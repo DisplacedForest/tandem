@@ -226,6 +226,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeTaskHandoffV11") { db in
             try Self.migrateNativeTasks(db)
         }
+        migrator.registerMigration("nativeTaskDisplayV12") { db in
+            try Self.migrateNativeTaskDisplay(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -328,7 +331,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
                        tool_activity_json, content_type, metadata_json, attachments_json,
-                       route_json, sources_json
+                       route_json, sources_json, spoken_text, display_blocks_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -343,11 +346,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
                        tool_activity_json, content_type, metadata_json, attachments_json,
-                       route_json, sources_json
+                       route_json, sources_json, spoken_text, display_blocks_json
                 FROM (
                     SELECT id, role, content, created_at, state, failure, model_id,
                            tool_activity_json, content_type, metadata_json, attachments_json,
-                           route_json, sources_json, ordinal
+                           route_json, sources_json, spoken_text, display_blocks_json, ordinal
                     FROM messages
                     WHERE conversation_id = ?
                     ORDER BY ordinal DESC
@@ -400,8 +403,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
                      failure, model_id, tool_activity_json, content_type, metadata_json,
-                     attachments_json, route_json, sources_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     attachments_json, route_json, sources_json, spoken_text, display_blocks_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
@@ -412,7 +415,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     metadata_json = excluded.metadata_json,
                     attachments_json = excluded.attachments_json,
                     route_json = excluded.route_json,
-                    sources_json = excluded.sources_json
+                    sources_json = excluded.sources_json,
+                    spoken_text = excluded.spoken_text
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -429,6 +433,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     Self.attachmentsJSON(for: message),
                     Self.routeJSON(for: message),
                     Self.sourcesJSON(for: message),
+                    message.role == .assistant ? (message.spokenText ?? message.text) : nil,
+                    try nativeTaskEncoded(message.displayBlocks),
                 ])
         }
     }
@@ -830,6 +836,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 state: state, failure: row["failure"], modelID: row["model_id"],
                 attachments: attachments, toolActivities: activities, contentType: contentType,
                 routeNote: decode(row["route_json"] as String?, as: MessageRouteNote.self))
+            message.spokenText = row["spoken_text"]
+            if let blocks: Data = row["display_blocks_json"] {
+                message.displayBlocks = (try? JSONDecoder().decode([NativeDisplayBlock].self, from: blocks)) ?? []
+            }
             if let sources = decode(row["sources_json"] as String?, as: [PulseSource].self),
                !sources.isEmpty {
                 message.sources = sources

@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from routers import inference_admission as admission, native_generation as relay, research, task_research, tasks
-from routers.task_runtime import Dispatcher
+from routers.task_runtime import Dispatcher, StepResult
 from routers.task_store import TaskStore
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -24,7 +24,11 @@ pytestmark = pytest.mark.skipif(os.environ.get('VERA_NATIVE_TASK_TEST') != '1', 
 async def fixture(tmp_path, monkeypatch, scenario):
     store = TaskStore(str(tmp_path / 'tasks.db'))
     engine = Dispatcher(store, poll_seconds=0.01)
-    engine.register('research', task_research.step, 180 if scenario == 'live' else 5, task_research.TOOLS)
+    async def waiting_step(task):
+        return StepResult(state='blocked', checkpoint={'phase': 'gather', 'sources': []})
+
+    engine.register('research', waiting_step if scenario == 'multiple' else task_research.step,
+                    180 if scenario == 'live' else 5, task_research.TOOLS)
     monkeypatch.setattr(tasks, '_runtime', engine)
     monkeypatch.setitem(tasks._validators, 'research', task_research.validate_payload)
     monkeypatch.setattr(admission, '_policy', admission.AdmissionPolicy(store, admission.Settings(
@@ -38,9 +42,21 @@ async def fixture(tmp_path, monkeypatch, scenario):
     provider_calls, api_bodies, acknowledgments, foreground_calls = [], [], [], []
     lost = False
     lost_result = False
+    lost_decision = False
+    streams, decisions = [], []
+    original_stream = tasks.event_stream
+
+    async def event_stream(store, after, task_id, request, poll_seconds=0.25):
+        async for event in original_stream(store, after, task_id, request, poll_seconds):
+            yield event
+            if scenario in {'reconnect', 'offline-completion'} and len(streams) == 1:
+                return
+
+    monkeypatch.setattr(tasks, 'event_stream', event_stream)
 
     async def search(_):
         await asyncio.wait_for(chat.wait(), 6)
+        await asyncio.sleep(2.4 if scenario == 'reconnect' else 0.4)
         return SimpleNamespace(results=[SimpleNamespace(url='https://fictional.test/luma', title='Fictional moon guide',
                                                        content='The fictional moon Luma is blue.')])
 
@@ -52,7 +68,11 @@ async def fixture(tmp_path, monkeypatch, scenario):
 
     @app.middleware('http')
     async def capture(request, call_next):
-        nonlocal lost, lost_result
+        nonlocal lost, lost_result, lost_decision
+        if request.url.path == '/tasks/events':
+            streams.append(request.query_params.get('after'))
+        if request.url.path.endswith('/decision'):
+            decisions.append(await request.json())
         if request.url.path.startswith('/tasks') and request.method == 'POST':
             body = await request.body()
             api_bodies.append(body.decode())
@@ -61,6 +81,9 @@ async def fixture(tmp_path, monkeypatch, scenario):
             lost_result = True
             return JSONResponse({'error': 'synthetic lost result'}, status_code=503)
         response = await call_next(request)
+        if request.url.path.endswith('/decision') and scenario == 'retry-lost-ack' and not lost_decision:
+            lost_decision = True
+            return JSONResponse({'error': 'synthetic lost decision acknowledgment'}, status_code=503)
         if request.url.path == '/tasks' and scenario == 'lost-ack' and not lost:
             lost = True
             return JSONResponse({'error': 'synthetic lost acknowledgment'}, status_code=503)
@@ -106,6 +129,8 @@ async def fixture(tmp_path, monkeypatch, scenario):
             await release.wait()
         planning = body['messages'][-1]['content'] == 'What color is the fictional moon Luma?'
         content = json.dumps({'subquestions': ['What color is Luma?']}) if planning else 'The fictional moon Luma is blue [1].'
+        if scenario in {'retry', 'retry-lost-ack'} and not planning and len(provider_calls) == 2:
+            content = 'The fictional moon Luma is blue [99].'
         return {'choices': [{'message': {'content': content}, 'finish_reason': 'length' if scenario == 'partial' else 'stop'}]}
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -119,7 +144,8 @@ async def fixture(tmp_path, monkeypatch, scenario):
     async def launch(mode):
         env = {key: value for key, value in os.environ.items()
                if not any(text in key for text in ('API_KEY', 'TOKEN', 'SECRET', 'VERA_ADMISSION_SELFTEST'))}
-        env['VERA_TASK_SELFTEST_CONFIG'] = json.dumps({'base': base, 'database': database.as_uri(), 'mode': mode, 'nativeLead': scenario == 'native-lead', 'live': scenario == 'live'})
+        env['VERA_TASK_SELFTEST_CONFIG'] = json.dumps({'base': base, 'database': database.as_uri(), 'mode': mode, 'nativeLead': scenario == 'native-lead', 'live': scenario == 'live',
+            'retry': scenario in {'retry', 'retry-lost-ack'}, 'cursorAhead': scenario == 'cursor-ahead'})
         process = await asyncio.create_subprocess_exec(str(BINARY), '--selftest', env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         processes.append(process)
@@ -130,7 +156,17 @@ async def fixture(tmp_path, monkeypatch, scenario):
         async with asyncio.timeout(4):
             while not server.started:
                 await asyncio.sleep(0.01)
-        first = await launch('cancel' if scenario == 'cancel' else 'create')
+        first = await launch('multiple' if scenario == 'multiple' else 'cancel' if scenario == 'cancel' else 'create')
+        if scenario == 'multiple':
+            stdout, stderr = await asyncio.wait_for(first.communicate(), 12)
+            assert first.returncode == 0, (stdout.decode(), stderr.decode())
+            assert len(store.list()) == 8 and len(streams) == 1 and not provider_calls
+            assert sum(task['state'] == 'canceled' for task in store.list()) == 1
+            with sqlite3.connect(database) as db:
+                assert db.execute('SELECT COUNT(*) FROM native_task_projections').fetchone()[0] == 8
+            (tmp_path / 'native-evidence.json').write_text(stdout.decode())
+            print('TASK_CARD_EVIDENCE ' + stdout.decode().strip())
+            return
         if scenario == 'crash':
             await asyncio.wait_for(provider_started.wait(), 6)
             first.kill()
@@ -155,7 +191,7 @@ async def fixture(tmp_path, monkeypatch, scenario):
         else:
             stdout, stderr = await asyncio.wait_for(first.communicate(), 150 if scenario == 'live' else 12)
             assert first.returncode == 0, (stdout.decode(), stderr.decode())
-            assert len(provider_calls) == (0 if scenario == 'live' else 1 if scenario in {'cancel', 'auth', 'quota', 'provider-error', 'partial'} else 2)
+            assert len(provider_calls) == (0 if scenario == 'live' else 3 if scenario in {'retry', 'retry-lost-ack'} else 1 if scenario in {'cancel', 'auth', 'quota', 'provider-error', 'partial'} else 2)
         rows = [json.loads(line.split(' ', 1)[1]) for line in stdout.decode().splitlines() if line.startswith('TASK_FIXTURE ')]
         if scenario not in {'crash', 'cancel', 'auth', 'quota', 'provider-error', 'partial'}:
             assert store.list()[0]['state'] == 'completed'
@@ -175,16 +211,31 @@ async def fixture(tmp_path, monkeypatch, scenario):
             assert len(foreground_calls) == 3
             assert all(row['first_content_seconds'] > 0 for row in rows if row['event'] in {'ack', 'chat'})
         assert len(store.list()) == 1
+        assert any(row['event'] == 'cards' and row['cards'] == 1 and row['original_conversation'] for row in rows)
+        if scenario in {'retry', 'retry-lost-ack'}:
+            assert decisions and len({reply['idempotency_key'] for reply in decisions}) == 1
+            assert all(reply['reply'] == {'action': 'retry'} for reply in decisions)
+        if scenario == 'reconnect':
+            assert len(streams) >= 2
+        if scenario == 'offline-completion':
+            assert len(streams) == 1
+        if scenario == 'cursor-ahead':
+            assert streams[0] == '100000' and '0' in streams[1:]
         assert all('synthetic-fixture-key' not in body and 'secret-sentinel-provider-body' not in body for body in api_bodies)
         with sqlite3.connect(database) as db:
             reserved = db.execute('SELECT COUNT(*) FROM native_task_generations').fetchone()[0]
             completed_generations = db.execute("SELECT COUNT(*) FROM native_task_generations WHERE state = 'completed'").fetchone()[0]
             assert 1 <= reserved <= 4 if scenario == 'live' else reserved == len(provider_calls)
-            for table in ('native_task_outbox', 'native_task_generations'):
+            blocks = [json.loads(row[0]) for row in db.execute('SELECT display_blocks_json FROM messages WHERE display_blocks_json IS NOT NULL')]
+            artifacts = [block for message in blocks for block in message if block['type'] == 'artifact']
+            assert len(artifacts) == (1 if store.list()[0]['state'] == 'completed' else 0)
+            for table in ('native_task_outbox', 'native_task_generations', 'native_task_projections', 'native_task_retries'):
                 saved = str(db.execute(f'SELECT * FROM {table}').fetchall())
                 assert 'synthetic-fixture-key' not in saved and 'secret-sentinel-provider-body' not in saved
-        print('TASK_EVIDENCE ' + json.dumps({'scenario': scenario, 'synthetic_provider_requests': len(provider_calls), 'foreground_requests': len(foreground_calls),
-            'state': store.list()[0]['state'], 'reserved_requests': reserved, 'completed_generations': completed_generations, 'timings': [row for row in rows if row['event'] in {'ack', 'chat'}]}))
+        evidence = {'scenario': scenario, 'synthetic_provider_requests': len(provider_calls), 'foreground_requests': len(foreground_calls),
+            'state': store.list()[0]['state'], 'reserved_requests': reserved, 'completed_generations': completed_generations, 'event_connections': len(streams), 'timings': [row for row in rows if row['event'] in {'ack', 'chat'}]}
+        (tmp_path / 'native-evidence.json').write_text(json.dumps(evidence))
+        print('TASK_EVIDENCE ' + json.dumps(evidence))
         return rows
     finally:
         release.set()
@@ -199,9 +250,16 @@ async def fixture(tmp_path, monkeypatch, scenario):
         sock.close()
 
 
-@pytest.mark.parametrize('scenario', ['complete', 'native-lead', 'lost-ack', 'lost-result', 'crash', 'two-apps', 'cancel', 'auth', 'quota', 'provider-error', 'partial'])
+@pytest.mark.parametrize('scenario', ['complete', 'native-lead', 'lost-ack', 'lost-result', 'crash', 'two-apps', 'cancel', 'auth', 'quota', 'provider-error', 'partial', 'offline-completion', 'reconnect', 'cursor-ahead', 'retry', 'retry-lost-ack', 'multiple'])
 def test_native_typed_handoff_actual_api(tmp_path, monkeypatch, scenario):
     asyncio.run(fixture(tmp_path, monkeypatch, scenario))
+
+
+def test_native_card_persistence_fixtures():
+    result = subprocess.run([str(BINARY), '--selftest'], env={**os.environ, 'VERA_TASK_SELFTEST_CONFIG': 'cards-unit'},
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert 'NATIVE TASK DISPLAY FIXTURE OK' in result.stdout
 
 
 def test_native_handoff_persistence_fixtures():

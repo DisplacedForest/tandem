@@ -256,9 +256,13 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     let phase: String?
     let nextQuery: Int
     let sources: [NativeTaskSource]
+    let nativeUnavailable: String?
+    let failureReason: String?
 
     private enum CodingKeys: String, CodingKey {
         case phase, sources
+        case nativeUnavailable = "native_unavailable"
+        case failureReason = "failure_reason"
         case nextQuery = "next_query"
     }
 
@@ -267,6 +271,8 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         phase = try container.decodeIfPresent(String.self, forKey: .phase)
         nextQuery = try container.decodeIfPresent(Int.self, forKey: .nextQuery) ?? 0
         sources = try container.decodeIfPresent([NativeTaskSource].self, forKey: .sources) ?? []
+        nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
+        failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
     }
 }
 

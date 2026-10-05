@@ -8,15 +8,26 @@ enum NativeTaskAPIPathFixture {
         let mode: String
         let nativeLead: Bool?
         let live: Bool?
+        let retry: Bool?
+        let cursorAhead: Bool?
     }
 
     static func run(_ raw: String) async throws {
         let input = try JSONDecoder().decode(Configuration.self, from: Data(raw.utf8))
         guard input.base.scheme == "http", ["localhost", "127.0.0.1"].contains(input.base.host ?? ""),
-              input.database.isFileURL, ["create", "recover", "cancel"].contains(input.mode) else {
+              input.database.isFileURL, ["create", "recover", "cancel", "multiple"].contains(input.mode) else {
             throw NativeTaskHTTPError.invalidResponse
         }
+        if input.mode == "multiple" {
+            try await NativeTaskControlAPIPathFixture.run(base: input.base, database: input.database)
+            return
+        }
         let repository = try LocalChatRepository(url: input.database)
+        if input.cursorAhead == true {
+            let lease = try repository.claimTaskStream(engine: NativeTaskEngineIdentity(input.base), instanceID: UUID())
+            try repository.saveTaskCursor(100000, lease: lease)
+            try repository.releaseTaskStream(lease)
+        }
         let config = NativeChatConfig(baseURL: input.base.appendingPathComponent("v1"),
             apiKey: "synthetic-fixture-key", model: "fixture-model", chatTemplateKwargs: nil, streaming: false)
         var settings = NativeChatSettings.fresh
@@ -87,16 +98,40 @@ enum NativeTaskAPIPathFixture {
         if input.mode == "cancel" {
             _ = try await URLSession.shared.data(from: input.base.appendingPathComponent("fixture/provider-started"))
             guard let reference = try repository.taskReferences(conversationID: nil).first,
-                  let service = store.nativeTaskService else { throw NativeTaskHTTPError.invalidResponse }
-            _ = try await service.requestCancellation(reference.id)
+                  let tracker = store.nativeTaskTracker else { throw NativeTaskHTTPError.invalidResponse }
+            await tracker.cancel(reference.id)
         }
-        let client = NativeTaskClient.live
+        var retried = false
         let deadline = ContinuousClock.now.advanced(by: .seconds(input.live == true ? 140 : 15))
         while ContinuousClock.now < deadline {
-            if let reference = try repository.taskReferences(conversationID: nil).first, reference.remoteTaskID != nil {
-                let snapshot = try await client.fetch(reference)
-                _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: snapshot)
-                if snapshot.state.isTerminal || snapshot.state == .needsDecision {
+            if let reference = try repository.taskReferences(conversationID: nil).first,
+               let snapshot = try repository.taskProjection(id: reference.id)?.snapshot {
+                if snapshot.state == .needsDecision, input.retry == true, !retried, let tracker = store.nativeTaskTracker {
+                    retried = true
+                    async let first: Void = tracker.retry(reference.id)
+                    async let duplicate: Void = tracker.retry(reference.id)
+                    _ = await (first, duplicate)
+                    continue
+                }
+                if snapshot.state.isTerminal || (snapshot.state == .needsDecision && input.retry != true) {
+                    store.select(reference.origin.conversationID)
+                    try await wait(seconds: 2) {
+                        guard let current = store.selected?.messages.first(where: { $0.id == reference.origin.assistantMessageID }) else { return false }
+                        let reportCount = current.displayBlocks.filter { if case .artifact = $0 { return true }; return false }.count
+                        return current.displayBlocks.contains { if case .taskCard = $0 { return true }; return false }
+                            && reportCount == (snapshot.state == .completed ? 1 : 0)
+                    }
+                    guard let message = store.selected?.messages.first(where: { $0.id == reference.origin.assistantMessageID }) else {
+                        throw NativeTaskFixture.Failure.assertion("Original conversation was not restored")
+                    }
+                    let cards = message.displayBlocks.filter { if case .taskCard = $0 { return true }; return false }
+                    let artifacts = message.displayBlocks.filter { if case .artifact = $0 { return true }; return false }
+                    try NativeTaskFixture.require(cards.count == 1 && artifacts.count == (snapshot.state == .completed ? 1 : 0),
+                        "Native transcript must contain one task card and exactly one completed report")
+                    try NativeTaskFixture.require(!message.nativeEnvelope.speechInput.contains("fictional.test"),
+                        "Restored report sources must stay out of spoken text")
+                    emit(["event": "cards", "cards": cards.count, "artifacts": artifacts.count,
+                          "original_conversation": true])
                     emit(["event": "finished", "state": snapshot.state.rawValue,
                           "report": snapshot.result?.report ?? "", "request_id": reference.id.uuidString])
                     return

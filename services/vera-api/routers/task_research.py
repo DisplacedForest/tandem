@@ -48,6 +48,7 @@ class Checkpoint(BaseModel):
     retry: bool = False
     attempt: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9-]{1,70}$")] = "initial"
     native_unavailable: str | None = Field(default=None, max_length=80)
+    failure_reason: Literal["request_limit", "input_limit", "request_conflict"] | None = None
 
 
 def _text(value: Any, limit: int) -> str:
@@ -115,6 +116,7 @@ async def step(task: dict[str, Any]) -> StepResult:
                           data={"message": "Open Vera with the original model profile to continue this research."})
     except native_generation.NativeGenerationFailed as error:
         if error.reason in {"request_limit", "request_conflict", "input_limit"}:
+            checkpoint.failure_reason = error.reason
             return StepResult(state="failed", checkpoint=checkpoint.model_dump(), event="failed",
                 data={"message": "This research task reached its saved generation limit." if error.reason == "request_limit"
                       else "This research input exceeds the task's saved input limit." if error.reason == "input_limit"

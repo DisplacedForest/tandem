@@ -381,6 +381,7 @@ private struct FlowChips: View {
 }
 
 struct MessageRow: View {
+    @EnvironmentObject private var store: ChatStore
     let message: Message
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
@@ -391,7 +392,7 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(message.toolActivities) { activity in
+                    ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
                         NativeToolActivityChip(activity: activity)
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
@@ -400,6 +401,11 @@ struct MessageRow: View {
                         }
                     }
                     AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    if !message.displayBlocks.isEmpty {
+                        NativeDisplayBlocksView(blocks: message.displayBlocks,
+                            connectedTaskIDs: store.connectedNativeTaskIDs,
+                            onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask)
+                    }
                     if message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)

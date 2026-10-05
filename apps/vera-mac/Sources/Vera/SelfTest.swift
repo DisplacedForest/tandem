@@ -353,6 +353,16 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "cards-unit" {
+            do {
+                try await NativeTaskDisplayFixture.run()
+                print("NATIVE TASK DISPLAY FIXTURE OK")
+            } catch {
+                print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)")
+                exit(1)
+            }
+            return
+        }
         if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "unit" {
             do {
                 try await NativeTaskFixture.run()
@@ -367,6 +377,9 @@ enum SelfTest {
             do {
                 try await NativeTaskAPIPathFixture.run(raw)
                 exit(0)
+            } catch NativeTaskFixture.Failure.assertion(let message) {
+                print("TASK_FIXTURE assertion=\(message)")
+                exit(1)
             } catch {
                 print("TASK_FIXTURE failure_type=\(String(reflecting: type(of: error)))")
                 exit(1)
@@ -381,6 +394,8 @@ enum SelfTest {
                 exit(1)
             }
         }
+        do { try await NativeTaskDisplayFixture.run() }
+        catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
         runPure()
         runNativeSettings()
         runModelParameters()

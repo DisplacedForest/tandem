@@ -67,6 +67,9 @@ final class ChatStore: ObservableObject {
     let nativeTaskEnrollment: NativeTaskProfileBinding?
     var nativeTaskRecoveryLoop: Task<Void, Never>?
     var nativeTaskGenerationLoop: Task<Void, Never>?
+    var nativeTaskTrackingLoop: Task<Void, Never>?
+    var nativeTaskTracker: NativeTaskTracker?
+    let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
     let attachmentStore: NativeAttachmentStore
     private let pulseFeedProvider: (any PulseFeedProviding)?
@@ -99,6 +102,7 @@ final class ChatStore: ObservableObject {
          nativeTaskEnrollment: NativeTaskProfileBinding? = nil) {
         let taskEngine = NativeTaskEngineSelection(veraAPI?.base)
         self.nativeTaskEngine = taskEngine
+        self.nativeTaskTrackingClient = nativeTaskClient
         self.nativeTaskConfiguration = nativeTaskConfiguration
         self.nativeTaskEnrollment = nativeTaskEnrollment
         self.nativeTaskRepository = repository as? any NativeTaskRepository
@@ -194,6 +198,8 @@ final class ChatStore: ObservableObject {
     deinit {
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
+        nativeTaskTrackingLoop?.cancel()
+        if let nativeTaskTracker { Task { await nativeTaskTracker.stop() } }
     }
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.

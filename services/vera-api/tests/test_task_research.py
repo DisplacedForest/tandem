@@ -188,3 +188,16 @@ def test_maximum_checkpoint_and_result_fit_serialized_budget(monkeypatch, charac
     assert len(encode(completed.result).encode("utf-8")) <= MAX_JSON_BYTES
     progress = task_research._progress(checkpoint, [source.model_dump() for source in sources])
     assert len(encode(progress.data, MAX_EVENT_BYTES).encode("utf-8")) <= MAX_EVENT_BYTES
+
+
+@pytest.mark.parametrize("reason", ["request_limit", "input_limit", "request_conflict"])
+def test_terminal_generation_reason_survives_checkpoint(reason, monkeypatch):
+    async def failed(task, payload, checkpoint):
+        raise task_research.native_generation.NativeGenerationFailed(reason)
+
+    monkeypatch.setattr(task_research, "_run", failed)
+    result = asyncio.run(task_research.step({"payload": {"query": "Fictional question"}}))
+    assert result.state == "failed"
+    reopened = task_research.Checkpoint.model_validate_json(json.dumps(result.checkpoint))
+    assert reopened.failure_reason == reason
+    assert not reopened.errors
