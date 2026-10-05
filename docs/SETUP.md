@@ -42,6 +42,29 @@ curl localhost:8089/health
 docker compose logs vera-api | head -60
 ```
 
+### Durable task API
+
+The task engine runs inside the existing vera-api process. `TASK_DB_PATH` defaults to `tasks.db` under the resolved `VERA_DATA_DIR`, so Docker and the packaged Mac engine use the same storage behavior. Existing stores are unchanged. Run one API process per task database: a process lock rejects a second dispatcher. Keep the database and its WAL together, and use SQLite's backup API for live snapshots.
+
+This release provides the substrate with no registered workers. `GET /tasks` returns persisted tasks and available worker types; `POST /tasks` returns HTTP 503 for an unconfigured worker without creating a record. Native chat still connects directly to its model endpoint. This queue does not yet schedule native inference, deliver reports, or provide household access controls. Keep the API within the same trusted deployment boundary as its other capabilities.
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /tasks` | JSON `worker_type`, `payload`, and required `idempotency_key`. An identical retry returns the original task; conflicting reuse returns 409. |
+| `GET /tasks` | Newest first, `limit` from 1 to 200. Pass the previous page's last task ID as `before` for stable pagination, including equal timestamps. |
+| `GET /tasks/{id}` | Current lifecycle, checkpoint, result, and pending decision. |
+| `POST /tasks/{id}/cancel` | Stops queued or waiting work immediately; running work stops at the next step boundary. Repeated cancellation is harmless. |
+| `POST /tasks/{id}/decision` | JSON `decision_id`, `idempotency_key`, and `reply` object. Only the current decision accepts a new reply. Identical retries do not requeue work twice. |
+| `GET /tasks/events` | SSE events with global numeric IDs. Reconnect using `Last-Event-ID`; optional `task_id` filters events without changing cursor meaning. `after` supplies an initial cursor when the header is absent. |
+
+The stream replays committed events in ascending order before following new events. IDs can have gaps and clients should deduplicate by ID. An invalid cursor returns 422, a cursor beyond the current store returns 409, and a cursor from another task is valid within the same database. Events are append-only, have no retention limit yet, and emit a keepalive during idle periods. Do not reuse a cursor after switching or replacing the database.
+
+Each worker step atomically saves its checkpoint, lifecycle and event. Recovery returns interrupted running tasks to the queue at their last committed checkpoint; a pending cancel becomes canceled. Queued, blocked, decision-waiting, and terminal tasks retain their state. Eligible steps run FIFO and requeue behind waiting work after yielding. Unknown worker types stay queued until their implementation is configured. A blocked task needs an explicit in-process `TaskStore.resume`; user-facing retry should use a decision instead.
+
+Worker implementations register an async `step(task)` with `tasks.register_worker` before startup and declare a finite timeout in seconds. Optional immutable tool names describe the trusted worker implementation; they do not grant model-selected access or create a sandbox. A step receives a snapshot with `id`, `payload`, `checkpoint`, and `decision_reply`, and returns `task_store.StepResult` with a lifecycle, checkpoint, optional result, and event data. A decision reply is the supplied object and is cleared by the next committed step. New decisions receive unique server-owned IDs. Payload, checkpoint, result, decision and reply objects each have a 256 KiB encoded JSON limit; event data has a 16 KiB limit. Values must be valid JSON without nonfinite numbers.
+
+Timeouts and worker errors record failure with the last checkpoint. Cancellation has a bounded grace period. A worker that keeps running makes the task engine unavailable and retains database ownership until it exits or the process dies; its late result is discarded. Shutdown wakes the dispatcher and fences claims only after execution ends. Steps must be asynchronous and must not block the event loop. Storage commits retry bounded transient errors without rerunning the step; persistent errors make task endpoints unavailable until the engine restarts after the underlying problem is fixed. This API does not provide exactly-once external effects. Workers must not perform side-effecting tools until a separate durable action protocol handles their crash windows and approval boundaries.
+
 ### The `.env` walkthrough
 
 `.env.example` is fully commented and is the authoritative reference; every variable the stack reads is in it (a test enforces this). The variables that matter first:

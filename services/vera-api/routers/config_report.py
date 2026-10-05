@@ -48,6 +48,7 @@ GROUPS: list[tuple[str, list[str]]] = [
                        "PULSE_MAX_CARDS", "PULSE_TRIAGE_ROUNDS", "PULSE_MAX_PER_INTEREST",
                        "AUDIT_WAKE_URL", "AUDIT_RELEASE_URL"]),
     ("scheduler",     ["SCHEDULER_ENABLED"]),
+    ("task storage",  ["TASK_DB_PATH"]),
 ]
 
 

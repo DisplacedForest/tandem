@@ -53,6 +53,8 @@ The API suite is hermetic (every store runs against a temp dir; no live endpoint
 `pytest.ini` sets the import path. `pytest` works from `services/vera-api` or as
 `pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
 
+Task-engine tests include deterministic fake workers, process-kill recovery, cancellation, replay, and duplicate-request checks. They do not call models or external tools.
+
 **Mac app** (no XCTest by design; the app validates through its own harness):
 
 ```sh

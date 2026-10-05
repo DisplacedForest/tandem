@@ -27,7 +27,7 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
-- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
+- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Vera.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
@@ -77,6 +77,10 @@ Native personal memory is an optional, local-only Mac feature. It starts off, st
 ### Knowledge: document collections that ground chat
 
 The Knowledge area manages document collections stored in vera-api's document engine: create and describe collections, add txt, md, pdf, docx, or html files, watch each file's index state (pending, indexing, ready, failed with the reason, stale), search and sort within a collection, and reindex or remove files. Any chat can then ground itself on selected collections: each turn retrieves the most relevant passages, the reply cites them inline, and the sources row names the collection and file behind every citation. Retrieval status is always visible (searching, how many passages, none relevant, or unavailable). Knowledge is an API-backed surface like Pulse: without a vera-api URL the area shows a clean unconfigured state and chat shows no knowledge controls, and nothing retrieved ever writes into personal memory automatically.
+
+### Durable background task storage
+
+The optional API stores queued work, checkpoints, decisions, results, and ordered events in SQLite. Tasks survive engine restarts, cancellation persists, and clients can reconnect to the event stream without losing committed updates. This is a backend foundation: no background worker or native task UI is enabled by this change. Creating work for an unavailable worker returns an explicit unconfigured response. See [the task API setup notes](docs/SETUP.md#durable-task-api) for its contract and limits.
 
 ### Pulse: scheduled research briefings
 
