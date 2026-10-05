@@ -46,7 +46,7 @@ docker compose logs vera-api | head -60
 
 The task engine runs inside the existing vera-api process. `TASK_DB_PATH` defaults to `tasks.db` under the resolved `VERA_DATA_DIR`, so Docker and the packaged Mac engine use the same storage behavior. Existing stores are unchanged. Run one API process per task database: a process lock rejects a second dispatcher. Keep the database and its WAL together, and use SQLite's backup API for live snapshots.
 
-This release provides the substrate with no registered workers. `GET /tasks` returns persisted tasks and available worker types; `POST /tasks` returns HTTP 503 for an unconfigured worker without creating a record. Native chat still connects directly to its model endpoint. This queue does not yet schedule native inference, deliver reports, or provide household access controls. Keep the API within the same trusted deployment boundary as its other capabilities.
+The `research` worker is registered when the API starts. `GET /tasks` returns persisted tasks and available worker types; `POST /tasks` returns HTTP 503 for an unconfigured worker without creating a record. Native chat still connects directly to its model endpoint. This queue does not yet schedule native inference, deliver reports, or provide household access controls. Keep the API within the same trusted deployment boundary as its other capabilities.
 
 | Endpoint | Contract |
 | --- | --- |
@@ -61,9 +61,23 @@ The stream replays committed events in ascending order before following new even
 
 Each worker step atomically saves its checkpoint, lifecycle and event. Recovery returns interrupted running tasks to the queue at their last committed checkpoint; a pending cancel becomes canceled. Queued, blocked, decision-waiting, and terminal tasks retain their state. Eligible steps run FIFO and requeue behind waiting work after yielding. Unknown worker types stay queued until their implementation is configured. A blocked task needs an explicit in-process `TaskStore.resume`; user-facing retry should use a decision instead.
 
-Worker implementations register an async `step(task)` with `tasks.register_worker` before startup and declare a finite timeout in seconds. Optional immutable tool names describe the trusted worker implementation; they do not grant model-selected access or create a sandbox. A step receives a snapshot with `id`, `payload`, `checkpoint`, and `decision_reply`, and returns `task_store.StepResult` with a lifecycle, checkpoint, optional result, and event data. A decision reply is the supplied object and is cleared by the next committed step. New decisions receive unique server-owned IDs. Payload, checkpoint, result, decision and reply objects each have a 256 KiB encoded JSON limit; event data has a 16 KiB limit. Values must be valid JSON without nonfinite numbers.
+Worker implementations register an async `step(task)` with `tasks.register_worker` before startup and declare a finite timeout in seconds. An optional payload validator rejects invalid new requests with HTTP 422 before persistence. Validators must be synchronous, fast local schema checks without I/O because they run inside the creation transaction. Existing request replay and conflicting key reuse are resolved before validation, and validators cannot rewrite the saved payload. Optional immutable tool names describe the trusted worker implementation; they do not grant model-selected access or create a sandbox. A step receives a snapshot with `id`, `payload`, `checkpoint`, and `decision_reply`, and returns `task_store.StepResult` with a lifecycle, checkpoint, optional result, and event data. A decision reply is the supplied object and is cleared by the next committed step. New decisions receive unique server-owned IDs. Payload, checkpoint, result, decision and reply objects each have a 256 KiB encoded JSON limit; event data has a 16 KiB limit. Values must be valid JSON without nonfinite numbers.
 
 Timeouts and worker errors record failure with the last checkpoint. Cancellation has a bounded grace period. A worker that keeps running makes the task engine unavailable and retains database ownership until it exits or the process dies; its late result is discarded. Shutdown wakes the dispatcher and fences claims only after execution ends. Steps must be asynchronous and must not block the event loop. Storage commits retry bounded transient errors without rerunning the step; persistent errors make task endpoints unavailable until the engine restarts after the underlying problem is fixed. This API does not provide exactly-once external effects. Workers must not perform side-effecting tools until a separate durable action protocol handles their crash windows and approval boundaries.
+
+Submit background research with `POST /tasks`:
+
+```json
+{
+  "worker_type": "research",
+  "payload": {"query": "What evidence answers this question?", "use_rag": false},
+  "idempotency_key": "research-request-1"
+}
+```
+
+Research uses the existing configured model and web search integrations. `use_rag` defaults to `true` and includes the existing local document store; set it to `false` for web-only work. `query` accepts 1 to 5,000 characters, `subquestions` accepts 1 to 5 (default 4), and `pages_per_q` accepts 0 to 4 (default 2). Each step has a 180-second deadline. Checkpoints retain up to 14 sources with 1,500 characters of evidence each. Source metadata, errors, and the report are bounded to fit the task store.
+
+Read the saved report and source list from `result` on `GET /tasks/{task_id}`. Progress events include numbered source titles without full source text. Report checks require numeric citations to refer to gathered sources; they do not verify every claim. If there are no usable sources or the model returns an unusable report, the task waits for a decision and preserves its evidence. After resolving the cause, submit `POST /tasks/{task_id}/decision` with the current `decision_id`, a new `idempotency_key`, and `"reply": {"action": "retry"}`. Cancel remains available through the normal task endpoint. A restart can repeat an interrupted read-only search or model call, but committed steps and their source events are not repeated. `POST /research` retains its existing blocking response contract for native chat and other callers.
 
 ### The `.env` walkthrough
 

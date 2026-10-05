@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -13,6 +13,7 @@ from .task_store import TaskConflict, TaskNotFound, TaskStore
 router = APIRouter(prefix='/tasks', tags=['tasks'])
 _runtime: Dispatcher | None = None
 _workers: dict[str, Worker] = {}
+_validators: dict[str, Callable[[dict[str, Any]], None]] = {}
 
 
 class CreateTask(BaseModel):
@@ -27,10 +28,13 @@ class DecisionReply(BaseModel):
     reply: dict[str, Any]
 
 
-def register_worker(worker_type: str, step: Step, timeout_seconds: float, tools: tuple[str, ...] = ()) -> None:
+def register_worker(worker_type: str, step: Step, timeout_seconds: float, tools: tuple[str, ...] = (),
+                    validate_payload: Callable[[dict[str, Any]], None] | None = None) -> None:
     if _runtime is not None or worker_type in _workers:
         raise ValueError('Register each worker once before task engine startup')
     _workers[worker_type] = Worker(step, timeout_seconds, tools)
+    if validate_payload is not None:
+        _validators[worker_type] = validate_payload
 
 
 async def start() -> None:
@@ -82,7 +86,8 @@ async def create_task(body: CreateTask) -> dict[str, Any]:
     engine = runtime()
     if body.worker_type not in engine.workers:
         raise HTTPException(503, 'This task worker is not configured')
-    return await call(engine.store.create, body.worker_type, body.payload, body.idempotency_key)
+    return await call(engine.store.create, body.worker_type, body.payload, body.idempotency_key,
+                      _validators.get(body.worker_type))
 
 
 async def event_stream(store: TaskStore, after: int, task_id: str | None,

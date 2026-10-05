@@ -7,7 +7,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 
 TaskState = Literal['queued', 'running', 'blocked', 'needs_decision', 'completed', 'failed', 'canceled']
 TERMINAL = frozenset({'completed', 'failed', 'canceled'})
@@ -126,7 +126,8 @@ class TaskStore:
         )
         return int(cursor.lastrowid)
 
-    def create(self, worker_type: str, payload: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
+    def create(self, worker_type: str, payload: dict[str, Any], idempotency_key: str,
+               validate_payload: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         if not worker_type.strip() or len(worker_type) > 80 or not idempotency_key.strip() or len(idempotency_key) > 200:
             raise ValueError('Worker type and idempotency key are required and must fit their limits')
         body = encode(payload)
@@ -136,6 +137,8 @@ class TaskStore:
                 if existing['worker_type'] != worker_type or existing['payload'] != body:
                     raise TaskConflict('Idempotency key already used with different task data')
                 return self._snapshot(existing)
+            if validate_payload is not None:
+                validate_payload(json.loads(body))
             task_id, now = str(uuid.uuid4()), time.time()
             db.execute('INSERT INTO tasks(id, worker_type, payload, creation_key, state, created_at, updated_at) VALUES(?,?,?,?,?,?,?)',
                        (task_id, worker_type, body, idempotency_key, 'queued', now, now))

@@ -80,7 +80,7 @@ The Knowledge area manages document collections stored in vera-api's document en
 
 ### Durable background task storage
 
-The optional API stores queued work, checkpoints, decisions, results, and ordered events in SQLite. Tasks survive engine restarts, cancellation persists, and clients can reconnect to the event stream without losing committed updates. This is a backend foundation: no background worker or native task UI is enabled by this change. Creating work for an unavailable worker returns an explicit unconfigured response. See [the task API setup notes](docs/SETUP.md#durable-task-api) for its contract and limits.
+The optional API stores queued work, checkpoints, decisions, results, and ordered events in SQLite. Background research plans questions, gathers sources one step at a time, and saves a cited report. Tasks resume from committed checkpoints after an engine restart, cancellation preserves collected evidence, and clients can reconnect to the event stream. Missing sources or an unusable report ask for an explicit retry. Native chat continues to use the blocking research endpoint; background task cards and native handoff remain separate work. See [the task API setup notes](docs/SETUP.md#durable-task-api) for its contract and limits.
 
 ### Pulse: scheduled research briefings
 
