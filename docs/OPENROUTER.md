@@ -55,3 +55,28 @@ The budget flag records approval; its presence is not a substitute for obtaining
 The first request forces a single `synthetic_add(19, 23)` call. The harness validates the exact name and arguments, calculates 42 locally, and sends a sanitized assistant/tool exchange for the second request. The third request contains a programmatically generated 32 by 32 red PNG and asks for its color. No arbitrary returned tool executes. Calls, outputs, response size, and individual HTTP operations are bounded. HTTP redirects are refused. Unknown models, moving aliases, unsupported capabilities, tiered or additional pricing, invalid tool arguments, response-model mismatches, missing usage, and incomplete completions stop the run.
 
 Reports contain the exact model, pass/fail checks, durations, and reported costs. Response bodies, authorization headers, and keys are withheld on errors. A failed request can still incur cost; consult the provider's usage page if a failure prevents a usage receipt. A mocked pass establishes harness behavior only. Only a successful authorized live run establishes provider behavior.
+
+
+## Test with the saved Vera credential
+
+If the OpenRouter key is already saved in Vera, use the native test entry point so the key never needs to be entered again or exported to another process. Build the app, then run from `apps/vera-mac`:
+
+```sh
+.build/debug/Vera --openrouter-smoke --credential-status
+.build/debug/Vera --openrouter-smoke --access-status
+.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash
+```
+
+The first command reads only the active saved endpoint and checks the existing Keychain store with interaction disabled. It prints a boolean, never the key. The access-status command validates that credential using the free key-status endpoint and prints only whether authentication succeeded. The model preflight refreshes the public catalog and forecast without reading the key. None of these commands writes configuration or credentials. A missing model selection in the app is acceptable because the test requires its own explicit model ID.
+
+With the model and credit usage authorized, run:
+
+```sh
+.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --live --approved-budget-usd 0.01
+```
+
+This uses the native request builder and response parser with fresh synthetic messages. It does not initialize the app's configuration store, import a persona, load conversations, enable tools, or access project/Home data. The only callable test tool adds the fixed integers. The saved key stays in the native process and is sent only as authentication to the saved, validated OpenRouter HTTPS API root. No environment key fallback or second credential lookup is attempted. Redirects, persistent URL caches, and cookie storage are disabled. Each request has a 45-second resource deadline and a two-megabyte response limit.
+
+If the saved credential cannot be read without user interaction, the command stops without opening a Keychain prompt. A successful credential-availability check is not authentication validation. An HTTP authentication, account-limit, or provider error stops the test without retries or alternate keys. Both harnesses use the same three-request plan and forecast, and both stop between requests when reported cost leaves insufficient budget. The native command reports each usage receipt before checking the final result.
+
+`mise run check` includes the offline native provider self-test. Run it separately with `.build/debug/Vera --provider-smoke-selftest`. Native provider smoke results do not establish API worker integration: the server's `model_client` authentication path is separate.

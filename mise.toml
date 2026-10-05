@@ -18,8 +18,13 @@ depends = ["leak-gate", "copy-check"]
 [tasks.provider-test]
 run = "python3 -m unittest discover -s scripts/tests -p 'test_openrouter_smoke.py' -v"
 
+[tasks.native-provider-test]
+dir = "apps/vera-mac"
+depends = ["mac-build"]
+run = ".build/debug/Vera --provider-smoke-selftest"
+
 [tasks.test]
-depends = ["api-test", "provider-test"]
+depends = ["api-test", "provider-test", "native-provider-test"]
 
 [tasks.check]
 depends = ["lint", "test", "mac-build"]
