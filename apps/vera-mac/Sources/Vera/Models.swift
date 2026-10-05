@@ -55,4 +55,5 @@ struct Conversation: Identifiable, Hashable {
     var originID: String? = nil
     var instructions: String? = nil
     var grounding: [String] = []
+    var mode: NativeSessionMode = .chat
 }

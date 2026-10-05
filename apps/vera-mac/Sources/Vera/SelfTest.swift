@@ -353,6 +353,18 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if let raw = ProcessInfo.processInfo.environment["VERA_SESSION_RESTART_FIXTURE"] {
+            do { try await NativeSessionHTTPFixture.restart(raw); exit(0) }
+            catch { print("SESSION_RESTART_ERROR: \(error)"); exit(1) }
+        }
+        if let raw = ProcessInfo.processInfo.environment["VERA_SESSION_HTTP_FIXTURE"] {
+            do { try await NativeSessionHTTPFixture.run(raw); exit(0) }
+            catch { print("SESSION_HTTP_FIXTURE ERROR: \(error)"); exit(1) }
+        }
+        if ProcessInfo.processInfo.environment["VERA_SESSION_SELFTEST"] == "1" {
+            do { try await NativeSessionFixture.run(); exit(0) }
+            catch { print("NATIVE SESSION FIXTURE ERROR: \(error)"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "cards-unit" {
             do {
                 try await NativeTaskDisplayFixture.run()
@@ -394,6 +406,8 @@ enum SelfTest {
                 exit(1)
             }
         }
+        do { try await NativeSessionFixture.run() }
+        catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
         catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
         runPure()
@@ -3278,7 +3292,7 @@ enum SelfTest {
                 nativeConfig: config,
                 nativeTransport: researchTransport,
                 repository: researchRepository,
-                nativeEnabledToolIDs: ["deep-research"],
+                nativeEnabledToolIDs: ["deep-research", "web-search"],
                 nativeToolRegistry: NativeToolRegistry(
                     definitions: NativeWebTools.definitions(
                         base: { URL(string: "https://api.example") }, client: webClient.client)))
@@ -3286,21 +3300,26 @@ enum SelfTest {
             researchStore.sendText("What happened to the river?")
             await waitForGeneration(researchStore)
             guard let researchConversation = researchStore.selected,
-                  let researchReply = researchConversation.messages.last,
-                  researchReply.toolActivities.first?.state == .succeeded,
-                  researchReply.sources.map(\.n) == [1, 2],
-                  researchReply.sources.first?.url == "https://a.example/one" else {
-                print("SELFTEST ERROR: research sources not lifted onto the reply"); exit(1)
+                  var researchReply = researchConversation.messages.last,
+                  researchReply.toolActivities.first?.state == .failed,
+                  researchTransport.schemas.allSatisfy({ !$0.contains(where: { $0.name == "deep_research" }) }) else {
+                print("SELFTEST ERROR: blocking research was advertised or executed in foreground chat"); exit(1)
             }
+            let legacyResearch = NativeToolActivity(id: "legacy-research", toolID: NativeWebTools.researchToolID,
+                name: NativeWebTools.researchToolName, title: "Research", round: 1, request: "{}",
+                result: "{\"report\":\"\",\"sources\":[{\"n\":1,\"title\":\"Gauge report\",\"url\":\"https://a.example/one\"}],\"errors\":[\"synthesis unavailable\"]}",
+                state: .failed, confirmationRequired: false)
+            researchReply.sources = NativeResearchSources.lift([legacyResearch])
+            try researchRepository.saveMessage(researchReply, conversationID: researchConversation.id, ordinal: 1)
             let relaunched = try LocalChatRepository(url: researchURL)
-            guard let reopened = try relaunched.messages(
-                    conversationID: researchConversation.id).last,
-                  reopened.sources == researchReply.sources else {
-                print("SELFTEST ERROR: research sources relaunch round trip"); exit(1)
+            guard let reopened = try relaunched.messages(conversationID: researchConversation.id).last,
+                  reopened.sources == researchReply.sources, reopened.sources.count == 1 else {
+                print("SELFTEST ERROR: failed legacy research evidence relaunch round trip"); exit(1)
             }
             try? FileManager.default.removeItem(at: researchURL.deletingLastPathComponent())
             let citedRequest = researchTransport.histories.first?.first?.content ?? ""
-            guard citedRequest.contains("bracketed numbers like [1]") else {
+            guard citedRequest.contains("bracketed numbers like [1]"),
+                  researchTransport.schemas.first?.contains(where: { $0.name == "web_search" }) == true else {
                 print("SELFTEST ERROR: citations contract missing from research request"); exit(1)
             }
             transport.interrupt = true
@@ -3319,35 +3338,18 @@ enum SelfTest {
             await waitForGeneration(store)
             guard transport.histories.last?.first?.content.contains(NativeChatSettings.defaultSystemPrompt) == true,
                   transport.histories.last?.dropFirst().map(\.content) == [
-                    "First", "Native reply", "Second", "Native reply", "Fail", "After interruption",
+                    "First", "Native reply", "Second", "Native reply", "After interruption",
                   ] else {
                 print("SELFTEST ERROR: native interrupted reply reused as prompt history"); exit(1)
             }
-            let countBeforeBlockedSend = store.selected?.messages.count
-            store.generating = true
+            let countBeforeConcurrentSend = store.selected?.messages.count ?? 0
             store.draft = "Concurrent"
             store.send()
-            store.sendText("Concurrent")
-            guard store.draft == "Concurrent" else {
-                print("SELFTEST ERROR: native blocked send cleared draft"); exit(1)
+            store.sendText("Another accepted question")
+            guard store.draft.isEmpty, store.selected?.messages.count == countBeforeConcurrentSend + 4 else {
+                print("SELFTEST ERROR: native concurrent input wasn't durably accepted"); exit(1)
             }
-            store.draft = ""
-            if let conversationIndex = store.conversations.firstIndex(where: { $0.id == store.selectedID }) {
-                let question = Message(
-                    role: .assistant,
-                    text: "Choose",
-                    ask: VeraAsk(question: "Choose", options: [.init(label: "A")]))
-                store.conversations[conversationIndex].messages.append(question)
-                store.submitAsk(messageID: question.id, selections: ["A"], other: "")
-                guard store.conversations[conversationIndex].messages.last?.answered == false else {
-                    print("SELFTEST ERROR: native blocked structured answer marked submitted"); exit(1)
-                }
-                store.conversations[conversationIndex].messages.removeLast()
-            }
-            store.generating = false
-            guard store.selected?.messages.count == countBeforeBlockedSend else {
-                print("SELFTEST ERROR: native concurrent send accepted"); exit(1)
-            }
+            await waitForGeneration(store)
             let unavailable = ChatStore(
                 nativeConfig: config,
                 nativeTransport: transport,
