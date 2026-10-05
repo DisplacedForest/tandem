@@ -353,6 +353,25 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "unit" {
+            do {
+                try await NativeTaskFixture.run()
+                print("NATIVE TASK FIXTURE OK")
+            } catch {
+                print("NATIVE TASK FIXTURE FAILED: \(error)")
+                exit(1)
+            }
+            return
+        }
+        if let raw = ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] {
+            do {
+                try await NativeTaskAPIPathFixture.run(raw)
+                exit(0)
+            } catch {
+                print("TASK_FIXTURE failure_type=\(String(reflecting: type(of: error)))")
+                exit(1)
+            }
+        }
         if let raw = ProcessInfo.processInfo.environment["VERA_ADMISSION_SELFTEST_CONFIG"] {
             do {
                 try await NativeInferenceAdmissionFixture.run(raw)

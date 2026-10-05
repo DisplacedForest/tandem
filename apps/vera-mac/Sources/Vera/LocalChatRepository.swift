@@ -66,6 +66,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     init(url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var configuration = Configuration()
+        configuration.busyMode = .timeout(0.25)
         configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
         database = try DatabaseQueue(path: url.path, configuration: configuration)
         try migrate()
@@ -221,6 +222,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.alter(table: "conversations") { table in
                 table.add(column: "grounding_json", .text)
             }
+        }
+        migrator.registerMigration("nativeTaskHandoffV11") { db in
+            try Self.migrateNativeTasks(db)
         }
         try migrator.migrate(database)
     }
@@ -431,6 +435,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     func deleteConversation(_ id: String) throws {
         try database.write { db in
+            try Self.detachTasks(db, conversationID: id)
             try db.execute(sql: "DELETE FROM conversations WHERE id = ?", arguments: [id])
         }
     }

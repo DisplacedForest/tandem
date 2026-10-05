@@ -59,6 +59,15 @@ final class ChatStore: ObservableObject {
     private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
+    let nativeTaskRepository: (any NativeTaskRepository)?
+    let nativeTaskService: NativeTaskHandoffService?
+    let nativeTaskBroker: NativeTaskGenerationBroker?
+    let nativeTaskEngine: NativeTaskEngineSelection
+    let nativeTaskConfiguration: NativeTaskConfiguration?
+    let nativeTaskEnrollment: NativeTaskProfileBinding?
+    var nativeTaskRecoveryLoop: Task<Void, Never>?
+    var nativeTaskGenerationLoop: Task<Void, Never>?
+    @Published var nativeTaskReferences: [NativeTaskReference] = []
     let attachmentStore: NativeAttachmentStore
     private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
@@ -83,7 +92,33 @@ final class ChatStore: ObservableObject {
          capabilityDeclarations: [NativeToolDeclaration] = [],
          pulseFeed: (any PulseFeedProviding)? = nil,
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
-         sweepOrphanedAttachments: Bool = false) {
+         sweepOrphanedAttachments: Bool = false,
+         nativeTaskConfiguration: NativeTaskConfiguration? = nil,
+         nativeTaskClient: NativeTaskClient = .live,
+         nativeResearchOptions: NativeTaskResearchOptions = .standard,
+         nativeTaskEnrollment: NativeTaskProfileBinding? = nil) {
+        let taskEngine = NativeTaskEngineSelection(veraAPI?.base)
+        self.nativeTaskEngine = taskEngine
+        self.nativeTaskConfiguration = nativeTaskConfiguration
+        self.nativeTaskEnrollment = nativeTaskEnrollment
+        self.nativeTaskRepository = repository as? any NativeTaskRepository
+        if let taskRepository = repository as? any NativeTaskRepository {
+            nativeTaskService = NativeTaskHandoffService(repository: taskRepository, client: nativeTaskClient,
+                                                       researchOptions: nativeResearchOptions, configuredBase: { taskEngine.base })
+        } else {
+            nativeTaskService = nil
+        }
+        if let taskRepository = repository as? any NativeTaskGenerationRepository, let nativeTaskConfiguration {
+            nativeTaskBroker = NativeTaskGenerationBroker(repository: taskRepository, client: nativeTaskClient,
+                configuredBase: { taskEngine.base },
+                isProfileAvailable: { await nativeTaskConfiguration.isAvailable($0) },
+                generate: { profile, job in
+                    let config = try await nativeTaskConfiguration.load(profile)
+                    return try await NativeTaskProvider.complete(config: config, binding: profile, job: job)
+                })
+        } else {
+            nativeTaskBroker = nil
+        }
         self.client = veraAPI
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
@@ -156,6 +191,11 @@ final class ChatStore: ObservableObject {
         try? JSONEncoder().encode(artifactLibrary).write(to: Self.artifactsURL)
     }
 
+    deinit {
+        nativeTaskRecoveryLoop?.cancel()
+        nativeTaskGenerationLoop?.cancel()
+    }
+
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
         let configStore = ConfigStore()
@@ -178,7 +218,7 @@ final class ChatStore: ObservableObject {
     }
 
     static var builtInToolNames: Set<String> {
-        Set(buildToolRegistry([]).definitions.map(\.name))
+        Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName])
     }
 
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
@@ -234,6 +274,7 @@ final class ChatStore: ObservableObject {
         nativeMemoryService = memoryService
         if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
         client = VeraAPIClient.resolved(model: cfg.model)
+        nativeTaskEngine.set(client?.base)
         chatConfigurationError = nil
         Task { await connect() }
     }
@@ -252,6 +293,7 @@ final class ChatStore: ObservableObject {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
         }
         newConversation()
+        startNativeTaskRecovery()
         await refreshPulse()
         reloadNativeMemory()
         runMemoryGroom()
@@ -1332,15 +1374,32 @@ final class ChatStore: ObservableObject {
         parameterRejection = nil
         streamStatus = "Thinking…"
         generating = true
+        var turnRegistry = nativeToolRegistry
+        if let service = nativeTaskService, nativeTaskEngine.base != nil,
+           let conversation = conversations.first(where: { $0.id == id }),
+           conversation.messages.indices.contains(userIndex), conversation.messages.indices.contains(replyIndex) {
+            let origin = NativeTaskOrigin(conversationID: id,
+                userMessageID: conversation.messages[userIndex].id,
+                assistantMessageID: conversation.messages[replyIndex].id)
+            let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
+            if nativeTaskConfiguration == nil || profile != nil {
+                turnRegistry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + [
+                    NativeTaskTools.definition(service: service, origin: origin, profile: profile,
+                        didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
+                ])
+            }
+        }
         let toolLoop = NativeToolLoop(
-            transport: nativeTransport, registry: nativeToolRegistry,
+            transport: nativeTransport, registry: turnRegistry,
             confirm: { [weak self] activity in
                 guard let self else { return false }
                 return await self.awaitToolConfirmation(activity)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
-        let enabledToolIDs = capabilityProfile.supportsTools ? nativeEnabledToolIDs : []
+        let enabledToolIDs = capabilityProfile.supportsTools
+            ? NativeTaskTools.enabledIDs(nativeEnabledToolIDs, hasEngine: nativeTaskEngine.base != nil,
+                                         hasRepository: nativeTaskRepository != nil) : []
         let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
@@ -1348,7 +1407,7 @@ final class ChatStore: ObservableObject {
         let scopes = resolvePromptScopes(conversationID: id)
         let persona = scopes.persona
         let ownerName = nativeOwnerName
-        let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
+        let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
         let groundingCollections = conversations.first(where: { $0.id == id })?.grounding ?? []
         let groundingBase = client?.base
         groundingStatus[id] = nil

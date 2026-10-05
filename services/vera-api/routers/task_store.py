@@ -239,11 +239,17 @@ class TaskStore:
             db.execute('UPDATE tasks SET queue_order = ? WHERE id = ?', (order, task_id))
             return self._snapshot(self._row(db, task_id))
 
-    def resume(self, task_id: str) -> dict[str, Any]:
+    def resume(self, task_id: str, expected_generation: int | None = None,
+               checkpoint_match: dict[str, Any] | None = None) -> dict[str, Any]:
         with self.transaction() as db:
             row = self._row(db, task_id)
-            if row['state'] != 'blocked':
+            if row['state'] != 'blocked' or row['cancel_requested']:
                 raise TaskConflict('Only blocked tasks can be resumed')
+            if expected_generation is not None and row['generation'] != expected_generation:
+                raise TaskConflict('This task generation is no longer current')
+            checkpoint = json.loads(row['checkpoint'])
+            if checkpoint_match is not None and any(checkpoint.get(key) != value for key, value in checkpoint_match.items()):
+                raise TaskConflict('This task is blocked for another reason')
             db.execute("UPDATE tasks SET state = 'queued', updated_at = ? WHERE id = ?", (time.time(), task_id))
             order = self._event(db, task_id, 'resumed', 'queued', {})
             db.execute('UPDATE tasks SET queue_order = ? WHERE id = ?', (order, task_id))

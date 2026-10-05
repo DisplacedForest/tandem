@@ -9,7 +9,7 @@ import data_root
 DATA_ROOT = data_root.apply()
 
 from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, identity_migrate, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
-from routers import task_research
+from routers import native_generation, task_research
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -99,6 +99,7 @@ CAPABILITIES = {
     "updates": updates.router,
     "scheduler": scheduler.router,
     "tasks": tasks.router,
+    "native_generation": native_generation.router,
     "inference_admission": inference_admission.router,
 }
 

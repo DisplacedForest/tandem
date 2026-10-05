@@ -1,10 +1,11 @@
 import re
+import uuid
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import research
+from . import native_generation, research
 from .task_store import StepResult
 
 
@@ -16,6 +17,8 @@ class ResearchPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)]
+    deliverables: list[ShortText] = Field(default_factory=list, max_length=5)
+    native_binding: native_generation.NativeBinding | None = None
     subquestions: int = Field(default=4, ge=1, le=5)
     pages_per_q: int = Field(default=2, ge=0, le=4)
     use_rag: bool = True
@@ -43,6 +46,8 @@ class Checkpoint(BaseModel):
     sources: list[Source] = Field(default_factory=list, max_length=research.MAX_SOURCES)
     errors: list[Annotated[str, StringConstraints(max_length=100)]] = Field(default_factory=list, max_length=16)
     retry: bool = False
+    attempt: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9-]{1,70}$")] = "initial"
+    native_unavailable: str | None = Field(default=None, max_length=80)
 
 
 def _text(value: Any, limit: int) -> str:
@@ -84,6 +89,7 @@ def _add_sources(checkpoint: Checkpoint, candidates: list[dict[str, Any]]) -> li
 def _pause(checkpoint: Checkpoint, reason: str) -> StepResult:
     _errors(checkpoint, [reason])
     checkpoint.retry = True
+    checkpoint.attempt = uuid.uuid4().hex
     return StepResult(
         state="needs_decision", checkpoint=checkpoint.model_dump(), event="progress",
         data={"message": reason}, decision={"prompt": reason + " Retry this step?", "choices": ["retry"]})
@@ -101,7 +107,29 @@ def _progress(checkpoint: Checkpoint, added: list[dict[str, Any]] | None = None)
 async def step(task: dict[str, Any]) -> StepResult:
     payload = ResearchPayload.model_validate(task["payload"])
     checkpoint = Checkpoint.model_validate(task.get("checkpoint") or {})
-    request = research.ResearchRequest(**payload.model_dump())
+    try:
+        return await _run(task, payload, checkpoint)
+    except native_generation.NativeExecutorUnavailable:
+        checkpoint.native_unavailable = payload.native_binding.id if payload.native_binding else None
+        return StepResult(state="blocked", checkpoint=checkpoint.model_dump(), event="progress",
+                          data={"message": "Open Vera with the original model profile to continue this research."})
+    except native_generation.NativeGenerationFailed as error:
+        if error.reason in {"request_limit", "request_conflict", "input_limit"}:
+            return StepResult(state="failed", checkpoint=checkpoint.model_dump(), event="failed",
+                data={"message": "This research task reached its saved generation limit." if error.reason == "request_limit"
+                      else "This research input exceeds the task's saved input limit." if error.reason == "input_limit"
+                      else "The saved model request conflicts with an earlier attempt."})
+        messages = {"provider_auth": "The saved model credential was not accepted.",
+                    "provider_quota": "The model provider's usage limit was reached.",
+                    "credential_unavailable": "The saved model credential is unavailable.",
+                    "previous_request_uncertain": "The previous model request ended without a saved response."}
+        return _pause(checkpoint, messages.get(error.reason, "The model request did not complete."))
+
+
+async def _run(task: dict[str, Any], payload: ResearchPayload, checkpoint: Checkpoint) -> StepResult:
+    checkpoint.native_unavailable = None
+    request = research.ResearchRequest(**payload.model_dump(exclude={"native_binding"}))
+    call = native_generation.caller(task, checkpoint.phase, checkpoint.attempt) if payload.native_binding else None
     errors: list[str] = []
     if checkpoint.retry:
         if task.get("decision_reply") != {"action": "retry"}:
@@ -110,7 +138,10 @@ async def step(task: dict[str, Any]) -> StepResult:
 
     if checkpoint.phase == "plan":
         cap = min(5, payload.subquestions, max(1, research._iteration_cap(payload.subquestions)))
-        questions = await research._plan(payload.query, cap, errors)
+        if call is None:
+            questions = await research._plan(payload.query, cap, errors)
+        else:
+            questions = await research._plan(payload.query, cap, errors, call=call)
         checkpoint.subquestions = [_text(question, 500) for question in questions[:cap] if question.strip()]
         if not checkpoint.subquestions:
             checkpoint.subquestions = [payload.query[:500]]
@@ -143,7 +174,10 @@ async def step(task: dict[str, Any]) -> StepResult:
         checkpoint.next_query = 0
         return _pause(checkpoint, "No usable sources were gathered.")
     sources = [source.model_dump() for source in checkpoint.sources]
-    report = await research._synthesize(request, checkpoint.subquestions, sources, errors)
+    if call is None:
+        report = await research._synthesize(request, checkpoint.subquestions, sources, errors)
+    else:
+        report = await research._synthesize(request, checkpoint.subquestions, sources, errors, call=call)
     _errors(checkpoint, errors)
     try:
         report.encode("utf-8")

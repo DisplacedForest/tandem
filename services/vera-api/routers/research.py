@@ -7,6 +7,7 @@ POST /research {query} runs a bounded loop:
 Parity with ChatGPT Deep Research / Claude Research, fully local.
 """
 import time
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -44,6 +45,7 @@ def _iteration_cap(requested: int) -> int:
 
 class ResearchRequest(BaseModel):
     query: str
+    deliverables: list[str] = Field(default_factory=list, max_length=5)
     subquestions: int = 4
     pages_per_q: int = 2
     use_rag: bool = True
@@ -71,15 +73,17 @@ async def _rag_sources(query: str, errors: list[str]) -> list[dict]:
     return out
 
 
-async def _plan(query: str, cap: int, errors: list[str]) -> list[str]:
+async def _plan(query: str, cap: int, errors: list[str], call: Callable[..., Awaitable[str]] | None = None) -> list[str]:
     try:
         plan, issues = await parsed(repairable(
-            _vera, [{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": query}],
+            call or _vera, [{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": query}],
             temperature=0.3, think="on"), ResearchPlan)
         errors.extend(f"plan: {issue}" for issue in issues)
         return ([q.strip()[:500] for q in plan["subquestions"] if q.strip()][:cap]
                 if plan else []) or [query]
     except Exception as e:
+        if call is not None:
+            raise
         errors.append(f"plan: {e}")
         return [query]
 
@@ -109,13 +113,17 @@ async def _gather(req: ResearchRequest, subqs: list[str], errors: list[str]) -> 
     return sources
 
 
-async def _synthesize(req: ResearchRequest, subqs: list[str], sources: list[dict], errors: list[str]) -> str:
+async def _synthesize(req: ResearchRequest, subqs: list[str], sources: list[dict], errors: list[str], call: Callable[..., Awaitable[str]] | None = None) -> str:
     src_block = "\n\n".join(f"[{s['n']}] {s['title']} ({s['url']})\n{s['content'][:PER_SOURCE_CHARS]}" for s in sources)
     syn_usr = f"Question: {req.query}\n\nSub-questions researched:\n- " + "\n- ".join(subqs) + f"\n\nSources:\n{src_block}"
+    if req.deliverables:
+        syn_usr += "\n\nRequested deliverables:\n- " + "\n- ".join(req.deliverables)
     try:
-        return (await _vera([{"role": "system", "content": voiced(SYN_SYS)}, {"role": "user", "content": syn_usr}],
+        return (await (call or _vera)([{"role": "system", "content": voiced(SYN_SYS)}, {"role": "user", "content": syn_usr}],
                             temperature=0.4, think="on")).strip()
     except Exception as e:
+        if call is not None:
+            raise
         errors.append(f"synthesis: {e}")
         return ""
 

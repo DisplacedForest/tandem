@@ -29,8 +29,14 @@ env = { VERA_NATIVE_ADMISSION_TEST = "1" }
 dir = "services/vera-api"
 run = "python -m pytest -q tests/test_native_inference_admission.py"
 
+[tasks.native-task-test]
+depends = ["mac-build"]
+env = { VERA_NATIVE_TASK_TEST = "1", VERA_NATIVE_TASK_LIVE = "0" }
+dir = "services/vera-api"
+run = "python -m pytest -q tests/test_native_task_handoff.py"
+
 [tasks.test]
-depends = ["api-test", "provider-test", "native-provider-test", "native-admission-test"]
+depends = ["api-test", "provider-test", "native-provider-test", "native-admission-test", "native-task-test"]
 
 [tasks.check]
 depends = ["lint", "test", "mac-build"]
