@@ -172,7 +172,7 @@ final class ConfigStore: ObservableObject {
         return NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
             baseURL: config.baseURL, apiKey: config.apiKey,
             embeddingsModel: nativeSettings.memory.embeddingsModel,
-            extractionModel: nativeSettings.memory.extractionModel))
+            extractionModel: nativeSettings.memory.extractionModel), admission: .configured())
     }
 
     func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {

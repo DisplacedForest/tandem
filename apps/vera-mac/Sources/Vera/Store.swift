@@ -163,7 +163,7 @@ final class ChatStore: ObservableObject {
         self.init(
             veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,
-            nativeTransport: native.map { NativeChatClient(config: $0) },
+            nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
             nativeOwnerName: configStore.ownerName,
             nativeMemorySettings: .fresh)
@@ -223,7 +223,7 @@ final class ChatStore: ObservableObject {
         capabilityDeclarations: [NativeToolDeclaration]? = nil
     ) {
         nativeConfig = cfg
-        nativeTransport = NativeChatClient(config: cfg)
+        nativeTransport = NativeChatClient.foreground(config: cfg)
         nativeSystemPrompt = systemPrompt
         nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
@@ -1299,7 +1299,7 @@ final class ChatStore: ObservableObject {
 
     func applyNativeOptions(_ cfg: NativeChatConfig) {
         nativeConfig = cfg
-        nativeTransport = NativeChatClient(config: cfg)
+        nativeTransport = NativeChatClient.foreground(config: cfg)
     }
 
     func retryLastTurn(conversationID: String? = nil) {

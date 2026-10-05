@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, IO
 
+from .inference_admission import priority_context
 from .task_store import StepResult, TaskConflict, TaskStore
 
 Step = Callable[[dict[str, Any]], Awaitable[StepResult]]
@@ -133,7 +134,14 @@ class Dispatcher:
 
     async def _run_step(self, task: dict[str, Any]) -> None:
         worker = self.workers[task['worker_type']]
-        self._active = asyncio.create_task(worker.step(copy.deepcopy(task)))
+        async def background_step() -> StepResult:
+            token = priority_context.set("background")
+            try:
+                return await worker.step(copy.deepcopy(task))
+            finally:
+                priority_context.reset(token)
+
+        self._active = asyncio.create_task(background_step())
         shutdown = asyncio.create_task(self._shutdown.wait())
         try:
             done, _ = await asyncio.wait({self._active, shutdown}, timeout=worker.timeout_seconds, return_when=asyncio.FIRST_COMPLETED)

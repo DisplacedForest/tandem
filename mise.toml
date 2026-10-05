@@ -23,8 +23,14 @@ dir = "apps/vera-mac"
 depends = ["mac-build"]
 run = ".build/debug/Vera --provider-smoke-selftest"
 
+[tasks.native-admission-test]
+depends = ["mac-build"]
+env = { VERA_NATIVE_ADMISSION_TEST = "1" }
+dir = "services/vera-api"
+run = "python -m pytest -q tests/test_native_inference_admission.py"
+
 [tasks.test]
-depends = ["api-test", "provider-test", "native-provider-test"]
+depends = ["api-test", "provider-test", "native-provider-test", "native-admission-test"]
 
 [tasks.check]
 depends = ["lint", "test", "mac-build"]

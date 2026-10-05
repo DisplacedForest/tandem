@@ -2,6 +2,8 @@ import os
 
 import aiohttp
 
+from . import inference_admission
+
 
 class ModelUnavailable(Exception):
     def __init__(self, reason: str):
@@ -57,7 +59,7 @@ def _main_kwargs(think: str | None) -> dict | None:
     return think_kwargs(think) if think else pulse.CHAT_TEMPLATE_KWARGS
 
 
-async def _post(url: str, body: dict, timeout: int) -> dict:
+async def _post(url: str, body: dict, timeout: float) -> dict:
     async with aiohttp.ClientSession() as s:
         async with s.post(url, json=body, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
             return await r.json()
@@ -65,7 +67,8 @@ async def _post(url: str, body: dict, timeout: int) -> dict:
 
 async def complete(messages, *, workload: str = "main", temperature: float = 0.4,
                    think: str | None = None, tools=None, max_tokens: int | None = None,
-                   timeout: int | None = None) -> dict:
+                   timeout: int | None = None,
+                   priority: inference_admission.Priority | None = None) -> dict:
     reason = unavailable_reason(workload)
     if reason:
         raise ModelUnavailable(reason)
@@ -79,7 +82,10 @@ async def complete(messages, *, workload: str = "main", temperature: float = 0.4
         body["tools"] = tools
     if max_tokens:
         body["max_tokens"] = max_tokens
-    d = await _post(f"{c['base']}/chat/completions", body, timeout or c["timeout"])
+    async def operation(seconds: float) -> dict:
+        return await _post(f"{c['base']}/chat/completions", body, seconds)
+
+    d = await inference_admission.run(c["base"], operation, timeout or c["timeout"], priority)
     return d["choices"][0]["message"]
 
 

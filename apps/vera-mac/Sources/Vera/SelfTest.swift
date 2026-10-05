@@ -353,6 +353,15 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if let raw = ProcessInfo.processInfo.environment["VERA_ADMISSION_SELFTEST_CONFIG"] {
+            do {
+                try await NativeInferenceAdmissionFixture.run(raw)
+                exit(0)
+            } catch {
+                print("ADMISSION_FIXTURE failed to initialize")
+                exit(1)
+            }
+        }
         runPure()
         runNativeSettings()
         runModelParameters()

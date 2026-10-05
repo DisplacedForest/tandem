@@ -53,7 +53,7 @@ The API suite is hermetic (every store runs against a temp dir; no live endpoint
 `pytest.ini` sets the import path. `pytest` works from `services/vera-api` or as
 `pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
 
-Task-engine tests include deterministic fake workers, process-kill recovery, cancellation, replay, and duplicate-request checks. They do not call models or external tools.
+Task-engine tests include deterministic fake workers, process-kill recovery, cancellation, replay, and duplicate-request checks. They do not call models or external tools. Native admission tests additionally launch the built app against a synthetic loopback engine and provider, exercising real streaming, cancellation, memory generation, and restart recovery without saved credentials. `mise run native-admission-test` builds and runs those tests.
 
 **Mac app** (no XCTest by design; the app validates through its own harness):
 

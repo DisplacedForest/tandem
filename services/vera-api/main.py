@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, identity_migrate, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, identity_migrate, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
 from routers import task_research
 
 # vera-api: ONE container, many capabilities.
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     vein_engine.load_block_modules()
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
+    await inference_admission.start()
     await home_events.start()
     await scheduler.start()
     try:
@@ -58,7 +59,10 @@ async def lifespan(app: FastAPI):
             try:
                 await scheduler.stop()
             finally:
-                await home_events.stop()
+                try:
+                    await home_events.stop()
+                finally:
+                    inference_admission.stop()
 
 
 app = FastAPI(title="vera-api", version=VERSION, lifespan=lifespan)
@@ -95,6 +99,7 @@ CAPABILITIES = {
     "updates": updates.router,
     "scheduler": scheduler.router,
     "tasks": tasks.router,
+    "inference_admission": inference_admission.router,
 }
 
 for _name, _router in CAPABILITIES.items():

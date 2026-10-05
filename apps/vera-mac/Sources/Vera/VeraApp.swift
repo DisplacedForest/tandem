@@ -47,7 +47,7 @@ struct VeraApp: App {
         let storeInstance = ChatStore(
             veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,
-            nativeTransport: native.map { NativeChatClient(config: $0) },
+            nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: repository,
             repositoryError: repositoryError,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,

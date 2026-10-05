@@ -79,6 +79,31 @@ Research uses the existing configured model and web search integrations. `use_ra
 
 Read the saved report and source list from `result` on `GET /tasks/{task_id}`. Progress events include numbered source titles without full source text. Report checks require numeric citations to refer to gathered sources; they do not verify every claim. If there are no usable sources or the model returns an unusable report, the task waits for a decision and preserves its evidence. After resolving the cause, submit `POST /tasks/{task_id}/decision` with the current `decision_id`, a new `idempotency_key`, and `"reply": {"action": "retry"}`. Cancel remains available through the normal task endpoint. A restart can repeat an interrupted read-only search or model call, but committed steps and their source events are not repeated. `POST /research` retains its existing blocking response contract for native chat and other callers.
 
+### Inference admission
+
+The engine and native app share a generation admission policy. The actual model request still goes directly from the Mac to its configured endpoint with its existing Keychain-owned credential. `POST /inference/admission` reserves a bounded logical window, and `POST /inference/admission/{request_id}/release` retires it after local transport cleanup. The control messages carry a fresh request UUID, a SHA-256 endpoint fingerprint, priority, and requested duration. They contain no provider key, messages, prompt, model output, or credential-bearing URL. Admission metadata lives beside tasks in `tasks.db` and follows `TASK_DB_PATH`.
+
+Native chat constructors used by the app, including settings reloads and vision bridging, explicitly join foreground admission whenever a Vera engine is configured. Automatic native memory extraction joins the background class; explicit memory-change requests join foreground. Embeddings and reranking bypass this generation policy. Standalone native chat without an engine retains its direct path. A configured engine that is unreachable or lacks the admission API produces a connection error rather than silently bypassing scheduling; use a matching engine version. This is the existing trusted engine boundary, with no new authentication system.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `INFERENCE_BACKGROUND_SLOTS` | `1` | Maximum admitted background generations per resource, from 1 to 32. |
+| `INFERENCE_BACKGROUND_SECONDS` | `20` | Total deadline for one background generation. |
+| `INFERENCE_FOREGROUND_SECONDS` | `600` | Upper bound for foreground generation. Native chat requests 120 seconds; existing API calls retain their shorter declared limits. |
+| `INFERENCE_CLEANUP_SECONDS` | `2` | Additional logical lease lifetime for transport cancellation cleanup. |
+| `INFERENCE_PENDING_SECONDS` | `10` | Pending request lifetime, refreshed only while it is still waiting. |
+| `INFERENCE_RESOURCE_GROUPS` | `{}` | Optional JSON mapping of endpoint fingerprints to a shared group name. |
+
+Endpoint identity lowercases scheme and host, removes default ports and trailing slashes, and hashes the origin plus base path. User information, query strings, and fragments are excluded. Models served by the same base URL share capacity. Distinct URLs sharing a generation resource need an explicit common group; the engine cannot infer hardware placement. Use the same canonical base endpoint in the native app and backend, or map both fingerprints to one group.
+
+A foreground intent is persisted before the native provider request begins. Queued background work cannot pass a pending or active foreground reservation. An already admitted background request is not preempted. With multiple background slots, foreground waits for the current admitted wave, bounded by the largest remaining generation window plus cleanup allowance, not by the depth of the background queue. `model_client.complete` routes through admission automatically; durable worker context selects background, and interactive API call sites can explicitly pass `priority="foreground"`. Untagged legacy API generation retains foreground treatment and its declared duration; preexisting scheduler, Pulse and authoring surfaces outside the durable worker runtime are not automatically reclassified as background. Individual generation timeouts apply inside the worker's separate step deadline, including repair calls.
+
+Successful idle foreground admission has no scheduler sleep or queue delay. Native coordination adds a control round trip before generation and a release round trip afterward; it does not promise unchanged total network latency. The native integration tests report measured elapsed and admission-handler time against a local synthetic endpoint.
+
+Repeated acquisition uses the same UUID and cannot renew an admitted generation. Lost responses can be retried safely; cancellation before acquisition creates a tombstone that rejects a delayed grant. Pending intents and unexpired admitted windows survive an API restart before new background work can proceed. Clients measure elapsed time with a monotonic clock and conservatively subtract the whole admission round trip from the server's remaining budget, so Mac and engine clocks need not be synchronized. Within one engine process, expiry is monotonic. After a restart, persisted wall-clock remaining time is clamped to the original configured duration plus cleanup allowance; a host clock correction across a restart can shorten or extend that recovery window within this bound.
+
+Clients stop accepting output at the generation cutoff and request local cancellation. A late response or frame is discarded. A lease expires at its fixed deadline plus cleanup allowance even if release is lost or the client exits. Expiry releases scheduling capacity only: it does not claim the remote provider has stopped computing. The policy makes no GPU-preemption or remote-termination guarantee. A worker that refuses cancellation can still make its task dispatcher unavailable, while the independent foreground admission route remains usable after the bounded lease expires.
+
 ### The `.env` walkthrough
 
 `.env.example` is fully commented and is the authoritative reference; every variable the stack reads is in it (a test enforces this). The variables that matter first:
