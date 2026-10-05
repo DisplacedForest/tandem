@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 enum ModelSelectionBasis: String, Codable, Equatable, Sendable {
     case user
@@ -364,16 +365,22 @@ protocol NativeCredentialStore {
 }
 
 struct KeychainNativeCredentialStore: NativeCredentialStore {
+    var allowsInteraction = true
     private let service = "org.displacedforest.vera.native-chat"
 
     func value(for profileID: String) -> String? {
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: profileID,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        if !allowsInteraction {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data else { return nil }
