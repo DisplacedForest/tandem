@@ -898,6 +898,7 @@ enum SelfTest {
 
     private static func runNativeTools() async {
         do {
+            try await NativeBoundedToolFixture.run()
             let service = SelfTestRemindersService()
             let registry = NativeToolRegistry(definitions: NativeRemindersTools.definitions(service: service))
             guard registry.active(enabledIDs: []).isEmpty,
@@ -1043,11 +1044,11 @@ enum SelfTest {
                     model: "local-model", enabledToolIDs: ["apple-reminders"]) {
                     limitedFinal = snapshot
                 }
-                print("SELFTEST ERROR: native tool round limit not enforced"); exit(1)
-            } catch NativeToolLoop.LoopError.roundLimit {
             }
             guard service.listCalls == baselineLists,
-                  limitedFinal?.activities.last?.state == .failed else {
+                  limitedFinal?.activities.last?.state == .failed,
+                  limitedFinal?.content.isEmpty == false,
+                  limitedTransport.schemas.last?.isEmpty == true else {
                 print("SELFTEST ERROR: native tool executed beyond round limit"); exit(1)
             }
 
