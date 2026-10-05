@@ -14,6 +14,8 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
+For optional cloud model evaluation, see the [OpenRouter setup and synthetic smoke test](OPENROUTER.md).
+
 ## 1. Prerequisites
 
 - **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.

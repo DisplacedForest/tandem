@@ -15,8 +15,11 @@ run = "scripts/check-copy.sh"
 [tasks.lint]
 depends = ["leak-gate", "copy-check"]
 
+[tasks.provider-test]
+run = "python3 -m unittest discover -s scripts/tests -p 'test_openrouter_smoke.py' -v"
+
 [tasks.test]
-depends = ["api-test"]
+depends = ["api-test", "provider-test"]
 
 [tasks.check]
 depends = ["lint", "test", "mac-build"]
