@@ -52,7 +52,7 @@ python3 scripts/openrouter_smoke.py --model qwen/qwen3.8-flash --live --approved
 
 The budget flag records approval; its presence is not a substitute for obtaining approval. At the catalog prices above, three requests with 4,096 input tokens allowed for each and at most 256 output tokens each forecast **$0.00220416**. Input tokens are an estimate, including image tokenization, not a provider-enforced token ceiling. The budget is a preflight and between-request stop condition, not an account spending limit or a guarantee against overbilling. Provider price ceilings reject routes above the catalog token rates. Reported usage cost is required before the next request. No purchases or automatic retries occur.
 
-The first request forces a single `synthetic_add(19, 23)` call. The harness validates the exact name and arguments, calculates 42 locally, and sends a sanitized assistant/tool exchange for the second request. The third request contains a programmatically generated 32 by 32 red PNG and asks for its color. No arbitrary returned tool executes. Calls, outputs, response size, and individual HTTP operations are bounded. HTTP redirects are refused. Unknown models, moving aliases, unsupported capabilities, tiered or additional pricing, invalid tool arguments, response-model mismatches, missing usage, and incomplete completions stop the run.
+The first request offers only `synthetic_add`, with `tool_choice: "auto"`, and asks for `synthetic_add(19, 23)`. The harness validates the exact name and arguments, calculates 42 locally, and sends a sanitized assistant/tool exchange for the second request. The third request contains a programmatically generated 32 by 32 red PNG and asks for its color. No arbitrary returned tool executes. Calls, outputs, response size, and individual HTTP operations are bounded. HTTP redirects are refused. Unknown models, moving aliases, unsupported capabilities, tiered or additional pricing, invalid tool arguments, response-model mismatches, missing usage, and incomplete completions stop the run.
 
 Reports contain the exact model, pass/fail checks, durations, and reported costs. Response bodies, authorization headers, and keys are withheld on errors. A failed request can still incur cost; consult the provider's usage page if a failure prevents a usage receipt. A mocked pass establishes harness behavior only. Only a successful authorized live run establishes provider behavior.
 
@@ -80,3 +80,18 @@ This uses the native request builder and response parser with fresh synthetic me
 If the saved credential cannot be read without user interaction, the command stops without opening a Keychain prompt. A successful credential-availability check is not authentication validation. An HTTP authentication, account-limit, or provider error stops the test without retries or alternate keys. Both harnesses use the same three-request plan and forecast, and both stop between requests when reported cost leaves insufficient budget. The native command reports each usage receipt before checking the final result.
 
 `mise run check` includes the offline native provider self-test. Run it separately with `.build/debug/Vera --provider-smoke-selftest`. Native provider smoke results do not establish API worker integration: the server's `model_client` authentication path is separate.
+
+
+## Diagnose a routing failure
+
+A model can advertise `tool_choice` while supporting only some of its modes. The [Qwen3.8 Flash endpoint metadata](https://openrouter.ai/api/v1/models/qwen/qwen3.8-flash/endpoints) currently advertises `auto` and `none`, but not `required` or a forced named `function`. Sending a forced function can therefore return HTTP 404 even when the model and tool-capable provider are available. Both harnesses use `auto`, matching Vera's native client, and fail the test unless the model actually calls the one permitted synthetic tool with the exact expected arguments.
+
+The native harness can isolate each surface while retaining the same saved credential and exact model:
+
+```sh
+.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case minimal-text --live --approved-budget-usd 0.01
+.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case tools --live --approved-budget-usd 0.01
+.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case image --live --approved-budget-usd 0.01
+```
+
+Each invocation requires prior credit authorization. `minimal-text` sends just model, synthetic messages, `stream: false`, and `max_tokens: 256`. It uses provider/account defaults without custom routing or reasoning parameters and never changes those settings. It may spend its output allowance on reasoning if the model defaults to thinking. `tools` performs the validated call and continuation; `image` independently submits the generated PNG. Those cases retain price ceilings, required-parameter routing, disabled provider fallbacks, and disabled reasoning. Omit `--case` for the original three-request combined test. The displayed three-request forecast remains a catalog-based estimate for each smaller case. Minimal text has no per-route price ceiling; the account/key cap remains authoritative.

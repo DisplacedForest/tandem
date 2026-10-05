@@ -189,8 +189,7 @@ def run_smoke(model: dict[str, Any], budget: Decimal,
                                        "completion": float(price(pricing["completion"]) * 1_000_000)}},
         }
         if use_tool:
-            body.update(tools=[TOOL], tool_choice={"type": "function",
-                        "function": {"name": "synthetic_add"}})
+            body.update(tools=[TOOL], tool_choice="auto")
         started = time.monotonic()
         requests += 1
         response = post(body)

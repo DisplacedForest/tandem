@@ -114,6 +114,27 @@ enum NativeProviderSmoke {
         ]
     }
 
+    static func boundedRequest(
+        client: NativeChatClient, model: Model, messages: [NativeChatMessage],
+        tools: [NativeToolSchema] = [], minimal: Bool = false
+    ) throws -> URLRequest {
+        var request = try client.request(messages: messages, model: model.id, tools: tools)
+        guard let data = request.httpBody,
+              var body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Failure(reason: "Native request construction failed")
+        }
+        body["max_tokens"] = 256
+        if !minimal {
+            body["reasoning"] = ["enabled": false]
+            body["provider"] = ["allow_fallbacks": false, "require_parameters": true,
+                                "max_price": ["prompt": model.inputPrice * 1_000_000,
+                                              "completion": model.outputPrice * 1_000_000]]
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 30
+        return request
+    }
+
     static func usageCost(from response: [String: Any]) throws -> Double {
         guard let usage = response["usage"] as? [String: Any], let number = usage["cost"] as? NSNumber,
               CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
@@ -188,6 +209,8 @@ enum NativeProviderSmoke {
             }
             let catalog = try await fetch(URLRequest(url: root.appendingPathComponent("models")), session: session)
             let selected = try model(from: catalog, id: id)
+            let testCase = value("--case") ?? "all"
+            try require(["all", "minimal-text", "tools", "image"].contains(testCase), "Unknown smoke case")
             emit(["mode": "preflight", "model": id, "forecast_usd": selected.forecast, "max_requests": 3])
             guard arguments.contains("--live") else { exit(0) }
             let budget = try approvedBudget(value("--approved-budget-usd"), forecast: selected.forecast)
@@ -205,16 +228,8 @@ enum NativeProviderSmoke {
             var requests = 0
             func complete(_ messages: [NativeChatMessage], tool: Bool = false) async throws -> NativeChatStreamSnapshot {
                 try require(requests < 3 && spent + selected.forecast / 3 <= budget, "Request or remaining budget limit reached")
-                var request = try client.request(messages: messages, model: id, tools: tool ? [schema] : [])
-                var body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                body["max_tokens"] = 256
-                body["reasoning"] = ["enabled": false]
-                body["provider"] = ["allow_fallbacks": false, "require_parameters": true,
-                                    "max_price": ["prompt": selected.inputPrice * 1_000_000,
-                                                  "completion": selected.outputPrice * 1_000_000]]
-                if tool { body["tool_choice"] = ["type": "function", "function": ["name": "synthetic_add"]] }
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                request.timeoutInterval = 30
+                let request = try boundedRequest(client: client, model: selected, messages: messages,
+                                                 tools: tool ? [schema] : [], minimal: testCase == "minimal-text")
                 requests += 1
                 let start = Date()
                 let response = try await fetch(request, session: session)
@@ -228,18 +243,30 @@ enum NativeProviderSmoke {
                 try require(snapshot.finishReason == (tool ? "tool_calls" : "stop"), "Unexpected completion termination")
                 return snapshot
             }
-            var messages = [NativeChatMessage(role: "user", content:
-                "Call synthetic_add with a=19 and b=23. After the tool result, reply with only the result integer.")]
-            messages += try toolMessages(from: await complete(messages, tool: true))
-            let answer = try await complete(messages)
-            try require(answer.toolCalls.isEmpty && answer.content.trimmingCharacters(in: .whitespacesAndNewlines) == "42",
-                        "Tool continuation did not return 42")
-            let vision = try await complete([NativeChatMessage(role: "user", content:
-                "What is the solid color of this image? Reply with one lowercase color word.", images: [redImage()])])
-            try require(vision.toolCalls.isEmpty && vision.content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red",
-                        "Image recognition did not return red")
-            emit(["mode": "live", "model": id, "requests": requests, "cost_usd": spent,
-                  "tool_call": "passed", "tool_continuation": "passed", "image_input": "passed",
+            if testCase == "minimal-text" {
+                let response = try await complete([NativeChatMessage(role: "user", content: "Reply with only the word OK.")])
+                try require(response.toolCalls.isEmpty && response.content.trimmingCharacters(in: .whitespacesAndNewlines) == "OK",
+                            "Minimal text did not return OK")
+            }
+            if testCase == "all" || testCase == "tools" {
+                var messages = [NativeChatMessage(role: "user", content:
+                    "Call synthetic_add with a=19 and b=23. After the tool result, reply with only the result integer.")]
+                messages += try toolMessages(from: await complete(messages, tool: true))
+                let answer = try await complete(messages)
+                try require(answer.toolCalls.isEmpty && answer.content.trimmingCharacters(in: .whitespacesAndNewlines) == "42",
+                            "Tool continuation did not return 42")
+            }
+            if testCase == "all" || testCase == "image" {
+                let vision = try await complete([NativeChatMessage(role: "user", content:
+                    "What is the solid color of this image? Reply with one lowercase color word.", images: [redImage()])])
+                try require(vision.toolCalls.isEmpty && vision.content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red",
+                            "Image recognition did not return red")
+            }
+            emit(["mode": "live", "model": id, "case": testCase, "requests": requests, "cost_usd": spent,
+                  "tool_call": ["all", "tools"].contains(testCase) ? "passed" : "not_run",
+                  "tool_continuation": ["all", "tools"].contains(testCase) ? "passed" : "not_run",
+                  "image_input": ["all", "image"].contains(testCase) ? "passed" : "not_run",
+                  "minimal_text": testCase == "minimal-text" ? "passed" : "not_run",
                   "scope": "native provider smoke; API worker integration not tested"])
             exit(0)
         } catch let error as Failure {
@@ -270,6 +297,23 @@ enum NativeProviderSmoke {
                 "pricing": ["prompt": "0.00000015", "completion": "0.00000047"],
             ]
             let selected = try model(from: ["data": [entry]], id: "test/vision")
+            let client = NativeChatClient(config: NativeChatConfig(
+                baseURL: URL(string: "https://openrouter.ai/api/v1")!, apiKey: nil,
+                model: selected.id, chatTemplateKwargs: nil, streaming: false))
+            let schema = NativeToolSchema(name: "synthetic_add", description: "Synthetic fixture", parameters: .object([:]))
+            let toolRequest = try boundedRequest(client: client, model: selected,
+                                                 messages: [NativeChatMessage(role: "user", content: "Synthetic fixture")], tools: [schema])
+            let toolBody = try JSONSerialization.jsonObject(with: toolRequest.httpBody!) as! [String: Any]
+            try require(toolBody["tool_choice"] as? String == "auto", "Unsupported forced tool choice")
+            try require(toolBody["max_tokens"] as? Int == 256, "Unbounded output")
+            let provider = toolBody["provider"] as? [String: Any]
+            try require(provider?["allow_fallbacks"] as? Bool == false
+                        && provider?["require_parameters"] as? Bool == true, "Routing safeguards changed")
+            let minimal = try boundedRequest(client: client, model: selected,
+                                             messages: [NativeChatMessage(role: "user", content: "Reply OK")], minimal: true)
+            let minimalBody = try JSONSerialization.jsonObject(with: minimal.httpBody!) as! [String: Any]
+            try require(Set(minimalBody.keys) == Set(["model", "messages", "stream", "max_tokens"]),
+                        "Minimal request contains extra parameters")
             try require(abs(selected.forecast - 0.00220416) < 0.000000001, "Forecast test failed")
             try rejects { _ = try model(from: ["data": [entry]], id: "test/other") }
             try rejects { _ = try model(from: ["data": [entry, entry]], id: "test/vision") }

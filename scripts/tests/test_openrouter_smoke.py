@@ -51,6 +51,7 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(body["provider"], {"allow_fallbacks": False, "require_parameters": True,
                                                "max_price": {"prompt": 0.15, "completion": 0.47}})
         self.assertEqual(bodies[0]["tools"], [smoke.TOOL])
+        self.assertEqual(bodies[0]["tool_choice"], "auto")
         self.assertNotIn("tools", bodies[1])
         self.assertEqual(json.loads(bodies[1]["messages"][-1]["content"]), {"result": 42})
         self.assertEqual(bodies[2]["messages"][0]["content"][1]["image_url"]["url"], smoke.red_image())
