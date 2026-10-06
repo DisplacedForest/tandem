@@ -14,9 +14,6 @@ struct NativeSessionModeControl: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 182)
-            Text(mode.detail)
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.bottom, 4)
     }

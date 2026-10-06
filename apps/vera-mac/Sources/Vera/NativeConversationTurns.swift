@@ -8,10 +8,6 @@ enum NativeSessionMode: String, Codable, CaseIterable, Sendable {
     case continuous
 
     var title: String { self == .chat ? "Chat" : "Continuous" }
-    var detail: String {
-        self == .chat ? "One answer at a time. Later messages wait in this chat."
-            : "Keep talking while research continues in the background."
-    }
 }
 
 struct NativeTurnHistoryMessage: Codable, Sendable {
