@@ -20,6 +20,8 @@ final class PrototypeStore: ObservableObject {
     @Published private(set) var conversationErrors: [UUID: String] = [:]
     @Published private(set) var connectionError: String?
     @Published private(set) var refreshing = false
+    @Published private(set) var reviewingReply = false
+    @Published private(set) var reviewedReplyID: UUID?
     private let stateURL: URL
     private var refreshVersion = 0
 
@@ -53,6 +55,16 @@ final class PrototypeStore: ObservableObject {
     var conversationError: String? { conversationErrors[conversation.id] }
     var visibleTasks: [TaskSnapshot] {
         tasks.filter { $0.payload.assistantID == saved.assistantID && $0.payload.conversationID == conversation.id }
+    }
+    var canAbandonReply: Bool {
+        guard let pending else { return false }
+        return reviewedReplyID == pending.messageID && !reviewingReply && connectionError == nil
+            && !busyConversations.contains(pending.conversationID)
+    }
+    var pendingTasks: [TaskSnapshot] {
+        guard let pending else { return [] }
+        let linkedIDs = Set(messages.filter { UUID(uuidString: $0.id) == pending.messageID }.flatMap(\.taskIDs))
+        return visibleTasks.filter { $0.payload.originatingMessageID == pending.messageID || linkedIDs.contains($0.id) }
     }
     var canSend: Bool { capabilities?.foreground == true && connectionError == nil && !busyConversations.contains(conversation.id) && pending == nil }
     var connectionLabel: String {
@@ -90,7 +102,7 @@ final class PrototypeStore: ObservableObject {
     }
 
     func refresh() async {
-        guard let client, !refreshing else { return }
+        guard let client, !refreshing, !reviewingReply else { return }
         refreshing = true
         defer { refreshing = false }
         let id = conversation.id
@@ -108,7 +120,7 @@ final class PrototypeStore: ObservableObject {
             }
             connectionError = nil
         } catch is CancellationError { }
-        catch { connectionError = error.localizedDescription }
+        catch { connectionError = error.localizedDescription; reviewedReplyID = nil }
     }
 
     func send() async {
@@ -125,14 +137,61 @@ final class PrototypeStore: ObservableObject {
     }
 
     func retry() async {
-        guard let pending, !busyConversations.contains(pending.conversationID), connectionError == nil else { return }
+        guard let pending, !reviewingReply, !busyConversations.contains(pending.conversationID), connectionError == nil else { return }
         await deliver(pending)
+    }
+
+    func reviewUnconfirmedReply() async {
+        guard let request = pending, let client, !reviewingReply, !refreshing,
+              !busyConversations.contains(request.conversationID) else { return }
+        reviewingReply = true
+        reviewedReplyID = nil
+        panel = .activity
+        let version = refreshVersion
+        defer { reviewingReply = false }
+        do {
+            let caps = try await client.capabilities()
+            guard caps.protocolVersion == 1 else { throw PrototypeError.invalidResponse }
+            async let newTasks = client.tasks()
+            async let newMessages = client.messages(request.conversationID)
+            let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
+            guard pending?.messageID == request.messageID, version == refreshVersion else { return }
+            capabilities = caps
+            tasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+            transcripts[request.conversationID] = receivedMessages
+            connectionError = nil
+            reviewedReplyID = request.messageID
+        } catch {
+            connectionError = error.localizedDescription
+        }
+    }
+
+    func abandonUnconfirmedReply() {
+        guard canAbandonReply, let request = pending else { return }
+        var candidate = saved
+        candidate.pending.removeAll { $0.messageID == request.messageID }
+        var abandoned = candidate.abandonedReplies ?? []
+        if !abandoned.contains(where: { $0.messageID == request.messageID }) { abandoned.append(request) }
+        candidate.abandonedReplies = abandoned
+        if candidate.assistant.id == request.conversationID {
+            if candidate.assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines) == request.text { candidate.assistant.draft = "" }
+        } else if let index = candidate.conversations.firstIndex(where: { $0.id == request.conversationID }),
+                  candidate.conversations[index].draft.trimmingCharacters(in: .whitespacesAndNewlines) == request.text {
+            candidate.conversations[index].draft = ""
+        }
+        do {
+            try commit(candidate)
+            reviewedReplyID = nil
+            conversationErrors[request.conversationID] = nil
+            refreshVersion += 1
+        } catch { conversationErrors[request.conversationID] = error.localizedDescription }
     }
 
     private func deliver(_ request: MessageRequest) async {
         guard let client else { return }
         let id = request.conversationID
         busyConversations.insert(id)
+        reviewedReplyID = nil
         conversationErrors[id] = nil
         refreshVersion += 1
         defer { busyConversations.remove(id) }

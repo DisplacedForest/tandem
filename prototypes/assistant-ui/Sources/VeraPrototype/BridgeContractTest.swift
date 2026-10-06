@@ -43,6 +43,43 @@ enum BridgeContractTest {
         print("PASS: actual mock bridge HTTP, assistant and focused messages, task approval, completed output file, task-specific Stop, persisted identity and transcript")
     }
 
+    static func recover(configuration: PrototypeConfiguration) async throws {
+        let store = try PrototypeStore(configuration: configuration)
+        guard store.saved.pending.count == 1, let original = store.pending, original.mode == "assistant" else {
+            throw PrototypeSelfTest.Failure(name: "Recovery requires one pending assistant message")
+        }
+        await store.refresh()
+        try PrototypeSelfTest.require(store.capabilities?.transport == "mock" && store.connectionError == nil,
+                                      "Recovery requires the isolated mock bridge")
+        let originalTaskIDs = Set(store.visibleTasks.map(\.id))
+        await store.retry()
+        try PrototypeSelfTest.require(store.pending?.messageID == original.messageID && !store.canSend
+                                      && store.conversationError == PrototypeError.status(409).localizedDescription,
+                                      "Interrupted turn returns 409 and retains original request")
+        try PrototypeSelfTest.require(!store.canAbandonReply, "Recovery needs explicit inspection")
+        await store.reviewUnconfirmedReply()
+        try PrototypeSelfTest.require(store.canAbandonReply, "Fresh transcript and task inspection enables recovery")
+        store.abandonUnconfirmedReply()
+        try PrototypeSelfTest.require(store.pending == nil && store.canSend
+                                      && store.saved.abandonedReplies?.last?.messageID == original.messageID,
+                                      "Explicit abandonment preserves original identity and unlocks composer")
+        await store.refresh()
+        try PrototypeSelfTest.require(Set(store.visibleTasks.map(\.id)) == originalTaskIDs,
+                                      "Abandonment preserves original tasks without new delegation")
+        let reopened = try PrototypeStore(configuration: configuration)
+        await reopened.refresh()
+        try PrototypeSelfTest.require(reopened.pending == nil && reopened.saved.abandonedReplies?.last?.messageID == original.messageID,
+                                      "Abandoned identity persists across restart")
+        reopened.setDraft("What is the current prototype status?")
+        await reopened.send()
+        await reopened.refresh()
+        try PrototypeSelfTest.require(reopened.pending == nil && reopened.canSend && reopened.conversationError == nil,
+                                      "Explicit fresh message succeeds after interruption")
+        try PrototypeSelfTest.require(Set(reopened.visibleTasks.map(\.id)) == originalTaskIDs,
+                                      "Fresh status message does not duplicate interrupted tasks")
+        print("PASS: interrupted real bridge 409, explicit inspection and abandonment, archived identity, original tasks retained, explicit fresh message")
+    }
+
     private static func awaitTask(_ store: PrototypeStore, state: String) async throws -> TaskSnapshot {
         for _ in 0..<80 {
             await store.refresh()

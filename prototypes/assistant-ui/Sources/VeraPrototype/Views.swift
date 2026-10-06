@@ -87,12 +87,7 @@ struct PrototypeView: View {
                     Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
                 }
                 if store.pending != nil && !store.busyConversations.contains(store.conversation.id) {
-                    HStack {
-                        Text("Message not confirmed").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Retry message") { Task { await store.retry() } }
-                            .disabled(store.connectionError != nil)
-                    }
+                    unconfirmedReply
                 }
                 if store.conversation.draft.unicodeScalars.count > 8000 {
                     Text("Messages can contain up to 8,000 characters.").font(.caption).foregroundStyle(.red)
@@ -119,6 +114,37 @@ struct PrototypeView: View {
             .padding(20)
         }
         .background(background)
+    }
+
+    private var unconfirmedReply: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reply not confirmed").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Retry message") { Task { await store.retry() } }
+                    .disabled(store.connectionError != nil || store.reviewingReply)
+                Button("Review reply and tasks") { Task { await store.reviewUnconfirmedReply() } }
+                    .disabled(store.refreshing || store.reviewingReply)
+                    .accessibilityIdentifier("review-unconfirmed-reply")
+            }
+            if store.reviewingReply { ProgressView().controlSize(.small).accessibilityLabel("Refreshing reply and tasks") }
+            if store.canAbandonReply, let pending = store.pending {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(pending.text).font(.callout).textSelection(.enabled)
+                        if store.pendingTasks.isEmpty {
+                            Text("No related tasks found.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(store.pendingTasks) { task in
+                            Text("\(task.title): \(task.status)").font(.caption)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 120)
+                Text("Any tasks continue. This message won't be sent again.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Continue without reply", action: store.abandonUnconfirmedReply)
+                    .accessibilityIdentifier("abandon-unconfirmed-reply")
+            }
+        }
     }
 
     private var inspector: some View {

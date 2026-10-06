@@ -96,9 +96,10 @@ struct TranscriptResponse: Decodable, Sendable { let messages: [Message] }
 struct TaskPayload: Decodable, Sendable {
     let assistantID: UUID?
     let conversationID: UUID?
+    let originatingMessageID: UUID?
     let objective: String?
     enum CodingKeys: String, CodingKey {
-        case assistantID = "assistant_id", conversationID = "conversation_id", objective
+        case assistantID = "assistant_id", conversationID = "conversation_id", originatingMessageID = "originating_message_id", objective
     }
 }
 
@@ -178,6 +179,7 @@ struct SavedState: Codable, Sendable {
     var assistant = Conversation(id: UUID(), title: "Vera")
     var conversations: [Conversation] = []
     var pending: [MessageRequest] = []
+    var abandonedReplies: [MessageRequest]?
     var decisions: [String: DecisionRequest] = [:]
     var endpoint: URL?
 }

@@ -11,12 +11,19 @@ actor ContractFixture {
     var failDecisionAfterAccept = false
     var messageDelay = false
     var rejectMessage = false
+    var interruptMessage = false
+    var interruptedIDs = Set<UUID>()
+    var offline = false
+    var originatingMessageID = UUID()
+    let unrelatedOriginID = UUID()
     var taskStates: [String: String] = [:]
     let taskID = UUID().uuidString.lowercased()
     let secondTaskID = UUID().uuidString.lowercased()
     let decisionID = UUID().uuidString.lowercased()
 
     func bind(_ assistant: UUID, _ conversation: UUID) { boundAssistant = assistant; boundConversation = conversation }
+    func interruptNextMessage() { interruptMessage = true }
+    func setOffline(_ value: Bool) { offline = value }
     func loseMessageReply() { failAfterAccept = true }
     func rejectNextMessage() { rejectMessage = true }
     func delayMessages() { messageDelay = true }
@@ -28,13 +35,14 @@ actor ContractFixture {
 
     func task(_ id: String, state: String? = nil) -> [String: Any] {
         ["id": id, "worker_type": "pi_worker", "payload": ["assistant_id": boundAssistant!.uuidString.lowercased(),
-            "conversation_id": boundConversation!.uuidString.lowercased(), "objective": id == taskID ? "Compare workshop insulation" : "Measure wall area"],
+            "conversation_id": boundConversation!.uuidString.lowercased(), "originating_message_id": (id == taskID ? originatingMessageID : unrelatedOriginID).uuidString.lowercased(), "objective": id == taskID ? "Compare workshop insulation" : "Measure wall area"],
          "state": state ?? taskStates[id] ?? "needs_decision", "cancel_requested": false, "updated_at": 123.0,
          "decision": ["id": decisionID, "prompt": "Read the project files?", "choices": ["approve", "decline"]],
          "result": NSNull()]
     }
 
     func send(_ request: URLRequest) async throws -> (Data, Int) {
+        if offline { throw PrototypeError.unavailable }
         let path = request.url!.path
         switch path {
         case "/assistant/capabilities":
@@ -43,6 +51,14 @@ actor ContractFixture {
             let body = try JSONDecoder().decode(MessageRequest.self, from: request.httpBody!)
             if rejectMessage { rejectMessage = false; return try response(["detail": "Rejected"], status: 422) }
             requests.append(body)
+            if interruptedIDs.contains(body.messageID) { return try response(["detail": "Interrupted"], status: 409) }
+            if interruptMessage {
+                interruptMessage = false
+                interruptedIDs.insert(body.messageID)
+                originatingMessageID = body.messageID
+                replies[body.conversationID, default: []].append(Message(id: body.messageID.uuidString.lowercased(), role: "user", text: body.text, taskIDs: [taskID]))
+                throw PrototypeError.unavailable
+            }
             if messageDelay { try await Task.sleep(for: .milliseconds(60)) }
             let replyID = "reply-" + body.messageID.uuidString.lowercased()
             if !(replies[body.conversationID] ?? []).contains(where: { $0.id == replyID }) {
@@ -188,6 +204,7 @@ enum PrototypeSelfTest {
             if let index = CommandLine.arguments.firstIndex(of: "--render-dir"), index + 1 < CommandLine.arguments.count {
                 try RenderTest.render(decisionRestart, directory: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true))
             }
+            try await RecoverySelfTest.run(root: root.appendingPathComponent("recovery"))
             print("PASS: identity, navigation, drafts, scoped messages/tasks, lost-response restart retry, decision retry, Stop isolation, output paths, unavailable state")
         } catch {
             print("FAIL: \(error)")

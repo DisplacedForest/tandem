@@ -42,9 +42,20 @@ prototypes/assistant-ui/.build/debug/VeraPrototype --contract-test \
 
 This check submits two synthetic tasks, approves one, stops the other, verifies its real output file, and reopens both assistant and focused transcripts. It refuses non-mock transport. For a read-only hidden-window capture of existing mock work, replace `--contract-test` with `--snapshot-dir /tmp/vera-ui-snapshot` and reuse its data directory.
 
+A process-kill integration harness can seed an existing UI data directory with one pending assistant request whose accepted runtime turn was interrupted, then invoke:
+
+```sh
+prototypes/assistant-ui/.build/debug/VeraPrototype --recovery-contract-test \
+  --data-root /tmp/vera-ui-interrupted \
+  --endpoint http://127.0.0.1:8769 \
+  --workspace-root /tmp/vera-pi-runtime/workspaces
+```
+
+This mock-only test requires the original request to return HTTP 409. It exercises explicit inspection and abandonment, checks the archived identity and unchanged task set across restart, and explicitly sends a fresh status question. It does not stop or replay the interrupted turn's task.
+
 ## Runtime boundary
 
-The client uses `GET /assistant/capabilities`, `GET /assistant/messages?conversation_id=...`, and `POST /assistant/messages` with stable assistant, conversation, and message UUIDs plus `text` and `mode`. An uncertain send preserves the exact request for explicit retry. Drafts remain editable while another conversation receives a response.
+The client uses `GET /assistant/capabilities`, `GET /assistant/messages?conversation_id=...`, and `POST /assistant/messages` with stable assistant, conversation, and message UUIDs plus `text` and `mode`. An uncertain send preserves the exact request for explicit retry. If an interrupted turn cannot return its reply, **Review reply and tasks** refreshes the transcript and associated task state. **Continue without reply** then archives the original request identity and removes only the local pending blocker. Tasks keep running and remain in Activity. The original message is never automatically resent with a new identity; a new message requires explicit Send. An unchanged original draft is cleared to avoid accidental replay, while an edited draft is preserved. Drafts remain editable while another conversation receives a response.
 
 Activity reconciles paginated `GET /tasks` snapshots every two seconds while the view is mounted. It scopes records to this assistant and selected conversation and only displays `pi_worker` tasks. It does not maintain a second event cursor or change the native app's task projection. `POST /tasks/{id}/cancel` targets one task. Approval replies use `POST /tasks/{id}/decision` with the current decision ID, a saved idempotency key, and `reply.approved`.
 

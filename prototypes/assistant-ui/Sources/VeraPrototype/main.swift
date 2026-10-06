@@ -17,7 +17,9 @@ if arguments.contains("--selftest") {
             dataRoot: URL(fileURLWithPath: dataRoot, isDirectory: true),
             endpoint: endpoint,
             workspaceRoot: argument("--workspace-root").map { URL(fileURLWithPath: $0, isDirectory: true) })
-        if arguments.contains("--contract-test") {
+        if arguments.contains("--recovery-contract-test") {
+            try await BridgeContractTest.recover(configuration: configuration)
+        } else if arguments.contains("--contract-test") {
             try await BridgeContractTest.run(configuration: configuration)
         } else if let directory = argument("--snapshot-dir") {
             let store = try PrototypeStore(configuration: configuration)
