@@ -58,7 +58,7 @@ run = "semgrep scan --config auto --error services scripts"
 run = "npm ci --ignore-scripts --no-audit --no-fund --prefix prototypes/pi_assistant"
 
 [tasks.pi-prototype-test]
-depends = ["pi-prototype-deps"]
+depends = ["pi-prototype-deps", "assistant-ui-test"]
 env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
 run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/tests"
 

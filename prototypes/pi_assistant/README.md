@@ -4,7 +4,23 @@ This prototype embeds the official Pi agent-core SDK 1.0.4 in separate foregroun
 
 The runnable transports are the inline deterministic mock and an explicitly selected native-helper mock. Pi's actual agent loop, validated tool calls and subprocess boundary run in these tests, but the mock does not measure model quality or local MLX performance. Every background request edits the same synthetic addition example inside that task's private workspace. It is not a general coding service.
 
-## Run
+## Start the separate prototype
+
+After `mise run pi-prototype-test` builds and checks the isolated dependencies and UI, start the bridge and prototype window together:
+
+```sh
+python prototypes/pi_assistant/launch.py --mock \
+  --data-root "$HOME/Library/Application Support/VeraPrototype/session-one" \
+  --port 8769
+```
+
+Use the same folder and port to reopen its identity, drafts and tasks. The folder must be private, owner-owned and free of symlink paths. A first run requires an empty folder; the launcher never clears existing state. It pre-binds the loopback port, verifies the exact bridge instance and workspace before starting the UI, and never connects to an existing service on a busy port. Closing the prototype window or stopping the launcher shuts down its owned runtime processes. It does not start or replace installed Vera.
+
+The launcher is explicitly mock-only. In Vera, send `/task Check addition` to try an approval, a synthetic worker and its output; focused chats stay separate. **Test runtime** remains visible. For a headless actual-UI consumer check, add `--contract-test` and use a fresh session folder. This runs the existing approval, foreground reply, artifact, Stop and transcript checks without a visible window.
+
+If the launcher is killed abruptly, the bridge stops when its parent pipe closes. An already-open prototype window may remain disconnected; it retains the session lock, preventing another launcher from sharing its state. Close that window before reopening the same session. No automatic restart or message replay occurs.
+
+## Run components separately
 
 Use the repository Python development environment with FastAPI, uvicorn, pytest and pytest-asyncio, and Node 22.19 or later. Dependencies are installed only in this directory:
 

@@ -18,6 +18,10 @@ The selftest injects an in-memory HTTP fixture and uses a temporary data directo
 
 The executable provides keyboard shortcuts for New Chat (Command-N) and Send (Command-Return), named controls, task-specific accessible action labels, selectable message text, and a visible composer focus outline. VoiceOver and keyboard event verification require a separately authorized visible QA session; hidden windows do not publish an accessibility tree.
 
+## Start a complete test session
+
+The [session launcher](../pi_assistant/README.md#start-the-separate-prototype) starts this UI with its own verified mock bridge and separate persistent state. It owns startup and shutdown; the UI itself still does not start an engine. The manual connection path below remains available.
+
 ## Run against the isolated bridge
 
 Start the separately maintained `prototypes/pi_assistant/bridge.py` with a disposable data root and unused loopback port. Then launch the UI using a different empty directory for its identity and drafts:
