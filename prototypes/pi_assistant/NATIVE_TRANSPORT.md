@@ -1,6 +1,6 @@
 # Proposed native test transport boundary
 
-Status: a separate [native helper](../native-transport/README.md) now implements this boundary and has mock credential, fixture HTTP, and process interruption tests. It is not connected to the Pi adapter or approved for live access. No new Keychain query, grant, access-list change, signing change, app installation, or paid request has been performed. The existing installed binary has no general completion broker; it cannot expose this contract without a reviewed binary change. Its fixed smoke command and research relay are not reusable by silently widening their allowed input.
+Status: a separate [native helper](../native-transport/README.md) now implements this boundary and has mock credential, fixture HTTP, and process interruption tests. Pi now connects through an explicit mock-only adapter. The live path remains unselected and unapproved. No new Keychain query, grant, access-list change, signing change, app installation, or paid request has been performed. The existing installed binary has no general completion broker; it cannot expose this contract without a reviewed binary change. Its fixed smoke command and research relay are not reusable by silently widening their allowed input.
 
 ## Smallest permitted next step
 

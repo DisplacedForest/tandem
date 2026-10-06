@@ -36,15 +36,15 @@ final class Ledger: @unchecked Sendable {
         defer { free(canonical) }
         let path = String(cString: canonical) + "/spend.sqlite"
         try require(sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | 0x01000000, nil) == SQLITE_OK, .storage)
+        let version = try rows("PRAGMA user_version").first?["user_version"] ?? "0"
+        try require(["0", "2"].contains(version), .storage)
         try execute("PRAGMA journal_mode=WAL")
         try execute("PRAGMA synchronous=FULL")
         try execute("PRAGMA busy_timeout=2000")
-        let version = try rows("PRAGMA user_version").first?["user_version"] ?? "0"
-        try require(["0", "1"].contains(version), .storage)
-        try execute("CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY,digest TEXT NOT NULL,baseline INTEGER NOT NULL,budget INTEGER NOT NULL,max_requests INTEGER NOT NULL,credential_attempted INTEGER NOT NULL DEFAULT 0)")
-        try execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,task_id TEXT NOT NULL,role TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 0)")
+        try execute("CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY,digest TEXT NOT NULL,baseline INTEGER NOT NULL,budget INTEGER NOT NULL,max_requests INTEGER NOT NULL,transport TEXT NOT NULL,credential_attempted INTEGER NOT NULL DEFAULT 0)")
+        try execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,task_id TEXT NOT NULL,role TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT '')")
         try execute("CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,session TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL,reserved INTEGER NOT NULL,charged INTEGER,usage_input INTEGER,usage_output INTEGER,created REAL NOT NULL,account_usage INTEGER NOT NULL,finished REAL,model TEXT NOT NULL)")
-        try execute("PRAGMA user_version=1")
+        try execute("PRAGMA user_version=2")
         try validateRows()
         try execute("UPDATE requests SET status='uncertain',finished=? WHERE status='reserved'", [String(Date().timeIntervalSince1970)])
         } catch {
@@ -95,9 +95,9 @@ final class Ledger: @unchecked Sendable {
         }
     }
     private func validateRows() throws {
-        let invalid = try rows("SELECT id FROM experiments WHERE typeof(baseline)!='integer' OR baseline<0 OR baseline>200000000000 OR typeof(budget)!='integer' OR budget<=0 OR budget>1000000000 OR typeof(max_requests)!='integer' OR max_requests<1 OR max_requests>12 OR typeof(credential_attempted)!='integer' OR credential_attempted NOT IN (0,1) LIMIT 1")
+        let invalid = try rows("SELECT id FROM experiments WHERE typeof(baseline)!='integer' OR baseline<0 OR baseline>200000000000 OR typeof(budget)!='integer' OR budget<=0 OR budget>1000000000 OR typeof(max_requests)!='integer' OR max_requests<1 OR max_requests>12 OR transport NOT IN ('mock','live') OR typeof(credential_attempted)!='integer' OR credential_attempted NOT IN (0,1) LIMIT 1")
         try require(invalid.isEmpty, .storage)
-        try require(try rows("SELECT id FROM sessions WHERE experiment NOT IN (SELECT id FROM experiments) OR role NOT IN ('foreground','worker') OR typeof(calls)!='integer' OR calls<0 OR calls>4 OR typeof(tools)!='integer' OR tools<0 OR tools>8 LIMIT 1").isEmpty, .storage)
+        try require(try rows("SELECT id FROM sessions WHERE experiment NOT IN (SELECT id FROM experiments) OR mode NOT IN ('','assistant','focused') OR role NOT IN ('foreground','worker') OR typeof(calls)!='integer' OR calls<0 OR calls>4 OR typeof(tools)!='integer' OR tools<0 OR tools>8 LIMIT 1").isEmpty, .storage)
         try require(try rows("SELECT requests.id FROM requests LEFT JOIN sessions ON requests.session=sessions.id WHERE sessions.id IS NULL OR requests.experiment!=sessions.experiment OR model!='qwen/qwen3.8-flash' OR typeof(account_usage)!='integer' OR account_usage<0 OR account_usage>200000000000 OR status NOT IN ('reserved','completed','uncertain') OR typeof(reserved)!='integer' OR reserved<0 OR reserved>1000000000 OR (charged IS NOT NULL AND (typeof(charged)!='integer' OR charged<0 OR charged>1000000000000)) OR (status='reserved' AND charged IS NOT NULL) OR (status='completed' AND (charged IS NULL OR charged>reserved OR usage_input IS NULL OR usage_output IS NULL)) OR (usage_input IS NOT NULL AND (typeof(usage_input)!='integer' OR usage_input<0 OR usage_input>16384)) OR (usage_output IS NOT NULL AND (typeof(usage_output)!='integer' OR usage_output<0 OR usage_output>256)) LIMIT 1").isEmpty, .storage)
     }
     func bind(_ permit: Permit) throws {
@@ -105,10 +105,11 @@ final class Ledger: @unchecked Sendable {
         try validateRows()
         try execute("BEGIN IMMEDIATE")
         do {
+            try require(try rows("SELECT id FROM experiments WHERE transport!=? LIMIT 1", [permit.transport]).isEmpty, .unauthorized)
             if let prior = try rows("SELECT digest FROM experiments WHERE id=?", [permit.experiment]).first {
                 try require(prior["digest"] == permit.digest, .unauthorized)
             } else {
-                try execute("INSERT INTO experiments(id,digest,baseline,budget,max_requests) VALUES(?,?,?,?,?)", [permit.experiment, permit.digest, String(permit.baseline), String(permit.budget), String(permit.maxRequests)])
+                try execute("INSERT INTO experiments(id,digest,baseline,budget,max_requests,transport) VALUES(?,?,?,?,?,?)", [permit.experiment, permit.digest, String(permit.baseline), String(permit.budget), String(permit.maxRequests), permit.transport])
                 for item in permit.sessions.values {
                     try execute("INSERT INTO sessions(id,experiment,task_id,role) VALUES(?,?,?,?)", [item.id, permit.experiment, item.taskID, item.role])
                 }
@@ -129,6 +130,9 @@ final class Ledger: @unchecked Sendable {
             throw prior["digest"] == request.digest ? Failure.duplicate : Failure.unauthorized
         }
         try require(try rows("SELECT id FROM requests WHERE status='uncertain' LIMIT 1").isEmpty, .uncertain)
+        try execute("UPDATE sessions SET task_id=?,mode=? WHERE id=? AND role=? AND (task_id='' OR task_id=?) AND (mode='' OR mode=?)", [request.session.taskID, request.mode, request.session.id, request.session.role, request.session.taskID, request.mode])
+        let bound = try rows("SELECT task_id,role,mode FROM sessions WHERE id=?", [request.session.id]).first
+        try require(bound?["task_id"] == request.session.taskID && bound?["role"] == request.session.role && bound?["mode"] == request.mode, .unauthorized)
     }
     func reserve(_ request: Completion, permit: Permit, amount: Int64, keyUsage: Int64) throws {
         mutex.lock(); defer { mutex.unlock() }

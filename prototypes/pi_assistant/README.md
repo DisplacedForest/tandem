@@ -2,7 +2,7 @@
 
 This prototype embeds the official Pi agent-core SDK 1.0.4 in separate foreground and worker processes. Vera's existing Python TaskStore and Dispatcher own task identity, approval waits, cancellation, recovery and terminal state. It never mounts routes in the active engine or loads the native app's configuration.
 
-The current runnable transport is a deterministic mock. Pi's actual agent loop, validated tool calls and subprocess boundary run in these tests, but the mock does not measure model quality or local MLX performance. Every background request edits the same synthetic addition example inside that task's private workspace. It is not a general coding service.
+The runnable transports are the inline deterministic mock and an explicitly selected native-helper mock. Pi's actual agent loop, validated tool calls and subprocess boundary run in these tests, but the mock does not measure model quality or local MLX performance. Every background request edits the same synthetic addition example inside that task's private workspace. It is not a general coding service.
 
 ## Run
 
@@ -18,11 +18,24 @@ The bridge binds only `127.0.0.1`. Choose a fresh private data directory. The UI
 ```sh
 mise run pi-prototype-test
 mise run pi-integration-test
+mise run pi-native-integration-test
 ```
 
 The integration task builds the separate UI and runs headless HTTP consumer checks against a fresh mock bridge. It kills the bridge after durable acceptance, reopens the same data, and verifies explicit UI recovery without resubmitting the accepted task. It also verifies approval, completion, output files, task-specific Stop and focused chat isolation. No visible window is launched.
 
 A message beginning `/task ` delegates a synthetic background task. Other text produces a mock foreground reply. Approval is required before the worker starts. A second foreground message uses an independent process while the worker runs. Focused mode has no delegation tool.
+
+## Native helper mock
+
+After building with `mise run pi-native-integration-test`, start a fresh bounded experiment with:
+
+```sh
+python prototypes/pi_assistant/bridge.py --data-root /tmp/vera-native-pi-example --port 8769 --native-mock-helper prototypes/native-transport/.build/debug/VeraNativeTransport
+```
+
+This runs Pi's actual SDK loops through private pipes to the Swift helper, whose credential and HTTP implementations are injected fixtures. Python and Node receive typed results and synthetic usage, never a credential. The HTTP capability stays labeled `transport:"mock"` and adds `transport_detail:"native-mock"`. There is no live transport flag or environment override in the bridge. Task payloads and results retain their selected transport, and changing it during recovery fails closed.
+
+The native experiment allows two foreground invocations and one worker invocation, four model rounds each, within a synthetic $1 accounting cap. It expires after ten minutes and never renews its own authority. Inspect the saved ledger and preserve its identity on interruption; do not reset it to bypass refusal. See the [helper contract](../native-transport/README.md). The native integration tests cover actual SDK tool calls, a second foreground reply during work, accounting, approval/decline, focused mode, pre-write cancellation, helper protocol failure, helper kill, and Python parent SIGKILL with descendant cleanup.
 
 ## HTTP contract, version 1
 
@@ -36,7 +49,7 @@ A message beginning `/task ` delegates a synthetic background task. Other text p
 | POST `/tasks/{id}/cancel` | Existing durable cancellation, plus active adapter polling and process-group termination. |
 | POST `/tasks/{id}/decision` | `decision_id`, `idempotency_key`, `reply:{"approved":true}` or false. |
 
-A task carries `worker_type:"pi_worker"` and a payload with assistant/conversation/originating-message UUIDs, objective, `workspace_ref:"task-private"`, and `transport:"mock"`. Workspace scope is host-selected, never a model-supplied path. Decisions have `id`, `prompt`, `choices:["approve","decline"]`. Results contain `summary`, `artifacts:[{kind:"file",path,title}]`, and transport. Only `sum.py` is a granted filename. The UI must independently scope file opening to its explicitly configured workspace root.
+A task carries `worker_type:"pi_worker"` and a payload with assistant/conversation/originating-message UUIDs, objective, `workspace_ref:"task-private"`, and `transport:"mock"` or `"native-mock"`. Workspace scope is host-selected, never a model-supplied path. Decisions have `id`, `prompt`, `choices:["approve","decline"]`. Results contain `summary`, `artifacts:[{kind:"file",path,title}]`, and transport. Only `sum.py` is a granted filename. The UI must independently scope file opening to its explicitly configured workspace root.
 
 Repeated identical message IDs return the saved answer; changed content conflicts. Interrupted foreground turns require inspection instead of automatic replay. Assistant and focused conversation identities cannot be rebound to another mode or assistant. The UI owns the stable assistant UUID and conversation mapping. These identifiers are integration fields, not ordinary display copy.
 
@@ -62,4 +75,4 @@ The separate `@earendil-works/pi-durable` package at that tag is explicitly expe
 
 No paid model call is made by this implementation. Existing native smoke support permits fixed requests and the current app relay is research-specific. Neither exposes a general Pi tool-schema completion broker. The prototype refuses to export a saved key into Python or Node, widen that relay, or create a new Keychain grant.
 
-See NATIVE_TRANSPORT.md for the proposed isolated credential-owning transport and exact remaining authorization boundary. Actual cloud results, if subsequently authorized and observed, must be labeled OpenRouter results and cannot establish local MLX latency or quality parity.
+See NATIVE_TRANSPORT.md for the isolated credential-owning transport and exact remaining authorization boundary. Actual cloud results, if subsequently authorized and observed, must be labeled OpenRouter results and cannot establish local MLX latency or quality parity.

@@ -9,6 +9,7 @@ struct SessionPermit: Sendable {
     let role: String
 }
 struct Permit: Sendable {
+    let transport: String
     let experiment: String
     let profileID: String
     let expires: Date
@@ -17,8 +18,11 @@ struct Permit: Sendable {
     let maxRequests: Int
     let sessions: [String: SessionPermit]
     let digest: String
+    func authorizeTransport(live: Bool) throws { try require(transport == (live ? "live" : "mock"), .unauthorized) }
     init(_ value: J, now: Date = Date()) throws {
-        try value.keys(["experiment_id", "profile_id", "issued_at", "expires_at", "reconciliation_id", "prior_test_spend_usd", "exclusive_test_owner", "budget_scope", "budget_usd", "max_requests", "sessions", "credential_access"], required: ["experiment_id", "profile_id", "issued_at", "expires_at", "reconciliation_id", "prior_test_spend_usd", "exclusive_test_owner", "budget_scope", "budget_usd", "max_requests", "sessions", "credential_access"])
+        try value.keys(["experiment_id", "profile_id", "issued_at", "expires_at", "reconciliation_id", "prior_test_spend_usd", "exclusive_test_owner", "budget_scope", "budget_usd", "max_requests", "sessions", "credential_access", "transport"], required: ["experiment_id", "profile_id", "issued_at", "expires_at", "reconciliation_id", "prior_test_spend_usd", "exclusive_test_owner", "budget_scope", "budget_usd", "max_requests", "sessions", "credential_access", "transport"])
+        guard let transport = value["transport"].string, ["mock", "live"].contains(transport) else { throw Failure.unauthorized }
+        self.transport = transport
         experiment = try identifier(value["experiment_id"])
         _ = try identifier(value["reconciliation_id"])
         guard let profile = value["profile_id"].string, UUID(uuidString: profile) != nil,
@@ -38,7 +42,9 @@ struct Permit: Sendable {
         var parsed: [String: SessionPermit] = [:]
         for entry in entries {
             try entry.keys(["id", "task_id", "role"], required: ["id", "task_id", "role"])
-            let id = try identifier(entry["id"]), task = try identifier(entry["task_id"])
+            let id = try identifier(entry["id"])
+            try require(transport == "mock" || entry["task_id"] != .null, .unauthorized)
+            let task = entry["task_id"] == .null ? "" : try identifier(entry["task_id"])
             guard let role = entry["role"].string, ["foreground", "worker"].contains(role), parsed[id] == nil else { throw Failure.unauthorized }
             parsed[id] = SessionPermit(id: id, taskID: task, role: role)
         }
@@ -54,24 +60,32 @@ struct Completion: Sendable {
     let digest: String
     let messages: [J]
     let tools: [J]
+    let mode: String
+    let toolRole: String
     let priorToolIDs: Set<String>
     let toolsUsed: Int
     init(_ value: J, permit: Permit, requestPermit: J, now: Date = Date()) throws {
         try require(now < permit.expires, .unauthorized)
-        try value.keys(["op", "request_id", "session_id", "task_id", "role", "messages"], required: ["op", "request_id", "session_id", "task_id", "role", "messages"])
+        try value.keys(["op", "request_id", "session_id", "task_id", "role", "messages", "mode"], required: ["op", "request_id", "session_id", "task_id", "role", "messages", "mode"])
         try require(value["op"].string == "complete")
         id = try identifier(value["request_id"])
         let sessionID = try identifier(value["session_id"])
-        guard let bound = permit.sessions[sessionID], bound.taskID == value["task_id"].string, bound.role == value["role"].string else { throw Failure.unauthorized }
-        session = bound
+        let taskID = try identifier(value["task_id"])
+        guard let bound = permit.sessions[sessionID], (bound.taskID.isEmpty || bound.taskID == taskID), bound.role == value["role"].string else { throw Failure.unauthorized }
+        session = SessionPermit(id: bound.id, taskID: taskID, role: bound.role)
+        let mode = value["mode"]
+        try require(["assistant", "focused"].contains(mode.string ?? ""))
+        try require(bound.role != "worker" || mode.string == "assistant")
+        self.mode = mode.string!
+        toolRole = bound.role == "worker" ? "worker" : (mode.string == "focused" ? "focused" : "foreground")
         digest = try value.digest()
         try requestPermit.keys(["request_id", "input_sha256", "experiment_id"], required: ["request_id", "input_sha256", "experiment_id"])
         try require(requestPermit["request_id"].string == id && requestPermit["input_sha256"].string == digest && requestPermit["experiment_id"].string == permit.experiment, .unauthorized)
-        let parsed = try Transcript.convert(value["messages"], role: bound.role)
+        let parsed = try Transcript.convert(value["messages"], role: toolRole)
         messages = parsed.0
         priorToolIDs = Set(parsed.0.flatMap { $0["tool_calls"].array ?? [] }.compactMap { $0["id"].string })
         toolsUsed = parsed.1
-        tools = ToolSchema.tools(bound.role)
+        tools = ToolSchema.tools(toolRole)
         let size = try J.object(["messages": .array(messages), "tools": .array(tools)]).data().count
         try require(size <= 8192)
     }
@@ -81,7 +95,7 @@ struct Completion: Sendable {
 }
 
 enum ToolSchema {
-    static func names(_ role: String) -> Set<String> { role == "worker" ? ["read_file", "write_file", "check_python"] : ["delegate"] }
+    static func names(_ role: String) -> Set<String> { role == "foreground" ? ["delegate"] : (role == "worker" ? ["read_file", "write_file", "check_python"] : []) }
     static func validate(_ name: String, args: J, role: String) throws {
         try require(names(role).contains(name))
         if name == "delegate" {

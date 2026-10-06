@@ -21,14 +21,38 @@ final class FixtureCredential: CredentialSource, @unchecked Sendable {
 
 actor FixtureHTTP: HTTPTransport {
     let delay: Duration
+    let scripted: Bool
     var paid = 0
     var stopped = 0
     var body: Data?
     var response: Data?
     var usage: Decimal
-    init(delay: Duration = .zero, response: Data? = nil, usage: Decimal = 0) { self.delay = delay; self.response = response; self.usage = usage }
+    init(delay: Duration = .zero, response: Data? = nil, usage: Decimal = 0, scripted: Bool = false) { self.scripted = scripted; self.delay = delay; self.response = response; self.usage = usage }
     static let catalog: J = .object(["data": .array([.object(["id": .string(modelID), "supported_parameters": .array(["tools", "max_tokens", "reasoning"].map(J.string)), "reasoning": .object(["mandatory": .bool(false)]), "pricing": .object(["prompt": .string("0.000001"), "completion": .string("0.000002")])])])])
     static let answer: J = .object(["model": .string(modelID), "choices": .array([.object(["finish_reason": .string("stop"), "message": .object(["role": .string("assistant"), "content": .string("Fixture response")])])]), "usage": .object(["prompt_tokens": .number(20), "completion_tokens": .number(4), "cost": .number(Decimal(string: "0.000028")!)])])
+    static func script(_ body: J) throws -> J {
+        let messages = body["messages"].array ?? []
+        let names = Set(body["tools"].array?.compactMap { $0["function"]["name"].string } ?? [])
+        let calls = messages.flatMap { $0["tool_calls"].array ?? [] }.count
+        var name: String?, args: J = .object([:])
+        var text = "Native helper fixture reply."
+        if messages.last?["content"].string?.hasPrefix("Tool failed:") == true { text = "Native helper fixture stopped after a tool failure." }
+        else if names.contains("read_file") {
+            if calls < 3 {
+                name = ["read_file", "write_file", "check_python"][calls]
+                args = .object(["path": .string("sum.py")])
+                if calls == 1 { args = changed(args, "content", .string("def add(a, b):\n    return a + b\n")) }
+            } else { text = "Native helper fixture updated sum.py and passed validation." }
+        } else if names.contains("delegate"), messages.last?["role"].string == "user", let user = messages.last?["content"].string, user.hasPrefix("/task ") {
+            name = "delegate"; args = .object(["objective": .string(String(user.dropFirst(6)))])
+        } else if messages.last?["role"].string == "tool" { text = "Your task is accepted and awaits approval. I am available for another message." }
+        var message: J = .object(["role": .string("assistant"), "content": .string(text)])
+        if let name {
+            let call: J = .object(["id": .string(UUID().uuidString.lowercased()), "type": .string("function"), "function": .object(["name": .string(name), "arguments": .string(String(decoding: try args.data(), as: UTF8.self))])])
+            message = .object(["role": .string("assistant"), "content": .null, "tool_calls": .array([call])])
+        }
+        return changed(Self.answer, "choices", .array([.object(["finish_reason": .string(name == nil ? "stop" : "tool_calls"), "message": message])]))
+    }
     func send(path: String, body: Data?, credential: String, limit: Int) async throws -> Data {
         if path == "models" { return try Self.catalog.data() }
         if path == "key" { return try J.object(["data": .object(["usage": .number(usage)])]).data() }
@@ -36,6 +60,7 @@ actor FixtureHTTP: HTTPTransport {
         self.body = body
         do { try await Task.sleep(for: delay) }
         catch { stopped += 1; throw error }
+        if scripted, let body { return try Self.script(J.parse(body)).data() }
         return try response ?? Self.answer.data()
     }
 }
@@ -48,14 +73,14 @@ struct Fixture {
     init(baseline: String = "0", budget: String = "1") throws {
         root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("vera-native-test-" + UUID().uuidString)
         let now = Date().timeIntervalSince1970
-        value = .object(["experiment_id": .string(UUID().uuidString.lowercased()), "reconciliation_id": .string(UUID().uuidString.lowercased()), "profile_id": .string(UUID().uuidString), "issued_at": .number(Decimal(now - 1)), "expires_at": .number(Decimal(now + 600)), "prior_test_spend_usd": .string(baseline), "exclusive_test_owner": .bool(true), "budget_scope": .string("vera-tests"), "budget_usd": .string(budget), "max_requests": .number(12), "credential_access": .string("noninteractive-once"), "sessions": .array(["foreground", "worker"].map { .object(["id": .string(UUID().uuidString.lowercased()), "task_id": .string(UUID().uuidString.lowercased()), "role": .string($0)]) })])
+        value = .object(["experiment_id": .string(UUID().uuidString.lowercased()), "reconciliation_id": .string(UUID().uuidString.lowercased()), "profile_id": .string(UUID().uuidString), "issued_at": .number(Decimal(now - 1)), "expires_at": .number(Decimal(now + 600)), "prior_test_spend_usd": .string(baseline), "exclusive_test_owner": .bool(true), "budget_scope": .string("vera-tests"), "budget_usd": .string(budget), "max_requests": .number(12), "credential_access": .string("noninteractive-once"), "transport": .string("mock"), "sessions": .array(["foreground", "worker"].map { .object(["id": .string(UUID().uuidString.lowercased()), "task_id": .string(UUID().uuidString.lowercased()), "role": .string($0)]) })])
         permit = try Permit(value)
         ledger = try Ledger(root: root)
         try ledger.bind(permit)
     }
     func request(role: String = "foreground", text: String = "Respond to this disposable test.") -> J {
         let session = permit.sessions.values.first { $0.role == role }!
-        return .object(["op": .string("complete"), "request_id": .string(UUID().uuidString.lowercased()), "session_id": .string(session.id), "task_id": .string(session.taskID), "role": .string(role), "messages": .array([.object(["role": .string("user"), "content": .string(text)])])])
+        return .object(["op": .string("complete"), "mode": .string("assistant"), "request_id": .string(UUID().uuidString.lowercased()), "session_id": .string(session.id), "task_id": .string(session.taskID), "role": .string(role), "messages": .array([.object(["role": .string("user"), "content": .string(text)])])])
     }
     func authorization(_ request: J) throws -> J {
         .object(["request_id": request["request_id"], "input_sha256": .string(try request.digest()), "experiment_id": .string(permit.experiment)])
@@ -290,6 +315,12 @@ enum Selftest {
         try expect(.storage) { _ = try Ledger(root: unsafe) }
         try ensure(try Data(contentsOf: target) == Data("unmodified".utf8))
         passed("symlink database denied before modification")
+        try await ScopeSelftest.binding()
+        passed("late binding rejects invalid input and raced rebinding across restart")
+        try ScopeSelftest.focused()
+        passed("focused mode rejects delegate in transcript and response")
+        try ScopeSelftest.mode()
+        passed("mock permits cannot authorize live transport")
         print("PASS native transport selftest \(count) groups; synthetic credentials and fixture HTTP only")
     }
 }

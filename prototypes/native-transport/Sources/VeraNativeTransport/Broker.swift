@@ -29,7 +29,7 @@ struct Reply: Sendable {
                 try call["function"].keys(["name", "arguments"], required: ["name", "arguments"])
                 try require(!request.priorToolIDs.contains(id) && ids.insert(id).inserted, .providerResponse)
                 let args = try J.parse(Data(argumentText.utf8), limit: 8192)
-                try ToolSchema.validate(name, args: args, role: request.session.role)
+                try ToolSchema.validate(name, args: args, role: request.toolRole)
                 content.append(.object(["type": .string("toolCall"), "id": .string(id), "name": .string(name), "arguments": args]))
             }
         }

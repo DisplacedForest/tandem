@@ -60,11 +60,11 @@ def run(binary: Path) -> None:
                 "profile_id": identifier(), "issued_at": now - 1, "expires_at": now + 600,
                 "prior_test_spend_usd": "0", "budget_usd": "1", "max_requests": 12,
                 "exclusive_test_owner": True, "budget_scope": "vera-tests",
-                "credential_access": "noninteractive-once",
+                "credential_access": "noninteractive-once", "transport": "mock",
                 "sessions": [{"id": session, "task_id": task, "role": "foreground"}],
             }
             private_json(root / "permit.json", permit)
-            request = {"op": "complete", "request_id": identifier(), "session_id": session,
+            request = {"op": "complete", "mode": "assistant", "request_id": identifier(), "session_id": session,
                        "task_id": task, "role": "foreground",
                        "messages": [{"role": "user", "content": "Disposable pipe test"}]}
 

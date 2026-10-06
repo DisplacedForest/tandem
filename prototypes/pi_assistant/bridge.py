@@ -35,15 +35,15 @@ class WorkerPayload(BaseModel):
     originating_message_id: UUID
     objective: str = Field(min_length=1, max_length=8000)
     workspace_ref: Literal['task-private']
-    transport: Literal['mock']
+    transport: Literal['mock', 'native-mock']
 
 
 def validate_payload(payload: dict) -> None:
     WorkerPayload.model_validate(payload)
 
 
-def create_app(root: Path, node: str) -> FastAPI:
-    runtime = Runtime(root, node)
+def create_app(root: Path, node: str, native_mock_helper: Path | None = None) -> FastAPI:
+    runtime = Runtime(root, node, native_mock_helper=native_mock_helper)
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await runtime.start()
@@ -68,7 +68,7 @@ def create_app(root: Path, node: str) -> FastAPI:
     app.include_router(tasks.router)
     @app.get('/assistant/capabilities')
     async def capabilities():
-        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'transport': 'mock', 'workspace_root': str(runtime.workspace)}
+        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'transport': 'mock', 'transport_detail': runtime.transport, 'workspace_root': str(runtime.workspace)}
     @app.post('/assistant/messages')
     async def message(body: Message):
         try:
@@ -86,6 +86,7 @@ def create_app(root: Path, node: str) -> FastAPI:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-root', required=True, type=Path)
+    parser.add_argument('--native-mock-helper', type=Path)
     parser.add_argument('--port', default=8769, type=int)
     args = parser.parse_args()
     root = args.data_root.expanduser().resolve()
@@ -96,7 +97,7 @@ def main() -> None:
         parser.error('Node is required')
     os.umask(0o077)
     import uvicorn
-    uvicorn.run(create_app(root, node), host='127.0.0.1', port=args.port, access_log=False, log_level='warning')
+    uvicorn.run(create_app(root, node, args.native_mock_helper), host='127.0.0.1', port=args.port, access_log=False, log_level='warning')
 
 
 if __name__ == '__main__':

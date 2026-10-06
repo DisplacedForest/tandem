@@ -18,8 +18,8 @@ function hostCall(type, value) {
   return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); emit({ type, id, ...value }); });
 }
 const zeroUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-function message(content) {
-  return { role: 'assistant', content, api: 'vera-transport', provider: 'vera', model: 'explicit-transport', usage: zeroUsage, stopReason: content.some(x => x.type === 'toolCall') ? 'toolUse' : 'stop', timestamp: Date.now() };
+function message(content, usage = zeroUsage) {
+  return { role: 'assistant', content, api: 'vera-transport', provider: 'vera', model: 'explicit-transport', usage, stopReason: content.some(x => x.type === 'toolCall') ? 'toolUse' : 'stop', timestamp: Date.now() };
 }
 function call(name, args) { return { type: 'toolCall', id: crypto.randomUUID(), name, arguments: args }; }
 async function run(config) {
@@ -42,8 +42,11 @@ async function run(config) {
     Promise.resolve().then(async () => {
       if (++rounds > 4) throw new Error('round_limit');
       let content;
+      let usage = zeroUsage;
       if (config.transport !== 'mock') {
-        content = (await hostCall('model', { context })).content;
+        const reply = await hostCall('model', { context });
+        content = reply.content;
+        if (reply.usage) usage = { ...zeroUsage, input: reply.usage.input, output: reply.usage.output, totalTokens: reply.usage.input + reply.usage.output, cost: { ...zeroUsage.cost, total: reply.usage.cost_usd } };
       } else if (config.role === 'worker' && context.messages.at(-1)?.role === 'toolResult' && context.messages.at(-1)?.isError) {
         content = [{ type: 'text', text: 'Mock coding fixture stopped because a required tool failed.' }];
       } else if (config.role === 'worker') {
@@ -55,7 +58,7 @@ async function run(config) {
       } else {
         content = [{ type: 'text', text: rounds > 1 ? 'Your task is accepted and awaits approval. I am available for another message.' : `Mock reply: ${config.text}` }];
       }
-      const answer = message(content);
+      const answer = message(content, usage);
       stream.push({ type: 'done', reason: answer.stopReason, message: answer });
       stream.end();
     }).catch(() => {

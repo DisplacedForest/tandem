@@ -75,7 +75,7 @@ actor Requests {
                 _ = try ledger.snapshot()
                 return
             }
-            try require(args.count == 9 && ["--live", "--mock-stdio"].contains(args[0]), .unauthorized)
+            try require(args.count == 9 && ["--live", "--mock-stdio", "--mock-pi-stdio"].contains(args[0]), .unauthorized)
             var options: [String: String] = [:]
             for index in stride(from: 1, to: args.count, by: 2) {
                 try require(options[args[index]] == nil, .unauthorized)
@@ -86,16 +86,19 @@ actor Requests {
             let hash = SHA256.hash(data: try Data(contentsOf: binary)).map { String(format: "%02x", $0) }.joined()
             try require(options["--approved-sha256"] == hash, .unauthorized)
             let permit = try Permit(J.parse(PrivateFiles.read(URL(fileURLWithPath: options["--permit"]!))))
+            try permit.authorizeTransport(live: args[0] == "--live")
             let ledger = try Ledger(root: URL(fileURLWithPath: options["--ledger-root"]!))
             let credentials: any CredentialSource
             let http: any HTTPTransport
-            if args[0] == "--mock-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .seconds(10)) }
+            if args[0] == "--mock-pi-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .milliseconds(350), scripted: true) }
+            else if args[0] == "--mock-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .seconds(10)) }
             else {
                 credentials = SelectedCredential(profileURL: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera/config.json"))
                 http = URLTransport()
             }
             let broker = try Broker(permit: permit, ledger: ledger, credentials: credentials, http: http)
             let requests = Requests(broker: broker, directory: URL(fileURLWithPath: options["--request-permits"]!), output: Output())
+            if args[0] == "--mock-pi-stdio" { await Output().send(.object(["type": .string("ready"), "transport": .string("native-mock")])) }
             await Task.detached {
                 var buffer = Data()
                 while true {
