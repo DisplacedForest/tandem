@@ -386,3 +386,89 @@ for line in sys.stdin:
                 if process.poll() is None:
                     process.kill()
                 process.communicate(timeout=5)
+
+
+def test_research_budgets_are_internal_scoped_and_queue_covers_longest(tmp_path):
+    policy = admission.AdmissionPolicy(TaskStore(str(tmp_path / 'scoped.db')))
+    assert request(policy, 'generic')['generation_seconds_remaining'] <= 20
+    policy.release('generic')
+    plan = policy.request('plan', RESOURCE, 'background', 90, admission.ResearchBudget.PLAN)
+    assert 29 < plan['generation_seconds_remaining'] <= 30
+    assert plan['queue_seconds'] == 72
+    policy.release('plan')
+    synthesis = policy.request('synthesis', RESOURCE, 'background', 90, admission.ResearchBudget.SYNTHESIS)
+    assert 59 < synthesis['generation_seconds_remaining'] <= 60
+    with pytest.raises(ValueError):
+        policy.request('not-typed', RESOURCE, 'background', 90, 'synthesize')
+    with pytest.raises(ValueError):
+        policy.request('not-background', RESOURCE, 'foreground', 90, admission.ResearchBudget.SYNTHESIS)
+    with pytest.raises(ValueError):
+        admission.AcquireRequest(request_id=uuid.uuid4(), resource=RESOURCE, priority='background', requested_seconds=90,
+                                 research_budget='synthesize')
+
+
+@pytest.mark.parametrize('value', [0, -1, 91, float('nan'), float('inf')])
+def test_research_budget_environment_bounds(monkeypatch, value):
+    for name in ('INFERENCE_RESEARCH_PLAN_SECONDS', 'INFERENCE_RESEARCH_SYNTHESIS_SECONDS'):
+        with monkeypatch.context() as context:
+            context.setenv(name, str(value))
+            with pytest.raises(ValueError):
+                admission.Settings.environment()
+
+
+def test_scoped_restart_keeps_deadline_and_foreground_precedence(tmp_path):
+    clock = Clock()
+    settings = admission.Settings(research_synthesis_seconds=80, pending_seconds=100)
+    path = str(tmp_path / 'scoped-restart.db')
+    policy = admission.AdmissionPolicy(TaskStore(path), settings, lambda: clock.wall, lambda: clock.mono)
+    active = policy.request('active', RESOURCE, 'background', 90, admission.ResearchBudget.SYNTHESIS)
+    assert active['queue_seconds'] == 182
+    request(policy, 'foreground', 'foreground')
+    request(policy, 'queued')
+    clock.advance(30)
+    reopened = admission.AdmissionPolicy(TaskStore(path), settings, lambda: clock.wall, lambda: clock.mono)
+    assert reopened.request('active', RESOURCE, 'background', 90, admission.ResearchBudget.SYNTHESIS)['generation_seconds_remaining'] == 50
+    assert request(reopened, 'foreground', 'foreground')['state'] == 'pending'
+    clock.advance(52.1)
+    assert request(reopened, 'queued')['state'] == 'pending'
+    assert request(reopened, 'foreground', 'foreground')['state'] == 'admitted'
+
+
+@pytest.mark.asyncio
+async def test_scoped_slow_success_and_queued_foreground_runs_next(tmp_path, monkeypatch):
+    policy = admission.AdmissionPolicy(TaskStore(str(tmp_path / 'slow.db')), admission.Settings(
+        background_seconds=0.02, research_plan_seconds=0.1, research_synthesis_seconds=0.2,
+        cleanup_seconds=0.01, pending_seconds=0.5, poll_seconds=0.002))
+    monkeypatch.setattr(admission, '_policy', policy)
+    entered = asyncio.Event()
+    order = []
+    async def slow(seconds):
+        assert seconds > 0.1
+        order.append('research')
+        entered.set()
+        await asyncio.sleep(0.07)
+        return 'report'
+    async def next_operation(seconds):
+        order.append('foreground')
+        return 'answer'
+    active = asyncio.create_task(admission.run('http://model.test/v1', slow, 90, 'background', admission.ResearchBudget.SYNTHESIS))
+    await entered.wait()
+    foreground = asyncio.create_task(admission.run('http://model.test/v1', next_operation, 1, 'foreground'))
+    assert await active == 'report'
+    assert await foreground == 'answer'
+    assert order == ['research', 'foreground']
+
+
+def test_research_environment_preserves_explicit_legacy_cap_and_phase_override(monkeypatch):
+    for key in ('INFERENCE_BACKGROUND_SECONDS', 'INFERENCE_RESEARCH_PLAN_SECONDS', 'INFERENCE_RESEARCH_SYNTHESIS_SECONDS'):
+        monkeypatch.delenv(key, raising=False)
+    settings = admission.Settings.environment()
+    assert (settings.background_seconds, settings.research_plan_seconds, settings.research_synthesis_seconds) == (20, 30, 60)
+    monkeypatch.setenv('INFERENCE_BACKGROUND_SECONDS', '12')
+    settings = admission.Settings.environment()
+    assert (settings.background_seconds, settings.research_plan_seconds, settings.research_synthesis_seconds) == (12, 12, 12)
+    monkeypatch.setenv('INFERENCE_RESEARCH_SYNTHESIS_SECONDS', '65')
+    settings = admission.Settings.environment()
+    assert (settings.background_seconds, settings.research_plan_seconds, settings.research_synthesis_seconds) == (12, 12, 65)
+    monkeypatch.setenv('INFERENCE_BACKGROUND_SECONDS', '120')
+    assert admission.Settings.environment().research_plan_seconds == 90

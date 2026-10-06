@@ -32,6 +32,8 @@ async def fixture(tmp_path, monkeypatch, scenario):
     monkeypatch.setattr(tasks, '_runtime', engine)
     monkeypatch.setitem(tasks._validators, 'research', task_research.validate_payload)
     monkeypatch.setattr(admission, '_policy', admission.AdmissionPolicy(store, admission.Settings(
+        research_plan_seconds=30 if scenario == 'live' else (0.7 if scenario == 'crash' else 3),
+        research_synthesis_seconds=60 if scenario == 'live' else (0.7 if scenario == 'crash' else 3),
         background_seconds=20 if scenario == 'live' else (0.7 if scenario == 'crash' else 3), cleanup_seconds=0.05, poll_seconds=0.01)))
     monkeypatch.setenv("STRUCTURED_REPAIR_ATTEMPTS", "1")
     relay._presence.clear()
@@ -405,3 +407,83 @@ async def test_native_session_process_restart_does_not_repeat_effect(tmp_path, s
         server.should_exit = True
         await serving
         sock.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('scenario,expected', [
+    ('headers', 'completed'), ('body', 'read_idle_timeout'), ('overall', 'overall_timeout'),
+    ('setup', 'connect_send_timeout'), ('short-overall', 'overall_timeout'), ('cancel', 'canceled'),
+    ('auth', 'provider_auth'), ('quota', 'provider_quota'), ('error', 'provider_unavailable'),
+])
+async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(scenario, expected):
+    handlers = set()
+    uploaded = asyncio.Event()
+    async def connection(reader, writer):
+        current = asyncio.current_task()
+        handlers.add(current)
+        try:
+            if scenario in {'setup', 'short-overall'}:
+                await asyncio.sleep(2)
+                return
+            header = await reader.readuntil(b'\r\n\r\n')
+            length = next(int(line.split(b':', 1)[1]) for line in header.split(b'\r\n') if line.lower().startswith(b'content-length:'))
+            await reader.readexactly(length)
+            uploaded.set()
+            if scenario in {'headers', 'cancel'}:
+                await asyncio.sleep(0.4)
+            status = {'auth': 401, 'quota': 429, 'error': 503}.get(scenario, 200)
+            body = json.dumps({'choices': [{'message': {'content': 'Synthetic complete answer'}, 'finish_reason': 'stop'}]}).encode()
+            if status != 200:
+                body = b'synthetic-secret-sentinel-error-body'
+            writer.write(f'HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: close\r\nX-Secret: synthetic-secret-sentinel-header\r\n\r\n'.encode())
+            await writer.drain()
+            if scenario == 'body':
+                writer.write(body[:1])
+                await writer.drain()
+                await asyncio.sleep(1)
+            elif scenario == 'overall':
+                for byte in body:
+                    writer.write(bytes([byte]))
+                    await writer.drain()
+                    await asyncio.sleep(0.03)
+            else:
+                writer.write(body)
+                await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+            handlers.discard(current)
+    server = await asyncio.start_server(connection, '127.0.0.1', 0)
+    port = server.sockets[0].getsockname()[1]
+    scheme = 'https' if scenario in {'setup', 'short-overall'} else 'http'
+    value = {'base': f'{scheme}://127.0.0.1:{port}/v1', 'scenario': scenario,
+             'overall': 0.08 if scenario == 'short-overall' else (0.45 if scenario == 'overall' else 2),
+             'setup': 0.15, 'idle': 0.18 if scenario in {'body', 'overall'} else 1}
+    try:
+        process = await asyncio.create_subprocess_exec(str(BINARY), '--selftest',
+            env={**os.environ, 'VERA_TASK_TRANSPORT_FIXTURE': json.dumps(value)},
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 8)
+        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+        result = json.loads(stdout.decode().splitlines()[-1])
+        timing = result['timing']
+        assert timing['outcome'] == expected
+        assert set(timing) <= {'phase', 'outcome', 'status', 'setupSeconds', 'headersSeconds', 'finishSeconds', 'dnsSeconds', 'connectSeconds', 'tlsSeconds'}
+        assert timing['phase'] == 'synthesize'
+        assert 'synthetic-secret-sentinel' not in stdout.decode()
+        assert timing['finishSeconds'] < value['overall'] + 0.3
+        assert result['failure'] == (None if expected == 'completed' else 'canceled' if expected == 'canceled' else 'request_timeout' if expected.endswith('timeout') else expected)
+        if scenario == 'headers':
+            assert uploaded.is_set() and timing['setupSeconds'] < value['setup']
+            assert timing['headersSeconds'] >= 0.35
+            assert timing['finishSeconds'] > 0.2
+            assert timing['status'] == 200
+        print(json.dumps({'scenario': scenario, **timing}, sort_keys=True))
+    finally:
+        server.close()
+        await server.wait_closed()
+        for task in handlers:
+            task.cancel()
+        if handlers:
+            await asyncio.gather(*list(handlers), return_exceptions=True)

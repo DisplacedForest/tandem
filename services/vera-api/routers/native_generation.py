@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from . import tasks
+from .inference_admission import ResearchBudget
 
 router = APIRouter(prefix='/tasks', tags=['tasks'])
 
@@ -203,7 +204,7 @@ def caller(task: dict[str, Any], phase: str, attempt: str,
                     pending.outcome.cancel()
 
         try:
-            return await run(binding.admission_base, operation, 90, priority='background')
+            return await run(binding.admission_base, operation, 90, priority='background', research_budget=ResearchBudget(phase))
         except TimeoutError:
             if issued is not None and issued.delivered:
                 raise NativeGenerationFailed('request_timeout') from None

@@ -353,6 +353,10 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if let raw = ProcessInfo.processInfo.environment["VERA_TASK_TRANSPORT_FIXTURE"] {
+            do { try await NativeTaskTransportFixture.run(raw); exit(0) }
+            catch { print("TASK TRANSPORT FIXTURE FAILED"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_CREDENTIAL_SELFTEST"] == "1" {
             do { try NativeCredentialLifecycleFixture.run(); exit(0) }
             catch { print("NATIVE CREDENTIAL LIFECYCLE FIXTURE FAILED: \(error)"); exit(1) }

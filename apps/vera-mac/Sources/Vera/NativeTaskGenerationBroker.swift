@@ -78,9 +78,10 @@ actor NativeTaskGenerationBroker {
         let generate = self.generate
         let repository = self.repository
         let configuredBase = self.configuredBase
+        let execution = try job.reducingDeadline(by: min(2, job.deadlineSeconds / 10))
         let operation = Task {
             try await NativeInferenceDeadline.run(seconds: job.deadlineSeconds) {
-                try await generate(profile, job)
+                try await generate(profile, execution)
             }
         }
         let watcher = Task {

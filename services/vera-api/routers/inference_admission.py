@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Awaitable, Callable, Literal, TypeVar
 from urllib.parse import quote, urlsplit
 
@@ -25,6 +26,11 @@ priority_context: contextvars.ContextVar[Priority] = contextvars.ContextVar('inf
 router = APIRouter(prefix='/inference/admission', tags=['inference'])
 _policy: AdmissionPolicy | None = None
 _managed = False
+
+
+class ResearchBudget(Enum):
+    PLAN = 'plan'
+    SYNTHESIS = 'synthesize'
 
 
 class AdmissionUnavailable(RuntimeError):
@@ -52,6 +58,8 @@ def endpoint_resource(base: str) -> str:
 class Settings:
     background_slots: int = 1
     background_seconds: float = 20.0
+    research_plan_seconds: float = 30.0
+    research_synthesis_seconds: float = 60.0
     foreground_seconds: float = 600.0
     cleanup_seconds: float = 2.0
     pending_seconds: float = 10.0
@@ -63,6 +71,8 @@ class Settings:
             raise ValueError('Background generation slots must be between 1 and 32')
         if any(not math.isfinite(value) or value <= 0 for value in (self.background_seconds, self.foreground_seconds, self.cleanup_seconds, self.pending_seconds, self.poll_seconds)):
             raise ValueError('Inference timing settings must be finite and positive')
+        if any(not math.isfinite(value) or not 0 < value <= 90 for value in (self.research_plan_seconds, self.research_synthesis_seconds)):
+            raise ValueError('Research generation budgets must be positive and at most 90 seconds')
         if self.poll_seconds >= self.pending_seconds:
             raise ValueError('Admission polling must be shorter than the pending lifetime')
         if not isinstance(self.groups, dict) or any(len(key) != 64 or any(c not in '0123456789abcdef' for c in key) or not isinstance(value, str) or not value or len(value) > 80 for key, value in self.groups.items()):
@@ -70,9 +80,14 @@ class Settings:
 
     @classmethod
     def environment(cls) -> Settings:
+        legacy = os.environ.get('INFERENCE_BACKGROUND_SECONDS')
+        plan = str(min(float(legacy), 90)) if legacy is not None else '30'
+        synthesis = str(min(float(legacy), 90)) if legacy is not None else '60'
         return cls(
             background_slots=int(os.environ.get('INFERENCE_BACKGROUND_SLOTS', '1')),
             background_seconds=float(os.environ.get('INFERENCE_BACKGROUND_SECONDS', '20')),
+            research_plan_seconds=float(os.environ.get('INFERENCE_RESEARCH_PLAN_SECONDS', plan)),
+            research_synthesis_seconds=float(os.environ.get('INFERENCE_RESEARCH_SYNTHESIS_SECONDS', synthesis)),
             foreground_seconds=float(os.environ.get('INFERENCE_FOREGROUND_SECONDS', '600')),
             cleanup_seconds=float(os.environ.get('INFERENCE_CLEANUP_SECONDS', '2')),
             pending_seconds=float(os.environ.get('INFERENCE_PENDING_SECONDS', '10')),
@@ -125,13 +140,19 @@ class AdmissionPolicy:
         generation, expiry = self._remaining(row) if row['state'] in {'pending', 'admitted'} else (0.0, 0.0)
         return {'request_id': row['id'], 'state': row['state'], 'generation_seconds_remaining': generation,
                 'lease_seconds_remaining': expiry, 'poll_seconds': self.settings.poll_seconds,
-                'queue_seconds': self.settings.background_seconds + self.settings.cleanup_seconds + self.settings.pending_seconds,
+                'queue_seconds': max(self.settings.background_seconds, self.settings.research_plan_seconds, self.settings.research_synthesis_seconds) + self.settings.cleanup_seconds + self.settings.pending_seconds,
                 'queue_wait_seconds': max(0.0, row['deadline'] - row['requested_seconds'] - row['created_at']) if row['state'] == 'admitted' else 0.0}
 
-    def request(self, request_id: str, resource: str, priority: Priority, requested_seconds: float) -> dict[str, Any]:
+    def request(self, request_id: str, resource: str, priority: Priority, requested_seconds: float,
+                research_budget: ResearchBudget | None = None) -> dict[str, Any]:
         if priority not in {'foreground', 'background'} or not math.isfinite(requested_seconds) or requested_seconds <= 0:
             raise ValueError('A priority and finite positive request duration are required')
-        duration = min(requested_seconds, self.settings.background_seconds if priority == 'background' else self.settings.foreground_seconds)
+        if research_budget is not None and (not isinstance(research_budget, ResearchBudget) or priority != 'background'):
+            raise ValueError('Research budgets require a typed background request')
+        ceiling = self.settings.background_seconds if priority == 'background' else self.settings.foreground_seconds
+        if research_budget is not None:
+            ceiling = self.settings.research_plan_seconds if research_budget == ResearchBudget.PLAN else self.settings.research_synthesis_seconds
+        duration = min(requested_seconds, ceiling)
         resource = self.settings.groups.get(resource, resource)
         with self._mutex, self.store.transaction() as db:
             self._expire(db)
@@ -217,7 +238,7 @@ async def release(request_id: uuid.UUID) -> dict[str, Any]:
 
 
 async def run(base: str, operation: Callable[[float], Awaitable[T]], requested_seconds: float,
-              priority: Priority | None = None) -> T:
+              priority: Priority | None = None, research_budget: ResearchBudget | None = None) -> T:
     policy = _policy
     if policy is None:
         if _managed:
@@ -230,7 +251,7 @@ async def run(base: str, operation: Callable[[float], Awaitable[T]], requested_s
     try:
         while True:
             started = time.monotonic()
-            lease = await asyncio.to_thread(policy.request, request_id, resource, selected, requested_seconds)
+            lease = await asyncio.to_thread(policy.request, request_id, resource, selected, requested_seconds, research_budget)
             if lease['state'] == 'admitted':
                 remaining = lease['generation_seconds_remaining'] - (time.monotonic() - started)
                 if remaining <= 0:

@@ -23,7 +23,7 @@ def native_task(tmp_path, monkeypatch):
     relay._pending.clear()
 
 
-async def direct_admission(base, operation, seconds, priority):
+async def direct_admission(base, operation, seconds, priority, research_budget=None):
     assert base == 'https://provider.test/v1' and priority == 'background'
     return await operation(min(seconds, 0.5))
 
@@ -82,7 +82,7 @@ async def test_disconnect_is_recoverable_absence(native_task):
     _, task, binding = native_task
     await relay.ready(task['id'], binding)
 
-    async def short_admission(base, operation, seconds, priority):
+    async def short_admission(base, operation, seconds, priority, research_budget=None):
         return await operation(0.01)
 
     with pytest.raises(relay.NativeExecutorUnavailable):
@@ -170,7 +170,7 @@ async def test_actual_admission_timeout_remains_recoverable(native_task, monkeyp
     from routers import inference_admission as admission
     store, task, binding = native_task
     monkeypatch.setattr(admission, '_policy', admission.AdmissionPolicy(store, admission.Settings(
-        background_seconds=0.04, cleanup_seconds=0.01, poll_seconds=0.005)))
+        background_seconds=0.04, research_plan_seconds=0.04, research_synthesis_seconds=0.04, cleanup_seconds=0.01, poll_seconds=0.005)))
     await relay.ready(task['id'], binding)
     with pytest.raises(relay.NativeExecutorUnavailable):
         await relay.caller(task, 'plan', 'initial')([{'role': 'user', 'content': 'Question'}])
@@ -184,10 +184,10 @@ async def test_delivered_generation_timeout_is_known_and_rejects_late_success(na
     from routers import inference_admission as admission
     store, task, binding = native_task
     monkeypatch.setattr(admission, '_policy', admission.AdmissionPolicy(store, admission.Settings(
-        background_seconds=0.08, cleanup_seconds=0.01, poll_seconds=0.005)))
+        background_seconds=0.08, research_plan_seconds=0.08, research_synthesis_seconds=0.08, cleanup_seconds=0.01, poll_seconds=0.005)))
     await relay.ready(task['id'], binding)
 
-    async def short_admission(base, operation, seconds, priority):
+    async def short_admission(base, operation, seconds, priority, research_budget=None):
         return await operation(0.08)
 
     running = asyncio.create_task(relay.caller(task, 'synthesize', 'initial', None if managed else short_admission)(

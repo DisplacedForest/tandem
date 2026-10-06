@@ -37,6 +37,7 @@ enum NativeTaskFixture {
     }
 
     static func run() async throws {
+        try NativeTaskTransportFixture.terminalFence()
         for invalid in ["{\"id\":1,\"id\":2}", "{\"id\":1,\"\\u0069d\":2}"] {
             do {
                 try NativeTaskJSON.validate(Data(invalid.utf8))
