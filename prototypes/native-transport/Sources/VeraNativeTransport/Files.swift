@@ -51,8 +51,10 @@ struct SelectedProfileMetadata {
 
 struct SelectedCredential: CredentialSource {
     let profileURL: URL
-    func read(profile: String) throws -> String {
+    func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String {
+        try progress(.metadataBegin)
         try SelectedProfileMetadata.validate(profileURL, profile: profile)
-        return try NativeCredential().read(profile: profile)
+        try progress(.metadataValidated)
+        return try NativeCredential().read(profile: profile, progress: progress)
     }
 }

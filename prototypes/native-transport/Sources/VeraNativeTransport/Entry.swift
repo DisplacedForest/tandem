@@ -70,6 +70,10 @@ actor Requests {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             if args == ["--selftest"] { try await Selftest.run(); return }
+            if args.first == "--watchdog-test", args.count == 3 {
+                try await WatchdogSelftest.run(args[1], root: URL(fileURLWithPath: args[2]))
+                return
+            }
             if args.first == "--lock-test", args.count == 2 {
                 let ledger = try Ledger(root: URL(fileURLWithPath: args[1]))
                 _ = try ledger.snapshot()

@@ -70,7 +70,7 @@ run = "python prototypes/pi_assistant/tests/integration_recovery.py"
 [tasks.pi-native-transport-test]
 dir = "prototypes/native-transport"
 env = { PYTHONDONTWRITEBYTECODE = "1" }
-run = "swift build && .build/debug/VeraNativeTransport --selftest && python3 tests/process_contract.py .build/debug/VeraNativeTransport"
+run = "swift build && .build/debug/VeraNativeTransport --selftest && python3 tests/process_contract.py .build/debug/VeraNativeTransport && python3 tests/watchdog_contract.py .build/debug/VeraNativeTransport"
 
 [tasks.pi-native-integration-test]
 depends = ["pi-native-transport-test", "pi-prototype-deps"]

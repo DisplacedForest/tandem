@@ -10,10 +10,12 @@ final class FixtureCredential: CredentialSource, @unchecked Sendable {
     let missing: Bool
     let sentinel = "synthetic-broker-key-never-real-7b52"
     init(missing: Bool = false) { self.missing = missing }
-    func read(profile: String) throws -> String {
+    func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String {
         lock.lock(); defer { lock.unlock() }
         reads += 1
+        try progress(.keychainBegin)
         if missing { throw Failure.credentialUnavailable }
+        try progress(.keychainReturned)
         return sentinel
     }
     var count: Int { lock.lock(); defer { lock.unlock() }; return reads }
@@ -70,8 +72,8 @@ struct Fixture {
     let value: J
     let permit: Permit
     let ledger: Ledger
-    init(baseline: String = "0", budget: String = "1") throws {
-        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("vera-native-test-" + UUID().uuidString)
+    init(baseline: String = "0", budget: String = "1", directory: URL? = nil) throws {
+        root = directory ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("vera-native-test-" + UUID().uuidString)
         let now = Date().timeIntervalSince1970
         value = .object(["experiment_id": .string(UUID().uuidString.lowercased()), "reconciliation_id": .string(UUID().uuidString.lowercased()), "profile_id": .string(UUID().uuidString), "issued_at": .number(Decimal(now - 1)), "expires_at": .number(Decimal(now + 600)), "prior_test_spend_usd": .string(baseline), "exclusive_test_owner": .bool(true), "budget_scope": .string("vera-tests"), "budget_usd": .string(budget), "max_requests": .number(12), "credential_access": .string("noninteractive-once"), "transport": .string("mock"), "sessions": .array(["foreground", "worker"].map { .object(["id": .string(UUID().uuidString.lowercased()), "task_id": .string(UUID().uuidString.lowercased()), "role": .string($0)]) })])
         permit = try Permit(value)
@@ -321,6 +323,8 @@ enum Selftest {
         passed("focused mode rejects delegate in transcript and response")
         try ScopeSelftest.mode()
         passed("mock permits cannot authorize live transport")
+        try await WatchdogSelftest.policyAndDisarm()
+        passed("explicit no-UI query policy and disarmed independent watchdogs")
         try ProfileMetadataSelftest.run()
         passed("existing selected-profile metadata accepts safe readable parent without changing private grants")
         print("PASS native transport selftest \(count) groups; synthetic credentials and fixture HTTP only")

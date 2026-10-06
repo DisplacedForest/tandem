@@ -44,6 +44,7 @@ final class Ledger: @unchecked Sendable {
         try execute("CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY,digest TEXT NOT NULL,baseline INTEGER NOT NULL,budget INTEGER NOT NULL,max_requests INTEGER NOT NULL,transport TEXT NOT NULL,credential_attempted INTEGER NOT NULL DEFAULT 0)")
         try execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,task_id TEXT NOT NULL,role TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT '')")
         try execute("CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,session TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL,reserved INTEGER NOT NULL,charged INTEGER,usage_input INTEGER,usage_output INTEGER,created REAL NOT NULL,account_usage INTEGER NOT NULL,finished REAL,model TEXT NOT NULL)")
+        try execute("CREATE TABLE IF NOT EXISTS phases(sequence INTEGER PRIMARY KEY AUTOINCREMENT,request TEXT NOT NULL,stage TEXT NOT NULL)")
         try execute("PRAGMA user_version=2")
         try validateRows()
         try execute("UPDATE requests SET status='uncertain',finished=? WHERE status='reserved'", [String(Date().timeIntervalSince1970)])
@@ -175,6 +176,15 @@ final class Ledger: @unchecked Sendable {
     func uncertain(_ id: String) {
         mutex.lock(); defer { mutex.unlock() }
         try? execute("UPDATE requests SET status='uncertain',finished=? WHERE id=? AND status='reserved'", [String(Date().timeIntervalSince1970), id])
+    }
+    func trace(_ request: String, _ stage: Stage) throws {
+        mutex.lock(); defer { mutex.unlock() }
+        _ = try identifier(.string(request))
+        try execute("INSERT INTO phases(request,stage) VALUES(?,?)", [request, stage.rawValue])
+    }
+    func phaseSnapshot() throws -> [[String: String]] {
+        mutex.lock(); defer { mutex.unlock() }
+        return try rows("SELECT request,stage FROM phases ORDER BY sequence")
     }
     func snapshot() throws -> [[String: String]] {
         mutex.lock(); defer { mutex.unlock() }

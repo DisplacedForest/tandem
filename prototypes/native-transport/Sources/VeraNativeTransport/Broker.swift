@@ -56,16 +56,23 @@ actor Broker {
     let ledger: Ledger
     let credentials: any CredentialSource
     let http: any HTTPTransport
+    let hardTimeout: DispatchTimeInterval
+    let credentialTimeout: DispatchTimeInterval
     let timeout: Duration
     private var key: String?
     private var credentialAttempted = false
     private var activeRoles = Set<String>()
-    init(permit: Permit, ledger: Ledger, credentials: any CredentialSource, http: any HTTPTransport, timeout: Duration = .seconds(30)) throws {
+    init(permit: Permit, ledger: Ledger, credentials: any CredentialSource, http: any HTTPTransport, timeout: Duration = .seconds(30), hardTimeout: DispatchTimeInterval = .seconds(31), credentialTimeout: DispatchTimeInterval = .seconds(5)) throws {
+        self.hardTimeout = hardTimeout
+        self.credentialTimeout = credentialTimeout
         self.timeout = timeout
         self.permit = permit; self.ledger = ledger; self.credentials = credentials; self.http = http
         try ledger.bind(permit)
     }
     func complete(_ value: J, requestPermit: J) async throws -> J {
+        let watchdog = HardDeadline(after: hardTimeout)
+        defer { watchdog.finish() }
+        return try await withTaskCancellationHandler {
         try await withThrowingTaskGroup(of: J.self) { group in
             group.addTask { try await self.perform(value, requestPermit: requestPermit) }
             group.addTask { try await Task.sleep(for: self.timeout); throw Failure.deadline }
@@ -73,10 +80,12 @@ actor Broker {
             guard let result = try await group.next() else { throw Failure.unavailable }
             return result
         }
+        } onCancel: { watchdog.arm(after: .seconds(1), code: 125) }
     }
     private func perform(_ value: J, requestPermit: J) async throws -> J {
         let request = try Completion(value, permit: permit, requestPermit: requestPermit)
         try ledger.check(request)
+        try ledger.trace(request.id, .accepted)
         try require(activeRoles.insert(request.session.role).inserted, .unavailable)
         defer { activeRoles.remove(request.session.role) }
         try Task.checkCancellation()
@@ -84,13 +93,22 @@ actor Broker {
             try require(!credentialAttempted, .credentialUnavailable)
             credentialAttempted = true
             try ledger.claimCredential(permit)
-            key = try credentials.read(profile: permit.profileID)
+            let credentialWatchdog = HardDeadline(after: credentialTimeout, code: 126)
+            defer { credentialWatchdog.finish() }
+            key = try credentials.read(profile: permit.profileID) { [ledger] stage in try ledger.trace(request.id, stage) }
+            try ledger.trace(request.id, .credentialReturned)
         }
         guard let key, !key.isEmpty, key.utf8.count <= 4096, !key.contains("\n"), !key.contains("\r") else { throw Failure.credentialUnavailable }
         try require(!String(decoding: try value.data(), as: UTF8.self).contains(key), .redacted)
+        try Task.checkCancellation()
+        try ledger.trace(request.id, .modelsBegin)
         let catalog = try await http.send(path: "models", body: nil, credential: key, limit: 8_000_000)
+        try ledger.trace(request.id, .modelsReturned)
         let pricing = try Pricing(catalog: J.parse(catalog, limit: 8_000_000))
+        try Task.checkCancellation()
+        try ledger.trace(request.id, .usageBegin)
         let usage = try await http.send(path: "key", body: nil, credential: key, limit: 65536)
+        try ledger.trace(request.id, .usageReturned)
         guard let amount = try J.parse(usage)["data"]["usage"].decimal else { throw Failure.providerResponse }
         let keyUsage = try nanos(amount)
         let body = try request.body(pricing).data()
@@ -99,13 +117,17 @@ actor Broker {
         try require(Date() < permit.expires, .unauthorized)
         try ledger.reserve(request, permit: permit, amount: pricing.reservation, keyUsage: keyUsage)
         do {
+            try ledger.trace(request.id, .inferenceReserved)
+            try ledger.trace(request.id, .inferenceBegin)
             let result = try await http.send(path: "chat/completions", body: body, credential: key, limit: 65536)
+            try ledger.trace(request.id, .inferenceReturned)
             try Task.checkCancellation()
             try require(!String(decoding: result, as: UTF8.self).contains(key), .redacted)
             let reply = try Reply(result, request: request)
             let envelope = reply.envelope(request.id)
             try require(!String(decoding: try envelope.data(), as: UTF8.self).contains(key), .redacted)
             try ledger.settle(request, charged: reply.cost, input: reply.input, output: reply.output, tools: reply.toolCount)
+            try ledger.trace(request.id, .settled)
             return envelope
         } catch {
             ledger.uncertain(request.id)

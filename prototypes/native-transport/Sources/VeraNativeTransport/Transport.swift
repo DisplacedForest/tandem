@@ -3,23 +3,29 @@ import Security
 import LocalAuthentication
 
 protocol CredentialSource: Sendable {
-    func read(profile: String) throws -> String
+    func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String
 }
 
 struct NativeCredential: CredentialSource {
-    func read(profile: String) throws -> String {
-        let context = LAContext()
+    static func query(profile: String, context: LAContext = LAContext()) throws -> [String: Any] {
         context.interactionNotAllowed = true
-        let query: [String: Any] = [
+        try require(context.interactionNotAllowed, .credentialUnavailable)
+        return [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "org.displacedforest.vera.native-chat",
             kSecAttrAccount as String: profile,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
         ]
+    }
+    func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String {
+        let query = try Self.query(profile: profile)
+        try progress(.keychainBegin)
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
+        try progress(.keychainReturned)
         guard status == errSecSuccess, let data = result as? Data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty,
               key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw Failure.credentialUnavailable }

@@ -130,7 +130,7 @@ class NativeMockTransport:
         assert self.process is not None and self.process.stdout is not None and self.ready is not None
         try:
             while line := await self.process.stdout.readline():
-                if len(line) > 65536:
+                if len(line) > 65536 or not line.endswith(b'\n'):
                     raise PiFailure('native_output_limit')
                 value = json.loads(line)
                 if not isinstance(value, dict):

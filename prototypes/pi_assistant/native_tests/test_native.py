@@ -455,3 +455,21 @@ def test_host_scope_mode_is_immutable(tmp_path):
     with pytest.raises(PiFailure, match='native_scope_mode'):
         native._slot(task_id, 'foreground', 'assistant')
     assert native._slot(task_id, 'foreground', 'focused') == slot
+
+
+@pytest.mark.asyncio
+async def test_unterminated_helper_reply_remains_unconfirmed(tmp_path):
+    helper = tmp_path / 'partial-helper'
+    helper.write_text('#!' + sys.executable + "\nimport json,sys\nprint(json.dumps({'type':'ready','transport':'native-mock'}),flush=True)\nrequest=json.loads(sys.stdin.readline())\nsys.stdout.write(json.dumps({'request_id':request['request_id'],'ok':True,'content':[]}))\nsys.stdout.flush()\n")
+    helper.chmod(0o700)
+    native = NativeMockTransport(tmp_path / 'native-transport', helper)
+    await native.start()
+    event = {'type': 'model', 'id': str(uuid.uuid4()), 'context': {'messages': [{'role': 'user', 'content': 'fixture'}]}}
+    try:
+        with pytest.raises(PiFailure):
+            await native.complete(event, str(uuid.uuid4()), 'foreground', 'assistant')
+        with native.connect() as db:
+            assert db.execute('SELECT state FROM requests').fetchone()[0] == 'pending'
+        assert not native.pending
+    finally:
+        await native.stop()
