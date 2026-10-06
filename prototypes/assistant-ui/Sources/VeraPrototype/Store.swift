@@ -219,7 +219,12 @@ final class PrototypeStore: ObservableObject {
                 do { try commit(candidate) }
                 catch { conversationErrors[id] = error.localizedDescription; return }
             }
-            conversationErrors[id] = error.localizedDescription
+            switch error {
+            case PrototypeError.unavailable, PrototypeError.status(409):
+                conversationErrors[id] = PrototypeError.replyUnconfirmed.localizedDescription
+            default:
+                conversationErrors[id] = error.localizedDescription
+            }
         }
     }
 

@@ -14,10 +14,20 @@ enum RecoverySelfTest {
         await fixture.interruptNextMessage()
         await store.send()
         guard let original = store.pending else { throw PrototypeSelfTest.Failure(name: "Interrupted request missing") }
+        let sentBeforeRefresh = await fixture.requests.count
+        await store.refresh()
+        let sentAfterRefresh = await fixture.requests.count
+        try PrototypeSelfTest.require(store.connectionLabel == "Test runtime" && store.connectionError == nil
+                                      && store.conversationError == "Review the reply and tasks before continuing."
+                                      && store.pending?.messageID == original.messageID && !store.canSend
+                                      && sentBeforeRefresh == sentAfterRefresh,
+                                      "Reconnected pending reply gives recovery guidance without replay or stale connection claim")
+        try PrototypeSelfTest.require(PrototypeError.status(409).localizedDescription == "This request changed or is already running. Refresh and try again.",
+                                      "Task conflict guidance remains independent of message recovery")
         let reopened = try PrototypeStore(configuration: configuration, client: client)
         await reopened.refresh()
         await reopened.retry()
-        try PrototypeSelfTest.require(reopened.conversationError == PrototypeError.status(409).localizedDescription
+        try PrototypeSelfTest.require(reopened.conversationError == PrototypeError.replyUnconfirmed.localizedDescription
                                       && reopened.pending?.messageID == original.messageID && !reopened.canSend,
                                       "Interrupted 409 remains identifiable after restart")
         let originalTasks = Set(reopened.visibleTasks.map(\.id))

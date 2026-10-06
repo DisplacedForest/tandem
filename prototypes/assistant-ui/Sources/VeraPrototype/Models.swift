@@ -1,12 +1,13 @@
 import Foundation
 
 enum PrototypeError: Error, LocalizedError {
-    case configuration, unavailable, invalidResponse, status(Int), persistence, artifact
+    case configuration, unavailable, invalidResponse, status(Int), persistence, artifact, replyUnconfirmed
 
     var errorDescription: String? {
         switch self {
         case .configuration: return "Choose a separate data folder and a loopback prototype address."
         case .unavailable: return "The prototype runtime isn't connected."
+        case .replyUnconfirmed: return "Review the reply and tasks before continuing."
         case .invalidResponse: return "The runtime returned an unreadable response."
         case .status(409): return "This request changed or is already running. Refresh and try again."
         case .status: return "The runtime couldn't complete this request."

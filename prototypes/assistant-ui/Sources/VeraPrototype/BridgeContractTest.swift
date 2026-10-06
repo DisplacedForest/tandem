@@ -54,7 +54,7 @@ enum BridgeContractTest {
         let originalTaskIDs = Set(store.visibleTasks.map(\.id))
         await store.retry()
         try PrototypeSelfTest.require(store.pending?.messageID == original.messageID && !store.canSend
-                                      && store.conversationError == PrototypeError.status(409).localizedDescription,
+                                      && store.conversationError == PrototypeError.replyUnconfirmed.localizedDescription,
                                       "Interrupted turn returns 409 and retains original request")
         try PrototypeSelfTest.require(!store.canAbandonReply, "Recovery needs explicit inspection")
         await store.reviewUnconfirmedReply()
