@@ -36,9 +36,20 @@ final class ConfigStore: ObservableObject {
     @Published var showOnboarding: Bool
     @Published var nativeSettings: NativeChatSettings
     @Published private var nativeAPIKeys: [String: String]
-    @Published var visionBridgeAPIKey: String
+    @Published var visionBridgeAPIKey: String {
+        didSet {
+            if oldValue != visionBridgeAPIKey { queueCredential(visionBridgeAPIKey, for: Self.visionBridgeCredentialID) }
+        }
+    }
+    @Published private(set) var credentialError: String?
     @Published private(set) var capabilityTools: NativeCapabilityToolCatalog
     private let credentialStore: any NativeCredentialStore
+    private let writeConfiguration: ([String: Any]) throws -> Void
+    private var savedCredentials: [String: String]
+    private var unavailableCredentials: Set<String>
+    private var pendingCredentials: [String: String] = [:]
+    private var legacyCredentials: [String: String] = [:]
+    private var blockedLegacyMigrationID: String?
 
     static let visionBridgeCredentialID = "vision-bridge"
 
@@ -50,31 +61,38 @@ final class ConfigStore: ObservableObject {
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
     ]
 
-    init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore()) {
-        let loaded = ConfigFile.read()
+    init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
+         readConfiguration: () -> [String: Any] = { ConfigFile.read() },
+         writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
+        let loaded = readConfiguration()
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
-        for profile in settings.profiles {
-            if let value = credentialStore.value(for: profile.id), !value.isEmpty {
-                keys[profile.id] = value
-            }
-        }
-        if let profile = settings.activeProfile,
-           keys[profile.id] == nil,
-           let legacy = loaded["model_api_key"] as? String,
-           !legacy.isEmpty {
-            keys[profile.id] = legacy
+        var unavailable: Set<String> = []
+        for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]) {
+            do { if let value = try credentialStore.read(for: id) { keys[id] = value } }
+            catch { unavailable.insert(id) }
         }
         raw = loaded
         nativeSettings = settings
         nativeAPIKeys = keys
-        visionBridgeAPIKey = credentialStore.value(for: Self.visionBridgeCredentialID) ?? ""
+        savedCredentials = keys
+        unavailableCredentials = unavailable
+        visionBridgeAPIKey = keys[Self.visionBridgeCredentialID] ?? ""
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
         self.credentialStore = credentialStore
+        self.writeConfiguration = writeConfiguration
+        credentialError = unavailable.isEmpty ? nil : NativeCredentialError.read.localizedDescription
         showOnboarding = !settings.hasValidConfiguration
             && settings.onboardingState != .skipped
             && settings.onboardingState != .complete
-        try? save()
+        if let profile = settings.activeProfile, keys[profile.id] == nil,
+           let legacy = loaded["model_api_key"] as? String, !legacy.isEmpty {
+            if unavailable.contains(profile.id) { blockedLegacyMigrationID = profile.id }
+            else {
+                nativeAPIKeys[profile.id] = legacy
+                legacyCredentials[profile.id] = legacy
+            }
+        }
     }
 
     subscript(_ key: String) -> String {
@@ -108,13 +126,38 @@ final class ConfigStore: ObservableObject {
     }
 
     /// Persist the current values to disk.
+    private func queueCredential(_ value: String, for id: String) {
+        if !unavailableCredentials.contains(id), value == (savedCredentials[id] ?? "") {
+            pendingCredentials.removeValue(forKey: id)
+        } else { pendingCredentials[id] = value }
+        legacyCredentials.removeValue(forKey: id)
+        if id == blockedLegacyMigrationID { blockedLegacyMigrationID = nil }
+    }
+
     func save() throws {
-        for profile in nativeSettings.profiles {
-            try credentialStore.set(nativeAPIKeys[profile.id], for: profile.id)
+        do {
+            if blockedLegacyMigrationID != nil { throw NativeCredentialError.read }
+            for id in pendingCredentials.keys.sorted() {
+                guard let value = pendingCredentials[id] else { continue }
+                try credentialStore.set(value.isEmpty ? nil : value, for: id)
+                savedCredentials[id] = value
+                unavailableCredentials.remove(id)
+                pendingCredentials.removeValue(forKey: id)
+            }
+            for id in legacyCredentials.keys.sorted() {
+                guard let value = legacyCredentials[id] else { continue }
+                try credentialStore.addIfAbsent(value, for: id)
+                savedCredentials[id] = value
+                legacyCredentials.removeValue(forKey: id)
+            }
+            credentialError = unavailableCredentials.isEmpty ? nil : NativeCredentialError.read.localizedDescription
+        } catch {
+            credentialError = (error as? NativeCredentialError)?.localizedDescription ?? NativeCredentialError.write.localizedDescription
+            throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
-        try credentialStore.set(visionBridgeAPIKey, for: Self.visionBridgeCredentialID)
-        raw = nativeSettings.merging(into: raw)
-        try ConfigFile.write(raw)
+        let merged = nativeSettings.merging(into: raw)
+        try writeConfiguration(merged)
+        raw = merged
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
     }
 
@@ -219,7 +262,9 @@ final class ConfigStore: ObservableObject {
             },
             set: { value in
                 guard let id = self.nativeSettings.activeProfileID else { return }
+                guard value != (self.nativeAPIKeys[id] ?? "") else { return }
                 self.nativeAPIKeys[id] = value
+                self.queueCredential(value, for: id)
             })
     }
 

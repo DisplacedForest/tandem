@@ -353,6 +353,12 @@ final class SelfTestWebClient: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["VERA_CREDENTIAL_SELFTEST"] == "1" {
+            do { try NativeCredentialLifecycleFixture.run(); exit(0) }
+            catch { print("NATIVE CREDENTIAL LIFECYCLE FIXTURE FAILED: \(error)"); exit(1) }
+        }
+        do { try NativeCredentialLifecycleFixture.run() }
+        catch { print("NATIVE CREDENTIAL LIFECYCLE FIXTURE FAILED: \(error)"); exit(1) }
         if let raw = ProcessInfo.processInfo.environment["VERA_SESSION_RESTART_FIXTURE"] {
             do { try await NativeSessionHTTPFixture.restart(raw); exit(0) }
             catch { print("SESSION_RESTART_ERROR: \(error)"); exit(1) }

@@ -359,48 +359,84 @@ enum NativeChatToolCatalog {
     }
 }
 
+enum NativeCredentialError: Error, LocalizedError {
+    case read, write, removal, migrationConflict
+
+    var errorDescription: String? {
+        switch self {
+        case .read: return "A saved API key couldn't be read. It remains unchanged in Keychain."
+        case .write: return "The API key couldn't be saved. Your edit is still here; try Save again."
+        case .removal: return "The API key couldn't be removed. Try Save again."
+        case .migrationConflict: return "A saved API key already exists. Reopen settings before changing it."
+        }
+    }
+}
+
+struct NativeKeychainOperations {
+    var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemCopyMatching($0, $1) }
+    var update: (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) }
+    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemAdd($0, $1) }
+    var delete: (CFDictionary) -> OSStatus = { SecItemDelete($0) }
+}
+
 protocol NativeCredentialStore {
+    func read(for profileID: String) throws -> String?
     func value(for profileID: String) -> String?
     func set(_ value: String?, for profileID: String) throws
+    func addIfAbsent(_ value: String, for profileID: String) throws
+}
+
+extension NativeCredentialStore {
+    func value(for profileID: String) -> String? { try? read(for: profileID) }
 }
 
 struct KeychainNativeCredentialStore: NativeCredentialStore {
     var allowsInteraction = true
+    var operations = NativeKeychainOperations()
     private let service = "org.displacedforest.vera.native-chat"
 
-    func value(for profileID: String) -> String? {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: profileID,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    private func query(for profileID: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: profileID]
+    }
+
+    func read(for profileID: String) throws -> String? {
+        var query = query(for: profileID)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         if !allowsInteraction {
             let context = LAContext()
             context.interactionNotAllowed = true
             query[kSecUseAuthenticationContext as String] = context
         }
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = operations.read(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.read }
+        return value
     }
 
     func set(_ value: String?, for profileID: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: profileID,
-        ]
-        SecItemDelete(query as CFDictionary)
-        guard let value, !value.isEmpty else { return }
-        var item = query
-        item[kSecValueData as String] = Data(value.utf8)
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        let query = query(for: profileID)
+        guard let value, !value.isEmpty else {
+            let status = operations.delete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw NativeCredentialError.removal }
+            return
         }
+        let attributes = [kSecValueData as String: Data(value.utf8)]
+        let status = operations.update(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound { try addIfAbsent(value, for: profileID) }
+        else if status != errSecSuccess { throw NativeCredentialError.write }
+    }
+
+    func addIfAbsent(_ value: String, for profileID: String) throws {
+        var item = query(for: profileID)
+        item[kSecValueData as String] = Data(value.utf8)
+        let status = operations.add(item as CFDictionary, nil)
+        if status == errSecDuplicateItem { throw NativeCredentialError.migrationConflict }
+        guard status == errSecSuccess else { throw NativeCredentialError.write }
     }
 }
 

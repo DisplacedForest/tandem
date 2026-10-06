@@ -79,6 +79,12 @@ Research uses the existing configured model and web search integrations. `use_ra
 
 Read the saved report and source list from `result` on `GET /tasks/{task_id}`. Progress events include numbered source titles without full source text. Report checks require numeric citations to refer to gathered sources; they do not verify every claim. If there are no usable sources or the model returns an unusable report, the task waits for a decision and preserves its evidence. After resolving the cause, submit `POST /tasks/{task_id}/decision` with the current `decision_id`, a new `idempotency_key`, and `"reply": {"action": "retry"}`. Cancel remains available through the normal task endpoint. A restart can repeat an interrupted read-only search or model call, but committed steps and their source events are not repeated. `POST /research` retains its existing blocking response contract for existing API callers. Native foreground chat no longer advertises it.
 
+### Saved API keys
+
+Opening Vera and saving unrelated settings leave existing Keychain items unchanged. Explicit key edits update the existing item in place; clearing an edited field removes only that credential. A denied read does not mean a key is missing and never authorizes deletion. Failed edits remain available to retry, with a visible error in endpoint and vision-bridge settings. Legacy configuration keys migrate only on Save after a confirmed missing Keychain item; migration conflicts preserve the original configuration.
+
+This preserves Keychain item continuity. Ad-hoc app builds still have changing code identities, so this change alone does not remove prompts caused by replacing the signed app.
+
 ### Native session recovery
 
 The composer offers Chat and Continuous per conversation. Chat serializes that conversation's answers, and a queued follow-up captures its completed predecessor context when it starts. Continuous accepts independent turns with completed context and clearly marked prior unfinished requests. Switching modes affects future sends; existing queued work keeps its order and mode.

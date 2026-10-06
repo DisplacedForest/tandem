@@ -113,6 +113,9 @@ struct NativeEndpointEditor: View {
                     SecureField("Optional", text: config.apiKeyBinding())
                         .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
                 }
+                if let error = config.credentialError {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+                }
                 Text("API keys are saved in your Mac keychain. Use the OpenAI-compatible API root ending in /v1.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 if let override = config.envOverride("model_base") {
@@ -338,6 +341,9 @@ struct NativeVisionBridgeEditor: View {
             LabeledContent("API key") {
                 SecureField("Optional", text: $config.visionBridgeAPIKey)
                     .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+            }
+            if let error = config.credentialError {
+                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
             }
             if config.nativeSettings.visionBridge.isConfigured {
                 Label("The bridge is configured. Unsupported attachments are described here, with disclosure on every bridged turn.",
