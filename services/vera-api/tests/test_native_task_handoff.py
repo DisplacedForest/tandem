@@ -104,7 +104,7 @@ async def fixture(tmp_path, monkeypatch, scenario):
     async def provider(request: Request):
         body = await request.json()
         assert request.headers.get('authorization') == 'Bearer synthetic-fixture-key'
-        if body.get('tools'):
+        if body.get('tools') or body.get('max_tokens') != 1024:
             foreground_calls.append(body)
             last = body['messages'][-1]
             if last['role'] == 'tool':

@@ -32,11 +32,18 @@ extension LocalChatRepository: NativeTaskRepository {
         struct Intent: Encodable {
             let userMessageID: UUID
             let engine: NativeTaskEngineIdentity
-            let request: NativeResearchTaskRequest
         }
         let intentKey = nativeTaskDigest(try nativeTaskEncoded(
-            Intent(userMessageID: origin.userMessageID, engine: engine, request: request)))
+            Intent(userMessageID: origin.userMessageID, engine: engine)))
         return try database.write { db in
+            if let bytes = try Data.fetchOne(db, sql: """
+                SELECT reference_json FROM native_task_outbox WHERE conversation_id = ?
+                AND json_extract(CAST(reference_json AS TEXT), '$.origin.userMessageID') = ? ORDER BY rowid LIMIT 1
+                """, arguments: [origin.conversationID, origin.userMessageID.uuidString]) {
+                let existing = try JSONDecoder().decode(NativeTaskReference.self, from: bytes)
+                guard existing.engine == engine else { throw NativeTaskError.engineChanged }
+                return existing
+            }
             if let row = try Row.fetchOne(db, sql: "SELECT reference_json FROM native_task_outbox WHERE intent_key = ?",
                                           arguments: [intentKey]) {
                 guard let bytes: Data = row["reference_json"] else { throw NativeTaskError.persistenceUnavailable }

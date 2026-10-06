@@ -1348,7 +1348,7 @@ final class ChatStore: ObservableObject {
         let scopes = resolvePromptScopes(conversationID: id)
         let turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
-            profile: turnProfile(for: user.routeNote), enabledToolIDs: nativeEnabledToolIDs,
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: NativeTurnToolAuthority(text).filter(nativeEnabledToolIDs),
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: conversation.mode))
@@ -1415,7 +1415,8 @@ final class ChatStore: ObservableObject {
 
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnCurrent(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
-        var allowed = NativeTaskTools.enabledIDs(turn.enabledToolIDs.intersection(nativeEnabledToolIDs),
+        let authority = NativeTurnToolAuthority(turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "")
+        var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(nativeEnabledToolIDs)),
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
@@ -1464,8 +1465,9 @@ final class ChatStore: ObservableObject {
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
+        let authority = NativeTurnToolAuthority(turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "")
         var enabledToolIDs = capabilityProfile.supportsTools
-            ? NativeTaskTools.enabledIDs(turn.enabledToolIDs.intersection(nativeEnabledToolIDs), hasEngine: nativeTaskEngine.base != nil,
+            ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(nativeEnabledToolIDs)), hasEngine: nativeTaskEngine.base != nil,
                                          hasRepository: nativeTaskRepository != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
@@ -1608,7 +1610,7 @@ final class ChatStore: ObservableObject {
                     contracts: contracts))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" +
-                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Start background research only when the user explicitly asks for research or an investigation. Never wait for its report or claim it is complete. Other accepted turns may still be working; this message does not cancel or change them.",
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 for try await snapshot in toolLoop.stream(

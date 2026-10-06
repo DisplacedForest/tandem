@@ -14,7 +14,7 @@ enum NativeTaskTools {
                            profile: NativeTaskProfileBinding?,
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         NativeToolDefinition(id: toolID, name: toolName, title: "Start background research",
-            description: "Start a research task that continues in the background. Specify the objective and deliverables, then acknowledge that research has started. The report arrives separately; do not wait for it or claim completion.",
+            description: "Start one research task only when the current user message explicitly requests research. Earlier conversation requests do not authorize another task. Specify the objective and deliverables, then acknowledge briefly. Progress and the report appear on the task card. Do not repeat task status on unrelated turns, expose internal identifiers, wait for the report, or claim completion.",
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
                 "required": .array([.string("worker_type"), .string("objective"), .string("deliverables")]),
@@ -42,12 +42,23 @@ enum NativeTaskTools {
                 await didSave(reference)
                 let message: String
                 switch reference.deliveryState {
-                case .accepted: message = "Research has started. You can keep chatting while the report is prepared."
+                case .accepted: message = "Research has started."
                 case .pending: message = "The research request is saved and waiting to connect."
                 case .rejected: message = reference.lastDeliveryError ?? "The research engine couldn't accept this request."
                 }
-                return .object(["message": .string(message), "task_reference": .string(reference.id.uuidString),
-                                "started": .bool(reference.deliveryState == .accepted)])
+                if reference.cancelRequested || reference.snapshot?.state == .canceled {
+                    return .object(["message": .string("This message's research request was canceled."), "started": .bool(false)])
+                }
+                if reference.snapshot?.state == .completed {
+                    return .object(["message": .string("This message's research report is already available on its card."), "started": .bool(false)])
+                }
+                if let state = reference.snapshot?.state, [.blocked, .needsDecision, .failed].contains(state) {
+                    return .object(["message": .string("This research request could not continue. Its card has the next step."), "started": .bool(false)])
+                }
+                if reference.deliveryState == .rejected {
+                    return .object(["error": .string(message), "started": .bool(false)])
+                }
+                return .object(["message": .string(message), "started": .bool(reference.deliveryState == .accepted)])
             })
     }
 }

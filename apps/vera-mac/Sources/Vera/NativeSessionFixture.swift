@@ -66,6 +66,7 @@ enum NativeSessionFixture {
     }
 
     static func run() async throws {
+        try await NativeTurnAuthorityFixture.run()
         try await continuous()
         try await serialChat()
         try await queueBound()
