@@ -17,7 +17,10 @@ The bridge binds only `127.0.0.1`. Choose a fresh private data directory. The UI
 
 ```sh
 mise run pi-prototype-test
+mise run pi-integration-test
 ```
+
+The integration task builds the separate UI and runs headless HTTP consumer checks against a fresh mock bridge. It kills the bridge after durable acceptance, reopens the same data, and verifies explicit UI recovery without resubmitting the accepted task. It also verifies approval, completion, output files, task-specific Stop and focused chat isolation. No visible window is launched.
 
 A message beginning `/task ` delegates a synthetic background task. Other text produces a mock foreground reply. Approval is required before the worker starts. A second foreground message uses an independent process while the worker runs. Focused mode has no delegation tool.
 

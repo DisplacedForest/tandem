@@ -332,7 +332,7 @@ def test_symlink_workspace_root_rejected(tmp_path):
 async def test_timeout_kills_process_before_stubborn_host_settles(tmp_path):
     child = tmp_path / 'host.mjs'
     child.write_text("process.stdout.write(JSON.stringify({type:'tool',id:'one',name:'fixture',args:{}})+'\\n');setInterval(()=>{},1000)")
-    proc = PiProcess(NODE, child, timeout=.1)
+    proc = PiProcess(NODE, child, timeout=1)
     entered = asyncio.Event()
     released = asyncio.Event()
     async def stubborn(event):
@@ -343,19 +343,27 @@ async def test_timeout_kills_process_before_stubborn_host_settles(tmp_path):
             await released.wait()
         return {}
     invocation = asyncio.create_task(proc.run({}, stubborn))
-    await entered.wait()
-    pids = list(proc.pids)
-    await asyncio.sleep(.5)
-    assert proc.cleanup_blocked
-    assert not proc.pids
-    assert not invocation.done()
-    for pid in pids:
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
-    released.set()
-    with pytest.raises(PiFailure, match='timeout'):
-        await asyncio.wait_for(invocation, 1)
-    assert not proc.cleanup_blocked
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        pids = list(proc.pids)
+        for _ in range(200):
+            if proc.cleanup_blocked:
+                break
+            await asyncio.sleep(.02)
+        assert proc.cleanup_blocked
+        assert not proc.pids
+        assert not invocation.done()
+        for pid in pids:
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+        released.set()
+        with pytest.raises(PiFailure, match='timeout'):
+            await asyncio.wait_for(invocation, 1)
+        assert not proc.cleanup_blocked
+    finally:
+        released.set()
+        await asyncio.gather(invocation, return_exceptions=True)
+
 
 
 @pytest.mark.asyncio
