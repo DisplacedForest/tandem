@@ -176,3 +176,29 @@ async def test_actual_admission_timeout_remains_recoverable(native_task, monkeyp
         await relay.caller(task, 'plan', 'initial')([{'role': 'user', 'content': 'Question'}])
     await asyncio.sleep(0.01)
     assert not relay._pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('managed', [False, True])
+async def test_delivered_generation_timeout_is_known_and_rejects_late_success(native_task, monkeypatch, managed):
+    from routers import inference_admission as admission
+    store, task, binding = native_task
+    monkeypatch.setattr(admission, '_policy', admission.AdmissionPolicy(store, admission.Settings(
+        background_seconds=0.08, cleanup_seconds=0.01, poll_seconds=0.005)))
+    await relay.ready(task['id'], binding)
+
+    async def short_admission(base, operation, seconds, priority):
+        return await operation(0.08)
+
+    running = asyncio.create_task(relay.caller(task, 'synthesize', 'initial', None if managed else short_admission)(
+        [{'role': 'user', 'content': 'Question'}]))
+    while task['id'] not in relay._pending:
+        await asyncio.sleep(0)
+    wire = await relay.ready(task['id'], binding)
+    with pytest.raises(relay.NativeGenerationFailed, match='request_timeout'):
+        await running
+    assert not relay._pending
+    with pytest.raises(HTTPException) as error:
+        await relay.result(task['id'], relay.GenerationResponse(job_id=wire['id'], binding_id=binding.id,
+            generation=task['generation'], messages_digest=wire['messages_digest'], response='Late answer'))
+    assert error.value.status_code == 409

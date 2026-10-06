@@ -72,6 +72,7 @@ class PendingGeneration:
     wire: dict[str, Any]
     deadline: float
     outcome: asyncio.Future[GenerationResponse]
+    delivered: bool = False
 
 
 _presence: dict[str, tuple[dict[str, str], float]] = {}
@@ -119,6 +120,7 @@ async def ready(task_id: str, body: NativeBinding) -> Any:
     remaining = pending.deadline - time.monotonic()
     if _pending.get(task_id) is not pending or remaining <= 0 or pending.outcome.done():
         return Response(status_code=204)
+    pending.delivered = True
     return {**pending.wire, 'deadline_seconds': remaining}
 
 
@@ -165,7 +167,10 @@ def caller(task: dict[str, Any], phase: str, attempt: str,
         if run is None:
             from .inference_admission import run
 
+        issued: PendingGeneration | None = None
+
         async def operation(seconds: float) -> str:
+            nonlocal issued
             presence = _presence.get(task['id'])
             if presence is None or presence[1] <= time.monotonic():
                 raise NativeExecutorUnavailable()
@@ -175,6 +180,7 @@ def caller(task: dict[str, Any], phase: str, attempt: str,
                       'phase': phase, 'attempt': f'{attempt}-{ordinal}', 'messages': messages,
                       'messages_digest': messages_digest(messages), 'generation': task['generation']},
                 deadline=time.monotonic() + min(seconds, 90), outcome=asyncio.get_running_loop().create_future())
+            issued = pending
             _pending[task['id']] = pending
             try:
                 while time.monotonic() < pending.deadline:
@@ -187,6 +193,8 @@ def caller(task: dict[str, Any], phase: str, attempt: str,
                             raise NativeGenerationFailed(response.failure)
                         return response.response or ''
                     await asyncio.sleep(0.05)
+                if pending.delivered:
+                    raise NativeGenerationFailed('request_timeout')
                 raise NativeExecutorUnavailable()
             finally:
                 if _pending.get(task['id']) is pending:
@@ -197,6 +205,8 @@ def caller(task: dict[str, Any], phase: str, attempt: str,
         try:
             return await run(binding.admission_base, operation, 90, priority='background')
         except TimeoutError:
+            if issued is not None and issued.delivered:
+                raise NativeGenerationFailed('request_timeout') from None
             raise NativeExecutorUnavailable() from None
         except RuntimeError as error:
             from .inference_admission import AdmissionUnavailable

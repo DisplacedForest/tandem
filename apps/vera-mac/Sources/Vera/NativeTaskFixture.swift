@@ -120,6 +120,24 @@ enum NativeTaskFixture {
         }
         try require(try recovered.reserveTaskGeneration(referenceID: reference.id, job: job("initial-1"))
             == .unavailable("previous_request_uncertain"), "Uncertain calls remain spent")
+        do {
+            try recovered.finishTaskGeneration(referenceID: reference.id, job: job("initial-1"), response: "Late", failure: nil)
+            throw Failure.assertion("Expired success must be rejected")
+        } catch is NativeTaskHTTPError {}
+        do {
+            try recovered.finishTaskGeneration(referenceID: reference.id,
+                job: job("initial-1", [NativeTaskGenerationMessage(role: "user", content: "Changed")]),
+                response: nil, failure: "request_timeout")
+            throw Failure.assertion("Mismatched failure cannot change a reservation")
+        } catch is NativeTaskHTTPError {}
+        try recovered.finishTaskGeneration(referenceID: reference.id, job: job("initial-1"), response: nil, failure: "request_timeout")
+        let settled = try self.repository(url)
+        try require(try settled.reserveTaskGeneration(referenceID: reference.id, job: job("initial-1"))
+            == .unavailable("request_timeout"), "Known timeout survives restart without another request")
+        do {
+            try settled.finishTaskGeneration(referenceID: reference.id, job: job("initial-1"), response: "Late", failure: nil)
+            throw Failure.assertion("A terminal failure cannot become a success")
+        } catch is NativeTaskHTTPError {}
         try require(try recovered.reserveTaskGeneration(referenceID: reference.id, job: job("retry-0"))
             == .unavailable("request_limit"), "Retry cannot reset pinned budget")
         let completed = try JSONDecoder().decode(NativeTaskSnapshot.self,
@@ -211,7 +229,7 @@ enum NativeTaskFixture {
         try require(nativeTaskSeconds(started.duration(to: .now)) < 0.2, "Resistant generation cannot hold the broker")
         try await Task.sleep(for: .milliseconds(300))
         try require(try repository.reserveTaskGeneration(referenceID: saved.id, job: job)
-            == .unavailable("previous_request_uncertain"), "Late output cannot overwrite the spent reservation")
+            == .unavailable("request_timeout"), "Known timeout stays spent and late output cannot overwrite it")
     }
 
     static func lostAcknowledgmentDeletion(directory: URL, engine: NativeTaskEngineIdentity,

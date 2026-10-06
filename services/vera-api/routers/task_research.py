@@ -121,7 +121,8 @@ async def step(task: dict[str, Any]) -> StepResult:
                 data={"message": "This research task reached its saved generation limit." if error.reason == "request_limit"
                       else "This research input exceeds the task's saved input limit." if error.reason == "input_limit"
                       else "The saved model request conflicts with an earlier attempt."})
-        messages = {"provider_auth": "The saved model credential was not accepted.",
+        messages = {"request_timeout": "The model request reached its time limit.",
+                    "provider_auth": "The saved model credential was not accepted.",
                     "provider_quota": "The model provider's usage limit was reached.",
                     "credential_unavailable": "The saved model credential is unavailable.",
                     "previous_request_uncertain": "The previous model request ended without a saved response."}

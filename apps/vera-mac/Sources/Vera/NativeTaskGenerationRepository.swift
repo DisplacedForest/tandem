@@ -47,9 +47,9 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
             }
             try db.execute(sql: """
                 UPDATE native_task_generations SET state = ?, response = ?, failure = ?
-                WHERE request_id = ? AND generation_key = ? AND messages_digest = ? AND state = 'reserved' AND reserved_until >= ?
+                WHERE request_id = ? AND generation_key = ? AND messages_digest = ? AND state = 'reserved' AND (? IS NULL OR reserved_until >= ?)
                 """, arguments: [response == nil ? "failed" : "completed", response, failure,
-                                   referenceID.uuidString, job.key, job.messagesDigest, Date().timeIntervalSince1970])
+                                   referenceID.uuidString, job.key, job.messagesDigest, response, Date().timeIntervalSince1970])
             guard db.changesCount == 1 else { throw NativeTaskHTTPError.invalidResponse }
         }
     }

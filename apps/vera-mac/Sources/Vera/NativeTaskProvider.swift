@@ -54,6 +54,8 @@ struct NativeTaskProvider {
             throw CancellationError()
         } catch let error as NativeTaskGenerationFailure {
             throw error
+        } catch let error as URLError where error.code == .timedOut {
+            throw NativeTaskGenerationFailure(code: "request_timeout")
         } catch {
             throw NativeTaskGenerationFailure(code: "provider_unavailable")
         }
