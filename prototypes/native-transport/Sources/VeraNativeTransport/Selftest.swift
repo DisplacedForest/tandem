@@ -321,6 +321,8 @@ enum Selftest {
         passed("focused mode rejects delegate in transcript and response")
         try ScopeSelftest.mode()
         passed("mock permits cannot authorize live transport")
+        try ProfileMetadataSelftest.run()
+        passed("existing selected-profile metadata accepts safe readable parent without changing private grants")
         print("PASS native transport selftest \(count) groups; synthetic credentials and fixture HTTP only")
     }
 }
