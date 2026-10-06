@@ -171,8 +171,27 @@ Two host scripts cover the standing ops work, and each documents its own environ
 ```sh
 cd apps/vera-mac
 swift build -c release
-scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
+scripts/deploy.sh    # packages Vera.app and installs it to /Applications
 ```
+
+### Stable signing for local builds
+
+`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement; existing items may still need a one-time approval when changing from ad-hoc signing.
+
+Create a dedicated certificate with Apple's [Certificate Assistant](https://support.apple.com/guide/keychain-access/create-self-signed-certificates-kyca8916/mac) in Keychain Access. Choose a self-signed identity and the Code Signing certificate type, use an RSA key of at least 2048 bits, and store it in the login Keychain. Keep its private key there. Leave trust and access controls at their defaults and complete any macOS security prompt yourself. This local setup does not require setting Always Trust or exporting a private key. It does not provide Developer ID notarization or Gatekeeper distribution approval. Apple's [code-signing guide](https://developer.apple.com/library/archive/technotes/tn2206/_index.html) explains how designated requirements identify successive versions.
+
+Find the certificate's exact SHA-1 fingerprint with `security find-identity -p codesigning`. Save the nonsecret build settings as JSON at `~/.config/vera/signing.json` (or `$XDG_CONFIG_HOME/vera/signing.json`):
+
+```json
+{
+  "identity": "REPLACE_WITH_40_CHARACTER_CERTIFICATE_FINGERPRINT",
+  "keychain": "/absolute/path/to/login.keychain-db"
+}
+```
+
+`keychain` is optional; when supplied it must be an existing absolute file path. The file is parsed as data, never executed. `VERA_SIGNING_CONFIG` selects another configuration file, and `VERA_SIGNING_IDENTITY` and `VERA_SIGNING_KEYCHAIN` override its values. An explicit identity must be its exact fingerprint. Invalid configuration, missing keys and signing failures stop packaging instead of silently falling back. `VERA_SIGNING_IDENTITY=-` explicitly selects ad-hoc signing. No build command creates certificates, changes trust, unlocks Keychains, or alters key access controls.
+
+To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
 
 First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, decide whether to enable local memory, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off.
 
