@@ -14,6 +14,7 @@ actor ContractFixture {
     var interruptMessage = false
     var interruptedIDs = Set<UUID>()
     var offline = false
+    var capabilityResponse: Data?
     var originatingMessageID = UUID()
     let unrelatedOriginID = UUID()
     var taskStates: [String: String] = [:]
@@ -23,6 +24,7 @@ actor ContractFixture {
 
     func bind(_ assistant: UUID, _ conversation: UUID) { boundAssistant = assistant; boundConversation = conversation }
     func interruptNextMessage() { interruptMessage = true }
+    func advertise(_ data: Data) { capabilityResponse = data }
     func setOffline(_ value: Bool) { offline = value }
     func loseMessageReply() { failAfterAccept = true }
     func rejectNextMessage() { rejectMessage = true }
@@ -46,6 +48,7 @@ actor ContractFixture {
         let path = request.url!.path
         switch path {
         case "/assistant/capabilities":
+            if let capabilityResponse { return (capabilityResponse, 200) }
             return try response(["protocol_version": 1, "foreground": true, "worker": true, "computers": false, "transport": "mock"])
         case "/assistant/messages" where request.httpMethod == "POST":
             let body = try JSONDecoder().decode(MessageRequest.self, from: request.httpBody!)
@@ -204,6 +207,7 @@ enum PrototypeSelfTest {
             if let index = CommandLine.arguments.firstIndex(of: "--render-dir"), index + 1 < CommandLine.arguments.count {
                 try RenderTest.render(decisionRestart, directory: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true))
             }
+            try await CapabilitySelfTest.run(root: root.appendingPathComponent("capabilities"))
             try await FacadeSelfTest.run(root: root.appendingPathComponent("facade"))
             try await RecoverySelfTest.run(root: root.appendingPathComponent("recovery"))
             print("PASS: identity, navigation, drafts, scoped messages/tasks, lost-response restart retry, decision retry, Stop isolation, output paths, unavailable state")

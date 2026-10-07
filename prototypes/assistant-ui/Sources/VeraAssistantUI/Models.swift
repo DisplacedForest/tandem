@@ -57,10 +57,29 @@ struct Capabilities: Decodable, Sendable {
     let worker: Bool
     let computers: Bool
     let transport: String
+    let transportDetail: String?
+    let provider: String?
+    let model: String?
+
+    var supported: Bool {
+        guard protocolVersion == 1 else { return false }
+        switch transport {
+        case "mock": return true
+        case "cloud":
+            return transportDetail == "app-owned-openrouter" && provider == "openrouter" && model == "qwen/qwen3.8-flash"
+        default: return false
+        }
+    }
+
+    var connectionLabel: String {
+        guard supported else { return "Not connected" }
+        return transport == "mock" ? "Test runtime" : "Cloud model"
+    }
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
-        case foreground, worker, computers, transport
+        case foreground, worker, computers, transport, provider, model
+        case transportDetail = "transport_detail"
     }
 }
 

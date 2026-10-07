@@ -73,10 +73,10 @@ final class PrototypeStore: ObservableObject {
         let linkedIDs = Set(messages.filter { UUID(uuidString: $0.id) == pending.messageID }.flatMap(\.taskIDs))
         return visibleTasks.filter { $0.payload.originatingMessageID == pending.messageID || linkedIDs.contains($0.id) }
     }
-    var canSend: Bool { capabilities?.foreground == true && connectionError == nil && !busyConversations.contains(conversation.id) && pending == nil }
+    var canSend: Bool { capabilities?.supported == true && capabilities?.foreground == true && connectionError == nil && !busyConversations.contains(conversation.id) && pending == nil }
     var connectionLabel: String {
-        guard capabilities != nil, connectionError == nil else { return "Not connected" }
-        return ["mock", "native-mock", "app-owned-mock"].contains(capabilities?.transport ?? "") ? "Test runtime" : "Connected"
+        guard let capabilities, connectionError == nil else { return "Not connected" }
+        return capabilities.connectionLabel
     }
 
     private static func validateStateURL(_ url: URL) throws {
@@ -116,7 +116,7 @@ final class PrototypeStore: ObservableObject {
         let version = refreshVersion
         do {
             let caps = try await client.capabilities()
-            guard caps.protocolVersion == 1 else { throw PrototypeError.invalidResponse }
+            guard caps.supported else { throw PrototypeError.invalidResponse }
             capabilities = caps
             async let newTasks = client.tasks()
             async let newMessages = client.messages(id)
@@ -144,7 +144,8 @@ final class PrototypeStore: ObservableObject {
     }
 
     func retry() async {
-        guard let pending, !reviewingReply, !busyConversations.contains(pending.conversationID), connectionError == nil else { return }
+        guard let pending, capabilities?.supported == true, capabilities?.foreground == true,
+              !reviewingReply, !busyConversations.contains(pending.conversationID), connectionError == nil else { return }
         await deliver(pending)
     }
 
@@ -158,7 +159,7 @@ final class PrototypeStore: ObservableObject {
         defer { reviewingReply = false }
         do {
             let caps = try await client.capabilities()
-            guard caps.protocolVersion == 1 else { throw PrototypeError.invalidResponse }
+            guard caps.supported else { throw PrototypeError.invalidResponse }
             async let newTasks = client.tasks()
             async let newMessages = client.messages(request.conversationID)
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
