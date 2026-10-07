@@ -75,6 +75,11 @@ enum BridgeContractTest {
 
     static func recover(configuration: PrototypeConfiguration) async throws {
         let store = try PrototypeStore(configuration: configuration)
+        _ = try await recovery(store: store)
+        print("PASS: interrupted real bridge 409, explicit inspection and abandonment, archived identity, original tasks retained, explicit fresh message")
+    }
+
+    static func recovery(store: PrototypeStore) async throws -> Data {
         guard store.saved.pending.count == 1, let original = store.pending, original.mode == "assistant" else {
             throw PrototypeSelfTest.Failure(name: "Recovery requires one pending assistant message")
         }
@@ -82,6 +87,7 @@ enum BridgeContractTest {
         try PrototypeSelfTest.require(store.capabilities?.transport == "mock" && store.connectionError == nil,
                                       "Recovery requires the isolated mock bridge")
         let originalTaskIDs = Set(store.visibleTasks.map(\.id))
+        try PrototypeSelfTest.require(!originalTaskIDs.isEmpty, "Recovery retains accepted work")
         await store.retry()
         try PrototypeSelfTest.require(store.pending?.messageID == original.messageID && !store.canSend
                                       && store.conversationError == PrototypeError.replyUnconfirmed.localizedDescription,
@@ -94,12 +100,14 @@ enum BridgeContractTest {
                                       && store.saved.abandonedReplies?.last?.messageID == original.messageID,
                                       "Explicit abandonment preserves original identity and unlocks composer")
         await store.refresh()
-        try PrototypeSelfTest.require(Set(store.visibleTasks.map(\.id)) == originalTaskIDs,
+        try PrototypeSelfTest.require(store.connectionError == nil && Set(store.visibleTasks.map(\.id)) == originalTaskIDs,
                                       "Abandonment preserves original tasks without new delegation")
-        let reopened = try PrototypeStore(configuration: configuration)
+        let reopened = try PrototypeStore(configuration: store.configuration, client: store.client)
         await reopened.refresh()
-        try PrototypeSelfTest.require(reopened.pending == nil && reopened.saved.abandonedReplies?.last?.messageID == original.messageID,
+        try PrototypeSelfTest.require(reopened.connectionError == nil && reopened.saved.assistantID == store.saved.assistantID
+                                      && reopened.saved.assistant.id == store.saved.assistant.id && reopened.pending == nil && reopened.saved.abandonedReplies?.last?.messageID == original.messageID,
                                       "Abandoned identity persists across restart")
+        let previousMessageIDs = Set(reopened.messages.map(\.id))
         reopened.setDraft("What is the current prototype status?")
         await reopened.send()
         await reopened.refresh()
@@ -107,7 +115,17 @@ enum BridgeContractTest {
                                       "Explicit fresh message succeeds after interruption")
         try PrototypeSelfTest.require(Set(reopened.visibleTasks.map(\.id)) == originalTaskIDs,
                                       "Fresh status message does not duplicate interrupted tasks")
-        print("PASS: interrupted real bridge 409, explicit inspection and abandonment, archived identity, original tasks retained, explicit fresh message")
+        let freshMessages = reopened.messages.filter { $0.role == "user" && !previousMessageIDs.contains($0.id) }
+        try PrototypeSelfTest.require(freshMessages.count == 1 && UUID(uuidString: freshMessages[0].id) != original.messageID,
+                                      "Recovery sends exactly one new message identity")
+        return try JSONSerialization.data(withJSONObject: [
+            "assistant_id": reopened.saved.assistantID.uuidString.lowercased(),
+            "conversation_id": reopened.saved.assistant.id.uuidString.lowercased(),
+            "archived_message_id": original.messageID.uuidString.lowercased(),
+            "fresh_message_id": freshMessages[0].id,
+            "original_task_ids": originalTaskIDs.sorted(), "tasks_unchanged": true,
+            "archived_on_reopen": true, "fresh_reply": true
+        ], options: [.sortedKeys])
     }
 
     private static func awaitTask(_ store: PrototypeStore, state: String) async throws -> TaskSnapshot {

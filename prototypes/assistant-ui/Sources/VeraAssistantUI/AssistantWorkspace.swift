@@ -14,6 +14,10 @@ public final class AssistantWorkspace {
 
     public var assistantID: UUID { store.saved.assistantID }
 
+    public func verifyRecovery() async throws -> Data {
+        try await BridgeContractTest.recovery(store: store)
+    }
+
     public func verifyWorkflow() async throws -> Data {
         try await BridgeContractTest.workflow(store: store, requireActiveWorker: true)
     }
