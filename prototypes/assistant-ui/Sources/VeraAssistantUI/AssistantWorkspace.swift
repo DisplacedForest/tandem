@@ -14,8 +14,8 @@ public final class AssistantWorkspace {
 
     public var assistantID: UUID { store.saved.assistantID }
 
-    public func verifyRecovery() async throws -> Data {
-        try await BridgeContractTest.recovery(store: store)
+    public func verifyRecovery(requireFreshReply: Bool = true) async throws -> Data {
+        try await BridgeContractTest.recovery(store: store, requireFreshReply: requireFreshReply)
     }
 
     public func verifyWorkflow() async throws -> Data {

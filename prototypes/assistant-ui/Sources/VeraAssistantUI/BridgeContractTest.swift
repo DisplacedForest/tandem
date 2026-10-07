@@ -79,7 +79,7 @@ enum BridgeContractTest {
         print("PASS: interrupted real bridge 409, explicit inspection and abandonment, archived identity, original tasks retained, explicit fresh message")
     }
 
-    static func recovery(store: PrototypeStore) async throws -> Data {
+    static func recovery(store: PrototypeStore, requireFreshReply: Bool = true) async throws -> Data {
         guard store.saved.pending.count == 1, let original = store.pending, original.mode == "assistant" else {
             throw PrototypeSelfTest.Failure(name: "Recovery requires one pending assistant message")
         }
@@ -107,6 +107,17 @@ enum BridgeContractTest {
         try PrototypeSelfTest.require(reopened.connectionError == nil && reopened.saved.assistantID == store.saved.assistantID
                                       && reopened.saved.assistant.id == store.saved.assistant.id && reopened.pending == nil && reopened.saved.abandonedReplies?.last?.messageID == original.messageID,
                                       "Abandoned identity persists across restart")
+        try PrototypeSelfTest.require(Set(reopened.visibleTasks.map(\.id)) == originalTaskIDs,
+                                      "Reopen preserves original task identities")
+        if !requireFreshReply {
+            return try JSONSerialization.data(withJSONObject: [
+                "assistant_id": reopened.saved.assistantID.uuidString.lowercased(),
+                "conversation_id": reopened.saved.assistant.id.uuidString.lowercased(),
+                "archived_message_id": original.messageID.uuidString.lowercased(),
+                "original_task_ids": originalTaskIDs.sorted(), "tasks_unchanged": true,
+                "archived_on_reopen": true, "fresh_reply": false, "fresh_send_attempted": false
+            ], options: [.sortedKeys])
+        }
         let previousMessageIDs = Set(reopened.messages.map(\.id))
         reopened.setDraft("What is the current prototype status?")
         await reopened.send()
@@ -124,7 +135,7 @@ enum BridgeContractTest {
             "archived_message_id": original.messageID.uuidString.lowercased(),
             "fresh_message_id": freshMessages[0].id,
             "original_task_ids": originalTaskIDs.sorted(), "tasks_unchanged": true,
-            "archived_on_reopen": true, "fresh_reply": true
+            "archived_on_reopen": true, "fresh_reply": true, "fresh_send_attempted": true
         ], options: [.sortedKeys])
     }
 

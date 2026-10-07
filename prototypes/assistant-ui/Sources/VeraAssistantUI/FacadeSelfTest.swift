@@ -135,22 +135,31 @@ enum FacadeSelfTest {
         let json = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
         try PrototypeSelfTest.require(Set(json.keys).isSubset(of: ["assistantID", "assistant", "conversations", "pending", "abandonedReplies", "decisions", "endpoint", "runtimeIdentity"]),
                                       "Workspace persists only conversation state and runtime binding")
-        let recoveryFixture = ContractFixture()
-        let recovery = try AssistantWorkspace(dataRoot: root.appendingPathComponent("recovery"), endpoint: firstEndpoint,
-                                             workspaceRoot: outputRoot, runtimeIdentity: "recovery-runtime") { try await recoveryFixture.send($0) }
-        await recoveryFixture.bind(recovery.assistantID, recovery.store.saved.assistant.id)
-        await recovery.store.refresh()
-        recovery.store.setDraft("Continue accepted work")
-        await recoveryFixture.interruptNextMessage()
-        await recovery.store.send()
-        guard let originalID = recovery.store.pending?.messageID else { throw PrototypeError.invalidResponse }
-        let recoveryEvidence = try await recovery.verifyRecovery()
-        let recovered = try JSONSerialization.jsonObject(with: recoveryEvidence) as! [String: Any]
-        try PrototypeSelfTest.require(recovered["archived_message_id"] as? String == originalID.uuidString.lowercased()
-                                      && recovered["tasks_unchanged"] as? Bool == true, "Facade recovery retains original identity and tasks")
-        let recoveryRequests = await recoveryFixture.requests
-        try PrototypeSelfTest.require(recoveryRequests.count == 3 && recoveryRequests[0].messageID == recoveryRequests[1].messageID
-                                      && recoveryRequests[2].messageID != originalID, "Facade recovery retries original identity once then sends only explicit fresh message")
+        for requireFreshReply in [true, false] {
+            let recoveryFixture = ContractFixture()
+            let recovery = try AssistantWorkspace(dataRoot: root.appendingPathComponent(requireFreshReply ? "recovery" : "quarantined-recovery"), endpoint: firstEndpoint,
+                                                 workspaceRoot: outputRoot, runtimeIdentity: "recovery-runtime") { try await recoveryFixture.send($0) }
+            await recoveryFixture.bind(recovery.assistantID, recovery.store.saved.assistant.id)
+            await recovery.store.refresh()
+            recovery.store.setDraft("Continue accepted work")
+            await recoveryFixture.interruptNextMessage()
+            await recovery.store.send()
+            guard let originalID = recovery.store.pending?.messageID else { throw PrototypeError.invalidResponse }
+            let recoveryEvidence = try await recovery.verifyRecovery(requireFreshReply: requireFreshReply)
+            let recovered = try JSONSerialization.jsonObject(with: recoveryEvidence) as! [String: Any]
+            try PrototypeSelfTest.require(recovered["archived_message_id"] as? String == originalID.uuidString.lowercased()
+                                          && recovered["tasks_unchanged"] as? Bool == true, "Facade recovery retains original identity and tasks")
+            let recoveryRequests = await recoveryFixture.requests
+            try PrototypeSelfTest.require(recoveryRequests.count == (requireFreshReply ? 3 : 2)
+                                          && recoveryRequests[0].messageID == recoveryRequests[1].messageID,
+                                          "Facade recovery retries only the original identity before optional fresh Send")
+            try PrototypeSelfTest.require(recovered["fresh_reply"] as? Bool == requireFreshReply
+                                          && recovered["fresh_send_attempted"] as? Bool == requireFreshReply,
+                                          "Quarantined recovery makes no fresh Send and reports the boundary")
+            if requireFreshReply {
+                try PrototypeSelfTest.require(recoveryRequests[2].messageID != originalID, "Explicit fresh Send uses a new identity")
+            }
+        }
         print("PASS: reusable UI workflow, injected transport, active-worker reply, single output, Stop, focused mode, stable runtime restart and legacy rejection")
     }
 }
