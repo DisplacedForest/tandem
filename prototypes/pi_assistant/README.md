@@ -53,6 +53,18 @@ This runs Pi's actual SDK loops through private pipes to the Swift helper, whose
 
 The native experiment allows two foreground invocations and one worker invocation, four model rounds each, within a synthetic $1 accounting cap. It expires after ten minutes and never renews its own authority. Inspect the saved ledger and preserve its identity on interruption; do not reset it to bypass refusal. See the [helper contract](../native-transport/README.md). The native integration tests cover actual SDK tool calls, a second foreground reply during work, accounting, approval/decline, focused mode, pre-write cancellation, helper protocol failure, helper kill, and Python parent SIGKILL with descendant cleanup.
 
+## App-owned broker mock
+
+Run `mise run pi-app-broker-test` for the headless app-owned experiment. It builds the isolated Vera executable, injects a fixture model inside that process, and starts the Python runtime through owned private pipes. The test controller uses those pipes to authorize exact message/task, assistant, conversation, role, mode and disposable profile bindings. Python still owns task persistence, approvals, tools, effects and result delivery. No installed app, saved profile, credential, model HTTP client or paid provider is used.
+
+The private entry point is `Vera --pi-broker-mock --root <private-experiment-directory> --repo <checkout> --python <absolute-python> --node <absolute-node> --port 0`. Both standard streams must be owned pipes, not a terminal. The test controller in `app_tests/test_app_broker.py` demonstrates this contract. It receives an ephemeral HTTP capability through the private bootstrap, never through arguments, environment or saved files. All routes require that capability, which expires after ten minutes. The existing standalone UI does not yet consume this new startup channel. Its mock launcher remains a separate test mode.
+
+The app ledger retains completed model receipts and uncertain reservations across restart. It admits at most one foreground and one worker completion at a time, twelve calls total and four per message/task, within a synthetic one-dollar allowance. Cancellation, timeout, invalid output or uncertain persistence fences further calls. Duplicate completed requests return the validated saved receipt. Reopening preserves profile identity but grants no authority automatically. These are synthetic admission/accounting tests, not integration with a configured shared inference coordinator or the real paid-test spend ledger.
+
+The runtime manifest binds the selected Python/Node binaries, prototype adapter sources and npm lockfile on reopen. It is not a complete measurement of installed Python packages, Node modules, the shared engine or a sandbox against hostile same-user code. Dependencies still use the existing reviewed, pinned setup. Process tests cover actual Pi foreground/worker loops, authenticated approval, a second reply during work, one delivered artifact, Stop, app/runtime SIGKILL, restart, malicious scope/channel requests, receipt replay and owned-descendant shutdown.
+
+There is no live selector or credential-owner implementation in this path. A usable live assistant still requires the separately reviewed saved-profile provider operation inside the normal Vera app, lifecycle/UI integration, actual shared admission and spend accounting, and authorization to run the resulting app. This experiment does not resolve or bypass the separate helper's denied credential access.
+
 ## HTTP contract, version 1
 
 | Route | Contract |
@@ -65,7 +77,7 @@ The native experiment allows two foreground invocations and one worker invocatio
 | POST `/tasks/{id}/cancel` | Existing durable cancellation, plus active adapter polling and process-group termination. |
 | POST `/tasks/{id}/decision` | `decision_id`, `idempotency_key`, `reply:{"approved":true}` or false. |
 
-A task carries `worker_type:"pi_worker"` and a payload with assistant/conversation/originating-message UUIDs, objective, `workspace_ref:"task-private"`, and `transport:"mock"` or `"native-mock"`. Workspace scope is host-selected, never a model-supplied path. Decisions have `id`, `prompt`, `choices:["approve","decline"]`. Results contain `summary`, `artifacts:[{kind:"file",path,title}]`, and transport. Only `sum.py` is a granted filename. The UI must independently scope file opening to its explicitly configured workspace root.
+A task carries `worker_type:"pi_worker"` and a payload with assistant/conversation/originating-message UUIDs, objective, `workspace_ref:"task-private"`, and `transport:"mock"`, `"native-mock"` or `"app-owned-mock"`. Workspace scope is host-selected, never a model-supplied path. Decisions have `id`, `prompt`, `choices:["approve","decline"]`. Results contain `summary`, `artifacts:[{kind:"file",path,title}]`, and transport. Only `sum.py` is a granted filename. The UI must independently scope file opening to its explicitly configured workspace root.
 
 Repeated identical message IDs return the saved answer; changed content conflicts. Interrupted foreground turns require inspection instead of automatic replay. Assistant and focused conversation identities cannot be rebound to another mode or assistant. The UI owns the stable assistant UUID and conversation mapping. These identifiers are integration fields, not ordinary display copy.
 

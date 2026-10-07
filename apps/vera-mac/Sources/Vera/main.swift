@@ -3,7 +3,11 @@ import Foundation
 // Entry point. `Vera --shot <path>` renders the UI to a PNG headlessly (no window) and exits;
 // otherwise it launches the normal app.
 let arguments = CommandLine.arguments
-if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
+if arguments.dropFirst().first == "--pi-broker-selftest" {
+    await NativePiModelBrokerFixture.run()
+} else if arguments.dropFirst().first == "--pi-broker-mock" {
+    await NativePiRuntimeSession.main(Array(arguments.dropFirst(2)))
+} else if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     let path = arguments[idx + 1]
     let view = arguments.firstIndex(of: "--view").map { arguments[$0 + 1] } ?? "chat"
     let appearance = arguments.firstIndex(of: "--appearance").map { arguments[$0 + 1] } ?? "dark"

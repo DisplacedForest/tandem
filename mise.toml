@@ -46,7 +46,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test"]
+depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test"]
 
 [tasks.ci]
 depends = ["check"]
@@ -76,3 +76,8 @@ run = "swift build && .build/debug/VeraNativeTransport --selftest && python3 tes
 depends = ["pi-native-transport-test", "pi-prototype-deps"]
 env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
 run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/native_tests"
+
+[tasks.pi-app-broker-test]
+depends = ["mac-build", "pi-prototype-deps"]
+env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "apps/vera-mac/.build/debug/Vera --pi-broker-selftest && python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests"

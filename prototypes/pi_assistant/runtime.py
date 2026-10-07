@@ -14,6 +14,7 @@ from routers.task_store import StepResult, TaskConflict, TaskStore
 
 from .process import PiFailure, PiProcess
 from .native import NativeMockTransport
+from .app_model import ModelTransport
 
 
 def canonical(value: Any) -> str:
@@ -21,7 +22,9 @@ def canonical(value: Any) -> str:
 
 
 class Runtime:
-    def __init__(self, root: Path, node: str, worker_delay_ms: int = 0, native_mock_helper: Path | None = None):
+    def __init__(self, root: Path, node: str, worker_delay_ms: int = 0, native_mock_helper: Path | None = None, model_transport: ModelTransport | None = None):
+        if native_mock_helper and model_transport:
+            raise ValueError("Choose one explicit mock transport")
         self.root = root.resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.workspace = self.root / 'workspaces'
@@ -36,8 +39,8 @@ class Runtime:
             os.close(root_fd)
         self.store = TaskStore(str(self.root / 'tasks.sqlite'))
         self.journal = self.root / 'assistant.sqlite'
-        self.native = NativeMockTransport(self.root / 'native-transport', native_mock_helper) if native_mock_helper else None
-        self.transport = 'native-mock' if self.native else 'mock'
+        self.native = model_transport or (NativeMockTransport(self.root / 'native-transport', native_mock_helper) if native_mock_helper else None)
+        self.transport = 'app-owned-mock' if model_transport else ('native-mock' if self.native else 'mock')
         self.process = PiProcess(node, Path(__file__).with_name('agent.mjs'), timeout=150 if self.native else 15)
         self.worker_delay_ms = worker_delay_ms
         self.dispatcher = Dispatcher(self.store, poll_seconds=0.02)
@@ -111,6 +114,8 @@ class Runtime:
         return await self._message(body)
 
     async def _message(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.transport == 'app-owned-mock':
+            self.native.validate_scope(body['message_id'], 'foreground', body['mode'], body['assistant_id'], body['conversation_id'])
         previous = self.accept(body)
         if previous:
             return previous
@@ -194,6 +199,11 @@ class Runtime:
             if attempt and attempt['state'] == 'running':
                 if task['decision_reply'] != {'approved': True}:
                     return StepResult(state='needs_decision', checkpoint=checkpoint, event='recovery_decision', decision={'prompt': 'The worker was interrupted. Retry in the same workspace after checking its saved edits?', 'choices': ['approve', 'decline']}) if task['decision_reply'] is None else StepResult(state='failed', checkpoint=checkpoint, event='retry_declined')
+            if self.transport == 'app-owned-mock':
+                try:
+                    self.native.validate_scope(task['id'], 'worker', 'assistant', task['payload']['assistant_id'], task['payload']['conversation_id'])
+                except PiFailure:
+                    return StepResult(state='failed', checkpoint=checkpoint, event='model_scope_required')
             db.execute("INSERT OR REPLACE INTO attempts VALUES(?,'running',NULL)", (task['id'],))
         directory = self.workspace / task['id']
         try:

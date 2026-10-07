@@ -22,7 +22,7 @@ class PiProcess:
                   canceled: Callable[[], bool] = lambda: False) -> dict[str, Any]:
         process = await asyncio.create_subprocess_exec(
             self.node, str(self.script), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, start_new_session=True, limit=262145,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True, close_fds=True, limit=262145,
             cwd=str(self.script.parent), env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
         )
         self.pids.add(process.pid)

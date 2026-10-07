@@ -1,10 +1,12 @@
 import argparse
 import asyncio
+import hmac
 import os
 import shutil
 import socket
 import stat
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -19,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from routers import tasks
 from routers.task_store import TaskConflict
 from pi_assistant.process import PiFailure
+from pi_assistant.app_model import ModelTransport
 from pi_assistant.runtime import Runtime
 
 
@@ -38,15 +41,18 @@ class WorkerPayload(BaseModel):
     originating_message_id: UUID
     objective: str = Field(min_length=1, max_length=8000)
     workspace_ref: Literal['task-private']
-    transport: Literal['mock', 'native-mock']
+    transport: Literal['mock', 'native-mock', 'app-owned-mock']
 
 
 def validate_payload(payload: dict) -> None:
     WorkerPayload.model_validate(payload)
 
 
-def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None) -> FastAPI:
-    runtime = Runtime(root, node, native_mock_helper=native_mock_helper)
+def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None, model_transport: ModelTransport | None = None, ui_capability: str | None = None) -> FastAPI:
+    if (model_transport is None) != (ui_capability is None) or (ui_capability is not None and len(ui_capability) != 72):
+        raise ValueError("App model transport requires its private UI capability")
+    capability_deadline = time.monotonic() + 600
+    runtime = Runtime(root, node, native_mock_helper=native_mock_helper, model_transport=model_transport)
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await runtime.start()
@@ -60,6 +66,9 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     app.state.runtime = runtime
     @app.middleware('http')
     async def local_boundary(request: Request, call_next):
+        if ui_capability is not None and (time.monotonic() >= capability_deadline or not hmac.compare_digest(request.headers.get('authorization', '').encode(), ('Bearer ' + ui_capability).encode())):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({'detail': 'Session authentication required'}, status_code=403)
         if request.headers.get('origin') or request.headers.get('host', '').split(':')[0] not in {'127.0.0.1', 'localhost', 'testserver'}:
             from fastapi.responses import JSONResponse
             return JSONResponse({'detail': 'Local native client only'}, status_code=403)
