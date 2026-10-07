@@ -41,7 +41,7 @@ class WorkerPayload(BaseModel):
     originating_message_id: UUID
     objective: str = Field(min_length=1, max_length=8000)
     workspace_ref: Literal['task-private']
-    transport: Literal['mock', 'native-mock', 'app-owned-mock']
+    transport: Literal['mock', 'native-mock', 'app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter']
 
 
 def validate_payload(payload: dict) -> None:
@@ -80,7 +80,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     app.include_router(tasks.router)
     @app.get('/assistant/capabilities')
     async def capabilities():
-        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'transport': 'mock', 'transport_detail': runtime.transport, 'workspace_root': str(runtime.workspace), **({'instance_id': instance_id} if instance_id else {})}
+        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'transport': 'cloud' if runtime.transport == 'app-owned-openrouter' else 'mock', 'transport_detail': runtime.transport, **({'provider': 'openrouter', 'model': 'qwen/qwen3.8-flash'} if runtime.transport == 'app-owned-openrouter' else {}), 'workspace_root': str(runtime.workspace), **({'instance_id': instance_id} if instance_id else {})}
     @app.post('/assistant/messages')
     async def message(body: Message):
         try:

@@ -30,7 +30,10 @@ def decode_frame(data: bytes) -> dict[str, Any]:
 
 
 class AppModelTransport:
-    def __init__(self, channel: str, profile: str, request_timeout: float = 5):
+    def __init__(self, channel: str, profile: str, request_timeout: float = 5, kind: str = 'app-owned-mock'):
+        if kind not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
+            raise PiFailure('app_transport')
+        self.kind = kind
         if not isinstance(request_timeout, (float, int)) or not 1 <= request_timeout <= 35:
             raise PiFailure("app_deadline")
         self.request_timeout = request_timeout

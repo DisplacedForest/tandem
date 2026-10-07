@@ -19,8 +19,8 @@ struct PiSelectedProfileBinding: Equatable, Sendable {
 actor PiSharedAccounting {
     let ledger: PiModelLedger
     private var blocked = false
-    init(root: URL, baselineNanos: Int64) throws {
-        ledger = try PiModelLedger(root: root, manifest: "app-shared-accounting-v1", budget: 200_000_000_000, baseline: baselineNanos)
+    init(root: URL, baselineNanos: Int64, budgetNanos: Int64 = 200_000_000_000, ownerBinding: String = "fixture", transport: PiTransportKind = .mock) throws {
+        ledger = try PiModelLedger(root: root, manifest: "app-shared-accounting-v1", budget: budgetNanos, baseline: baselineNanos, ownerBinding: ownerBinding, transport: transport)
     }
     func reserve(_ request: PiModelRequest) throws -> PiValue? {
         try piCheck(!blocked, .uncertain)
@@ -42,6 +42,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
         let body = try PiProviderCodec.body(request, model: binding.model).piData()
+        try piCheck(body.count <= 16384)
         return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
             try budget.check()
             if let saved = try await accounting.reserve(request) {

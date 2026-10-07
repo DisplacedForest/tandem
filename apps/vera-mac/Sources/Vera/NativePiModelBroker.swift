@@ -41,7 +41,7 @@ final class PiModelLedger: @unchecked Sendable {
     let profile: String
     let budget: Int64
     let baseline: Int64
-    init(root: URL, manifest: String, budget: Int64 = 1_000_000_000, baseline: Int64 = 0, ownerBinding: String = "fixture") throws {
+    init(root: URL, manifest: String, budget: Int64 = 1_000_000_000, baseline: Int64 = 0, ownerBinding: String = "fixture", transport: PiTransportKind = .mock) throws {
         try piCheck(budget > 0 && budget <= 200_000_000_000 && baseline >= 0 && baseline <= budget, .budget)
         owner = try PiExperimentRoot(root)
         self.budget = budget
@@ -58,7 +58,7 @@ final class PiModelLedger: @unchecked Sendable {
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS bindings(subject TEXT PRIMARY KEY,binding TEXT NOT NULL)")
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,subject TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL,reserved INTEGER NOT NULL,charged INTEGER,reply BLOB)")
-            for (key, value) in [("manifest", manifest), ("transport", "app-owned-mock"), ("budget", String(budget)), ("baseline", String(baseline)), ("owner_binding", ownerBinding)] {
+            for (key, value) in [("manifest", manifest), ("transport", transport.rawValue), ("budget", String(budget)), ("baseline", String(baseline)), ("owner_binding", ownerBinding)] {
                 try db.execute(sql: "INSERT OR IGNORE INTO metadata VALUES(?,?)", arguments: [key, value])
                 try piCheck(try Self.storedString(db, sql: "SELECT value FROM metadata WHERE key=?", arguments: [key]) == value, .unauthorized)
             }

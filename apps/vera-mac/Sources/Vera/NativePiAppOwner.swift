@@ -14,12 +14,12 @@ actor NativePiAppOwner {
     private var bindings: [String: PiValue] = [:]
     private var granting: [String: Task<Void, Error>] = [:]
     private var commandTimers: [String: Task<Void, Never>] = [:]
-    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
+    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
         self.httpTransport = httpTransport
         let input = Pipe(), output = Pipe()
         channel = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         let control = PiPrivatePipe(read: input.fileHandleForReading, write: output.fileHandleForWriting)
-        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33)
+        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33, transport: transport)
         self.session = session
         runner = Task.detached { await session.run() }
     }

@@ -39,8 +39,9 @@ class Runtime:
             os.close(root_fd)
         self.store = TaskStore(str(self.root / 'tasks.sqlite'))
         self.journal = self.root / 'assistant.sqlite'
+        self.model_transport = model_transport
         self.native = model_transport or (NativeMockTransport(self.root / 'native-transport', native_mock_helper) if native_mock_helper else None)
-        self.transport = 'app-owned-mock' if model_transport else ('native-mock' if self.native else 'mock')
+        self.transport = getattr(model_transport, 'kind', 'app-owned-mock') if model_transport else ('native-mock' if self.native else 'mock')
         self.process = PiProcess(node, Path(__file__).with_name('agent.mjs'), timeout=150 if self.native else 15)
         self.worker_delay_ms = worker_delay_ms
         self.dispatcher = Dispatcher(self.store, poll_seconds=0.02)
@@ -114,7 +115,7 @@ class Runtime:
         return await self._message(body)
 
     async def _message(self, body: dict[str, Any]) -> dict[str, Any]:
-        if self.transport == 'app-owned-mock':
+        if self.model_transport is not None:
             self.native.validate_scope(body['message_id'], 'foreground', body['mode'], body['assistant_id'], body['conversation_id'])
         previous = self.accept(body)
         if previous:
@@ -188,7 +189,7 @@ class Runtime:
         if not checkpoint.get('approved'):
             reply = task['decision_reply']
             if reply is None:
-                return StepResult(state='needs_decision', event='approval_required', decision={'prompt': 'Allow the mock coding worker to edit sum.py in its disposable task workspace?', 'choices': ['approve', 'decline']})
+                return StepResult(state='needs_decision', event='approval_required', decision={'prompt': 'Allow the coding worker to edit sum.py in its disposable task workspace?', 'choices': ['approve', 'decline']})
             if reply != {'approved': True}:
                 return StepResult(state='failed', event='permission_denied', data={'reason': 'permission_denied'})
             return StepResult(checkpoint={'approved': True}, event='approved')
@@ -199,7 +200,7 @@ class Runtime:
             if attempt and attempt['state'] == 'running':
                 if task['decision_reply'] != {'approved': True}:
                     return StepResult(state='needs_decision', checkpoint=checkpoint, event='recovery_decision', decision={'prompt': 'The worker was interrupted. Retry in the same workspace after checking its saved edits?', 'choices': ['approve', 'decline']}) if task['decision_reply'] is None else StepResult(state='failed', checkpoint=checkpoint, event='retry_declined')
-        if self.transport == 'app-owned-mock':
+        if self.model_transport is not None:
             try:
                 await self.native.wait_scope(task['id'], 'worker', 'assistant', task['payload']['assistant_id'], task['payload']['conversation_id'])
             except PiFailure:

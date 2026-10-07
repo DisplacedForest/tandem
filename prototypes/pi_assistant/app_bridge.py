@@ -14,7 +14,7 @@ from pi_assistant.bridge import create_app
 
 async def serve(boot: dict) -> None:
     import uvicorn
-    transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'])
+    transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'], boot['transport'])
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', boot['port']))
         listener.listen(16)
@@ -39,14 +39,14 @@ async def serve(boot: dict) -> None:
 
 
 def main() -> None:
-    if sys.argv[1:] != ['--app-owned-mock'] or not all(stat.S_ISFIFO(os.fstat(fd).st_mode) for fd in (0, 1)):
-        raise ValueError('private mock channel required')
+    if sys.argv[1:] not in (['--app-owned'], ['--app-owned-mock']) or not all(stat.S_ISFIFO(os.fstat(fd).st_mode) for fd in (0, 1)):
+        raise ValueError('private app channel required')
     os.umask(0o077)
     if os.getpgrp() != os.getpid():
         os.setsid()
     boot = decode_frame(sys.stdin.buffer.readline(65538))
-    if set(boot) != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port', 'request_timeout'} or boot['op'] != 'initialize' or boot['transport'] != 'app-owned-mock':
-        raise ValueError('mock bootstrap required')
+    if set(boot) != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port', 'request_timeout'} or boot['op'] != 'initialize' or boot['transport'] not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
+        raise ValueError('app bootstrap required')
     cap = boot['ui_capability']
     if not isinstance(cap, str) or len(cap) != 72 or any(c not in '0123456789abcdef-' for c in cap):
         raise ValueError('capability required')
@@ -70,5 +70,5 @@ if __name__ == '__main__':
     try:
         main()
     except Exception:
-        sys.stderr.write('App-owned mock runtime unavailable\n')
+        sys.stderr.write('App-owned runtime unavailable\n')
         sys.exit(1)

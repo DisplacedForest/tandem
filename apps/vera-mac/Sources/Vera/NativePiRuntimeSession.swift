@@ -58,11 +58,13 @@ final class NativePiRuntimeSession: @unchecked Sendable {
     let ledger: PiModelLedger
     let channel: String
     let capability: String
+    let transport: PiTransportKind
     private let lock = NSLock()
     private var ended = false
     private var ownedGroup: Int32?
     private var grants: [String: (String, PiModelScope)] = [:]
-    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3) throws {
+    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock) throws {
+        self.transport = transport
         signal(SIGPIPE, SIG_IGN)
         umask(0o077)
         var info = stat()
@@ -84,7 +86,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         var digest = Data()
         for name in files { digest.append(Data(name.utf8)); digest.append(try Data(contentsOf: source.appendingPathComponent(name))) }
         digest.append(try Data(contentsOf: python)); digest.append(try Data(contentsOf: node))
-        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding)
+        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding, transport: transport)
         channel = UUID().uuidString.lowercased()
         capability = UUID().uuidString.lowercased() + UUID().uuidString.lowercased()
         broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, timeout: .seconds(requestTimeout))
@@ -92,7 +94,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         let input = Pipe(), output = Pipe()
         process = Process()
         process.executableURL = python
-        process.arguments = [source.appendingPathComponent("app_bridge.py").path, "--app-owned-mock"]
+        process.arguments = [source.appendingPathComponent("app_bridge.py").path, "--app-owned"]
         process.environment = ["PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
         process.standardInput = input
         process.standardOutput = output
@@ -100,7 +102,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         child = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         try process.run()
         rememberGroup()
-        do { try child.send(.object(["op": .string("initialize"), "transport": .string("app-owned-mock"), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port)), "request_timeout": .number(requestTimeout + 2)])) }
+        do { try child.send(.object(["op": .string("initialize"), "transport": .string(transport.rawValue), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port)), "request_timeout": .number(requestTimeout + 2)])) }
         catch { child.closeWrite(); Self.killGroup(process); throw error }
     }
     static func killGroup(_ process: Process) {
@@ -140,7 +142,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
                     ready = true
                     try value.piKeys(["op", "channel", "port"])
                     try piCheck(value.pi("channel").piString == channel, .unauthorized)
-                    try controller.send(.object(["op": .string("ready"), "transport": .string("app-owned-mock"), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "port": value.pi("port"), "pid": .number(Double(process.processIdentifier))]))
+                    try controller.send(.object(["op": .string("ready"), "transport": .string(transport.rawValue), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "port": value.pi("port"), "pid": .number(Double(process.processIdentifier))]))
                     continue
                 }
                 if value.pi("op").piString == "scoped" {

@@ -217,6 +217,7 @@ final class ConfigStore: ObservableObject {
                         transport: @escaping PiProviderSend) async throws -> (Data, Int) {
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
         guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
+        try piCheck(!piContainsCredential(body, key: key), .unauthorized)
         var outgoing = URLRequest(url: binding.endpoint.appendingPathComponent("chat/completions"))
         outgoing.httpMethod = "POST"
         outgoing.httpBody = body
@@ -225,7 +226,42 @@ final class ConfigStore: ObservableObject {
         outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         let response = try await transport(outgoing, request)
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+        try piCheck(!piContainsCredential(response.0, key: key), .unauthorized)
+        if response.1 == 200 {
+            let typed = try PiProviderCodec.reply(PiValue.piRead(response.0), request: request, model: binding.model)
+            try piCheck(!piContainsCredential(typed.piData(), key: key), .unauthorized)
+        }
         return response
+    }
+
+    private func piContainsCredential(_ data: Data, key: String) -> Bool {
+        if data.range(of: Data(key.utf8)) != nil { return true }
+        func contains(_ value: Any, depth: Int = 0) -> Bool {
+            if let text = value as? String {
+                if text.contains(key) { return true }
+                if depth < 4, let nested = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed]) { return contains(nested, depth: depth + 1) }
+            }
+            if let list = value as? [Any] { return list.contains { contains($0, depth: depth) } }
+            if let object = value as? [String: Any] { return object.contains { $0.key.contains(key) || contains($0.value, depth: depth) } }
+            return false
+        }
+        guard let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return false }
+        return contains(value)
+    }
+
+    func piProviderMetadata(binding: PiSelectedProfileBinding, path: String, http: PiProviderHTTP) async throws -> Data {
+        try piValidate(binding)
+        try piCheck(["models", "key"].contains(path), .unauthorized)
+        guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
+        var outgoing = URLRequest(url: binding.endpoint.appendingPathComponent(path))
+        outgoing.httpMethod = "GET"
+        outgoing.timeoutInterval = 30
+        outgoing.setValue("application/json", forHTTPHeaderField: "Accept")
+        outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        let (data, _) = try await http.send(outgoing)
+        try piValidate(binding)
+        try piCheck(!piContainsCredential(data, key: key), .unauthorized)
+        return data
     }
 
     func reloadCapabilityTools() {

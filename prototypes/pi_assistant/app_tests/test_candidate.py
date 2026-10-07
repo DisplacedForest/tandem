@@ -131,3 +131,10 @@ def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+
+def test_provider_http_wiring_fixture(tmp_path: Path) -> None:
+    result = run('--pi-provider-wiring-selftest', arguments(tmp_path / 'runtime'), timeout=45)
+    assert result.returncode == 0, result.stderr
+    assert 'actual SDK foreground and worker' in result.stdout
+    assert 'no real provider or credential calls' in result.stdout
