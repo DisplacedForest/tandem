@@ -21,8 +21,9 @@ struct PrototypeConfiguration: Sendable {
     let dataRoot: URL
     let endpoint: URL?
     let workspaceRoot: URL?
+    let runtimeIdentity: String?
 
-    init(dataRoot: URL, endpoint: URL?, workspaceRoot: URL?) throws {
+    init(dataRoot: URL, endpoint: URL?, workspaceRoot: URL?, runtimeIdentity: String? = nil) throws {
         let root = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
         let live = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera").resolvingSymlinksInPath()
         guard dataRoot.isFileURL, root.path != "/", root.path != live.path,
@@ -37,6 +38,13 @@ struct PrototypeConfiguration: Sendable {
                 throw PrototypeError.configuration
             }
         }
+        if let runtimeIdentity {
+            guard !runtimeIdentity.isEmpty, runtimeIdentity.utf8.count <= 256,
+                  !runtimeIdentity.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw PrototypeError.configuration
+            }
+        }
+        self.runtimeIdentity = runtimeIdentity
         self.dataRoot = root
         self.endpoint = endpoint
         self.workspaceRoot = workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath()
@@ -183,6 +191,7 @@ struct SavedState: Codable, Sendable {
     var abandonedReplies: [MessageRequest]?
     var decisions: [String: DecisionRequest] = [:]
     var endpoint: URL?
+    var runtimeIdentity: String?
 }
 
 extension String {

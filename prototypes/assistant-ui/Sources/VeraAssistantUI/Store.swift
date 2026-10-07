@@ -33,13 +33,20 @@ final class PrototypeStore: ObservableObject {
         let fm = FileManager.default
         if fm.fileExists(atPath: stateURL.path) {
             saved = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: stateURL))
-            guard saved.endpoint == configuration.endpoint else { throw PrototypeError.configuration }
+            guard saved.runtimeIdentity == configuration.runtimeIdentity else { throw PrototypeError.configuration }
+            if configuration.runtimeIdentity == nil {
+                guard saved.endpoint == configuration.endpoint else { throw PrototypeError.configuration }
+            } else if saved.endpoint != configuration.endpoint {
+                var candidate = saved
+                candidate.endpoint = configuration.endpoint
+                try commit(candidate)
+            }
         } else {
             if fm.fileExists(atPath: configuration.dataRoot.path) {
                 guard try fm.contentsOfDirectory(atPath: configuration.dataRoot.path).isEmpty else { throw PrototypeError.configuration }
             }
             try fm.createDirectory(at: configuration.dataRoot, withIntermediateDirectories: true)
-            saved = SavedState(endpoint: configuration.endpoint)
+            saved = SavedState(endpoint: configuration.endpoint, runtimeIdentity: configuration.runtimeIdentity)
             try JSONEncoder().encode(saved).write(to: stateURL, options: .atomic)
         }
     }
@@ -69,7 +76,7 @@ final class PrototypeStore: ObservableObject {
     var canSend: Bool { capabilities?.foreground == true && connectionError == nil && !busyConversations.contains(conversation.id) && pending == nil }
     var connectionLabel: String {
         guard capabilities != nil, connectionError == nil else { return "Not connected" }
-        return capabilities?.transport == "mock" ? "Test runtime" : "Connected"
+        return ["mock", "native-mock", "app-owned-mock"].contains(capabilities?.transport ?? "") ? "Test runtime" : "Connected"
     }
 
     private static func validateStateURL(_ url: URL) throws {

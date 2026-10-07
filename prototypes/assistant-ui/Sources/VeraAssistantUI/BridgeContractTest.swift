@@ -4,28 +4,40 @@ import Foundation
 enum BridgeContractTest {
     static func run(configuration: PrototypeConfiguration) async throws {
         let store = try PrototypeStore(configuration: configuration)
+        _ = try await workflow(store: store)
+        print("PASS: actual mock bridge HTTP, assistant and focused messages, task approval, completed output file, task-specific Stop, persisted identity and transcript")
+    }
+
+    static func workflow(store: PrototypeStore, requireActiveWorker: Bool = false) async throws -> Data {
         await store.refresh()
         try PrototypeSelfTest.require(store.capabilities?.transport == "mock" && store.canSend, "Contract test requires an explicit mock bridge")
+        try PrototypeSelfTest.require(store.saved.conversations.isEmpty && store.messages.isEmpty && store.visibleTasks.isEmpty,
+                                      "Workflow requires a fresh assistant workspace")
         store.setDraft("/task Verify addition in the isolated example")
         await store.send()
         try PrototypeSelfTest.require(store.pending == nil && store.messages.count == 2, "Bridge accepted assistant message")
         let first = try await awaitTask(store, state: "needs_decision")
+        await store.reply(first, approved: true)
+        try PrototypeSelfTest.require(store.taskErrors[first.id] == nil, "Approval accepted")
+        if requireActiveWorker {
+            _ = try await awaitTask(store, state: "running")
+        }
         store.setDraft("What are you working on?")
         await store.send()
-        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with a waiting task")
-        await store.reply(first, approved: true)
+        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with an active task")
+        if requireActiveWorker {
+            await store.refresh()
+            try PrototypeSelfTest.require(store.connectionError == nil && store.visibleTasks.contains { $0.id == first.id && $0.state == "running" },
+                                          "Foreground reply completes while the worker remains running")
+        }
         let completed = try await awaitTask(store, state: "completed")
         try PrototypeSelfTest.require(completed.id == first.id, "Stable task identity through completion")
-        guard let output = completed.result?.artifacts?.first else { throw PrototypeError.invalidResponse }
-        try PrototypeSelfTest.require(output.resolved(in: configuration.workspaceRoot) != nil, "Real task artifact resolves within configured workspace")
-        store.setDraft("/task Check a second isolated example")
-        await store.send()
-        let second = try await awaitTask(store, state: "needs_decision")
-        try PrototypeSelfTest.require(second.id != first.id, "Second task identity")
-        await store.stop(second)
+        guard let output = completed.result?.artifacts?.first,
+              let outputURL = output.resolved(in: store.configuration.workspaceRoot) else { throw PrototypeError.artifact }
         await store.refresh()
-        try PrototypeSelfTest.require(store.visibleTasks.first(where: { $0.id == second.id })?.state == "canceled", "Task-specific Stop reaches bridge")
-        try PrototypeSelfTest.require(store.visibleTasks.first(where: { $0.id == first.id })?.state == "completed", "Stop leaves completed task unchanged")
+        await store.refresh()
+        try PrototypeSelfTest.require(store.messages.filter { $0.id == "task:" + first.id }.count == 1,
+                                      "Completed task result delivered once")
         store.newChat()
         let focusedID = store.conversation.id
         await store.refresh()
@@ -34,13 +46,31 @@ enum BridgeContractTest {
         await store.send()
         await store.refresh()
         try PrototypeSelfTest.require(store.pending == nil && store.visibleTasks.isEmpty, "Focused mode cannot hand off a worker")
-        let reopened = try PrototypeStore(configuration: configuration)
+        let reopened = try PrototypeStore(configuration: store.configuration, client: store.client)
         await reopened.refresh()
         try PrototypeSelfTest.require(reopened.saved.assistantID == store.saved.assistantID && reopened.messages.count >= 4, "Real bridge transcript reopens")
+        try PrototypeSelfTest.require(reopened.messages.filter { $0.id == "task:" + first.id }.count == 1, "Reopen preserves single result delivery")
         reopened.destination = .conversation(focusedID)
         await reopened.refresh()
         try PrototypeSelfTest.require(reopened.messages.count == 2, "Focused transcript reopens separately")
-        print("PASS: actual mock bridge HTTP, assistant and focused messages, task approval, completed output file, task-specific Stop, persisted identity and transcript")
+        store.destination = .assistant
+        await store.refresh()
+        store.setDraft("/task Check a second isolated example")
+        await store.send()
+        let second = try await awaitTask(store, state: "needs_decision")
+        try PrototypeSelfTest.require(second.id != first.id, "Second task identity")
+        await store.stop(second)
+        await store.refresh()
+        try PrototypeSelfTest.require(store.visibleTasks.first(where: { $0.id == second.id })?.state == "canceled", "Task-specific Stop reaches bridge")
+        try PrototypeSelfTest.require(store.visibleTasks.first(where: { $0.id == first.id })?.state == "completed", "Stop leaves completed task unchanged")
+        return try JSONSerialization.data(withJSONObject: [
+            "assistant_id": store.saved.assistantID.uuidString.lowercased(),
+            "conversation_id": store.saved.assistant.id.uuidString.lowercased(),
+            "completed_task_id": first.id, "stopped_task_id": second.id,
+            "focused_conversation_id": focusedID.uuidString.lowercased(),
+            "artifact_path": outputURL.path, "result_deliveries": 1,
+            "foreground_reply": true, "foreground_while_worker_active": requireActiveWorker, "focused_no_delegation": true, "reopened": true
+        ], options: [.sortedKeys])
     }
 
     static func recover(configuration: PrototypeConfiguration) async throws {

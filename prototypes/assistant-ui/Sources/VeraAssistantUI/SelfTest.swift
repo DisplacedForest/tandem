@@ -204,6 +204,7 @@ enum PrototypeSelfTest {
             if let index = CommandLine.arguments.firstIndex(of: "--render-dir"), index + 1 < CommandLine.arguments.count {
                 try RenderTest.render(decisionRestart, directory: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true))
             }
+            try await FacadeSelfTest.run(root: root.appendingPathComponent("facade"))
             try await RecoverySelfTest.run(root: root.appendingPathComponent("recovery"))
             print("PASS: identity, navigation, drafts, scoped messages/tasks, lost-response restart retry, decision retry, Stop isolation, output paths, unavailable state")
         } catch {
