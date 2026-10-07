@@ -6,7 +6,33 @@ protocol CredentialSource: Sendable {
     func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String
 }
 
+protocol NativeKeychainAccess: Sendable {
+    func disableInteraction() -> OSStatus
+    func interactionAllowed() -> (OSStatus, Bool)
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?)
+}
+
+struct SystemKeychainAccess: NativeKeychainAccess {
+    func disableInteraction() -> OSStatus { SecKeychainSetUserInteractionAllowed(false) }
+    func interactionAllowed() -> (OSStatus, Bool) {
+        var allowed: DarwinBoolean = true
+        let status = SecKeychainGetUserInteractionAllowed(&allowed)
+        return (status, allowed.boolValue)
+    }
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return (status, result as? Data)
+    }
+}
+
 struct NativeCredential: CredentialSource {
+    let access: any NativeKeychainAccess
+    let context: @Sendable () -> LAContext
+    init(access: any NativeKeychainAccess = SystemKeychainAccess(), context: @escaping @Sendable () -> LAContext = { LAContext() }) {
+        self.access = access
+        self.context = context
+    }
     static func query(profile: String, context: LAContext = LAContext()) throws -> [String: Any] {
         context.interactionNotAllowed = true
         try require(context.interactionNotAllowed, .credentialUnavailable)
@@ -21,12 +47,14 @@ struct NativeCredential: CredentialSource {
         ]
     }
     func read(profile: String, progress: @Sendable (Stage) throws -> Void) throws -> String {
-        let query = try Self.query(profile: profile)
+        try require(access.disableInteraction() == errSecSuccess, .credentialUnavailable)
+        let (policyStatus, allowed) = access.interactionAllowed()
+        try require(policyStatus == errSecSuccess && !allowed, .credentialUnavailable)
+        let query = try Self.query(profile: profile, context: context())
         try progress(.keychainBegin)
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, data) = access.copyMatching(query)
         try progress(.keychainReturned)
-        guard status == errSecSuccess, let data = result as? Data,
+        guard status == errSecSuccess, let data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty,
               key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw Failure.credentialUnavailable }
         return key

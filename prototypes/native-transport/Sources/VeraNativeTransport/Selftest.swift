@@ -323,6 +323,7 @@ enum Selftest {
         passed("focused mode rejects delegate in transcript and response")
         try ScopeSelftest.mode()
         passed("mock permits cannot authorize live transport")
+        try CredentialPolicySelftest.run()
         try await WatchdogSelftest.policyAndDisarm()
         passed("explicit no-UI query policy and disarmed independent watchdogs")
         try ProfileMetadataSelftest.run()
