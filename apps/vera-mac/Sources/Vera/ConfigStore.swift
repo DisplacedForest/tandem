@@ -46,6 +46,9 @@ final class ConfigStore: ObservableObject {
     private let credentialStore: any NativeCredentialStore
     private let writeConfiguration: ([String: Any]) throws -> Void
     private var savedCredentials: [String: String]
+    private var piCommittedSettings: NativeChatSettings
+    private var piCommittedCredentials: [String: String]
+    private var piCommitValid = true
     private var unavailableCredentials: Set<String>
     private var pendingCredentials: [String: String] = [:]
     private var legacyCredentials: [String: String] = [:]
@@ -76,6 +79,8 @@ final class ConfigStore: ObservableObject {
         nativeSettings = settings
         nativeAPIKeys = keys
         savedCredentials = keys
+        piCommittedCredentials = keys
+        piCommittedSettings = settings
         unavailableCredentials = unavailable
         visionBridgeAPIKey = keys[Self.visionBridgeCredentialID] ?? ""
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
@@ -135,6 +140,8 @@ final class ConfigStore: ObservableObject {
     }
 
     func save() throws {
+        piCommitValid = false
+        let piCredentialsChanged = Set(pendingCredentials.keys).union(legacyCredentials.keys)
         do {
             if blockedLegacyMigrationID != nil { throw NativeCredentialError.read }
             for id in pendingCredentials.keys.sorted() {
@@ -155,10 +162,70 @@ final class ConfigStore: ObservableObject {
             credentialError = (error as? NativeCredentialError)?.localizedDescription ?? NativeCredentialError.write.localizedDescription
             throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
-        let merged = nativeSettings.merging(into: raw)
+        var merged = nativeSettings.merging(into: raw)
+        var revisions = raw["pi_profile_revisions"] as? [String: String] ?? [:]
+        for profile in nativeSettings.profiles {
+            let previous = piCommittedSettings.profiles.first { $0.id == profile.id }
+            if revisions[profile.id] == nil || previous?.baseURL != profile.baseURL || previous?.selectedModel != profile.selectedModel || piCredentialsChanged.contains(profile.id) || piCommittedCredentials[profile.id] != savedCredentials[profile.id] {
+                revisions[profile.id] = UUID().uuidString.lowercased()
+            }
+        }
+        merged["pi_profile_revisions"] = revisions
         try writeConfiguration(merged)
+        piCommittedSettings = nativeSettings
+        piCommittedCredentials = savedCredentials
+        piCommitValid = true
         raw = merged
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
+    }
+
+    func piSelectedProfileBinding() throws -> PiSelectedProfileBinding {
+        guard piCommitValid, let committed = piCommittedSettings.activeProfile,
+              let current = nativeSettings.activeProfile,
+              committed.id == current.id, committed.baseURL == current.baseURL,
+              piCommittedSettings.profiles.filter({ $0.id == committed.id }).count == 1,
+              nativeSettings.profiles.filter({ $0.id == current.id }).count == 1,
+              committed.selectedModel == current.selectedModel,
+              pendingCredentials[committed.id] == nil, legacyCredentials[committed.id] == nil,
+              !unavailableCredentials.contains(committed.id), blockedLegacyMigrationID != committed.id,
+              let key = piCommittedCredentials[committed.id], !key.isEmpty,
+              key == savedCredentials[committed.id], key == nativeAPIKeys[committed.id],
+              key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw PiBrokerError.unauthorized }
+        let initial = Array(piHash(Data([committed.id, committed.baseURL, committed.selectedModel].joined(separator: "\n").utf8)).prefix(32))
+        let derived = [String(initial[0..<8]), String(initial[8..<12]), String(initial[12..<16]), String(initial[16..<20]), String(initial[20..<32])].joined(separator: "-")
+        let revision = (raw["pi_profile_revisions"] as? [String: String])?[committed.id] ?? derived
+        return try PiSelectedProfileBinding(profileID: committed.id, revision: revision, endpoint: committed.baseURL, model: committed.selectedModel)
+    }
+
+    func piSelectedProfileOperation(binding: PiSelectedProfileBinding, admission: NativeInferenceAdmission,
+                                    accounting: PiSharedAccounting, transport: @escaping PiProviderSend) throws -> PiSelectedProfileOperation {
+        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+        return PiSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting, validate: { [weak self] in
+            guard let self else { throw PiBrokerError.unavailable }
+            try await self.piValidate(binding)
+        }) { [weak self] request, body in
+            guard let self else { throw PiBrokerError.unavailable }
+            return try await self.piSend(binding: binding, request: request, body: body, transport: transport)
+        }
+    }
+
+    private func piValidate(_ binding: PiSelectedProfileBinding) throws {
+        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+    }
+
+    private func piSend(binding: PiSelectedProfileBinding, request: PiModelRequest, body: Data,
+                        transport: @escaping PiProviderSend) async throws -> (Data, Int) {
+        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+        guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
+        var outgoing = URLRequest(url: binding.endpoint.appendingPathComponent("chat/completions"))
+        outgoing.httpMethod = "POST"
+        outgoing.httpBody = body
+        outgoing.timeoutInterval = 30
+        outgoing.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        let response = try await transport(outgoing, request)
+        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+        return response
     }
 
     func reloadCapabilityTools() {

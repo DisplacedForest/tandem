@@ -30,13 +30,17 @@ def decode_frame(data: bytes) -> dict[str, Any]:
 
 
 class AppModelTransport:
-    def __init__(self, channel: str, profile: str):
+    def __init__(self, channel: str, profile: str, request_timeout: float = 5):
+        if not isinstance(request_timeout, (float, int)) or not 1 <= request_timeout <= 35:
+            raise PiFailure("app_deadline")
+        self.request_timeout = request_timeout
         self.channel = identifier(channel)
         self.profile = identifier(profile)
         self.scopes: dict[tuple[str, str], dict[str, str]] = {}
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.seen: set[str] = set()
         self.closed = asyncio.Event()
+        self.scope_changed = asyncio.Event()
         self.buffer = bytearray()
         self.started = False
 
@@ -80,6 +84,7 @@ class AppModelTransport:
             if key in self.scopes or len(self.scopes) >= 16:
                 raise PiFailure('app_scope')
             self.scopes[key] = value
+            self.scope_changed.set()
             self.send({'op': 'scoped', 'channel': self.channel, 'scope': value['scope']})
         elif frame.get('op') == 'reply':
             ok = frame.get('ok')
@@ -113,6 +118,17 @@ class AppModelTransport:
         if self.closed.is_set() or scope is None or (scope['mode'], scope['assistant'], scope['conversation']) != (mode, assistant, conversation):
             raise PiFailure('app_unauthorized')
 
+    async def wait_scope(self, subject: str, role: str, mode: str, assistant: str, conversation: str) -> None:
+        async def wait() -> None:
+            while (subject, role) not in self.scopes and not self.closed.is_set():
+                self.scope_changed.clear()
+                await self.scope_changed.wait()
+            self.validate_scope(subject, role, mode, assistant, conversation)
+        try:
+            await asyncio.wait_for(wait(), 3)
+        except asyncio.TimeoutError:
+            raise PiFailure('app_scope_required') from None
+
     async def complete(self, event: dict[str, Any], task_id: str, role: str, mode: str) -> dict[str, Any]:
         scope = self.scopes.get((task_id, role))
         if event.get('type') != 'model' or scope is None or scope['mode'] != mode or self.closed.is_set():
@@ -132,7 +148,7 @@ class AppModelTransport:
         self.seen.add(request_id)
         try:
             self.send({'op': 'complete', 'id': request_id, 'channel': self.channel, **scope, 'messages': messages})
-            return await asyncio.wait_for(asyncio.shield(future), 4)
+            return await asyncio.wait_for(asyncio.shield(future), self.request_timeout)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             if not future.done():
                 self.send({'op': 'cancel', 'id': request_id, 'channel': self.channel})
@@ -147,6 +163,7 @@ class AppModelTransport:
         if self.started:
             asyncio.get_running_loop().remove_reader(0)
         self.closed.set()
+        self.scope_changed.set()
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(PiFailure('app_unconfirmed'))

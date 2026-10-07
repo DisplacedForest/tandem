@@ -62,11 +62,11 @@ final class NativePiRuntimeSession: @unchecked Sendable {
     private var ended = false
     private var ownedGroup: Int32?
     private var grants: [String: (String, PiModelScope)] = [:]
-    init(arguments: [String]) throws {
+    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3) throws {
         signal(SIGPIPE, SIG_IGN)
         umask(0o077)
         var info = stat()
-        try piCheck(fstat(STDIN_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO && fstat(STDOUT_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO, .unauthorized)
+        try piCheck(fstat(injectedController?.readHandle.fileDescriptor ?? STDIN_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO && fstat(injectedController?.writeHandle.fileDescriptor ?? STDOUT_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO, .unauthorized)
         try piCheck(arguments.count == 10)
         var options: [String: String] = [:]
         for offset in stride(from: 0, to: arguments.count, by: 2) {
@@ -84,11 +84,11 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         var digest = Data()
         for name in files { digest.append(Data(name.utf8)); digest.append(try Data(contentsOf: source.appendingPathComponent(name))) }
         digest.append(try Data(contentsOf: python)); digest.append(try Data(contentsOf: node))
-        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest))
+        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding)
         channel = UUID().uuidString.lowercased()
         capability = UUID().uuidString.lowercased() + UUID().uuidString.lowercased()
-        broker = NativePiModelBroker(ledger: ledger, channel: channel)
-        controller = PiPrivatePipe(read: .standardInput, write: .standardOutput)
+        broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, timeout: .seconds(requestTimeout))
+        controller = injectedController ?? PiPrivatePipe(read: .standardInput, write: .standardOutput)
         let input = Pipe(), output = Pipe()
         process = Process()
         process.executableURL = python
@@ -100,7 +100,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         child = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         try process.run()
         rememberGroup()
-        do { try child.send(.object(["op": .string("initialize"), "transport": .string("app-owned-mock"), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port))])) }
+        do { try child.send(.object(["op": .string("initialize"), "transport": .string("app-owned-mock"), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port)), "request_timeout": .number(requestTimeout + 2)])) }
         catch { child.closeWrite(); Self.killGroup(process); throw error }
     }
     static func killGroup(_ process: Process) {
@@ -212,6 +212,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         killOwnedGroup()
         if process.isRunning { process.waitUntilExit() }
         _ = await reader.value
+        controller.closeWrite()
     }
     static func main(_ arguments: [String]) async {
         do { try await NativePiRuntimeSession(arguments: arguments).run() }

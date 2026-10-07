@@ -42,6 +42,11 @@ func piUUID(_ value: PiValue) throws -> String {
     guard let text = value.piString, UUID(uuidString: text)?.uuidString.lowercased() == text else { throw PiBrokerError.invalid }
     return text
 }
+func piToolID(_ value: PiValue) throws -> String {
+    guard let id = value.piString, !id.isEmpty, id.utf8.count <= 128,
+          id.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { throw PiBrokerError.invalid }
+    return id
+}
 func piHash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
 struct PiModelScope: Sendable {
@@ -95,7 +100,7 @@ struct PiModelRequest: Sendable {
                     else {
                         try block.piKeys(["type", "id", "name", "arguments"])
                         try piCheck(block.pi("type").piString == "toolCall")
-                        let callID = try piUUID(block.pi("id"))
+                        let callID = try piToolID(block.pi("id"))
                         guard let name = block.pi("name").piString else { throw PiBrokerError.invalid }
                         try Self.arguments(block.pi("arguments"), name: name, scope: scope)
                         try piCheck(seen.insert(callID).inserted)
@@ -104,7 +109,7 @@ struct PiModelRequest: Sendable {
                 }
             } else if role == "toolResult" {
                 try message.piKeys(["role", "content", "toolCallId", "toolName", "isError"], required: ["role", "content", "toolCallId", "toolName"])
-                let callID = try piUUID(message.pi("toolCallId"))
+                let callID = try piToolID(message.pi("toolCallId"))
                 guard let name = message.pi("toolName").piString, let expected = pending.removeValue(forKey: callID) else { throw PiBrokerError.invalid }
                 try piCheck(expected == name && seen.contains(callID))
                 guard let blocks = message.pi("content").piArray else { throw PiBrokerError.invalid }
@@ -137,7 +142,12 @@ struct PiModelRequest: Sendable {
 }
 
 protocol PiMockModelExecutor: Sendable {
+    func validateOwner() async throws
     func complete(_ request: PiModelRequest) async throws -> PiValue
+}
+
+extension PiMockModelExecutor {
+    func validateOwner() async throws {}
 }
 
 struct PiFixtureModel: PiMockModelExecutor {

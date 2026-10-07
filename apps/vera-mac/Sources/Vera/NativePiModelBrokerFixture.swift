@@ -34,7 +34,10 @@ enum NativePiModelBrokerFixture {
     }
     static func rejected(_ expected: PiBrokerError? = nil, _ operation: () async throws -> Void) async throws {
         do { try await operation() }
-        catch let error as PiBrokerError { try piCheck(expected == nil || error == expected); return }
+        catch let error as PiBrokerError {
+            if let expected, error != expected { print("Rejected category mismatch: expected \(expected.rawValue), received \(error.rawValue)") }
+            try piCheck(expected == nil || error == expected); return
+        }
         throw PiBrokerError.invalid
     }
     static func exercise(_ root: URL) async throws {

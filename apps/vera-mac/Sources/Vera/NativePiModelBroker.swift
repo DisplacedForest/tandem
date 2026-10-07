@@ -40,10 +40,12 @@ final class PiModelLedger: @unchecked Sendable {
     let database: DatabaseQueue
     let profile: String
     let budget: Int64
-    init(root: URL, manifest: String, budget: Int64 = 1_000_000_000) throws {
-        try piCheck(budget > 0 && budget <= 1_000_000_000, .budget)
+    let baseline: Int64
+    init(root: URL, manifest: String, budget: Int64 = 1_000_000_000, baseline: Int64 = 0, ownerBinding: String = "fixture") throws {
+        try piCheck(budget > 0 && budget <= 200_000_000_000 && baseline >= 0 && baseline <= budget, .budget)
         owner = try PiExperimentRoot(root)
         self.budget = budget
+        self.baseline = baseline
         let file = owner.url.appendingPathComponent("broker.sqlite")
         let fd = open(file.path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
         try piCheck(fd >= 0, .storage)
@@ -56,7 +58,7 @@ final class PiModelLedger: @unchecked Sendable {
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS bindings(subject TEXT PRIMARY KEY,binding TEXT NOT NULL)")
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,subject TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL,reserved INTEGER NOT NULL,charged INTEGER,reply BLOB)")
-            for (key, value) in [("manifest", manifest), ("transport", "app-owned-mock"), ("budget", String(budget))] {
+            for (key, value) in [("manifest", manifest), ("transport", "app-owned-mock"), ("budget", String(budget)), ("baseline", String(baseline)), ("owner_binding", ownerBinding)] {
                 try db.execute(sql: "INSERT OR IGNORE INTO metadata VALUES(?,?)", arguments: [key, value])
                 try piCheck(try Self.storedString(db, sql: "SELECT value FROM metadata WHERE key=?", arguments: [key]) == value, .unauthorized)
             }
@@ -65,7 +67,7 @@ final class PiModelLedger: @unchecked Sendable {
             guard let profile = try Self.storedString(db, sql: "SELECT value FROM metadata WHERE key='profile'") else { throw PiBrokerError.storage }
             _ = try piUUID(.string(profile))
             try db.execute(sql: "UPDATE requests SET status='uncertain' WHERE status='reserved'")
-            try Self.validateRows(db, budget: budget)
+            try Self.validateRows(db, budget: budget - baseline)
             return profile
         }
     }
@@ -89,8 +91,10 @@ final class PiModelLedger: @unchecked Sendable {
             switch replyValue.storage { case .null: reply = nil; case .blob(let value): reply = value; default: throw PiBrokerError.storage }
             try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain"].contains(status) && reserved == 1_000_000, .storage)
             if status == "completed" {
-                try piCheck(charged == 28000 && reply != nil, .storage)
-                try PiModelReply.validate(PiValue.piRead(reply!))
+                try piCheck(charged != nil && reply != nil, .storage)
+                let saved = try PiValue.piRead(reply!)
+                try PiModelReply.validate(saved)
+                try piCheck(charged == PiModelReply.costNanos(saved), .storage)
             } else { try piCheck(charged == nil && reply == nil, .storage) }
             counts[subject, default: 0] += 1
             try piCheck(counts[subject]! <= 4, .storage)
@@ -106,7 +110,7 @@ final class PiModelLedger: @unchecked Sendable {
     }
     func reserve(_ request: PiModelRequest) throws -> PiValue? {
         try database.write { db in
-            try Self.validateRows(db, budget: budget)
+            try Self.validateRows(db, budget: budget - baseline)
             if let row = try Row.fetchOne(db, sql: "SELECT digest,status,reply FROM requests WHERE id=?", arguments: [request.id]) {
                 try piCheck(row["digest"] as String == request.digest, .duplicate)
                 guard row["status"] as String == "completed", let data: Data = row["reply"] else { throw PiBrokerError.uncertain }
@@ -116,15 +120,17 @@ final class PiModelLedger: @unchecked Sendable {
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests") ?? 12
             let own = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE subject=?", arguments: [request.scope.subject]) ?? 4
             let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
-            try piCheck(count < 12 && own < 4 && exposure <= budget - 1_000_000, .budget)
+            try piCheck(count < 12 && own < 4 && exposure <= budget - baseline - 1_000_000, .budget)
             try db.execute(sql: "INSERT INTO requests VALUES(?,?,?,'reserved',1000000,NULL,NULL)", arguments: [request.id, request.scope.subject, request.digest])
             return nil
         }
     }
     func settle(_ id: String, reply: PiValue) throws {
         let data = try reply.piData()
+        try PiModelReply.validate(reply)
+        let charged = PiModelReply.costNanos(reply)
         try database.write { db in
-            try db.execute(sql: "UPDATE requests SET status='completed',charged=28000,reply=? WHERE id=? AND status='reserved'", arguments: [data, id])
+            try db.execute(sql: "UPDATE requests SET status='completed',charged=?,reply=? WHERE id=? AND status='reserved'", arguments: [charged, data, id])
             try piCheck(db.changesCount == 1, .storage)
         }
     }
@@ -133,7 +139,7 @@ final class PiModelLedger: @unchecked Sendable {
     }
     func snapshot() throws -> PiValue {
         try database.read { db in
-            try Self.validateRows(db, budget: budget)
+            try Self.validateRows(db, budget: budget - baseline)
             let rows = try Row.fetchAll(db, sql: "SELECT id,status,reserved,charged FROM requests ORDER BY rowid")
             return .array(rows.map { row in .object(["id": .string(row["id"]), "status": .string(row["status"]), "reserved": .number(Double(row["reserved"] as Int64)), "charged": (row["charged"] as Int64?).map { .number(Double($0)) } ?? .null]) })
         }
@@ -141,18 +147,26 @@ final class PiModelLedger: @unchecked Sendable {
 }
 
 enum PiModelReply {
+    static func costNanos(_ reply: PiValue) -> Int64 {
+        guard case .number(let cost) = reply.pi("usage").pi("cost_usd"), cost.isFinite, cost >= 0, cost <= 0.001 else { return -1 }
+        return Int64((cost * 1_000_000_000).rounded(.up))
+    }
     static func validate(_ reply: PiValue, request: PiModelRequest? = nil) throws {
         try reply.piKeys(["content", "usage"])
-        try piCheck(reply.pi("usage") == .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0.000028)]) && (try reply.piData()).count <= 65536)
-        guard let content = reply.pi("content").piArray, content.count == 1 else { throw PiBrokerError.invalid }
+        try reply.pi("usage").piKeys(["input", "output", "cost_usd"])
+        guard case .number(let input) = reply.pi("usage").pi("input"), case .number(let output) = reply.pi("usage").pi("output") else { throw PiBrokerError.invalid }
+        try piCheck(input.isFinite && input.rounded() == input && (0...16384).contains(input) && output.isFinite && output.rounded() == output && (0...256).contains(output) && costNanos(reply) >= 0 && (try reply.piData()).count <= 65536)
+        guard let content = reply.pi("content").piArray, !content.isEmpty, content.count <= 9 else { throw PiBrokerError.invalid }
+        var ids = Set<String>()
         for block in content {
             if block.pi("type").piString == "text" { try PiModelRequest.text(block) }
             else {
                 try block.piKeys(["type", "id", "name", "arguments"])
                 try piCheck(block.pi("type").piString == "toolCall")
-                let id = try piUUID(block.pi("id"))
+                let id = try piToolID(block.pi("id"))
+                try piCheck(ids.insert(id).inserted && ids.count <= 8)
                 if let request {
-                    try piCheck(request.toolCount < 8 && !request.toolIDs.contains(id))
+                    try piCheck(request.toolCount + ids.count <= 8 && !request.toolIDs.contains(id))
                     try PiModelRequest.arguments(block.pi("arguments"), name: block.pi("name").piString ?? "", scope: request.scope)
                 } else {
                     try piCheck(block.pi("name").piString != nil && block.pi("arguments").piObject != nil)
@@ -203,13 +217,19 @@ actor NativePiModelBroker {
         return scope
     }
     func complete(_ value: PiValue) async throws -> PiValue {
+        try await executor.validateOwner()
         try piCheck(!closed && Date() < expires, .unauthorized)
         try piCheck(!quarantined, .uncertain)
         guard let scope = scopes[value.pi("scope").piString ?? ""] else { throw PiBrokerError.unauthorized }
         let request = try PiModelRequest(value, scope: scope, channel: channel)
         try piCheck(!canceled.contains(request.id), .canceled)
         try piCheck(!active.values.contains { $0.0 == scope.role }, .unavailable)
-        if let saved = try ledger.reserve(request) { try PiModelReply.validate(saved, request: request); return saved }
+        if let saved = try ledger.reserve(request) {
+            try await executor.validateOwner()
+            try piCheck(!closed && !quarantined && !canceled.contains(request.id), .unauthorized)
+            try PiModelReply.validate(saved, request: request)
+            return saved
+        }
         let operation = Task { try await executor.complete(request) }
         let race = PiModelRace()
         active[request.id] = (scope.role, operation, race)

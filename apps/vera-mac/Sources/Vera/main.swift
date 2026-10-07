@@ -3,7 +3,16 @@ import Foundation
 // Entry point. `Vera --shot <path>` renders the UI to a PNG headlessly (no window) and exits;
 // otherwise it launches the normal app.
 let arguments = CommandLine.arguments
-if arguments.dropFirst().first == "--pi-broker-selftest" {
+let piModes: Set<String> = ["--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
+if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.contains(arguments.dropFirst().first ?? "") {
+    FileHandle.standardError.write(Data("Unsupported isolated Vera mode\n".utf8))
+    exit(2)
+}
+if arguments.dropFirst().first == "--pi-candidate-selftest" {
+    await NativePiCandidateSelftest.run(Array(arguments.dropFirst(2)))
+} else if ["--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-recovery-contract"].contains(arguments.dropFirst().first ?? "") {
+    await NativePiCandidate.main(Array(arguments.dropFirst(2)), contract: arguments[1] == "--pi-candidate-contract", recovery: arguments[1] == "--pi-candidate-recovery-contract")
+} else if arguments.dropFirst().first == "--pi-broker-selftest" {
     await NativePiModelBrokerFixture.run()
 } else if arguments.dropFirst().first == "--pi-broker-mock" {
     await NativePiRuntimeSession.main(Array(arguments.dropFirst(2)))

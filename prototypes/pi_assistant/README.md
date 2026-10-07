@@ -104,3 +104,29 @@ The separate `@earendil-works/pi-durable` package at that tag is explicitly expe
 No paid model call is made by this implementation. Existing native smoke support permits fixed requests and the current app relay is research-specific. Neither exposes a general Pi tool-schema completion broker. The prototype refuses to export a saved key into Python or Node, widen that relay, or create a new Keychain grant.
 
 See NATIVE_TRANSPORT.md for the isolated credential-owning transport and exact remaining authorization boundary. Actual cloud results, if subsequently authorized and observed, must be labeled OpenRouter results and cannot establish local MLX latency or quality parity.
+
+
+## Integrated app candidate
+
+The app executable can own the assistant UI, Python durable runtime, Pi SDK foreground and worker loops, provider operation, admission client and accounting together. This candidate uses explicitly injected credentials, provider replies and admission responses. It never reads Keychain or calls a real provider.
+
+Build and run the headless workflow first:
+
+```sh
+mise run mac-build pi-prototype-deps
+python prototypes/pi_assistant/candidate.py --mock --data-root /tmp/vera-app-candidate-check --contract-test
+```
+
+To open its separate test window, use a fresh folder and omit `--contract-test`:
+
+```sh
+python prototypes/pi_assistant/candidate.py --mock --data-root /tmp/vera-app-candidate-ui
+```
+
+The app starts and stops its own authenticated loopback bridge. A persistent runtime identity permits a new ephemeral port on reopen. The selected-profile operation uses committed profile and credential state, excludes environment overrides, and checks the same binding around execution and receipt replay. The model receives no credential; Python and Node receive only typed requests, replies and explicit task authority. Worker authority follows a confirmed durable approval. Closing the window terminates owned runtime descendants.
+
+The foreground and worker operations use the existing native admission client, plus shared durable reservations and provider usage receipts. Synthetic accounting starts at zero and is separate from any real test-spend ledger. An interrupted model request remains uncertain and blocks new provider work. UI inspection and archival of an unconfirmed reply do not reconcile or erase that hold. A saved completion receipt can be displayed without repeating the operation.
+
+The live activation boundary remains closed. A future reviewed owner must supply the app's existing committed selected-profile operation, actual admission service and reconciled cumulative spend baseline through the same interfaces. It must keep credentials in the app and refuse redirects or profile drift. The fixed model, provider price ceiling and reply limits need a bounded live compatibility check before use. There is no live candidate flag, credential grant, signing change, installed-app replacement or deployment command in this launcher. Mock results establish neither cloud quality nor local MLX performance.
+
+`mise run pi-app-broker-test` includes the integrated app workflow, selected-profile/receipt regressions, refused approval, missing acknowledgement, invalid flag and nonregular-file checks. The workflow drives the same UI store used by the candidate window; it does not establish visual or accessibility QA.

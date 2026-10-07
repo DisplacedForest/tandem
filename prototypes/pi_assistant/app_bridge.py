@@ -14,7 +14,7 @@ from pi_assistant.bridge import create_app
 
 async def serve(boot: dict) -> None:
     import uvicorn
-    transport = AppModelTransport(boot['channel'], boot['profile'])
+    transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'])
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', boot['port']))
         listener.listen(16)
@@ -45,7 +45,7 @@ def main() -> None:
     if os.getpgrp() != os.getpid():
         os.setsid()
     boot = decode_frame(sys.stdin.buffer.readline(65538))
-    if set(boot) != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port'} or boot['op'] != 'initialize' or boot['transport'] != 'app-owned-mock':
+    if set(boot) != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port', 'request_timeout'} or boot['op'] != 'initialize' or boot['transport'] != 'app-owned-mock':
         raise ValueError('mock bootstrap required')
     cap = boot['ui_capability']
     if not isinstance(cap, str) or len(cap) != 72 or any(c not in '0123456789abcdef-' for c in cap):

@@ -199,11 +199,12 @@ class Runtime:
             if attempt and attempt['state'] == 'running':
                 if task['decision_reply'] != {'approved': True}:
                     return StepResult(state='needs_decision', checkpoint=checkpoint, event='recovery_decision', decision={'prompt': 'The worker was interrupted. Retry in the same workspace after checking its saved edits?', 'choices': ['approve', 'decline']}) if task['decision_reply'] is None else StepResult(state='failed', checkpoint=checkpoint, event='retry_declined')
-            if self.transport == 'app-owned-mock':
-                try:
-                    self.native.validate_scope(task['id'], 'worker', 'assistant', task['payload']['assistant_id'], task['payload']['conversation_id'])
-                except PiFailure:
-                    return StepResult(state='failed', checkpoint=checkpoint, event='model_scope_required')
+        if self.transport == 'app-owned-mock':
+            try:
+                await self.native.wait_scope(task['id'], 'worker', 'assistant', task['payload']['assistant_id'], task['payload']['conversation_id'])
+            except PiFailure:
+                return StepResult(state='needs_decision', checkpoint={}, event='model_scope_required', decision={'prompt': 'The app was interrupted before work could begin. Resume this task?', 'choices': ['approve', 'decline']})
+        with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO attempts VALUES(?,'running',NULL)", (task['id'],))
         directory = self.workspace / task['id']
         try:
