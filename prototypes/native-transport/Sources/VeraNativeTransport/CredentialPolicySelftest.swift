@@ -12,9 +12,15 @@ final class FixtureAuthenticationContext: LAContext {
 final class FixtureKeychainAccess: NativeKeychainAccess, @unchecked Sendable {
     enum Mode { case accepted, setFailure, getFailure, stillAllowed, refused }
     let mode: Mode
+    let readStatus: OSStatus
+    let readData: Data?
     private let lock = NSLock()
     private var calls: [String] = []
-    init(_ mode: Mode) { self.mode = mode }
+    init(_ mode: Mode, status: OSStatus = errSecSuccess, data: Data? = Data("synthetic-policy-key".utf8)) {
+        self.mode = mode
+        self.readStatus = status
+        self.readData = data
+    }
     func disableInteraction() -> OSStatus {
         lock.lock(); defer { lock.unlock() }
         calls.append("disable")
@@ -36,7 +42,7 @@ final class FixtureKeychainAccess: NativeKeychainAccess, @unchecked Sendable {
             && query[kSecMatchLimit as String] as? String == kSecMatchLimitOne as String
         calls.append("read")
         guard valid else { return (errSecParam, nil) }
-        return mode == .refused ? (errSecInteractionNotAllowed, nil) : (errSecSuccess, Data("synthetic-policy-key".utf8))
+        return mode == .refused ? (errSecInteractionNotAllowed, nil) : (readStatus, readData)
     }
     var recorded: [String] { lock.lock(); defer { lock.unlock() }; return calls }
 }
@@ -46,7 +52,14 @@ enum CredentialPolicySelftest {
         for mode in [FixtureKeychainAccess.Mode.setFailure, .getFailure, .stillAllowed, .refused] {
             let access = FixtureKeychainAccess(mode)
             let reader = NativeCredential(access: access, context: { FixtureAuthenticationContext() })
-            try Selftest.expect(.credentialUnavailable) { _ = try reader.read(profile: UUID().uuidString, progress: { _ in }) }
+            do {
+                _ = try reader.read(profile: UUID().uuidString, progress: { _ in })
+                throw Failure.invalidRequest
+            } catch let failure as CredentialReadFailure {
+                try ensure(mode == .refused && failure.status == errSecInteractionNotAllowed)
+            } catch {
+                try ensure(mode != .refused && (error as? Failure) == .credentialUnavailable)
+            }
             let expected = mode == .setFailure ? ["disable"] : (mode == .refused ? ["disable", "verify", "read"] : ["disable", "verify"])
             try ensure(access.recorded == expected)
         }

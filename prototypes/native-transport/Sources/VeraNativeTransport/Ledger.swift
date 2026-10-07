@@ -45,6 +45,7 @@ final class Ledger: @unchecked Sendable {
         try execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,task_id TEXT NOT NULL,role TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT '')")
         try execute("CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,experiment TEXT NOT NULL,session TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL,reserved INTEGER NOT NULL,charged INTEGER,usage_input INTEGER,usage_output INTEGER,created REAL NOT NULL,account_usage INTEGER NOT NULL,finished REAL,model TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS phases(sequence INTEGER PRIMARY KEY AUTOINCREMENT,request TEXT NOT NULL,stage TEXT NOT NULL)")
+        try execute("CREATE TABLE IF NOT EXISTS credential_failures(request TEXT PRIMARY KEY,os_status INTEGER NOT NULL CHECK(typeof(os_status)='integer' AND os_status BETWEEN -2147483648 AND 2147483647),category TEXT NOT NULL)")
         try execute("PRAGMA user_version=2")
         try validateRows()
         try execute("UPDATE requests SET status='uncertain',finished=? WHERE status='reserved'", [String(Date().timeIntervalSince1970)])
@@ -181,6 +182,21 @@ final class Ledger: @unchecked Sendable {
         mutex.lock(); defer { mutex.unlock() }
         _ = try identifier(.string(request))
         try execute("INSERT INTO phases(request,stage) VALUES(?,?)", [request, stage.rawValue])
+    }
+    func traceCredentialFailure(_ request: String, _ failure: CredentialReadFailure) throws {
+        mutex.lock(); defer { mutex.unlock() }
+        _ = try identifier(.string(request))
+        try execute("INSERT INTO credential_failures(request,os_status,category) VALUES(?,?,?)", [request, String(failure.status), failure.category])
+    }
+    func credentialFailure(_ request: String) throws -> [[String: String]] {
+        mutex.lock(); defer { mutex.unlock() }
+        _ = try identifier(.string(request))
+        let result = try rows("SELECT os_status,category FROM credential_failures WHERE request=?", [request])
+        try require(result.count <= 1, .storage)
+        for row in result {
+            guard let text = row["os_status"], let status = Int32(text), row["category"] == CredentialReadFailure(status: status).category else { throw Failure.storage }
+        }
+        return result
     }
     func phaseSnapshot() throws -> [[String: String]] {
         mutex.lock(); defer { mutex.unlock() }

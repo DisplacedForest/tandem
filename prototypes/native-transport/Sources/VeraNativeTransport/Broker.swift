@@ -95,7 +95,12 @@ actor Broker {
             try ledger.claimCredential(permit)
             let credentialWatchdog = HardDeadline(after: credentialTimeout, code: 126)
             defer { credentialWatchdog.finish() }
-            key = try credentials.read(profile: permit.profileID) { [ledger] stage in try ledger.trace(request.id, stage) }
+            do {
+                key = try credentials.read(profile: permit.profileID) { [ledger] stage in try ledger.trace(request.id, stage) }
+            } catch let failure as CredentialReadFailure {
+                try ledger.traceCredentialFailure(request.id, failure)
+                throw Failure.credentialUnavailable
+            }
             try ledger.trace(request.id, .credentialReturned)
         }
         guard let key, !key.isEmpty, key.utf8.count <= 4096, !key.contains("\n"), !key.contains("\r") else { throw Failure.credentialUnavailable }

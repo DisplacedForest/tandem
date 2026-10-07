@@ -56,7 +56,7 @@ struct NativeCredential: CredentialSource {
         try progress(.keychainReturned)
         guard status == errSecSuccess, let data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty,
-              key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw Failure.credentialUnavailable }
+              key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw CredentialReadFailure(status: status) }
         return key
     }
 }
