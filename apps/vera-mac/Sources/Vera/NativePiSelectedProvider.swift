@@ -38,10 +38,11 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     let accounting: PiSharedAccounting
     let validate: @Sendable () async throws -> Void
     let send: @Sendable (PiModelRequest, Data) async throws -> (Data, Int)
+    var checkpointPricing: PiCheckpointPricing? = nil
     func validateOwner() async throws { try await validate() }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
-        let body = try PiProviderCodec.body(request, model: binding.model).piData()
+        let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
         try piCheck(body.count <= 16384)
         return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
             try budget.check()

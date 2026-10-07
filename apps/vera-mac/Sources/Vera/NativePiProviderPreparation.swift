@@ -84,11 +84,16 @@ enum PiProviderPreflight {
 struct PiPreparedExecutor: PiMockModelExecutor {
     let operation: PiSelectedProfileOperation
     let permit: PiCumulativeBudget
+    var journal: PiCheckpointLedger? = nil
     func validateOwner() async throws { try permit.validate(operation.binding); try await operation.validateOwner() }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validateOwner()
         let reply = try await operation.complete(request)
         try await validateOwner()
+        if let journal {
+            try piCheck({ if case .number(let input) = reply.pi("usage").pi("input") { return input <= 4096 }; return false }())
+            try journal.settle(reply)
+        }
         return reply
     }
 }
@@ -102,6 +107,36 @@ final class PiPreparedProvider {
     private let owner: ConfigStore
     private init(owner: ConfigStore, binding: PiSelectedProfileBinding, accounting: PiSharedAccounting, executor: PiPreparedExecutor, transport: PiTransportKind) {
         self.owner = owner; self.binding = binding; self.accounting = accounting; self.executor = executor; self.transport = transport
+    }
+    static func checkpoint(owner: ConfigStore, admission: NativeInferenceAdmission, journal: PiCheckpointLedger, accountingRoot: URL, http: PiProviderHTTP, transport: PiTransportKind) async throws -> PiPreparedProvider {
+        try piCheck(transport != .mock, .unauthorized)
+        let binding = try owner.piSelectedProfileBinding(), permit = try journal.permit(binding: owner.piSelectedProfileBinding())
+        try permit.validate(binding)
+        try journal.metadata("models")
+        let pricing = try PiCheckpointPricing(catalog: await owner.piProviderMetadata(binding: binding, path: "models", http: http))
+        try permit.validate(binding)
+        try journal.stage("models_returned", additions: ["price_ceilings_per_million": pricing.ceilings, "forecast_nanos": .number(Double(pricing.forecastNanos))])
+        try journal.metadata("usage")
+        let usage = try PiProviderPreflight.usage(await owner.piProviderMetadata(binding: binding, path: "key", http: http))
+        try permit.validate(binding)
+        let baseline = try permit.baseline(observedProviderUsage: usage)
+        try journal.stage("usage_returned", additions: ["observed_provider_usage_nanos": .number(Double(usage))])
+        let accounting = try PiSharedAccounting(root: accountingRoot, baselineNanos: baseline, budgetNanos: baseline + PiCheckpointPricing.reservation, ownerBinding: permit.digest, transport: transport)
+        let baseOperation = try owner.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { outgoing, request in
+            try permit.validate(binding)
+            let expected = try pricing.body(request)
+            try piCheck(outgoing.httpBody == expected, .unauthorized)
+            try journal.reserve(baseline: baseline, body: expected)
+            let result = try await http.send(outgoing)
+            try permit.validate(binding)
+            return result
+        }
+        var operation = PiSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting, validate: {
+            try permit.validate(binding)
+            try await baseOperation.validateOwner()
+        }, send: baseOperation.send)
+        operation.checkpointPricing = pricing
+        return PiPreparedProvider(owner: owner, binding: binding, accounting: accounting, executor: PiPreparedExecutor(operation: operation, permit: permit, journal: journal), transport: transport)
     }
     static func prepare(owner: ConfigStore, admission: NativeInferenceAdmission?, permit: PiCumulativeBudget, accountingRoot: URL, http: PiProviderHTTP, transport: PiTransportKind) async throws -> PiPreparedProvider {
         guard let admission, transport != .mock else { throw PiBrokerError.unauthorized }

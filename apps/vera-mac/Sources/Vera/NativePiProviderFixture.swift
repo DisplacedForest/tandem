@@ -14,6 +14,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         try piCheck(request.url?.host == "openrouter.ai" && request.value(forHTTPHeaderField: "Authorization") == "Bearer " + PiCandidateCredentials.key)
         let path = request.url!.lastPathComponent
         paths.append(path)
+        if behavior == "checkpoint-held" && path == "completions" { _ = PiCheckpointDeadline(seconds: 0.5, code: 124) }
         if behavior == "status" { return (Data(), 503, [:], 0) }
         if behavior == "redirect" { return (Data(), 302, ["Location": "https://forbidden.invalid"], 0) }
         if behavior == "oversize" { return (Data(repeating: 32, count: 65537), 200, [:], 0) }
@@ -28,7 +29,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
                 let text = String(decoding: try PiValue.object(fields).piData(), as: UTF8.self).replacingOccurrences(of: PiCandidateCredentials.key, with: "\\u0069n-memory-mock-credential")
                 return (Data(text.utf8), 200, [:], 0)
             }
-            return (try Self.catalog.piData(), 200, [:], 0)
+            return (try (behavior.hasPrefix("checkpoint") ? Self.checkpointCatalog : Self.catalog).piData(), 200, [:], 0)
         }
         if path == "key" { return (Data("{\"data\":{\"usage\":0.25}}".utf8), 200, [:], 0) }
         var data = request.httpBody
@@ -46,7 +47,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         guard let data else { throw PiBrokerError.invalid }
         let body = try PiValue.piRead(data)
         try piCheck(body.pi("model").piString == "qwen/qwen3.8-flash" && body.pi("max_tokens") == .number(256) && body.pi("reasoning").pi("enabled") == .bool(false))
-        try piCheck(body.pi("provider").pi("max_price").pi("prompt") == .number(0.05) && body.pi("provider").pi("allow_fallbacks") == .bool(false))
+        try piCheck(body.pi("provider").pi("max_price").pi("prompt") == .number(behavior.hasPrefix("checkpoint") ? 0.17 : 0.05) && body.pi("provider").pi("allow_fallbacks") == .bool(false))
         let names = body.pi("tools").piArray!.compactMap { $0.pi("function").pi("name").piString }
         let messages = body.pi("messages").piArray!, last = body.pi("messages").piArray!.last!
         let worker = names.contains("write_file")
@@ -58,7 +59,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         } else if names.contains("delegate"), last.pi("role").piString == "user", let text = last.pi("content").piString, text.hasPrefix("/task ") {
             name = "delegate"; args = .object(["objective": .string(String(text.dropFirst(6)))])
         }
-        var message: [String: PiValue] = ["role": .string("assistant"), "content": .string("HTTP provider fixture reply.")]
+        var message: [String: PiValue] = ["role": .string("assistant"), "content": .string(behavior.hasPrefix("checkpoint") ? "OK" : "HTTP provider fixture reply.")]
         if let name {
             message["content"] = .null
             message["tool_calls"] = .array([.object(["id": .string(UUID().uuidString.lowercased()), "type": .string("function"), "function": .object(["name": .string(name), "arguments": .string(String(decoding: try args.piData(), as: UTF8.self))])])])
@@ -72,7 +73,12 @@ final class PiProviderFixtureState: @unchecked Sendable {
         let reply: PiValue = .object(["model": .string("qwen/qwen3.8-flash"), "choices": .array([.object(["finish_reason": .string(name == nil ? "stop" : "tool_calls"), "message": .object(message)])]), "usage": behavior == "missing-cost" ? .object(["prompt_tokens": .number(20), "completion_tokens": .number(4)]) : .object(["prompt_tokens": .number(20), "completion_tokens": .number(4), "cost": .number(0.000028)])])
         let replyData = try reply.piData()
         let encoded = behavior == "escaped-echo" ? Data(String(decoding: replyData, as: UTF8.self).replacingOccurrences(of: PiCandidateCredentials.key, with: "\\u0069n-memory-mock-credential").utf8) : replyData
-        return (encoded, 200, [:], behavior == "held" ? 5 : (worker ? 0.3 : 0.01))
+        return (encoded, 200, [:], (behavior == "held" || behavior == "checkpoint-held") ? 5 : (worker ? 0.3 : 0.01))
+    }
+    static var checkpointCatalog: PiValue {
+        var entry = catalog.pi("data").piArray![0].piObject!
+        entry["pricing"] = .object(["prompt": .string("0.00000015"), "completion": .string("0.00000047"), "request": .string("0")])
+        return .object(["data": .array([.object(entry)])])
     }
     static var catalog: PiValue {
         .object(["data": .array([.object(["id": .string("qwen/qwen3.8-flash"), "reasoning": .object(["mandatory": .bool(false)]), "supported_parameters": .array(["tools", "max_tokens", "reasoning"].map(PiValue.string)), "pricing": .object(["prompt": .string("0.00000005"), "completion": .string("0.0000001"), "request": .string("0"), "input_cache_read": .string("0.000000025")])])])])
