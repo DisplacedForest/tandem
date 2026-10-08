@@ -100,3 +100,16 @@ copy it manually, either right-click → **Open** once, or:
 xattr -dr com.apple.quarantine /Applications/Vera.app
 ```
 `spctl --assess` will report it as rejected: expected for ad-hoc; it still runs.
+
+
+## Persistent assistant experiment
+
+The Pi experiment uses the existing native window, sidebar, transcript, composer and task cards. The Vera destination is separate from focused chats created with New chat. Assistant messages and pending requests stay in the isolated Pi session journal; they are not inserted into focused-chat history or submitted to its turn scheduler. Leaving Vera keeps its background tasks running.
+
+Normal launch preserves the existing configuration and shows the assistant as disconnected until an app-owned session is supplied. There is no automatic test runtime or cloud connection. The old standalone prototype shell is not the native app frontend.
+
+`--pi-native-contract` exercises the native presentation adapter headlessly with the app-owned mock provider. Supply the same explicit `--root`, `--repo`, `--python`, `--node` and `--port` arguments as the Pi candidate contract. `--pi-native-reopen-contract` verifies the saved session after that process exits. These contracts make no real credential or model calls.
+
+The explicitly requested `--pi-candidate-mock` visual fixture now enters through `VeraApp` and `ContentView`. It requires `CFFIXED_USER_HOME` to point to a separate disposable home, and both `--root` and any `VERA_CONFIG_DIR` override must stay inside that home. Its focused chats have separate local history and no model connection. Native assistant attachments and ratings remain unavailable; classic chat retains its existing controls. Output buttons reveal validated workspace files in Finder.
+
+Task approval uses the exact decision displayed. Recovery first refreshes the original reply and tasks; Continue without reply archives that request without resending or stopping its work. A changed draft is preserved. No visual acceptance or live cloud-model result is implied by the headless contracts.

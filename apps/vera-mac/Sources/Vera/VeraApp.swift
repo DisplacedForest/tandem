@@ -14,6 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !bundled, let icon = Brand.icon { NSApp.applicationIconImage = icon }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            await NativePiNativeContext.presentation.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 }
 
 struct VeraApp: App {
@@ -25,13 +32,18 @@ struct VeraApp: App {
     @StateObject private var engine = EngineManager()
 
     init() {
-        let configInstance = ConfigStore()
-        let native = configInstance.nativeResolved
-        let socket = VoiceSocketConfig.load().map { VeraSocket(config: $0) }
+        let fixture = NativePiNativeContext.candidate
+        let configInstance = fixture?.config ?? ConfigStore()
+        let native = fixture == nil ? configInstance.nativeResolved : nil
+        let socket = fixture == nil ? VoiceSocketConfig.load().map { VeraSocket(config: $0) } : nil
         let repository: LocalChatRepository?
         let repositoryError: String?
         do {
-            repository = try LocalChatRepository()
+            if let fixture {
+                repository = try LocalChatRepository(url: fixture.root.url.appendingPathComponent("focused.sqlite"))
+            } else {
+                repository = try LocalChatRepository()
+            }
             repositoryError = nil
         } catch {
             repository = nil
@@ -45,7 +57,7 @@ struct VeraApp: App {
             }
         }
         let storeInstance = ChatStore(
-            veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
+            veraAPI: fixture == nil ? VeraAPIClient.resolved(model: native?.model ?? "") : nil,
             nativeConfig: native,
             nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: repository,
@@ -59,10 +71,11 @@ struct VeraApp: App {
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
-            sweepOrphanedAttachments: true,
+            sweepOrphanedAttachments: fixture == nil,
             nativeTaskConfiguration: NativeTaskConfiguration(
                 settings: { configInstance.nativeSettings },
-                savedTemplate: { configInstance["chat_template_kwargs"] }))
+                savedTemplate: { configInstance["chat_template_kwargs"] }),
+            artifactPersistenceEnabled: fixture == nil)
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
         _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
@@ -79,9 +92,9 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
-                .task { updates.start() }
-                .task { await engine.reconcileOnLaunch() }
-                .task { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) }
+                .task { if NativePiNativeContext.candidate == nil { updates.start() } }
+                .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
+                .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
         }
         .defaultSize(width: 1180, height: 760)
         .commands {

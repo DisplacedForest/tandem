@@ -4,12 +4,14 @@ import SwiftUI
 @MainActor
 public final class AssistantWorkspace {
     let store: PrototypeStore
+    public let session: AssistantSession
 
     public init(dataRoot: URL, endpoint: URL, workspaceRoot: URL, runtimeIdentity: String,
                 send: @escaping @Sendable (URLRequest) async throws -> (Data, Int)) throws {
         let configuration = try PrototypeConfiguration(dataRoot: dataRoot, endpoint: endpoint,
                                                        workspaceRoot: workspaceRoot, runtimeIdentity: runtimeIdentity)
         store = try PrototypeStore(configuration: configuration, client: PrototypeClient(base: endpoint, send: send))
+        session = AssistantSession(store: store)
     }
 
     public var assistantID: UUID { store.saved.assistantID }

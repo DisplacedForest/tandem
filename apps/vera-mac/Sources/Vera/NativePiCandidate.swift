@@ -1,6 +1,4 @@
 import Foundation
-import AppKit
-import SwiftUI
 import VeraAssistantUI
 
 @MainActor
@@ -121,99 +119,5 @@ final class NativePiCandidate {
             FileHandle.standardError.write(Data("The isolated Vera candidate could not complete. Its saved work was preserved.\n".utf8))
             exit(1)
         }
-    }
-}
-
-@MainActor
-final class NativePiCandidateLauncher: ObservableObject {
-    @Published var candidate: NativePiCandidate?
-    @Published var error: String?
-    var arguments: [String] = []
-    private var started = false
-    private var startup: Task<NativePiCandidate, Error>?
-    func start() async {
-        guard !started else { return }
-        started = true
-        let arguments = self.arguments
-        let startup = Task { try await NativePiCandidate.create(arguments) }
-        self.startup = startup
-        do { candidate = try await startup.value }
-        catch { self.error = "The test runtime could not start. Its saved work was preserved." }
-    }
-    func stop() async {
-        startup?.cancel()
-        if let candidate { await candidate.stop() }
-        else if let startup, let candidate = try? await startup.value { await candidate.stop() }
-    }
-}
-
-@MainActor
-final class NativePiCandidateDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        if NSApp.windows.isEmpty {
-            let screen = NSScreen.screens.max { $0.visibleFrame.width < $1.visibleFrame.width }
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false, screen: screen)
-            window.isReleasedWhenClosed = false
-            window.title = "Vera Test Candidate"
-            let host = NSHostingView(rootView: NativePiCandidateLaunchView())
-            host.sizingOptions = []
-            window.contentView = host
-            window.contentMinSize = NSSize(width: 1140, height: 600)
-            window.setContentSize(NSSize(width: 1180, height: 760))
-            window.center()
-            self.window = window
-            window.makeKeyAndOrderFront(nil)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Task {
-            await NativePiCandidateApplication.launcher.stop()
-            sender.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
-    }
-}
-
-struct NativePiCandidateLaunchView: View {
-    @ObservedObject private var state = NativePiCandidateApplication.launcher
-    var body: some View {
-        Group {
-            if let candidate = state.candidate { AssistantWorkspaceView(workspace: candidate.workspace) }
-            else if let error = state.error { Text(error).padding(32) }
-            else { ProgressView("Starting test runtime").padding(32) }
-        }
-        .frame(minWidth: 1140, minHeight: 600)
-        .task { await state.start() }
-    }
-}
-
-@MainActor
-enum NativePiCandidateApplication {
-    static let launcher = NativePiCandidateLauncher()
-    private static var delegate: NativePiCandidateDelegate?
-    static func main() {
-        let application = NSApplication.shared
-        application.setActivationPolicy(.regular)
-        let delegate = NativePiCandidateDelegate()
-        self.delegate = delegate
-        application.delegate = delegate
-        let menu = NSMenu()
-        for (title, entries) in [
-            ("Vera Test Candidate", [("Quit Vera Test Candidate", "terminate:", "q")]),
-            ("File", [("Close", "performClose:", "w")]),
-            ("Edit", [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")])
-        ] {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            let submenu = NSMenu(title: title)
-            for (label, action, key) in entries { submenu.addItem(withTitle: label, action: NSSelectorFromString(action), keyEquivalent: key) }
-            item.submenu = submenu
-            menu.addItem(item)
-        }
-        application.mainMenu = menu
-        application.run()
     }
 }

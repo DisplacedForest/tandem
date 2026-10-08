@@ -67,14 +67,15 @@ def test_missing_scope_ack_is_bounded(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path) -> None:
+@pytest.mark.parametrize("contract,recovery", [("--pi-candidate-contract", "--pi-candidate-recovery-contract"), ("--pi-native-contract", "--pi-native-recovery-contract")])
+def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path, contract: str, recovery: str) -> None:
     import signal
     import sqlite3
     import time
     from test_app_broker import descendants, gone, wait_for
 
     root = tmp_path / 'candidate'
-    process = subprocess.Popen([str(BINARY), '--pi-candidate-contract', *arguments(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen([str(BINARY), contract, *arguments(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     state_file = root / 'ui/assistant-ui.json'
     ledger = root / 'model/broker.sqlite'
     journal = root / 'model/runtime/assistant.sqlite'
@@ -104,12 +105,21 @@ def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path
         assert original is not None, 'Did not observe concurrent worker and pending foreground before kill'
         process.communicate(timeout=8)
         wait_for(lambda: all(gone(pid) for pid in children), bool, timeout=8)
-        result = run('--pi-candidate-recovery-contract', arguments(root))
+        result = run(recovery, arguments(root))
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
         assert report['assistant_id'] == original['assistantID'].lower()
         assert report['archived_message_id'] == original['pending'][0]['message_id'].lower()
-        assert report['tasks_unchanged'] and report['archived_on_reopen']
+        assert report['tasks_unchanged']
+        if recovery == '--pi-native-recovery-contract':
+            restarted = run('--pi-native-reopen-contract', arguments(root))
+            assert restarted.returncode == 0, restarted.stderr
+            saved = json.loads(restarted.stdout)
+            assert report['archived_message_id'] in saved['archived_message_ids']
+            assert saved['task_ids'] == report['original_task_ids']
+            assert not saved['pending'] and saved['draft'] == 'Preserve edited recovery draft'
+        else:
+            assert report['archived_on_reopen']
         assert report['fresh_send_attempted'] is False
         for directory in ('accounting', 'model'):
             with sqlite3.connect(root / directory / 'broker.sqlite') as db:
@@ -219,3 +229,21 @@ def test_checkpoint_deadline_after_transmission_cleans_descendants(tmp_path: Pat
         if process.poll() is None:
             process.kill()
             process.communicate(timeout=8)
+
+
+def test_native_session_contract(tmp_path: Path) -> None:
+    result = run('--pi-native-contract', arguments(tmp_path / 'native'), timeout=40)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report['native_components'] and report['classic_store_unchanged']
+    assert report['foreground_while_worker_active']
+    assert report['result_deliveries'] == 1
+    assert report['real_provider_calls'] == report['real_keychain_reads'] == 0
+    assert report['visible_launch'] is False
+    assert Path(report['artifact_path']).is_file()
+    reopened = run('--pi-native-reopen-contract', arguments(tmp_path / 'native'))
+    assert reopened.returncode == 0, reopened.stderr
+    saved = json.loads(reopened.stdout)
+    assert saved['projected_ids'] == report['projected_ids']
+    assert saved['conversation_id'] == report['conversation_id']
+    assert saved['task_ids'] == sorted([report['completed_task_id'], report['stopped_task_id']])

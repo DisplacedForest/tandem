@@ -3,12 +3,14 @@ import MarkdownUI
 
 struct NativeTaskCardView: View {
     let card: NativeTaskCardPresentation
+    var statusTitle: String? = nil
+    var stopTitle = "Stop research"
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(card.status.title, systemImage: card.status.symbol)
+            Label(statusTitle ?? card.status.title, systemImage: card.status.symbol)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
             Text(card.title)
@@ -33,7 +35,7 @@ struct NativeTaskCardView: View {
             if card.canCancel || card.canRetry {
                 HStack(spacing: 12) {
                     if card.canRetry { Button("Retry") { onRetry?() }.disabled(onRetry == nil) }
-                    if card.canCancel { Button("Stop research") { onCancel?() }.disabled(onCancel == nil) }
+                    if card.canCancel { Button(stopTitle) { onCancel?() }.disabled(onCancel == nil) }
                 }
                 .font(.system(size: 12))
             }
