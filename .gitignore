@@ -37,4 +37,5 @@ venv/
 /.vscode/
 
 .worktrees/
+apps/vera-mac/Sources/Vera/VeraPackagedRuntimeSeal.swift
 .serena/

@@ -66,6 +66,25 @@ launch. Per-conversation instructions live on the conversation row and are edite
 chip above the composer.
 
 ## Package & install
+
+Packaging requires Python 3.14 or later on the build machine. `package.sh` bundles an arm64 Python 3.12 runtime, Node 22 and the pinned Pi 1.0.4 SDK, so the packaged Pi experiment does not need a checkout or developer tools on its destination Mac. This app requires macOS 26 or later. Normal launch still opens the existing native app; bundling the runtime does not enable a live Pi assistant automatically.
+
+Runtime inputs are pinned in `runtime/runtime-lock.json` and the Pi npm lock. Assembly verifies every download and never executes package installation scripts. `VERA_RUNTIME_CACHE` chooses the download cache; `VERA_RUNTIME_OFFLINE=1` requires all pinned inputs already present. The bundle includes dependency notices and a complete inventory whose digest is compiled into the executable. Startup checks this seal and every runtime file before execution. Developer-path overrides remain available only as a complete `--repo`, `--python`, `--node` set; ordinary development builds cannot implicitly load a bundled runtime.
+
+The packaged headless fixture uses a fresh explicit data directory and injected credentials and model responses:
+
+```sh
+build/Vera.app/Contents/MacOS/Vera --pi-candidate-contract --root /tmp/vera-packaged-fixture
+```
+
+For checkout-denied cancellation, real process-kill recovery and integrity checks, copy the package outside the checkout and run the portable contract from the repository with the development Python environment:
+
+```sh
+python3 scripts/tests/packaged_runtime_contract.py --app /tmp/vera-portable/Vera.app --output-dir /tmp/vera-portable/evidence
+```
+
+These are offline fixture checks. Clean-user onboarding, real provider access, signing distribution policy and target-device validation remain separate requirements. User settings, conversations and credentials are never package inputs.
+
 ```bash
 scripts/package.sh              # -> build/Vera.app (ad-hoc signed)
 scripts/deploy.sh               # package + install to /Applications (+ a second Mac if configured)

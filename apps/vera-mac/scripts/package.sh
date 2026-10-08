@@ -26,9 +26,18 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$BUILD_DIR/Vera.icns"
 
+RUNTIME_STAGE="$(mktemp -d "$BUILD_DIR/.runtime.XXXXXX")"
+SEAL="Sources/Vera/VeraPackagedRuntimeSeal.swift"
+if [ -e "$SEAL" ]; then echo "A runtime package build is already staged" >&2; rmdir "$RUNTIME_STAGE"; exit 1; fi
+trap 'rm -rf "$RUNTIME_STAGE"; rm -f "$SEAL"' EXIT
+RUNTIME_ARGS=(--destination "$RUNTIME_STAGE/PiRuntime" --cache "${VERA_RUNTIME_CACHE:-$APP_ROOT/build/runtime-cache}" --seal-source "$SEAL")
+if [ "${VERA_RUNTIME_OFFLINE:-0}" = "1" ]; then RUNTIME_ARGS+=(--offline); fi
+python3 "$APP_ROOT/scripts/package_runtime.py" "${RUNTIME_ARGS[@]}"
+RUNTIME_SHA="$(shasum -a 256 "$RUNTIME_STAGE/PiRuntime/manifest.json" | cut -d ' ' -f 1)"
+
 # 2. Release build
 echo "==> swift build -c release"
-swift build -c release
+swift build -c release -Xswiftc -DVERA_PACKAGED_RUNTIME
 
 BIN="$(swift build -c release --show-bin-path)"
 
@@ -40,6 +49,8 @@ cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
 cp "$BUILD_DIR/Vera.icns" "$APP/Contents/Resources/Vera.icns"
 # SwiftPM resource bundles (Vera_Vera.bundle = logo, Starscream_Starscream.bundle = ws privacy manifest)
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
+
+cp -R "$RUNTIME_STAGE/PiRuntime" "$APP/Contents/Resources/PiRuntime"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -64,6 +75,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 python3 "$APP_ROOT/scripts/sign.py" "$APP"
+python3 "$APP_ROOT/scripts/package_runtime.py" --verify --destination "$APP/Contents/Resources/PiRuntime" --manifest-sha256 "$RUNTIME_SHA"
 
 rm -rf "$ICONSET"
 echo "==> Done: $APP_ROOT/$APP  (v$VERSION, build $BUILD_NUM)"

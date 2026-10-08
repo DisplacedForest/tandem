@@ -64,6 +64,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
     private var ownedGroup: Int32?
     private var grants: [String: (String, PiModelScope)] = [:]
     init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock) throws {
+        let arguments = try NativePiRuntimePaths.expanded(arguments)
         self.transport = transport
         signal(SIGPIPE, SIG_IGN)
         umask(0o077)
@@ -85,6 +86,8 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         let source = repo.appendingPathComponent("prototypes/pi_assistant")
         var digest = Data()
         for name in files { digest.append(Data(name.utf8)); digest.append(try Data(contentsOf: source.appendingPathComponent(name))) }
+        let runtimeManifest = repo.deletingLastPathComponent().appendingPathComponent("manifest.json")
+        if FileManager.default.fileExists(atPath: runtimeManifest.path) { digest.append(try Data(contentsOf: runtimeManifest)) }
         digest.append(try Data(contentsOf: python)); digest.append(try Data(contentsOf: node))
         ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding, transport: transport)
         channel = UUID().uuidString.lowercased()
@@ -94,7 +97,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         let input = Pipe(), output = Pipe()
         process = Process()
         process.executableURL = python
-        process.arguments = [source.appendingPathComponent("app_bridge.py").path, "--app-owned"]
+        process.arguments = ["-I", "-B", source.appendingPathComponent("app_bridge.py").path, "--app-owned"]
         process.environment = ["PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
         process.standardInput = input
         process.standardOutput = output

@@ -68,6 +68,7 @@ enum NativePiCheckpoint {
     static func main(_ arguments: [String]) async {
         var journal: PiCheckpointLedger?
         do {
+            let arguments = try NativePiRuntimePaths.expanded(arguments)
             try piCheck(arguments.count == 16)
             var options: [String: String] = [:]
             for index in stride(from: 0, to: arguments.count, by: 2) { try piCheck(options[arguments[index]] == nil); options[arguments[index]] = arguments[index + 1] }

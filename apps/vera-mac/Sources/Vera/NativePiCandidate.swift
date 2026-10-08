@@ -20,6 +20,7 @@ final class NativePiCandidate {
         self.accounting = accounting; self.owner = owner; self.workspace = workspace; self.admission = admission
     }
     static func create(_ arguments: [String], httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) async throws -> NativePiCandidate {
+        let arguments = try NativePiRuntimePaths.expanded(arguments)
         try piCheck(arguments.count == 10)
         var options: [String: String] = [:]
         for index in stride(from: 0, to: arguments.count, by: 2) {
