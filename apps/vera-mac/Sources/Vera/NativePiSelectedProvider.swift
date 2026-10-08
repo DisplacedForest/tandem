@@ -39,24 +39,39 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     let validate: @Sendable () async throws -> Void
     let send: @Sendable (PiModelRequest, Data) async throws -> (Data, Int)
     var checkpointPricing: PiCheckpointPricing? = nil
+    var memoryBridge: NativeRuntimeMemoryBridge? = nil
+    func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest {
+        if let memoryBridge { return try await memoryBridge.prepare(request) }
+        return request
+    }
+    func validateRequest(_ request: PiModelRequest) async throws {
+        try Task.checkCancellation()
+        if let memoryBridge { try await memoryBridge.validate(request) }
+    }
     func validateOwner() async throws { try await validate() }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
+        let request = try await prepareRequest(request)
         let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
         try piCheck(body.count <= 16384)
         return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
             try budget.check()
+            try await validate()
+            try await validateRequest(request)
             if let saved = try await accounting.reserve(request) {
                 try await validate()
+                try await validateRequest(request)
                 try PiModelReply.validate(saved, request: request)
                 return saved
             }
             do {
+                try await validateRequest(request)
                 let (data, status) = try await send(request, body)
                 try budget.check()
                 try piCheck(status == 200 && data.count <= 65536, .unavailable)
                 let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
                 try await accounting.settle(request, reply: reply)
+                try await validateRequest(request)
                 return reply
             } catch {
                 await accounting.uncertain(request)

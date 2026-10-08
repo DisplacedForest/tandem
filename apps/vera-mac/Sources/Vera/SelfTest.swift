@@ -427,7 +427,10 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         await runNativeCapabilityTools()
-        do { try await NativeMemoryEvidenceSelftest.run() }
+        do {
+            try await NativeMemoryEvidenceSelftest.run()
+            try await NativeRuntimeMemorySelftest.run()
+        }
         catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryGroom()

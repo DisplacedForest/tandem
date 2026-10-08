@@ -117,7 +117,7 @@ enum NativeMemoryEvidenceSelftest {
             for name in ["memory_fts_insert", "memory_fts_update", "memory_fts_delete", "memory_source_message_change", "memory_source_message_delete", "memory_source_exclusion", "memory_source_deletion"] {
                 try db.execute(sql: "DROP TRIGGER " + name)
             }
-            try db.execute(sql: "DROP TABLE native_memory_fts; DROP TABLE native_memory_revisions; DELETE FROM grdb_migrations WHERE identifier = 'nativeMemoryEvidenceV14'")
+            try db.execute(sql: "DROP TABLE native_memory_fts; DROP TABLE native_memory_revisions; DROP TABLE runtime_memory_sources; DELETE FROM grdb_migrations WHERE identifier IN ('nativeMemoryEvidenceV14','runtimeMemorySourcesV15')")
         }
         let original = try repository.messages(conversationID: "legacy")
         repository = try LocalChatRepository(url: url)

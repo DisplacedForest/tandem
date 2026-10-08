@@ -6,10 +6,12 @@ import VeraAssistantUI
 @MainActor
 final class NativePiConnection {
     let workspace: AssistantWorkspace
+    let memoryBridge: NativeRuntimeMemoryBridge?
     private let stopAction: () async -> Void
     private var stopping: Task<Void, Never>?
-    init(workspace: AssistantWorkspace, stop: @escaping () async -> Void) {
+    init(workspace: AssistantWorkspace, memoryBridge: NativeRuntimeMemoryBridge? = nil, stop: @escaping () async -> Void) {
         self.workspace = workspace
+        self.memoryBridge = memoryBridge
         stopAction = stop
     }
     func stop() async {
@@ -19,9 +21,9 @@ final class NativePiConnection {
         stopping = task
         await task.value
     }
-    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider) async throws -> NativePiConnection {
-        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider)
-        return NativePiConnection(workspace: session.workspace, stop: { await session.owner.stop() })
+    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore) async throws -> NativePiConnection {
+        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider, store: store)
+        return NativePiConnection(workspace: session.workspace, memoryBridge: session.memoryBridge, stop: { await session.owner.stop() })
     }
 }
 
@@ -51,7 +53,7 @@ final class NativePiPresentation: ObservableObject {
         guard let session else { return nil }
         return Conversation(id: session.id.uuidString, title: "Vera", messages: session.messages.map {
             Message(id: Self.messageID(conversation: session.id, source: $0.id), role: $0.isUser ? .user : .assistant,
-                    text: $0.text, createdAt: Date(timeIntervalSince1970: 0))
+                    text: $0.text, createdAt: Date(timeIntervalSince1970: 0), sources: connection?.memoryBridge?.sources(conversation: session.id.uuidString.lowercased(), message: $0.id) ?? [])
         }, createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))
     }
     static func messageID(conversation: UUID, source: String) -> UUID {

@@ -1462,12 +1462,44 @@ final class ChatStore: ObservableObject {
         return nativeToolRegistry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
-    private func turnMemoryIsCurrent(_ turn: NativeConversationTurn) -> Bool {
-        guard turnCurrent(turn) else { return false }
-        guard let selected = turnMemorySelections[turn.attempt ?? turn.id], !selected.isEmpty else { return true }
+    func selectApprovedMemory(_ text: String, settings: NativeMemorySettings? = nil,
+                              service: (any NativeMemoryServing)? = nil) async -> [NativeMemoryRanked] {
+        let settings = settings ?? nativeMemorySettings
+        guard settings.enabled, nativeMemorySettings.enabled else { return [] }
+        var selected: [NativeMemoryRanked] = []
+        do {
+            if settings.embeddingsModel.isEmpty, let local = repository as? LocalChatRepository {
+                selected = try local.recallMemory(text, bankScope: settings.bankScope)
+            } else if !NativeMemorySafety.containsSensitiveData(text),
+                      let memoryRepository = repository as? any NativeMemoryRepository,
+                      let service = service ?? nativeMemoryService {
+                let query = try await service.embed(text)
+                selected = NativeMemoryRecall.rank(records: try memoryRepository.approvedMemories(),
+                    query: query, bankScope: settings.bankScope)
+            }
+            guard nativeMemorySettings.enabled else { return [] }
+            if let local = repository as? LocalChatRepository {
+                selected = try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope)
+            }
+            memoryServiceState = memoryProposals.isEmpty ? .ready : .pendingReview(memoryProposals.count)
+            return selected
+        } catch {
+            memoryServiceState = .retrievalUnavailable("Saved memory could not be searched on this Mac.")
+            return []
+        }
+    }
+
+    func memorySelectionIsCurrent(_ selected: [NativeMemoryRanked]) -> Bool {
+        guard !selected.isEmpty else { return true }
         guard nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else { return false }
         do { return try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope).count == selected.count }
         catch { return false }
+    }
+
+    private func turnMemoryIsCurrent(_ turn: NativeConversationTurn) -> Bool {
+        guard turnCurrent(turn) else { return false }
+        guard let selected = turnMemorySelections[turn.attempt ?? turn.id], !selected.isEmpty else { return true }
+        return memorySelectionIsCurrent(selected)
     }
 
     func performTurn(_ turn: NativeConversationTurn) {
@@ -1587,31 +1619,7 @@ final class ChatStore: ObservableObject {
                     turnMessages[current].routeNote = conversations[location.conversation].messages[location.user].routeNote
                 }
                 var selectedMemories: [NativeMemoryRanked] = []
-                if memorySettings.enabled {
-                    if memorySettings.embeddingsModel.isEmpty, let local = repository as? LocalChatRepository {
-                        do {
-                            selectedMemories = try local.recallMemory(text, bankScope: memorySettings.bankScope)
-                            memoryServiceState = memoryProposals.isEmpty ? .ready : .pendingReview(memoryProposals.count)
-                        } catch {
-                            memoryServiceState = .retrievalUnavailable("Saved memory could not be searched on this Mac.")
-                        }
-                    } else if NativeMemorySafety.containsSensitiveData(text) {
-                        memoryServiceState = memoryProposals.isEmpty
-                            ? .ready : .pendingReview(memoryProposals.count)
-                    } else if let memoryRepository = repository as? any NativeMemoryRepository,
-                              let memoryService {
-                        do {
-                            let query = try await memoryService.embed(text)
-                            selectedMemories = NativeMemoryRecall.rank(
-                                records: try memoryRepository.approvedMemories(), query: query,
-                                bankScope: memorySettings.bankScope)
-                            memoryServiceState = memoryProposals.isEmpty
-                                ? .ready : .pendingReview(memoryProposals.count)
-                        } catch {
-                            memoryServiceState = .retrievalUnavailable(error.localizedDescription)
-                        }
-                    }
-                }
+                selectedMemories = await selectApprovedMemory(text, settings: memorySettings, service: memoryService)
                 var groundingAssembly: KnowledgeGrounding.Assembly?
                 if !groundingCollections.isEmpty {
                     if let groundingBase {

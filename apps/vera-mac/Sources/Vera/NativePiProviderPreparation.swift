@@ -86,6 +86,13 @@ struct PiPreparedExecutor: PiMockModelExecutor {
     let permit: PiCumulativeBudget
     var journal: PiCheckpointLedger? = nil
     func validateOwner() async throws { try permit.validate(operation.binding); try await operation.validateOwner() }
+    func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { try await operation.prepareRequest(request) }
+    func validateRequest(_ request: PiModelRequest) async throws { try await operation.validateRequest(request) }
+    func sharingMemory(_ bridge: NativeRuntimeMemoryBridge) -> PiPreparedExecutor {
+        var operation = operation
+        operation.memoryBridge = bridge
+        return PiPreparedExecutor(operation: operation, permit: permit, journal: journal)
+    }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validateOwner()
         let reply = try await operation.complete(request)

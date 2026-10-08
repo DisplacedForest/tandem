@@ -221,12 +221,16 @@ actor NativePiModelBroker {
         try piCheck(!closed && Date() < expires, .unauthorized)
         try piCheck(!quarantined, .uncertain)
         guard let scope = scopes[value.pi("scope").piString ?? ""] else { throw PiBrokerError.unauthorized }
-        let request = try PiModelRequest(value, scope: scope, channel: channel)
+        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel))
+        try await executor.validateRequest(request)
+        try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
         try piCheck(!canceled.contains(request.id), .canceled)
         try piCheck(!active.values.contains { $0.0 == scope.role }, .unavailable)
         if let saved = try ledger.reserve(request) {
             try await executor.validateOwner()
             try piCheck(!closed && !quarantined && !canceled.contains(request.id), .unauthorized)
+            try await executor.validateRequest(request)
+            try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(saved, request: request)
             return saved
         }
@@ -247,6 +251,8 @@ actor NativePiModelBroker {
             }
             try Task.checkCancellation()
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
+            try await executor.validateRequest(request)
+            try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
             return reply

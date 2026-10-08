@@ -5,9 +5,11 @@ final class PiProviderFixtureState: @unchecked Sendable {
     private var paths: [String] = []
     private var behavior = "normal"
     private var stops = 0
-    func configure(_ behavior: String) { lock.lock(); defer { lock.unlock() }; self.behavior = behavior; paths = []; stops = 0 }
+    private var memoryChecks: [(Bool, Bool)] = []
+    func configure(_ behavior: String) { lock.lock(); defer { lock.unlock() }; self.behavior = behavior; paths = []; stops = 0; memoryChecks = [] }
     func stopped() { lock.lock(); defer { lock.unlock() }; stops += 1 }
     func stopCount() -> Int { lock.lock(); defer { lock.unlock() }; return stops }
+    func sharedMemoryEvidence() -> [(Bool, Bool)] { lock.lock(); defer { lock.unlock() }; return memoryChecks }
     func calls() -> [String] { lock.lock(); defer { lock.unlock() }; return paths }
     func response(_ request: URLRequest) throws -> (Data, Int, [String: String], Double) {
         lock.lock(); defer { lock.unlock() }
@@ -51,6 +53,9 @@ final class PiProviderFixtureState: @unchecked Sendable {
         let names = body.pi("tools").piArray!.compactMap { $0.pi("function").pi("name").piString }
         let messages = body.pi("messages").piArray!, last = body.pi("messages").piArray!.last!
         let worker = names.contains("write_file")
+        let prompt = messages.first?.pi("content").piString ?? ""
+        memoryChecks.append((worker, prompt.contains("USER-APPROVED MEMORY CONTEXT")))
+        try piCheck(!prompt.contains("Other-bank-only evidence"))
         let count = messages.filter { $0.pi("role").piString == "tool" }.count
         var name: String?, args: PiValue = .object([:])
         if worker && count < 3 {

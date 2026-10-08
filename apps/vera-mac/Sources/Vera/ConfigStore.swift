@@ -224,6 +224,8 @@ final class ConfigStore: ObservableObject {
         outgoing.timeoutInterval = 30
         outgoing.setValue("application/json", forHTTPHeaderField: "Content-Type")
         outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        try await request.memoryAuthority?.validate(request)
+        try Task.checkCancellation()
         let response = try await transport(outgoing, request)
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
         try piCheck(!piContainsCredential(response.0, key: key), .unauthorized)

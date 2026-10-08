@@ -239,6 +239,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeMemoryEvidenceV14") { db in
             try Self.migrateMemoryEvidence(db)
         }
+        migrator.registerMigration("runtimeMemorySourcesV15") { db in
+            try Self.migrateRuntimeMemorySources(db)
+        }
         try migrator.migrate(database)
     }
 
