@@ -439,7 +439,7 @@ struct NativeMemorySettingsTab: View {
                 DiscoveredModelPicker(title: "Embeddings model",
                                       models: config.activeNativeProfile?.discoveredModels ?? [],
                                       selection: config.memoryStringBinding(\.embeddingsModel))
-                Text("Semantic recall requires an embeddings model at the active OpenAI-compatible endpoint. The list comes from that endpoint's model discovery; refresh it under Model. If the model is missing or unavailable, ordinary chat continues without memory context.")
+                Text("Leave embeddings unset to search approved memory locally. An optional embeddings model uses the active OpenAI-compatible endpoint for semantic recall. Model-suggested changes still require an extraction model and your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 DiscoveredModelPicker(title: "Extraction model",
                                       models: config.activeNativeProfile?.discoveredModels ?? [],

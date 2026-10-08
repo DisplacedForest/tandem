@@ -315,7 +315,7 @@ the vera-api base URL is configured.
 
 ### Native personal memory
 
-Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. A compatible embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable.
+Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. With embeddings unset, approved memory uses local lexical recall without model calls. A configured embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable.
 
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 

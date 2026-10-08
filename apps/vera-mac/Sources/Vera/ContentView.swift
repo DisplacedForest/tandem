@@ -64,6 +64,8 @@ struct ContentView: View {
                 VoiceView().transition(.opacity).zIndex(1)
             }
         }
+        .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
+        .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision) }
         .animation(.easeInOut(duration: 0.2), value: voice.isActive)
         .sheet(isPresented: $config.showOnboarding) { OnboardingSheet() }
     }

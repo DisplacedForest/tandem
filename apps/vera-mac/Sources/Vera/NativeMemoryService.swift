@@ -13,7 +13,7 @@ enum NativeMemoryServiceState: Equatable, Sendable {
     var label: String {
         switch self {
         case .off: "Memory is off"
-        case .setupRequired: "Set up embeddings to use memory in chat"
+        case .setupRequired: "Set up memory suggestions"
         case .ready: "Ready"
         case .indexing: "Indexing approved memory"
         case .pendingReview(let count): "\(count) change\(count == 1 ? "" : "s") waiting for review"

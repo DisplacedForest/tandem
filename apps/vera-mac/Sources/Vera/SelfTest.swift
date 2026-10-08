@@ -427,6 +427,8 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         await runNativeCapabilityTools()
+        do { try await NativeMemoryEvidenceSelftest.run() }
+        catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryGroom()
         await runPromptLibrary()
@@ -1507,6 +1509,7 @@ enum SelfTest {
         do {
             let repository = try LocalChatRepository(inMemory: true)
             let now = Date(timeIntervalSince1970: 2_000_000_000)
+            try repository.saveConversation(Conversation(id: "source", title: "Source", messages: [], updatedAt: now))
             let approved = NativeMemoryRecord(
                 id: "approved", title: "Favorite drink", summary: "Prefers natural wine",
                 details: ["The user prefers natural wine"], group: .you, category: .preference,

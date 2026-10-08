@@ -23,7 +23,7 @@ protocol NativeMemoryRepository: Sendable {
     func allMemories() throws -> [NativeMemoryRecord]
     func approvedMemories() throws -> [NativeMemoryRecord]
     func pendingProposals() throws -> [NativeMemoryProposal]
-    func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String) throws
+    func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String, expected: NativeMemoryRecord?) throws
     func saveProposal(_ proposal: NativeMemoryProposal) throws
     func decideProposal(
         _ id: String, status: NativeMemoryProposalStatus, note: String, memoryID: String?
@@ -33,6 +33,10 @@ protocol NativeMemoryRepository: Sendable {
 }
 
 extension NativeMemoryRepository {
+    func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String) throws {
+        try saveMemory(memory, decision: decision, note: note, expected: nil)
+    }
+
     func decideProposal(_ id: String, status: NativeMemoryProposalStatus) throws {
         try decideProposal(
             id, status: status,
@@ -231,6 +235,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
         migrator.registerMigration("nativeConversationTurnsV13") { db in
             try Self.migrateConversationTurns(db)
+        }
+        migrator.registerMigration("nativeMemoryEvidenceV14") { db in
+            try Self.migrateMemoryEvidence(db)
         }
         try migrator.migrate(database)
     }
@@ -504,7 +511,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     }
 
     func saveMemory(
-        _ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String
+        _ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String, expected: NativeMemoryRecord? = nil
     ) throws {
         guard memory.durability == .durable || memory.expiry != nil else {
             throw NSError(domain: "NativeMemory", code: 1,
@@ -515,6 +522,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                           userInfo: [NSLocalizedDescriptionKey: "Memory cannot store credentials or secrets"])
         }
         try database.write { db in
+            if let expected {
+                guard let json = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [memory.id]),
+                      Self.decode(json, as: NativeMemoryRecord.self) == expected else { throw NativeMemoryEvidenceError.changed }
+            }
             let exists = try Bool.fetchOne(
                 db, sql: "SELECT EXISTS(SELECT 1 FROM native_memories WHERE id = ?)",
                 arguments: [memory.id]) ?? false
@@ -524,7 +535,14 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 throw NSError(domain: "NativeMemory", code: 4,
                               userInfo: [NSLocalizedDescriptionKey: "Review the capacity proposal before adding memory"])
             }
+            if try String.fetchOne(db, sql: "SELECT status FROM native_memories WHERE id = ?", arguments: [memory.id]) == "deleted" {
+                throw NativeMemoryEvidenceError.removed
+            }
+            if let json = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [memory.id]),
+               let current = Self.decode(json, as: NativeMemoryRecord.self), current != memory,
+               expected == nil { throw NativeMemoryEvidenceError.changed }
             try Self.writeMemory(memory, db: db)
+            try Self.preserveMemoryEvidence(memory, db: db)
             try Self.writeChange(
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: memory.id, proposalID: nil,
@@ -587,9 +605,15 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [id]),
                   var memory = Self.decode(row["record_json"], as: NativeMemoryRecord.self) else { return }
             memory.status = .deleted
+            memory.title = "Removed memory"
+            memory.summary = ""
+            memory.details = []
+            memory.sourceConversationID = nil
+            memory.sourceMessageID = nil
             memory.embedding = nil
             memory.updatedAt = Date()
             try Self.writeMemory(memory, db: db)
+            try db.execute(sql: "DELETE FROM native_memory_revisions WHERE memory_id = ?", arguments: [id])
             try Self.writeChange(
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: id, proposalID: nil,
@@ -784,7 +808,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             updatedAt: Date(timeIntervalSince1970: row["updated_at"]))
     }
 
-    private static func writeMemory(_ memory: NativeMemoryRecord, db: Database) throws {
+    static func writeMemory(_ memory: NativeMemoryRecord, db: Database) throws {
         try db.execute(sql: """
             INSERT INTO native_memories
                 (id, title, summary, details_json, library_group, category, bank,

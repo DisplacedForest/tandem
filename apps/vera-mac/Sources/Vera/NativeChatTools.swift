@@ -529,7 +529,7 @@ struct NativeToolLoop: Sendable {
                         try await checkAuthorization()
                         var last = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                         do {
-                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas) {
+                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas, validateRequest: validateModelRequest) {
                                 try Task.checkCancellation()
                                 last = snapshot
                                 for call in snapshot.toolCalls {
@@ -703,6 +703,14 @@ struct NativeToolLoop: Sendable {
         }
     }
 
+    private func validateModelRequest() async throws {
+        try Task.checkCancellation()
+        guard await authorize() else {
+            throw NativeChatClient.ClientError.server("This answer stopped because its context or permissions changed. Please send it again.")
+        }
+        try Task.checkCancellation()
+    }
+
     private func checkAuthorization() async throws {
         try Task.checkCancellation()
         guard await authorize() else { throw CancellationError() }
@@ -747,7 +755,7 @@ struct NativeToolLoop: Sendable {
             let answer = try await Self.bounded(timeout: synthesisTimeout) {
                 try await checkAuthorization()
                 var final = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
-                for try await snapshot in transport.stream(messages: finalHistory, model: model, tools: []) {
+                for try await snapshot in transport.stream(messages: finalHistory, model: model, tools: [], validateRequest: validateModelRequest) {
                     try Task.checkCancellation()
                     guard snapshot.toolCalls.isEmpty, snapshot.content.utf8.count <= 65536 else {
                         throw NativeToolError.failed("The final answer was not usable")
