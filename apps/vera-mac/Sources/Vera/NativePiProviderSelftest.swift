@@ -184,17 +184,31 @@ enum NativePiProviderSelftest {
     static func workflow(_ arguments: [String], config: ConfigStore, binding: PiSelectedProfileBinding, http: PiProviderHTTP, admission: NativeInferenceAdmission, root: URL) async throws {
         PiProviderFixtureProtocol.state.configure("normal")
         let provider = try await PiPreparedProvider.prepare(owner: config, admission: admission, permit: permit(binding), accountingRoot: root.appendingPathComponent("workflow-accounting"), http: http, transport: .providerFixture)
-        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: root.appendingPathComponent("ui"), provider: provider)
+        let presentation = NativePiPresentation(factory: {
+            try await NativePiConnection.prepared(arguments: arguments, uiRoot: root.appendingPathComponent("ui"), provider: provider)
+        })
         do {
-            let report = try PiValue.piRead(await session.workspace.verifyWorkflow())
-            await session.owner.stop()
+            await presentation.connect()
+            guard let connection = presentation.connection, let session = presentation.session else { throw PiBrokerError.unavailable }
+            try piCheck(session.connectionLabel == "Test runtime" && session.messages.isEmpty)
+            let report = try PiValue.piRead(await connection.workspace.verifyWorkflow())
+            await session.refresh()
+            guard let projected = presentation.conversation, let completed = session.tasks.first(where: { $0.state == "completed" }) else { throw PiBrokerError.invalid }
+            let resultID = NativePiPresentation.messageID(conversation: session.id, source: "task:" + completed.id)
+            try piCheck(projected.messages.filter { $0.id == resultID }.count == 1
+                && session.output(taskID: completed.id, index: 0) != nil)
+            await presentation.stop()
+            try piCheck(presentation.connection == nil && !presentation.canSend)
             try piCheck(report.pi("result_deliveries") == .number(1) && report.pi("foreground_while_worker_active") == .bool(true))
             let calls = PiProviderFixtureProtocol.state.calls()
             try piCheck(calls.count == 12 && calls.filter { $0 == "completions" }.count == 10)
             let rows = try await provider.accounting.snapshot().piArray!
             try piCheck(rows.count == 10 && rows.allSatisfy { $0.pi("status").piString == "completed" })
-            try NativePiCandidate.verifyNoCredentialFiles(session.owner.session.ledger.owner.url)
-            print("PASS: actual SDK foreground and worker, HTTP provider fixture, UI consumer, approval and cancellation, ten accounted synthetic responses")
-        } catch { await session.owner.stop(); throw error }
+            try NativePiCandidate.verifyNoCredentialFiles(root)
+            if let index = arguments.firstIndex(of: "--root"), index + 1 < arguments.count {
+                try NativePiCandidate.verifyNoCredentialFiles(URL(fileURLWithPath: arguments[index + 1]))
+            }
+            print("PASS: actual SDK foreground and worker, prepared provider through native session adapter, HTTP provider fixture, approval and cancellation, ten accounted synthetic responses")
+        } catch { await presentation.stop(); throw error }
     }
 }
