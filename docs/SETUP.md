@@ -31,6 +31,14 @@ docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api i
 
 Compose pulls the released image by default. To run from source instead, uncomment `build: services/vera-api` in `docker-compose.yml` and use `docker compose up -d --build`.
 
+### Local engine lifecycle
+
+Remote URL and Off unregister the local engine and remove its login job. They preserve engine data. Stop also removes the job; when Local is still selected, reopening Vera starts it again. Remove engine files removes only the job and downloaded binaries. Stop the engine before using the separate Delete data action.
+
+An engine update verifies its download and stages the executable before stopping the current version. It retains the previous executable and launch settings until the new version answers its health check. Failed starts restore that previous version. An interrupted activation leaves a recovery record so reopening Vera in Local mode restores the previous settings before trying another update. If recovery fails, Vera keeps the recovery files and reports the failure. Binary rollback does not reverse changes an engine has already made to its data.
+
+An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its job file, using a separate launchd identity. Its job file stays under that root and is started explicitly by the app. This isolates engine storage, not Keychain credentials or every other app service.
+
 ### Run the engine without Docker (macOS arm64)
 
 Every release ships a packaged engine binary alongside the image. Download `vera-api-macos-arm64.zip` and its `.sha256` from the GitHub Release, verify with `shasum -a 256 -c vera-api-macos-arm64.zip.sha256`, unzip, and run `./vera-api/vera-api`. It serves on `127.0.0.1:8089` and keeps its data in `~/.vera/data`; `VERA_DATA_DIR`, `VERA_BIND`, and `VERA_PORT` override those defaults. Configuration is the same `.env` surface either way (export the variables or launch through a wrapper that sets them).
