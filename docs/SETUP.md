@@ -180,7 +180,7 @@ Two host scripts cover the standing ops work, and each documents its own environ
 
 ## 3. The Mac app
 
-**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases and can update itself in place.
+**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
 **From source** (Swift toolchain):
 

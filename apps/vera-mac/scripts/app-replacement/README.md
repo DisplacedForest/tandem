@@ -6,7 +6,13 @@ Staging preserves the source or extracted bundle's extended attributes, includin
 
 A successful replacement prints a `receipt.json` path beneath a private `.Vera-replacement-*` directory beside the installed app. That directory retains the previous `Vera.app`. Receipts bind directory identities and SHA-256 manifests of file contents, names, types, link destinations and permissions. They distinguish a prepared copy from an installed replacement even if the installer is killed immediately after the exchange. In-place content changes invalidate a receipt. Inspection does not launch either app or modify installation state.
 
-Build the standalone repair command from the repository root:
+Packaged apps include a standalone repair command. Inspection needs no compiler or checkout:
+
+```sh
+/Applications/Vera.app/Contents/Helpers/VeraAppReplacement --inspect /path/to/receipt.json
+```
+
+For development builds, compile the same command from the repository root:
 
 ```sh
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
@@ -19,7 +25,7 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
 To restore a retained app, quit Vera and run:
 
 ```sh
-/tmp/vera-app-replacement --rollback /path/to/receipt.json
+/Applications/Vera.app/Contents/Helpers/VeraAppReplacement --rollback /path/to/receipt.json
 ```
 
 Rollback requires the current installation and retained app to match that receipt and pass signature validation. It uses another atomic exchange and retains the displaced replacement under a new receipt. A receipt marked `changed` cannot be used to roll back. No automatic cleanup deletes retained apps. Remove an obsolete rollback directory only after verifying the new installation works and keeping any required backup.

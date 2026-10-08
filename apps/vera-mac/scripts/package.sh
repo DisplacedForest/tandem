@@ -74,6 +74,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+mkdir -p "$APP/Contents/Helpers"
+xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
+  Sources/Vera/SafeAppReplacement.swift scripts/app-replacement/main.swift \
+  -o "$APP/Contents/Helpers/VeraAppReplacement"
+
 python3 "$APP_ROOT/scripts/sign.py" "$APP"
 python3 "$APP_ROOT/scripts/package_runtime.py" --verify --destination "$APP/Contents/Resources/PiRuntime" --manifest-sha256 "$RUNTIME_SHA"
 
