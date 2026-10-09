@@ -72,7 +72,7 @@ final class ConfigStore: ObservableObject {
         var keys: [String: String] = [:]
         var unavailable: Set<String> = []
         for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]) {
-            do { if let value = try credentialStore.read(for: id) { keys[id] = value } }
+            do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
         raw = loaded
