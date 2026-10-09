@@ -420,4 +420,4 @@ When something doesn't work, check the config report and `docker compose logs ve
 
 ## Remote service tools
 
-Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior and the HTTPS boundary and temporary Bearer-token setup.
+Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior, the HTTPS boundary, temporary Bearer tokens and explicit OAuth sign-in.

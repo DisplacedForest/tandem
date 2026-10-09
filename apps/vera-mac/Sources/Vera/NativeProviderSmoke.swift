@@ -174,6 +174,13 @@ enum NativeProviderSmoke {
         return result
     }
 
+    static func credentialStatus(read: () throws -> String?) -> String {
+        do {
+            guard let key = try read(), !key.isEmpty else { return "missing" }
+            return "available"
+        } catch { return "unavailable" }
+    }
+
     static func run(arguments: [String]) async {
         func value(_ flag: String) -> String? {
             guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
@@ -182,8 +189,12 @@ enum NativeProviderSmoke {
         do {
             let profile = try savedProfile(from: ConfigFile.read())
             if arguments.contains("--credential-status") {
-                let available = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id)?.isEmpty == false
-                emit(["mode": "credential-status", "credential_available_without_prompt": available])
+                let status = credentialStatus {
+                    try KeychainNativeCredentialStore(allowsInteraction: false).readForStartup(for: profile.id)
+                }
+                let available = status == "available"
+                emit(["mode": "credential-status", "credential_status": status,
+                      "credential_available_without_prompt": available])
                 exit(available ? 0 : 1)
             }
             let id = value("--model") ?? ""
@@ -198,7 +209,7 @@ enum NativeProviderSmoke {
             defer { session.invalidateAndCancel() }
             let root = URL(string: profile.baseURL)!
             if arguments.contains("--access-status") {
-                guard let key = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id), !key.isEmpty else {
+                guard let key = try KeychainNativeCredentialStore(allowsInteraction: false).readForStartup(for: profile.id), !key.isEmpty else {
                     throw Failure(reason: "Saved credential unavailable without a Keychain prompt")
                 }
                 var request = URLRequest(url: root.appendingPathComponent("key"))
@@ -214,7 +225,7 @@ enum NativeProviderSmoke {
             emit(["mode": "preflight", "model": id, "forecast_usd": selected.forecast, "max_requests": 3])
             guard arguments.contains("--live") else { exit(0) }
             let budget = try approvedBudget(value("--approved-budget-usd"), forecast: selected.forecast)
-            guard let key = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id), !key.isEmpty else {
+            guard let key = try KeychainNativeCredentialStore(allowsInteraction: false).readForStartup(for: profile.id), !key.isEmpty else {
                 throw Failure(reason: "Saved credential unavailable without a Keychain prompt; no alternate key tried")
             }
             let client = NativeChatClient(config: NativeChatConfig(
@@ -290,6 +301,10 @@ enum NativeProviderSmoke {
                 do { try operation() } catch { rejected = true }
                 try require(rejected, "Invalid input accepted")
             }
+            try require(credentialStatus { "synthetic-never-printed" } == "available", "Credential status lost availability")
+            try require(credentialStatus { nil } == "missing", "Missing credential misclassified")
+            try require(credentialStatus { "" } == "missing", "Empty credential misclassified")
+            try require(credentialStatus { throw NativeCredentialError.read } == "unavailable", "Denied credential misclassified")
             let entry: [String: Any] = [
                 "id": "test/vision", "architecture": ["input_modalities": ["text", "image"]],
                 "supported_parameters": ["tools", "tool_choice", "max_tokens", "reasoning"],
