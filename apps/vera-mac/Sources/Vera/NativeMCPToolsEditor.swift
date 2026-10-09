@@ -4,6 +4,7 @@ struct NativeMCPToolsEditor: View {
     @ObservedObject var manager: NativeMCPManager
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @State private var temporaryTokens: [String: String] = [:]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Connected services").font(.headline)
@@ -18,13 +19,25 @@ struct NativeMCPToolsEditor: View {
                         Text(server.configuration.name).fontWeight(.medium)
                         Spacer()
                         if server.connected || server.connecting {
-                            Button(server.connecting ? "Cancel connection" : "Disconnect") { Task { await manager.disconnect(server.id) } }
+                            Button(server.connecting ? "Cancel connection" : "Disconnect") {
+                                temporaryTokens.removeValue(forKey: server.id)
+                                Task { await manager.disconnect(server.id) }
+                            }
                         } else {
-                            Button("Connect") { Task { await manager.connect(server.id) } }
+                            Button("Connect") {
+                                let token = temporaryTokens.removeValue(forKey: server.id)
+                                Task { await manager.connect(server.id, token: token) }
+                            }
                         }
                     }
                     Text(server.configuration.endpoint.absoluteString).font(.caption).textSelection(.enabled)
                     Text(server.status).font(.caption).foregroundStyle(Theme.textSecondary)
+                    if server.configuration.authentication == .bearer && !server.connected && !server.connecting {
+                        SecureField("Temporary access token", text: Binding(get: { temporaryTokens[server.id] ?? "" }, set: { temporaryTokens[server.id] = $0 }))
+                            .textFieldStyle(.roundedBorder)
+                        Text("Used only for this connection. Forgotten on disconnect or after one hour. Enter the token again after reopening Vera.")
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                    }
                     ForEach(server.tools) { tool in
                         Toggle(isOn: Binding(get: { config.nativeSettings.enabledToolIDs.contains(tool.id) }, set: {
                             config.setNativeTool(tool.id, enabled: $0)
@@ -48,5 +61,6 @@ struct NativeMCPToolsEditor: View {
             Text("Only explicitly approved reads are available. A service cannot grant itself permission. Connections stop when Vera quits; reconnect here after reopening.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }
+        .onDisappear { temporaryTokens.removeAll() }
     }
 }

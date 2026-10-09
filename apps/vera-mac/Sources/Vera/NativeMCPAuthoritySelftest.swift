@@ -74,6 +74,7 @@ enum NativeMCPAuthoritySelftest {
     }
     @MainActor static func run() async throws {
         try NativeMCPJSONSchemaSelftest.run()
+        try await NativeMCPAuthorityAuthSelftest.run()
         let oversizedInteger = String(repeating: "1234567890", count: 4)
         for raw in ["{\"const\":9007199254740993}", "{\"const\":0.10000000000000001}", "{\"id\":\(oversizedInteger)}"] {
             try await reject { try NativeMCPWireJSON.validate(Data(raw.utf8)) }
