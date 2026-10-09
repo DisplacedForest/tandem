@@ -193,3 +193,5 @@ Issues and PRs are welcome; merged work is credited in the next release's notes.
 ## License
 
 [MIT](LICENSE).
+
+The API also includes an optional [household assistant messaging gateway](docs/HOUSEHOLD.md), with separate inboxes and explicit sharing consent. It defaults to disabled and requires authenticated setup before household use.

@@ -286,3 +286,7 @@ Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24
 5. Create a vein (the in-app builder or `POST /pulse/veins`), enable it, and confirm its chip appears; its job in Agentic shows the next run time.
 
 When something doesn't work, check the config report and `docker compose logs vera-api` first.
+
+## Household assistant gateway
+
+The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter within the existing API. It is disabled until an authenticated host integration is supplied. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
