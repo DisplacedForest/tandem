@@ -24,7 +24,7 @@ def test_http_authentication_and_protocol(tmp_path):
         return client.post('/household/mcp', json={**rpc, "method": method, "params": params or {}}, headers=auth)
     assert call("server/discover").json()["result"]["supportedVersions"] == ["2026-07-28"]
     tools = call("tools/list").json()["result"]["tools"]
-    assert len(tools) == 7
+    assert len(tools) == 8
     assert call("events/list").json()["result"] == {"events": []}
     meta = {"actor": "beta", "authority": "admin", "progressToken": "synthetic"}
     assert json.loads(call("tools/call", {"name": "inbox_read", "_meta": meta}).json()["result"]["content"][0]["text"]) == {"messages": []}

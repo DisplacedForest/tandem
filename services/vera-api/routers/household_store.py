@@ -37,6 +37,7 @@ class Store:
                     delivered REAL, processed REAL, UNIQUE(sender,dedup));
                 CREATE UNIQUE INDEX IF NOT EXISTS reply_once ON messages(sender,parent)
                     WHERE parent IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS setup_checks(message_id TEXT PRIMARY KEY REFERENCES messages(id));
                 CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, owner TEXT NOT NULL,
                     url TEXT NOT NULL, secret TEXT NOT NULL, old_secret TEXT,
                     rotate_until REAL NOT NULL DEFAULT 0, expires REAL NOT NULL,
@@ -119,6 +120,8 @@ class Store:
     def allowed(self, db: sqlite3.Connection, row: sqlite3.Row) -> None:
         self.require(db, row["sender"])
         self.require(db, row["recipient"])
+        if row["sender"] == row["recipient"] and db.execute("SELECT 1 FROM setup_checks WHERE message_id=?", (row["id"],)).fetchone():
+            return
         pair = db.execute("SELECT state FROM pairs WHERE id=?", (row["pair_id"],)).fetchone()
         if not pair or pair[0] != "active":
             raise Denied("Pair revoked")
@@ -156,10 +159,36 @@ class Store:
                 db.execute("INSERT INTO outbox(event_id,message_id,subscription_id,next_at) VALUES (?,?,?,?)", (str(uuid.uuid4()), message_id, sub[0], now))
             return message_id
 
+    def setup_check(self, actor: str, dedup: str) -> str:
+        if not dedup or len(dedup) > 128:
+            raise ValueError("Invalid idempotency key")
+        with self.tx() as db:
+            self.require(db, actor)
+            key = "setup:" + dedup
+            old = db.execute("SELECT m.id FROM messages m JOIN setup_checks c ON c.message_id=m.id WHERE m.sender=? AND m.dedup=?", (actor, key)).fetchone()
+            if old:
+                return old[0]
+            now = time.time()
+            subscriptions = db.execute("SELECT id FROM subscriptions WHERE owner=? AND active=1 AND expires>?", (actor, now)).fetchall()
+            if not subscriptions:
+                raise Denied("Subscribe to inbox events before requesting a setup check")
+            if db.execute("SELECT 1 FROM messages m JOIN setup_checks c ON c.message_id=m.id WHERE m.sender=? AND m.created>?", (actor, now - 3600)).fetchone():
+                raise Denied("A setup check was already requested within the last hour")
+            if db.execute("SELECT 1 FROM messages WHERE sender=? AND dedup=?", (actor, key)).fetchone():
+                raise ValueError("Idempotency key conflicts with an earlier message")
+            message_id = str(uuid.uuid4())
+            body = "Your inbox setup check. This is synthetic test content, with no private history or instructions."
+            fingerprint = hashlib.sha256(canonical([actor, "setup_check", body]).encode()).hexdigest()
+            db.execute("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)", (message_id, "", actor, actor, "message", body, key, fingerprint, None, 0, now))
+            db.execute("INSERT INTO setup_checks VALUES (?)", (message_id,))
+            for sub in subscriptions:
+                db.execute("INSERT INTO outbox(event_id,message_id,subscription_id,next_at) VALUES (?,?,?,?)", (str(uuid.uuid4()), message_id, sub[0], now))
+            return message_id
+
     def inbox(self, actor: str, after: int = 0) -> list[dict]:
         with self.tx() as db:
             self.require(db, actor)
-            rows = db.execute("SELECT m.rowid AS cursor,m.* FROM messages m JOIN pairs p ON p.id=m.pair_id JOIN members s ON s.id=m.sender LEFT JOIN inbox_endpoints e ON e.principal=m.sender WHERE m.recipient=? AND p.state='active' AND s.enabled=1 AND m.rowid>? AND (e.principal IS NULL OR (e.enabled=1 AND e.expires>?)) ORDER BY m.rowid LIMIT 100", (actor, after, time.time()))
+            rows = db.execute("SELECT m.rowid AS cursor,m.* FROM messages m LEFT JOIN pairs p ON p.id=m.pair_id JOIN members s ON s.id=m.sender LEFT JOIN inbox_endpoints e ON e.principal=m.sender WHERE m.recipient=? AND (p.state='active' OR (m.sender=m.recipient AND EXISTS (SELECT 1 FROM setup_checks c WHERE c.message_id=m.id))) AND s.enabled=1 AND m.rowid>? AND (e.principal IS NULL OR (e.enabled=1 AND e.expires>?)) ORDER BY m.rowid LIMIT 100", (actor, after, time.time()))
             return [self.public(row) for row in rows]
 
     def public(self, row: sqlite3.Row) -> dict:
