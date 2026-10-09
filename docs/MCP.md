@@ -58,3 +58,5 @@ The persistent workspace accepts at most 16 enabled tools, 8 KiB of total catalo
 The first slice exposes only host-approved reads. Consequential actions remain unavailable through MCP and retain existing native confirmation boundaries. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
 
 Run `mise run native-mcp-test` for schema, shared-authority and synthetic HTTP SDK tests, and `mise run check` for the repository regressions. The HTTP fixture binds only to loopback and makes no paid model calls. Synthetic test results do not establish live-service compatibility. See [SDK evaluation](MCP_SDK.md) for the exact dependency pin and transport boundaries.
+
+Consequential MCP calls remain unavailable. An isolated prepared-invocation fixture exercises durable per-action decisions through the existing TaskStore, with exact action bindings and no replay after uncertain dispatch. It does not register a production action tool, accept model-authored approval or migrate an existing database.

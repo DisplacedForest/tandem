@@ -61,6 +61,11 @@ if arguments.dropFirst().first == "--pi-native-selftest" {
     NativeApplicationEntry.runAsync { await NativeProviderSmoke.run(arguments: arguments) }
 } else if arguments.contains("--provider-smoke-selftest") {
     NativeProviderSmoke.selfTest()
+} else if arguments.contains("--prepared-invocation-selftest") {
+    NativeApplicationEntry.runAsync {
+        do { try await NativePreparedInvocationSelftest.run() }
+        catch { print("PREPARED INVOCATION SELFTEST FAILED"); exit(1) }
+    }
 } else if arguments.contains("--mcp-selftest") {
     NativeApplicationEntry.runAsync {
         do {
