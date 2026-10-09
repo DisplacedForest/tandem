@@ -246,7 +246,7 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let convo = conversation, !convo.messages.isEmpty {
+            if let convo = conversation, !convo.messages.isEmpty || assistant?.session?.tasks.isEmpty == false {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
@@ -262,6 +262,10 @@ private struct ChatPane: View {
                                                store.resolveTurnConfirmation(msg.id, approved: approved,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
+                                if let assistant {
+                                    NativePiTaskSection(assistant: assistant, messageID: msg.id)
+                                        .padding(.leading, 34)
+                                }
                             }
                             // One mark per chat at the leading edge — below the last response; animates
                             // while Vera works, sits still when idle. (Like Claude's single mark.)

@@ -107,6 +107,12 @@ struct NativeResearchArtifact: Codable, Hashable, Identifiable, Sendable {
     var title: String
     var report: String
     var sources: [PulseSource]
+    var taskOutput: NativeTaskOutputReference? = nil
+}
+
+struct NativeTaskOutputReference: Codable, Hashable, Sendable {
+    var taskID: String
+    var index: Int
 }
 
 struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {

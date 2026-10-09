@@ -7,14 +7,17 @@ public final class AssistantWorkspace {
     public let session: AssistantSession
 
     public init(dataRoot: URL, endpoint: URL, workspaceRoot: URL, runtimeIdentity: String,
+                events: (@Sendable (Int64) async throws -> AsyncThrowingStream<AssistantTaskEvent, Error>)? = nil,
                 send: @escaping @Sendable (URLRequest) async throws -> (Data, Int)) throws {
         let configuration = try PrototypeConfiguration(dataRoot: dataRoot, endpoint: endpoint,
                                                        workspaceRoot: workspaceRoot, runtimeIdentity: runtimeIdentity)
-        store = try PrototypeStore(configuration: configuration, client: PrototypeClient(base: endpoint, send: send))
+        store = try PrototypeStore(configuration: configuration, client: PrototypeClient(base: endpoint, send: send), events: events)
         session = AssistantSession(store: store)
     }
 
     public var assistantID: UUID { store.saved.assistantID }
+    public func startEventTracking() { session.startEventTracking() }
+    public func stopEventTracking() async { await session.stopEventTracking() }
 
     public func verifyRecovery(requireFreshReply: Bool = true) async throws -> Data {
         try await BridgeContractTest.recovery(store: store, requireFreshReply: requireFreshReply)

@@ -1,10 +1,13 @@
 import Foundation
+import VeraAssistantUI
 
 actor NativePiAppOwner {
     let session: NativePiRuntimeSession
     let channel: PiPrivatePipe
     let runner: Task<Void, Never>
     let httpTransport: @Sendable (URLRequest) async throws -> (Data, Int)
+    let eventTransport: PiOwnedTaskEventTransport
+    private var eventStreams: [UUID: (Task<Void, Never>, PiOwnedTaskEventConnection, AsyncThrowingStream<AssistantTaskEvent, Error>.Continuation)] = [:]
     let memoryBridge: NativeRuntimeMemoryBridge?
     private var reader: Task<Void, Never>?
     private var pending: [String: CheckedContinuation<PiValue, Error>] = [:]
@@ -15,8 +18,9 @@ actor NativePiAppOwner {
     private var bindings: [String: PiValue] = [:]
     private var granting: [String: Task<Void, Error>] = [:]
     private var commandTimers: [String: Task<Void, Never>] = [:]
-    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
+    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send, eventTransport: PiOwnedTaskEventTransport = .live) throws {
         self.httpTransport = httpTransport
+        self.eventTransport = eventTransport
         self.memoryBridge = memoryBridge
         let input = Pipe(), output = Pipe()
         channel = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
@@ -56,6 +60,7 @@ actor NativePiAppOwner {
     }
     private func disconnected() {
         closed = true
+        cancelEventStreams()
         channel.closeWrite()
         startWaiter?.resume(throwing: PiBrokerError.unavailable)
         startWaiter = nil
@@ -172,7 +177,45 @@ actor NativePiAppOwner {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await httpTransport(request)
     }
+    func events(after: Int64) throws -> AsyncThrowingStream<AssistantTaskEvent, Error> {
+        guard !closed, let assistant, let capability = ready?.pi("ui_capability").piString else { throw PiBrokerError.unavailable }
+        try piCheck(eventStreams.count < 2, .unavailable)
+        let request = try PiOwnedTaskEventTransport.request(endpoint: endpoint(), capability: capability, after: after)
+        let connection = eventTransport.open(request)
+        let id = UUID()
+        let (events, continuation) = AsyncThrowingStream<AssistantTaskEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(PiOwnedTaskEventTransport.maximumBufferedEvents))
+        let operation = Task {
+            defer { connection.cancel(); eventStreams.removeValue(forKey: id) }
+            do {
+                for try await event in connection.events {
+                    try Task.checkCancellation()
+                    try piCheck(!closed && self.assistant == assistant, .unavailable)
+                    switch continuation.yield(event) {
+                    case .enqueued: break
+                    case .dropped: throw PiBrokerError.unavailable
+                    case .terminated: return
+                    @unknown default: throw PiBrokerError.unavailable
+                    }
+                }
+                continuation.finish()
+            } catch { continuation.finish(throwing: error) }
+        }
+        eventStreams[id] = (operation, connection, continuation)
+        continuation.onTermination = { _ in operation.cancel(); connection.cancel() }
+        return events
+    }
+    private func cancelEventStreams() {
+        let active = eventStreams.values
+        eventStreams.removeAll()
+        for (operation, connection, continuation) in active {
+            operation.cancel()
+            connection.cancel()
+            continuation.finish(throwing: CancellationError())
+        }
+    }
     func stop() async {
+        closed = true
+        cancelEventStreams()
         await memoryBridge?.close()
         channel.closeWrite()
         await runner.value

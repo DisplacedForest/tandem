@@ -39,9 +39,10 @@ struct NativePiSessionStatus: View {
 
 struct NativePiTaskSection: View {
     @ObservedObject var assistant: NativePiPresentation
+    var messageID: UUID? = nil
     var body: some View {
         if let session = assistant.session {
-            ForEach(session.tasks) { task in
+            ForEach(assistant.tasks(for: messageID)) { task in
                 VStack(alignment: .leading, spacing: 8) {
                     NativeTaskCardView(card: Self.card(task), statusTitle: task.status, stopTitle: "Stop",
                         onCancel: { Task { await session.stop(taskID: task.id) } })

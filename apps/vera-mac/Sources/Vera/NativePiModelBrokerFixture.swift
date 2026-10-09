@@ -194,6 +194,7 @@ enum NativePiModelBrokerFixture {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("pi-app-selftest-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            try await NativePiTaskEventSelftest.run()
             try await stage("pipe lifecycle") { try await NativePiPipeFixture.exercise() }
             try await stage("runtime tools") { try await NativePiRuntimeToolFixture.exercise(root.appendingPathComponent("runtime-tools")) }
             try await stage("runtime tool restart") { try await NativePiRuntimeToolFixture.restart(root.appendingPathComponent("runtime-tools-restart")) }

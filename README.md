@@ -92,6 +92,8 @@ Each answer has its own Stop control and tool approvals. Stopping an answer does
 
 ### Durable background task storage
 
+In the persistent **Vera** conversation, task cards stay with the message that started them. Updates arrive from the task event stream, and reopening the app refreshes saved work before resuming that stream. Stop and decision replies go to the task engine. Completed file outputs open only from the configured task workspace; task details and output links are excluded from spoken replies.
+
 The optional API stores queued work, checkpoints, decisions, results, and ordered events in SQLite. Background research plans questions, gathers sources one step at a time, and saves a cited report. Tasks resume from committed checkpoints after an engine restart, cancellation preserves collected evidence, and clients can reconnect to the event stream. Missing sources or an unusable report ask for an explicit retry. With Deep research enabled and an engine configured, typed native chat can hand research to this queue and continue the conversation. The app saves the request before sending it and can replay an interrupted handoff without creating another task. Native generation uses the saved model profile and local credential; closed or unavailable apps leave research waiting at its checkpoint. Progress stays in the original chat as a saved task card, with Stop and an explicit Retry when needed. Completion adds one cited report that opens inside the app. Cards recover after reconnect or restart, and saved reports remain readable when the engine is disconnected. Voice handoff remains separate. See [the task API setup notes](docs/SETUP.md#durable-task-api) for its contract and limits.
 
 ### Pulse: scheduled research briefings

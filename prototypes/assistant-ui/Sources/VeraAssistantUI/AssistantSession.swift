@@ -5,10 +5,12 @@ public struct AssistantSessionMessage: Identifiable, Sendable {
     public let id: String
     public let isUser: Bool
     public let text: String
+    public let taskIDs: [String]
 }
 
 public struct AssistantSessionTask: Identifiable, Sendable {
     public let id: String
+    public let originatingMessageID: UUID?
     public let title: String
     public let state: String
     public let status: String
@@ -40,6 +42,7 @@ public final class AssistantSession: ObservableObject {
     }
 
     public var id: UUID { store.saved.assistant.id }
+    public var savedEventCursor: Int64 { store.saved.taskEventCursor ?? 0 }
     public var draft: String { store.saved.assistant.draft }
     public var connected: Bool { store.capabilities?.supported == true && store.connectionError == nil }
     public var connectionLabel: String { store.connectionLabel }
@@ -58,13 +61,14 @@ public final class AssistantSession: ObservableObject {
     private var selected: Bool { store.destination == .assistant }
     public var messages: [AssistantSessionMessage] {
         (store.transcripts[id] ?? []).filter { ["user", "assistant"].contains($0.role) }.map {
-            AssistantSessionMessage(id: $0.id, isUser: $0.role == "user", text: $0.text)
+            AssistantSessionMessage(id: $0.id, isUser: $0.role == "user", text: $0.text, taskIDs: $0.taskIDs)
         }
     }
     public var tasks: [AssistantSessionTask] {
         store.tasks.filter { $0.payload.assistantID == store.saved.assistantID && $0.payload.conversationID == id }.map { task in
-            AssistantSessionTask(id: task.id, title: task.title, state: task.state, status: task.status,
-                summary: task.result?.summary ?? "", canStop: task.canStop && connected,
+            AssistantSessionTask(id: task.id, originatingMessageID: task.payload.originatingMessageID,
+                title: task.title, state: task.state, status: task.status,
+                summary: task.milestone, canStop: task.canStop && connected,
                 decisionID: task.state == "needs_decision" && !task.cancelRequested ? task.decision?.id : nil,
                 decisionPrompt: task.decision?.prompt, savedApproval: store.savedReply(task),
                 busy: store.busyTasks.contains(task.id), error: store.taskErrors[task.id],
@@ -76,7 +80,9 @@ public final class AssistantSession: ObservableObject {
     public func select() { store.destination = .assistant }
     public func setDraft(_ text: String) { guard selected else { return }; store.setDraft(text) }
     public func refresh() async { guard selected else { return }; await store.refresh() }
-    public func poll() async { guard selected else { return }; await store.refresh(background: true) }
+    public func poll() async { guard selected, !store.taskEventsHealthy else { return }; await store.refresh(background: true) }
+    public func startEventTracking() { store.startEventTracking() }
+    public func stopEventTracking() async { await store.stopEventTracking() }
     public func send() async { guard canSend else { return }; await store.send() }
     public func retry(messageID: UUID) async { guard canRetry, pendingID == messageID else { return }; await store.retry() }
     public func review(messageID: UUID) async { guard selected, pendingID == messageID else { return }; await store.reviewUnconfirmedReply() }

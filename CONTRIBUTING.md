@@ -61,6 +61,8 @@ Task-engine tests include deterministic fake workers, process-kill recovery, can
 
 `mise run task-engine-contract` runs the task HTTP contract against a disposable source engine. It uses synthetic tasks, a fresh data directory and loopback connections, then kills and restarts its own process to verify durable state and event replay. It makes no provider calls. The API test suite includes this contract. After building the engine with PyInstaller, run `mise run task-engine-package-test` to exercise the same contract against `services/vera-api/dist/vera-api/vera-api`. To test another build, pass its executable to `python scripts/tests/task_engine_contract.py --engine <path>`. Every run creates its own data; it does not attach to an existing engine.
 
+The native app broker tests also exercise the persistent conversation against a disposable runtime over authenticated loopback SSE. They check event-driven updates without polling, task placement in the original turn, cursor replay, owner shutdown and restart, and task control boundaries. UI library selftests cover stale event callbacks, refresh failures and cursor persistence. For an offscreen transcript fixture, run the built app with `--pi-native-selftest --task-card-shot /tmp/task-transcript.png`; this renders synthetic task cards without launching the ordinary app or accessing saved configuration.
+
 **Mac app** (no XCTest by design; the app validates through its own harness):
 
 ```sh

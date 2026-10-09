@@ -101,6 +101,7 @@ enum NativePiPresentationSelftest {
             await ready.stop()
             await ready.stop()
             try piCheck(readyGate.stops == 1 && ready.connection == nil)
+            try await NativePiTranscriptSelftest.run(root: root)
             print("PASS: idle isolation, direct observation, late startup cancellation, concurrent shutdown and stable projection namespace")
         } catch {
             FileHandle.standardError.write(Data("Native presentation selftest failed: \(type(of: error))\n".utf8))

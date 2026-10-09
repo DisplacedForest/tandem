@@ -10,16 +10,16 @@ final class NativePiPreparedSession {
     private init(provider: PiPreparedProvider, owner: NativePiAppOwner, workspace: AssistantWorkspace, memoryBridge: NativeRuntimeMemoryBridge?) {
         self.provider = provider; self.owner = owner; self.workspace = workspace; self.memoryBridge = memoryBridge
     }
-    static func create(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore? = nil, tools: (any NativeRuntimeToolServing)? = nil) async throws -> NativePiPreparedSession {
+    static func create(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore? = nil, tools: (any NativeRuntimeToolServing)? = nil, eventTransport: PiOwnedTaskEventTransport = .live) async throws -> NativePiPreparedSession {
         try await provider.executor.validateOwner()
         let memoryBridge = store.map { NativeRuntimeMemoryBridge(store: $0) }
         let executor = memoryBridge.map { provider.executor.sharingMemory($0) } ?? provider.executor
-        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge, tools: tools ?? store?.nativeMCP?.authority)
+        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge, tools: tools ?? store?.nativeMCP?.authority, eventTransport: eventTransport)
         do {
             let ready = try await owner.start()
             guard case .number(let port) = ready.pi("port"), let identity = ready.pi("profile").piString else { throw PiBrokerError.invalid }
             let root = owner.session.ledger.owner.url
-            let workspace = try AssistantWorkspace(dataRoot: uiRoot, endpoint: URL(string: "http://127.0.0.1:\(Int(port))")!, workspaceRoot: root.appendingPathComponent("runtime/workspaces"), runtimeIdentity: piHash(Data((root.path + ":" + identity).utf8))) { request in try await owner.http(request) }
+            let workspace = try AssistantWorkspace(dataRoot: uiRoot, endpoint: URL(string: "http://127.0.0.1:\(Int(port))")!, workspaceRoot: root.appendingPathComponent("runtime/workspaces"), runtimeIdentity: piHash(Data((root.path + ":" + identity).utf8)), events: { cursor in try await owner.events(after: cursor) }) { request in try await owner.http(request) }
             try await owner.bindAssistant(workspace.assistantID)
             return NativePiPreparedSession(provider: provider, owner: owner, workspace: workspace, memoryBridge: memoryBridge)
         } catch { await owner.stop(); throw error }
