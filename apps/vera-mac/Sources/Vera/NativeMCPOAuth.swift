@@ -386,7 +386,8 @@ actor NativeMCPOAuthSession: CustomStringConvertible, CustomDebugStringConvertib
     }
 
     private static func form(_ fields: [String: String]) -> Data {
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        let allowed = CharacterSet(charactersIn: "a"..."z").union(CharacterSet(charactersIn: "A"..."Z"))
+            .union(CharacterSet(charactersIn: "0"..."9")).union(CharacterSet(charactersIn: "-._~"))
         return Data(fields.keys.sorted().map { key in key + "=" + fields[key]!.addingPercentEncoding(withAllowedCharacters: allowed)! }.joined(separator: "&").utf8)
     }
 

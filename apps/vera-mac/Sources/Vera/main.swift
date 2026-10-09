@@ -66,6 +66,7 @@ if arguments.dropFirst().first == "--pi-native-selftest" {
         do {
             try await NativeMCPAuthoritySelftest.run()
             try await NativeMCPTransportSelftest.run()
+            try await NativeMCPOAuthSelftest.run()
             try await NativeMCPIntegrationFixture.run(Array(arguments.dropFirst(2)))
             print("NATIVE MCP SELFTEST OK")
         } catch { print("NATIVE MCP SELFTEST FAILED: \(error)"); exit(1) }
