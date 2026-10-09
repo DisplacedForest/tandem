@@ -420,6 +420,8 @@ enum SelfTest {
         catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
         catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
+        do { try await WorkflowSelectionTests.run() }
+        catch { print("WORKFLOW SELECTION SELFTEST FAILED: \(error.localizedDescription)"); exit(1) }
         runPure()
         runNativeSettings()
         runModelParameters()
@@ -3939,20 +3941,17 @@ enum SelfTest {
             }
             print("  scheduler OK (\(cronCases.count) cron summaries, jobs decode (incl. env-locked))")
 
-            // Canvas graph manifest decode: flows with stages/state, surfaces with stats.
             let graphJSON = """
             {"flows": [
               {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run",
                "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
                "tools": ["websearch"], "running": false,
-               "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],
                "stage_state": {"state": "ok", "rounds": 2, "proposed": 9,
                                "gates": {"dedup": 3}, "injected": 6,
                                "warnings": ["starved run: 6/8"], "finished_at": 1750000000}},
               {"id": "memory_groom", "label": "Memory groom", "icon": "archivebox",
                "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": [],
-               "running": true,
-               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent"}]}
+               "running": true}
             ],
             "surfaces": [{"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper",
                           "stat": "6 cards today"},
@@ -3961,15 +3960,14 @@ enum SelfTest {
             guard let graphObj = try? JSONSerialization.jsonObject(with: Data(graphJSON.utf8)),
                   let graph = AgenticGraph.parse(graphObj),
                   graph.flows.count == 2, graph.surfaces.count == 2,
-                  let gp = graph.flow("pulse"), gp.stages.count == 1,
+                  let gp = graph.flow("pulse"),
                   gp.pulseState?.gates["dedup"] == 3, gp.pulseState?.injected == 6,
                   gp.pulseState?.warnings.count == 1,
                   let groom = graph.flow("memory_groom"), groom.running,
-                  groom.stages.first?.id == "learn",
                   graph.surfaces[0].stat == "6 cards today", graph.surfaces[1].stat == nil else {
                 print("SELFTEST ERROR: agentic graph parse"); exit(1)
             }
-            print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
+            print("  agentic graph OK (flows + state, surfaces incl. nil stat)")
 
             guard let editorCatalog = WorkflowCatalog.fixture(),
                   editorCatalog.nodes.count == 10,

@@ -257,8 +257,16 @@ struct WorkflowFlowFace: Hashable {
 
 @MainActor
 struct WorkflowClient {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, Int)
     let base: URL
     let workflowID: String
+    let transport: Transport
+
+    nonisolated static func live(_ request: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let status = (response as? HTTPURLResponse)?.statusCode else { throw URLError(.badServerResponse) }
+        return (data, status)
+    }
 
     private func fetch(path: String, method: String = "GET", body: [String: Any]? = nil) async -> (Data, Int)? {
         var request = URLRequest(url: base.appendingPathComponent(path))
@@ -268,9 +276,7 @@ struct WorkflowClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let status = (response as? HTTPURLResponse)?.statusCode else { return nil }
-        return (data, status)
+        return try? await transport(request)
     }
 
     private func request(path: String, method: String = "GET", body: [String: Any]? = nil) async -> WorkflowOutcome {
@@ -347,12 +353,20 @@ final class WorkflowEditorStore: ObservableObject {
     @Published var connectionSourceID: String?
     @Published var busy = false
     @Published var note: String?
-    @Published var flowID = "pulse"
+    @Published private(set) var flowID = ""
     @Published var flowFace: WorkflowFlowFace?
     var paletteDragType: String?
 
     private var base: URL?
     private var client: WorkflowClient?
+    private let transport: WorkflowClient.Transport
+    private var selectionRevision = UUID()
+    private var refreshRevision = UUID()
+    private var mutationRevision: UUID?
+
+    init(transport: @escaping WorkflowClient.Transport = WorkflowClient.live) {
+        self.transport = transport
+    }
 
     var displayed: WorkflowVersion? { draft ?? active }
     var isEditing: Bool { draft != nil }
@@ -371,18 +385,35 @@ final class WorkflowEditorStore: ObservableObject {
     }
     var canSave: Bool { isEditing && changed && validationMessage == nil && !busy }
     var canPromote: Bool { isEditing && validationMessage == nil && promotionMessage == nil && !busy }
+    var canvasHint: String {
+        isEditing ? (isLocked ? "Drag to arrange · select a node to adjust its settings"
+                             : "Drag to arrange · drag a port to connect · drag empty space to pan")
+                  : "Viewing the active workflow · Edit workflow to make changes"
+    }
 
     func configure(base: URL?) {
+        guard self.base != base else { return }
         self.base = base
-        client = base.map { WorkflowClient(base: $0, workflowID: flowID) }
-        if client == nil { phase = .unavailable }
+        resetSelection()
     }
 
     func select(_ id: String) async {
-        guard id != flowID else { return }
+        guard id != flowID else {
+            if !id.isEmpty, phase != .ready { await refresh() }
+            return
+        }
         flowID = id
+        resetSelection()
+        await refresh()
+    }
+
+    private func resetSelection() {
+        selectionRevision = UUID()
+        refreshRevision = UUID()
+        mutationRevision = nil
+        busy = false
         flowFace = nil
-        client = base.map { WorkflowClient(base: $0, workflowID: id) }
+        client = flowID.isEmpty ? nil : base.map { WorkflowClient(base: $0, workflowID: flowID, transport: transport) }
         catalog = nil
         active = nil
         draft = nil
@@ -392,17 +423,24 @@ final class WorkflowEditorStore: ObservableObject {
         runStale = false
         selectedNodeID = nil
         connectionSourceID = nil
+        paletteDragType = nil
         note = nil
         mode = .edit
-        phase = .loading
-        await refresh()
+        phase = client == nil ? .unavailable : .loading
     }
 
     func refresh() async {
         guard let client else { phase = .unavailable; return }
-        guard let served = await client.catalog() else { phase = .unavailable; return }
+        let selection = selectionRevision
+        let request = UUID()
+        refreshRevision = request
+        let served = await client.catalog()
+        guard selection == selectionRevision, request == refreshRevision, !Task.isCancelled else { return }
+        guard let served else { phase = .unavailable; return }
+        let overview = await client.overview()
+        guard selection == selectionRevision, request == refreshRevision, !Task.isCancelled else { return }
+        guard let overview else { phase = .unavailable; return }
         catalog = served
-        guard let overview = await client.overview() else { phase = .unavailable; return }
         active = overview.version
         latestRun = overview.latestRun
         triggerJob = overview.triggerJob
@@ -420,13 +458,22 @@ final class WorkflowEditorStore: ObservableObject {
         mode = next
         connectionSourceID = nil
         if next == .run {
-            Task { await refreshRun() }
+            let selection = selectionRevision
+            Task {
+                guard selection == selectionRevision, mode == .run else { return }
+                await refreshRun()
+            }
         }
     }
 
     func refreshRun() async {
-        guard let client else { return }
-        guard let overview = await client.overview() else {
+        guard let client, catalog != nil else { return }
+        let selection = selectionRevision
+        let request = UUID()
+        refreshRevision = request
+        let overview = await client.overview()
+        guard selection == selectionRevision, request == refreshRevision, !Task.isCancelled else { return }
+        guard let overview else {
             runStale = true
             return
         }
@@ -439,13 +486,24 @@ final class WorkflowEditorStore: ObservableObject {
     }
 
     func beginDraft() async {
-        guard let client else { return }
+        guard let client, !busy else { return }
+        let selection = selectionRevision
+        let mutation = UUID()
+        mutationRevision = mutation
         busy = true
-        defer { busy = false }
-        guard let workflow = await client.createDraft() else { note = "Couldn’t create a draft."; return }
+        defer { finishMutation(mutation) }
+        let workflow = await client.createDraft()
+        guard selection == selectionRevision, mutation == mutationRevision, !Task.isCancelled else { return }
+        guard let workflow else { note = "Couldn’t create a draft."; return }
         draft = workflow
         selectedNodeID = workflow.definition.nodes.first?.id
         note = "Draft ready. Changes are not live until you promote it."
+    }
+
+    private func finishMutation(_ mutation: UUID) {
+        guard mutationRevision == mutation else { return }
+        mutationRevision = nil
+        busy = false
     }
 
     func discardDraft() {
@@ -457,7 +515,9 @@ final class WorkflowEditorStore: ObservableObject {
 
     func placeNode(_ type: String, at point: CGPoint) async {
         guard mode == .edit, !isLocked else { return }
+        let selection = selectionRevision
         if !isEditing { await beginDraft() }
+        guard selection == selectionRevision, !Task.isCancelled else { return }
         placeNodeInDraft(type, at: point)
     }
 
@@ -597,14 +657,19 @@ final class WorkflowEditorStore: ObservableObject {
     }
 
     func save() async {
-        guard let client, let draft else { return }
+        guard let client, let draft, !busy else { return }
         if let message = validationMessage {
             note = message
             return
         }
+        let selection = selectionRevision
+        let mutation = UUID()
+        mutationRevision = mutation
         busy = true
-        defer { busy = false }
-        switch await client.save(draft) {
+        defer { finishMutation(mutation) }
+        let outcome = await client.save(draft)
+        guard selection == selectionRevision, mutation == mutationRevision, !Task.isCancelled else { return }
+        switch outcome {
         case .success(let saved):
             self.draft = saved
             note = "Draft saved. Promote it when you want this workflow to use it."
@@ -616,16 +681,23 @@ final class WorkflowEditorStore: ObservableObject {
     }
 
     func promote() async {
-        guard let client, let draft else { return }
+        guard let client, let draft, !busy else { return }
         if let message = validationMessage ?? promotionMessage {
             note = message
             return
         }
+        let selection = selectionRevision
+        let mutation = UUID()
+        mutationRevision = mutation
         busy = true
-        defer { busy = false }
-        switch await client.save(draft) {
+        defer { finishMutation(mutation) }
+        let outcome = await client.save(draft)
+        guard selection == selectionRevision, mutation == mutationRevision, !Task.isCancelled else { return }
+        switch outcome {
         case .success(let saved):
-            switch await client.promote(saved) {
+            let promoted = await client.promote(saved)
+            guard selection == selectionRevision, mutation == mutationRevision, !Task.isCancelled else { return }
+            switch promoted {
             case .success(let promoted):
                 active = promoted
                 self.draft = nil
@@ -659,6 +731,7 @@ final class WorkflowEditorStore: ObservableObject {
 
     static func fixture(editing: Bool = false) -> WorkflowEditorStore {
         let store = WorkflowEditorStore()
+        store.flowID = "pulse"
         store.catalog = WorkflowCatalog.fixture()
         var nodes = [
             WorkflowNode(id: "schedule", type: "trigger.schedule",
@@ -1238,10 +1311,7 @@ struct WorkflowEditor: View {
                 exit: { spliceEdge = nil },
                 perform: { location, info in performCanvasDrop(location, info: info) }))
             .overlay(alignment: .bottom) {
-                Text(store.isEditing
-                     ? (store.isLocked ? "Drag to arrange · select a node to adjust its settings"
-                                       : "Drag to arrange · drag a port to connect · drag empty space to pan")
-                     : "Viewing the active workflow · Edit workflow to make changes")
+                Text(store.canvasHint)
                     .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 11).padding(.vertical, 5)
                     .background(Capsule().fill(Theme.bg.opacity(0.85)))
@@ -1616,7 +1686,7 @@ struct WorkflowEditor: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                Text("Drag to arrange · drag a port to connect")
+                Text(store.canvasHint)
                     .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 11).padding(.vertical, 5)
                     .background(Capsule().fill(Theme.bg.opacity(0.85)))

@@ -5,15 +5,6 @@ enum AgenticPane: String {
     case canvas, activity
 }
 
-/// One drill-in stage of a flow (a pipeline step), as declared
-/// by the server's graph manifest.
-struct GraphStage: Identifiable, Sendable, Hashable {
-    let id: String
-    var label: String
-    var icon: String
-    var tint: String
-}
-
 /// The distilled last pulse run, for per-stage state on the pulse drill-in.
 struct PulseStageState: Sendable, Hashable {
     var state: String           // ok | error | running | stale
@@ -39,7 +30,6 @@ struct GraphFlow: Identifiable, Sendable, Hashable {
     var feeds: [String]
     var tools: [String]
     var running: Bool
-    var stages: [GraphStage]
     var pulseState: PulseStageState?
 }
 
@@ -65,13 +55,6 @@ struct AgenticGraph: Sendable, Hashable {
               let surfArr = obj["surfaces"] as? [[String: Any]] else { return nil }
         let flows: [GraphFlow] = flowArr.compactMap { f in
             guard let id = f["id"] as? String else { return nil }
-            let stages: [GraphStage] = ((f["stages"] as? [[String: Any]]) ?? []).compactMap { s in
-                guard let sid = s["id"] as? String else { return nil }
-                return GraphStage(id: sid,
-                                  label: (s["label"] as? String) ?? sid,
-                                  icon: (s["icon"] as? String) ?? "circle",
-                                  tint: (s["tint"] as? String) ?? "gray")
-            }
             var pulseState: PulseStageState?
             if let st = f["stage_state"] as? [String: Any], let state = st["state"] as? String {
                 var gates: [String: Int] = [:]
@@ -97,7 +80,6 @@ struct AgenticGraph: Sendable, Hashable {
                 feeds: (f["feeds"] as? [String]) ?? [],
                 tools: (f["tools"] as? [String]) ?? [],
                 running: (f["running"] as? Bool) ?? false,
-                stages: stages,
                 pulseState: pulseState)
         }
         let surfaces: [GraphSurface] = surfArr.compactMap { s in
@@ -113,25 +95,15 @@ struct AgenticGraph: Sendable, Hashable {
 
     /// Demo topology for screenshots — mirrors the live manifest shape.
     static func mock() -> AgenticGraph {
-        func stage(_ id: String, _ label: String, _ icon: String, _ tint: String) -> GraphStage {
-            GraphStage(id: id, label: label, icon: icon, tint: tint)
-        }
         func flow(_ id: String, _ label: String, _ icon: String, _ tint: String, _ group: String,
                   feeds: [String], tools: [String] = [],
-                  running: Bool = false, stages: [GraphStage] = []) -> GraphFlow {
+                  running: Bool = false) -> GraphFlow {
             GraphFlow(id: id, label: label, title: label, icon: icon, tint: tint,
                       group: group, feeds: feeds, tools: tools, running: running,
-                      stages: stages, pulseState: nil)
+                      pulseState: nil)
         }
         var pulse = flow("pulse", "Pulse briefing", "newspaper", "accent", "Ambient",
-                         feeds: ["pulse_feed"], tools: ["websearch", "vera-image"],
-                         stages: [
-                            stage("triage", "Triage", "globe", "accent"),
-                            stage("gates", "Gates", "line.3.horizontal.decrease.circle", "orange"),
-                            stage("synthesis", "Synthesis", "sparkles", "purple"),
-                            stage("claim_audit", "Claim audit", "checkmark.shield", "cyan"),
-                            stage("cover_art", "Cover art", "photo", "purple"),
-                            stage("inject", "Inject", "arrow.down.to.line", "green")])
+                         feeds: ["pulse_feed"], tools: ["websearch", "vera-image"])
         pulse.pulseState = PulseStageState(state: "ok", rounds: 3, proposed: 24,
                                            gates: ["dedup": 6, "freshness": 1, "coherence": 1, "interest_cap": 1],
                                            injected: 6,
