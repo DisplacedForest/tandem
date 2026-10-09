@@ -16,10 +16,18 @@ final class NativeCredentialFixtureStore: NativeCredentialStore {
     var denied: Set<String> = []
     var failWrites = false
     var writes: [String] = []
+    var reads: [String] = []
+    var startupReads: [String] = []
 
     func read(for profileID: String) throws -> String? {
+        reads.append(profileID)
         if denied.contains(profileID) { throw NativeCredentialError.read }
         return values[profileID]
+    }
+
+    @MainActor func readForStartup(for profileID: String) throws -> String? {
+        startupReads.append(profileID)
+        return try read(for: profileID)
     }
 
     func set(_ value: String?, for profileID: String) throws {
@@ -241,13 +249,14 @@ enum NativeCredentialLifecycleFixture {
         var addStatus = errSecSuccess
         var deleteStatus = errSecSuccess
         var readStatus = errSecSuccess
+        var readValue: CFTypeRef = Data("synthetic-read".utf8) as CFData
         var checkedContext = false
         var onlyValueUpdated = false
         let operations = NativeKeychainOperations(authenticationContext: { NativeCredentialFixtureContext() }, read: { query, result in
             calls.append("read")
             let dictionary = query as NSDictionary
             checkedContext = (dictionary[kSecUseAuthenticationContext] as? LAContext)?.interactionNotAllowed == true
-            result?.pointee = Data("synthetic-read".utf8) as CFData
+            result?.pointee = readValue
             return readStatus
         }, update: { _, attributes in
             calls.append("update")
@@ -258,6 +267,13 @@ enum NativeCredentialLifecycleFixture {
         let store = KeychainNativeCredentialStore(allowsInteraction: false, operations: operations)
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == "synthetic-read" && checkedContext,
             "Noninteractive reads must retain the existing no-prompt authentication context")
+        for malformed: CFTypeRef in [Data([0xff]) as CFData, "synthetic-invalid-type" as CFString] {
+            readValue = malformed
+            do {
+                _ = try store.read(for: "fixture-profile")
+                throw NativeTaskFixture.Failure.assertion("Malformed data must fail")
+            } catch NativeCredentialError.format {}
+        }
         readStatus = errSecItemNotFound
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == nil, "Only item-not-found is absence")
         readStatus = errSecAuthFailed

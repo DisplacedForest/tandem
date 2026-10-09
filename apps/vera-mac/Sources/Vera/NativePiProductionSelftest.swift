@@ -22,6 +22,7 @@ enum NativePiProductionSelftest {
         for index in stride(from: 0, to: arguments.count, by: 2) where arguments[index] != "--root" {
             runtime += [arguments[index], arguments[index + 1]]
         }
+        try await NativePiCredentialRetrySelftest.recovery(runtime, http: http, admission: admission, root: root)
         let taskID = try await phase(root: root, config: config, http: http, admission: admission, arguments: runtime, reopen: nil)
         _ = try await phase(root: root, config: config, http: http, admission: admission, arguments: runtime, reopen: taskID)
         let saved = try NativePiSpendingPolicy(root: root)

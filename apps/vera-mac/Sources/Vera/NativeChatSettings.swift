@@ -354,11 +354,12 @@ enum NativeChatToolCatalog {
 }
 
 enum NativeCredentialError: Error, LocalizedError {
-    case read, write, removal, migrationConflict
+    case read, format, write, removal, migrationConflict
 
     var errorDescription: String? {
         switch self {
         case .read: return "A saved API key couldn't be read. It remains unchanged in Keychain."
+        case .format: return "The saved API key has an unsupported format. It remains unchanged in Keychain."
         case .write: return "The API key couldn't be saved. Your edit is still here; try Save again."
         case .removal: return "The API key couldn't be removed. Try Save again."
         case .migrationConflict: return "A saved API key already exists. Reopen settings before changing it."
@@ -445,8 +446,9 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
         var result: CFTypeRef?
         let status = operations.read(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.read }
+        guard status == errSecSuccess else { throw NativeCredentialError.read }
+        guard let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.format }
         return value
     }
 

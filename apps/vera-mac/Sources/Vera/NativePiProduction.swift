@@ -15,8 +15,18 @@ enum NativePiProduction {
             let ownership = try PiExperimentRoot(root)
             let policy = try NativePiSpendingPolicy(root: ownership.url)
             let binding: PiSelectedProfileBinding
-            do { binding = try config.piSelectedProfileBinding() }
-            catch { throw Failure(message: "The saved model connection isn't available. Check the selected model and existing credential in Settings, then connect again.") }
+            do { binding = try config.piConnectSelectedProfile() }
+            catch ConfigStore.PiConnectionError.credentialAccess {
+                throw Failure(message: "macOS couldn't access the saved credential. It hasn't been changed. After access is restored, choose Connect assistant to retry.")
+            } catch ConfigStore.PiConnectionError.credentialMissing {
+                throw Failure(message: "No saved credential is available for the selected model. Check its endpoint in Settings, then connect again.")
+            } catch ConfigStore.PiConnectionError.credentialFormat {
+                throw Failure(message: "The saved credential couldn't be used. It hasn't been changed. Check its format in Settings, then connect again.")
+            } catch ConfigStore.PiConnectionError.credentialChanged {
+                throw Failure(message: "The saved credential changed outside Vera. Save the selected credential in Settings to confirm the change before connecting.")
+            } catch {
+                throw Failure(message: "The saved model configuration isn't ready. Save a supported OpenRouter model connection in Settings, then connect again.")
+            }
             guard let admission = admission ?? NativeInferenceAdmission.configured() else {
                 throw Failure(message: "Connect Vera's engine in Settings before starting the assistant.")
             }
