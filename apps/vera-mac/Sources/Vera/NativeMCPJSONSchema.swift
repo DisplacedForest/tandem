@@ -15,7 +15,13 @@ struct NativeMCPJSONSchema: Sendable {
         }
     }
 
+    private enum Dialect: String {
+        case draft7 = "http://json-schema.org/draft-07/schema#"
+        case draft2020 = "https://json-schema.org/draft/2020-12/schema"
+    }
+
     let schema: NativeJSONValue
+    private let dialect: Dialect
     private let definitions: [String: NativeJSONValue]
     private static let types: Set<String> = ["object", "array", "string", "number", "integer", "boolean", "null"]
     private static let annotations: Set<String> = ["title", "description", "$comment", "default", "examples", "deprecated", "readOnly", "writeOnly"]
@@ -26,6 +32,12 @@ struct NativeMCPJSONSchema: Sendable {
         var bytes = 0
         try Self.measure(schema, depth: 0, nodes: &nodes, bytes: &bytes)
         self.schema = schema
+        if case .object(let root) = schema, let declaration = root["$schema"] {
+            guard case .string(let identifier) = declaration, let dialect = Dialect(rawValue: identifier) else { throw Failure.unsupportedSchema }
+            self.dialect = dialect
+        } else {
+            dialect = .draft2020
+        }
         if case .object(let root) = schema, case .object(let definitions)? = root["$defs"] {
             self.definitions = definitions
         } else {
@@ -97,10 +109,11 @@ struct NativeMCPJSONSchema: Sendable {
         if case .bool = value { return }
         guard case .object(let object) = value,
               Set(object.keys).isSubset(of: Self.keywords.union(Self.annotations)) else { throw Failure.unsupportedSchema }
+        if dialect == .draft7, !Set(object.keys).isDisjoint(with: ["$ref", "$defs", "prefixItems", "deprecated"]) { throw Failure.unsupportedSchema }
         for (key, value) in object {
             switch key {
             case "$schema":
-                guard case .string("https://json-schema.org/draft/2020-12/schema") = value, depth == 0 else { throw Failure.unsupportedSchema }
+                guard case .string(let identifier) = value, identifier == dialect.rawValue, depth == 0 else { throw Failure.unsupportedSchema }
             case "$defs":
                 guard depth == 0, case .object(let definitions) = value else { throw Failure.unsupportedSchema }
                 for (name, definition) in definitions {
