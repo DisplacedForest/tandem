@@ -59,6 +59,8 @@ Task-engine tests include deterministic fake workers, process-kill recovery, can
 
 `mise run signing-test` validates local signing configuration, exact certificate selection, and failure behavior with mocked signing commands. It does not access Keychain identities or change trust settings.
 
+`mise run task-engine-contract` runs the task HTTP contract against a disposable source engine. It uses synthetic tasks, a fresh data directory and loopback connections, then kills and restarts its own process to verify durable state and event replay. It makes no provider calls. The API test suite includes this contract. After building the engine with PyInstaller, run `mise run task-engine-package-test` to exercise the same contract against `services/vera-api/dist/vera-api/vera-api`. To test another build, pass its executable to `python scripts/tests/task_engine_contract.py --engine <path>`. Every run creates its own data; it does not attach to an existing engine.
+
 **Mac app** (no XCTest by design; the app validates through its own harness):
 
 ```sh

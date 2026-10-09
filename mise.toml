@@ -2,6 +2,12 @@
 dir = "services/vera-api"
 run = "python -m pytest -q"
 
+[tasks.task-engine-contract]
+run = "python scripts/tests/task_engine_contract.py"
+
+[tasks.task-engine-package-test]
+run = "python scripts/tests/task_engine_contract.py --engine services/vera-api/dist/vera-api/vera-api"
+
 [tasks.mac-build]
 dir = "apps/vera-mac"
 run = "swift build"

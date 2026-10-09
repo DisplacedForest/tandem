@@ -115,7 +115,7 @@ jobs:
         working-directory: services/vera-api
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.7 altgraph==0.17.4 macholib==1.16.3
       - name: Build
         working-directory: services/vera-api
         run: pyinstaller --noconfirm vera-api.spec
@@ -137,6 +137,9 @@ jobs:
           curl -sf http://127.0.0.1:8089/pulse/veins/catalog > /tmp/catalog.json
           python3 -c "import json; d = json.load(open('/tmp/catalog.json')); assert d['veins'] == [], d['veins']"
           kill "$engine_pid"
+      - name: Verify packaged task recovery and event replay
+        working-directory: services/vera-api
+        run: python ../../scripts/tests/task_engine_contract.py --engine dist/vera-api/vera-api
       - name: Zip and checksum
         working-directory: services/vera-api/dist
         run: |
