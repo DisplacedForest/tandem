@@ -16,7 +16,7 @@ PLUGIN_URL = 'https://chatgpt.com/plugins/plugin_' + APP_ID
 def test_missing_destination_has_no_actionable_request():
     page = render()
     assert 'Setup is not available yet.' in page
-    assert 'Your setup link is missing' in page
+    assert 'Your personal link comes first' in page
     for absent in ('Start setup', 'Copy setup request', '<textarea', '<script', 'href="https://chatgpt.com/"', 'plugin_asdk_app_'):
         assert absent not in page
 
@@ -28,10 +28,10 @@ def test_request_carries_exact_destination_and_subscription_source():
     assert copied == setup_request(PLUGIN_URL, APP_ID)
     assert PLUGIN_URL in copied
     assert APP_ID in copied
-    assert 'source matching that registered connection ID' in copied
-    assert 'household.message.created with empty filters' in copied
-    assert 'Do not substitute a similarly named app' in copied
-    assert 'stop and report that exact missing connection' in copied
+    assert 'household-inbox-setup skill' in copied
+    assert 'Use only my assigned connection' in copied
+    assert 'stop and explain what is missing' in copied
+    assert len(copied) < 650
 
 
 @pytest.mark.parametrize('url,app_id', [
@@ -53,15 +53,15 @@ def test_incomplete_or_mismatched_destination_is_rejected(url, app_id):
 def test_onboarding_requires_user_submission_and_full_event_acceptance():
     page = render(PLUGIN_URL, APP_ID)
     assert 'Nothing is sent from this page' in page
-    assert 'only when you review and send it' in page
-    assert 'Installing the plugin alone does not subscribe your dot' in page
-    assert 'native approval' in page
+    assert 'Review the request before sending' in page
+    assert 'Connecting alone does not turn on notifications' in page
+    assert 'chat where your dot manages inbox notifications' in page
+    assert 'connection or setup skill is unavailable' in SETUP_REQUEST
     assert 'No new account is needed' in page
-    assert 'gateway has no account signup' in SETUP_REQUEST
-    assert 'inbox_setup_check' in SETUP_REQUEST
-    assert 'Reuse an existing matching subscription' in SETUP_REQUEST
-    assert 'actual event to wake my dot' in SETUP_REQUEST
-    assert 'Confirm subscription renewal separately' in SETUP_REQUEST
+    assert 'one test message to my own inbox' in SETUP_REQUEST
+    assert 'Reuse my matching subscription' in SETUP_REQUEST
+    assert 'test actually arrives and is handled' in page
+    assert 'Setup does not pair you with anyone' in page
     for forbidden in ('fetch(', 'XMLHttpRequest', 'localStorage', 'document.cookie', '<form', 'whsec_'):
         assert forbidden not in page
 
