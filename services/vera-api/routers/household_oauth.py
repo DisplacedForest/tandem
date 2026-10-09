@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import html
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
+from string import Template
 from typing import Any, AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -83,12 +85,26 @@ class OAuth:
 
     def cleanup(self, db: sqlite3.Connection) -> None:
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
-        for table in ("oauth_enrollment", "oauth_pending", "oauth_codes", "oauth_grants", "oauth_clients"):
-            db.execute(f"DELETE FROM {table} WHERE expires<=?", (time.time(),))
+        for statement in (
+            "DELETE FROM oauth_enrollment WHERE expires<=?",
+            "DELETE FROM oauth_pending WHERE expires<=?",
+            "DELETE FROM oauth_codes WHERE expires<=?",
+            "DELETE FROM oauth_grants WHERE expires<=?",
+            "DELETE FROM oauth_clients WHERE expires<=?",
+        ):
+            db.execute(statement, (time.time(),))
 
     def room(self, db: sqlite3.Connection, table: str, limit: int) -> None:
         self.cleanup(db)
-        if db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] >= limit:
+        statements = {
+            "oauth_enrollment": "SELECT count(*) FROM oauth_enrollment",
+            "oauth_pending": "SELECT count(*) FROM oauth_pending",
+            "oauth_codes": "SELECT count(*) FROM oauth_codes",
+            "oauth_grants": "SELECT count(*) FROM oauth_grants",
+            "oauth_clients": "SELECT count(*) FROM oauth_clients",
+            "oauth_tokens": "SELECT count(*) FROM oauth_tokens",
+        }
+        if db.execute(statements[table]).fetchone()[0] >= limit:
             raise OAuthError("temporarily_unavailable", 429)
 
     def endpoint(self, db: sqlite3.Connection, endpoint: str, snapshot: str | None = None) -> sqlite3.Row:
@@ -330,7 +346,7 @@ async def authorize(request: Request) -> Response:
         if len(request.url.query) > 4096 or len(request.query_params.multi_items()) != len(request.query_params):
             raise OAuthError()
         session = await run_in_threadpool(oauth.authorize, dict(request.query_params))
-        page = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect your inbox</title><main><h1>Connect your inbox</h1><p>Enter your one-time inbox code. Connecting lets ChatGPT read your inbox, receive notifications, and share messages only when you ask. Your other conversations stay separate.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="' + session + '"><label>Inbox code <input name="enrollment" type="password" required maxlength="128" autocomplete="off"></label><button type="submit" name="action" value="connect">Connect</button></form><p>Close this window to cancel.</p></main></html>'
+        page = Template('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect your inbox</title><main><h1>Connect your inbox</h1><p>Enter your one-time inbox code. Connecting lets ChatGPT read your inbox, receive notifications, and share messages only when you ask. Your other conversations stay separate.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="$csrf"><label>Inbox code <input name="enrollment" type="password" required maxlength="128" autocomplete="off"></label><button type="submit" name="action" value="connect">Connect</button></form><p>Close this window to cancel.</p></main></html>').substitute(csrf=html.escape(session, quote=True))
         response = HTMLResponse(page, headers=HEADERS)
         response.set_cookie(COOKIE, session, max_age=600, secure=True, httponly=True, samesite="lax", path="/")
         return response
