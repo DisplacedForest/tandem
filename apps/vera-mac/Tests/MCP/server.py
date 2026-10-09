@@ -1,8 +1,25 @@
 import json
 import sys
 import time
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+
+synthetic_token = 'vera-synthetic-bearer-proof-7GkN4'
+synthetic_replacement = 'vera-synthetic-bearer-replacement-3FhP8'
+counts = {}
+counts_lock = threading.Lock()
+
+
+def record(path, method):
+    with counts_lock:
+        key = path + '|' + method
+        counts[key] = counts.get(key, 0) + 1
+        target = Path(sys.argv[1] + '.counts.json')
+        temporary = target.with_suffix('.tmp')
+        temporary.write_text(json.dumps(counts))
+        temporary.replace(target)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -14,13 +31,36 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         method = request.get('method')
-        if method == 'notifications/initialized':
-            self.send_response(202)
+        record(self.path, method)
+        bearer = self.path.startswith('/bearer')
+        if bearer and self.headers.get('Authorization') not in ['Bearer ' + synthetic_token, 'Bearer ' + synthetic_replacement]:
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Bearer error="invalid_token"')
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        if any(self.headers.get(key) for key in ['Authorization', 'Cookie', 'X-Vera-MCP-Boundary']):
+        forbidden_headers = ['Cookie', 'X-Vera-MCP-Boundary', 'Proxy-Authorization']
+        if not bearer:
+            forbidden_headers.append('Authorization')
+        if any(self.headers.get(key) for key in forbidden_headers):
             self.send_response(403)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if self.path in ['/bearer-denied', '/bearer-scope']:
+            self.send_response(401 if self.path == '/bearer-denied' else 403)
+            self.send_header('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="fixture:write", resource_metadata="https://unapproved.example/metadata"')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if self.path == '/bearer-redirect':
+            self.send_response(307)
+            self.send_header('Location', '/forbidden')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if method == 'notifications/initialized':
+            self.send_response(202)
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
@@ -59,11 +99,18 @@ class Handler(BaseHTTPRequestHandler):
             if name == 'slow':
                 time.sleep(4)
             result = {'content': [{'type': 'text', 'text': 'fixture result'}], 'structuredContent': {'count': 1, 'ok': True}, 'isError': name == 'error' or self.path == '/tool-error'}
+        if self.path == '/bearer-echo-schema' and method == 'tools/list' and result.get('tools'):
+            result['tools'][0]['description'] = synthetic_token
+        if self.path.startswith('/bearer-echo') and method == 'tools/call':
+            result['content'][0]['text'] = synthetic_token
         if self.path == '/data-schema' and method == 'tools/list' and result.get('tools'):
             result['tools'][0]['inputSchema']['properties']['uri'] = {'const': 'data:,hello'}
         if self.path == '/data-result' and method == 'tools/call':
             result['structuredContent'] = {'uri': 'data:,hello'}
         body = json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}).encode()
+        if self.path in ['/bearer-echo-escaped', '/bearer-echo-sse']:
+            escaped = ''.join('\\u%04x' % ord(char) for char in synthetic_token).encode()
+            body = body.replace(synthetic_token.encode(), escaped)
         if self.path == '/numeric':
             body = body.replace(b'"capabilities":', b'"unsupportedPrecision":9007199254740993,"capabilities":')
         if self.path == '/decimal':
@@ -76,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'"protocolVersion":', b'"protocolVersion":"2025-11-25","protocolVersion":')
         if self.path == '/invalid-utf8':
             body = body.replace(b'synthetic', b'synthetic\xff')
-        if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8']:
+        if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse']:
             body = b'data: ' + body + b'\n\n'
         if self.path == '/malformed':
             body = b'{broken'
@@ -85,7 +132,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ['/large', '/chunked']:
             body = b'x' * 40000
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8'] else 'application/json')
+        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse'] else 'application/json')
+        if self.path == '/bearer-echo-header':
+            self.send_header('MCP-Session-Id', synthetic_token)
         self.send_header('Set-Cookie', 'fixture=must-not-persist')
         if self.path == '/chunked':
             self.send_header('Transfer-Encoding', 'chunked')

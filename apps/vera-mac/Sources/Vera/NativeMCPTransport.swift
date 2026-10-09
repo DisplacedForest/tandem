@@ -30,13 +30,16 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
     private let endpoint: URL
     private let timeout: TimeInterval
     private let maximumResponseBytes: Int
+    private let authorization: NativeMCPAuthorization?
+    private let serverID: String?
+    private var authorizationObserver: UUID?
     private var client: Client?
     private var boundary: NativeMCPNetworkBoundary?
     private var boundaryID: String?
     private var busy = false
     private var generation = 0
 
-    init(endpoint: URL, timeout: TimeInterval = 20, maximumResponseBytes: Int = 1_048_576) throws {
+    init(endpoint: URL, timeout: TimeInterval = 20, maximumResponseBytes: Int = 1_048_576, authorization: NativeMCPAuthorization? = nil, serverID: String? = nil) throws {
         guard let host = endpoint.host, !host.isEmpty,
               endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
               endpoint.query == nil,
@@ -45,6 +48,11 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
               maximumResponseBytes > 0, maximumResponseBytes <= 8_000_000 else {
             throw NativeMCPTransportError.invalidEndpoint
         }
+        if let authorization {
+            guard let serverID, authorization.isValid(serverID: serverID, endpoint: endpoint) else { throw NativeMCPTransportError.authenticationRequired }
+        }
+        self.authorization = authorization
+        self.serverID = serverID
         self.endpoint = endpoint
         self.timeout = timeout
         self.maximumResponseBytes = maximumResponseBytes
@@ -58,20 +66,26 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
         busy = false
         try Task.checkCancellation()
         guard generation == expectedGeneration else { throw NativeMCPTransportError.disconnected }
-        let guardrail = NativeMCPNetworkBoundary(endpoint: endpoint, maximumBytes: maximumResponseBytes, timeout: timeout)
+        try validateAuthorization()
+        let guardrail = NativeMCPNetworkBoundary(endpoint: endpoint, maximumBytes: maximumResponseBytes, timeout: timeout, authorization: authorization)
         let identifier = UUID().uuidString
         NativeMCPBoundedURLProtocol.boundaries.withLock { $0[identifier] = guardrail }
         boundaryID = identifier
         boundary = guardrail
         let configuration = NativeMCPNetworkBoundary.configuration(timeout: timeout)
         configuration.protocolClasses = [NativeMCPBoundedURLProtocol.self]
-        let transport = HTTPClientTransport(endpoint: endpoint, configuration: configuration, streaming: false, requestModifier: { request in
+        let transport = HTTPClientTransport(endpoint: endpoint, configuration: configuration, streaming: false, authorizer: authorization?.makeAuthorizer(), requestModifier: { request in
             var request = request
             request.setValue(identifier, forHTTPHeaderField: NativeMCPBoundedURLProtocol.marker)
             return request
-        })
+        }, logger: Logger(label: "vera.mcp.transport", factory: { _ in SwiftLogNoOpLogHandler() }))
         let candidate = Client(name: "Vera", version: "1", configuration: .strict)
         client = candidate
+        authorizationObserver = authorization?.onInvalidation { [weak guardrail, weak candidate] in
+            guardrail?.fail(.authenticationRequired)
+            guardrail?.cancel()
+            Task { await candidate?.disconnect() }
+        }
         let validated = NativeMCPValidatingTransport(underlying: transport, boundary: guardrail) { await candidate.disconnect() }
         try await perform {
             let result = try await candidate.connect(transport: validated)
@@ -103,6 +117,8 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
 
     func disconnect() async {
         generation += 1
+        if let authorizationObserver { authorization?.removeInvalidationObserver(authorizationObserver) }
+        authorizationObserver = nil
         let previous = client
         client = nil
         boundary?.cancel()
@@ -117,13 +133,14 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
     private func perform<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         guard !busy else { throw NativeMCPTransportError.busy }
         try Task.checkCancellation()
+        try validateAuthorization()
         busy = true
         defer { busy = false }
         let timeout = timeout
         let current = client
         let guardrail = boundary
         do {
-            return try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: T.self) { group in
                     group.addTask { try await operation() }
                     group.addTask {
@@ -140,6 +157,8 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
                 guardrail?.cancel()
                 Task { await current?.disconnect() }
             }
+            try validateAuthorization()
+            return result
         } catch {
             let failure = guardrail?.failure
             await disconnect()
@@ -156,6 +175,12 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
                 }
             }
             throw NativeMCPTransportError.malformedResponse
+        }
+    }
+
+    private func validateAuthorization() throws {
+        if let authorization {
+            guard let serverID, authorization.isValid(serverID: serverID, endpoint: endpoint) else { throw NativeMCPTransportError.authenticationRequired }
         }
     }
 
@@ -190,6 +215,7 @@ private final class NativeMCPNetworkBoundary: Sendable {
     let endpoint: URL
     let maximumBytes: Int
     let timeout: TimeInterval
+    let authorization: NativeMCPAuthorization?
     private struct State {
         var failure: NativeMCPTransportError?
         var sessions: [URLSession] = []
@@ -197,7 +223,8 @@ private final class NativeMCPNetworkBoundary: Sendable {
     }
     private let state = Mutex(State())
 
-    init(endpoint: URL, maximumBytes: Int, timeout: TimeInterval) {
+    init(endpoint: URL, maximumBytes: Int, timeout: TimeInterval, authorization: NativeMCPAuthorization?) {
+        self.authorization = authorization
         self.endpoint = endpoint
         self.maximumBytes = maximumBytes
         self.timeout = timeout
@@ -265,8 +292,17 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         outgoing.setValue(nil, forHTTPHeaderField: "Cookie")
         let session = URLSession(configuration: NativeMCPNetworkBoundary.configuration(timeout: guardrail.timeout), delegate: self, delegateQueue: nil)
         self.session = session
-        guard guardrail.add(session) else { finish(CancellationError()); return }
-        session.dataTask(with: outgoing).resume()
+        let start: (URLRequest) -> Void = { request in
+            guard guardrail.add(session) else { self.finish(CancellationError()); return }
+            session.dataTask(with: request).resume()
+        }
+        if let authorization = guardrail.authorization {
+            do { try authorization.performAuthorizedRequest(outgoing, perform: start) }
+            catch {
+                guardrail.fail(.authenticationRequired)
+                finish(NativeMCPTransportError.authenticationRequired)
+            }
+        } else { start(outgoing) }
     }
 
     override func stopLoading() {
@@ -306,7 +342,18 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         lock.lock()
         defer { lock.unlock() }
         guard !terminal, let http = response as? HTTPURLResponse, let guardrail else { completionHandler(.cancel); return }
-        if [401, 403].contains(http.statusCode) {
+        if let authorization = guardrail.authorization {
+            let headers = http.allHeaderFields.map { "\($0.key):\($0.value)" }.joined(separator: "\n")
+            do { try authorization.validateResponse(Data(headers.utf8), endpoint: guardrail.endpoint) }
+            catch {
+                let failure = (error as? NativeMCPTransportError) ?? .authenticationRequired
+                guardrail.fail(failure)
+                completionHandler(.cancel)
+                finish(failure)
+                return
+            }
+        }
+        if [401, 403].contains(http.statusCode), guardrail.authorization == nil {
             guardrail.fail(.authenticationRequired)
             completionHandler(.cancel)
             finish(NativeMCPTransportError.authenticationRequired)
@@ -346,6 +393,15 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
             guardrail?.fail(.malformedResponse)
             finish(NativeMCPTransportError.malformedResponse)
             return
+        }
+        if let authorization = guardrail?.authorization {
+            do { try authorization.validateResponse(body, endpoint: guardrail!.endpoint) }
+            catch {
+                let failure = (error as? NativeMCPTransportError) ?? .authenticationRequired
+                guardrail?.fail(failure)
+                finish(failure)
+                return
+            }
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
@@ -399,6 +455,7 @@ private actor NativeMCPValidatingTransport: Transport {
                         try Task.checkCancellation()
                         do {
                             try NativeMCPWireJSON.validate(data, maximumBytes: boundary.maximumBytes)
+                            try boundary.authorization?.validateResponse(data, endpoint: boundary.endpoint, includingDecodedJSON: true)
                             _ = try JSONSerialization.jsonObject(with: data)
                         } catch {
                             boundary.fail(.malformedResponse)

@@ -97,6 +97,7 @@ enum NativeMCPTransportSelftest {
         catch is CancellationError {}
         try require(start.duration(to: .now) < .seconds(1), "Cancellation did not promptly finish")
         await cancellable.disconnect()
+        try await NativeMCPAuthorizationSelftest.run(port: port, counterFile: URL(fileURLWithPath: portFile.path + ".counts.json"))
         print("MCP TRANSPORT SELFTEST OK")
     }
 
