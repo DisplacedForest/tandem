@@ -30,10 +30,21 @@ enum NativeMCPIntegrationFixture {
         defer { process.terminate(); process.waitUntilExit(); try? FileManager.default.removeItem(at: root) }
         for _ in 0..<100 { if FileManager.default.fileExists(atPath: file.path) { break }; try await Task.sleep(for: .milliseconds(20)) }
         let port = try String(contentsOf: file, encoding: .utf8)
-        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic MCP service", endpoint: URL(string: "http://127.0.0.1:\(port)/ok")!, readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], allowLoopbackFixture: true)
+        for authenticated in [false, true] {
+            var scoped = arguments
+            guard let index = scoped.firstIndex(of: "--root") else { throw PiBrokerError.invalid }
+            scoped[index + 1] += authenticated ? "/authenticated" : "/anonymous"
+            let endpoint = URL(string: "http://127.0.0.1:\(port)/" + (authenticated ? "bearer" : "ok"))!
+            try await sharedContract(scoped, endpoint: endpoint, authenticated: authenticated)
+        }
+        try await errorContract(arguments, endpoint: URL(string: "http://127.0.0.1:\(port)/tool-error")!)
+        print("NATIVE MCP SHARED AUTHENTICATED AND ANONYMOUS SDK HTTP AND PI CONTRACT OK")
+    }
+    static func sharedContract(_ arguments: [String], endpoint: URL, authenticated: Bool) async throws {
+        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic MCP service", endpoint: endpoint, readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], authentication: authenticated ? .bearer : .none, allowLoopbackFixture: true)
         let name = configuration.toolID("fixture_read")
         let manager = NativeMCPManager(servers: [configuration], enabled: [name])
-        await manager.connect(configuration.id)
+        await manager.connect(configuration.id, token: authenticated ? "vera-synthetic-bearer-proof-7GkN4" : nil)
         try NativeMCPAuthoritySelftest.check(manager.servers[0].connected, "Shared SDK connection failed")
         let transport = NativeMCPChatFixture(name: name, arguments: "{\"rows\":[{\"n\":1}]}")
         let repository = try LocalChatRepository(inMemory: true)
@@ -48,8 +59,24 @@ enum NativeMCPIntegrationFixture {
             try NativeMCPAuthoritySelftest.check(await counted.count() == 3, "Shared SDK Pi calls missing")
             await manager.disconnect(configuration.id)
         } catch { await manager.disconnect(configuration.id); throw error }
-        try await errorContract(arguments, endpoint: URL(string: "http://127.0.0.1:\(port)/tool-error")!)
-        print("NATIVE MCP SHARED SDK HTTP AND PI CONTRACT OK")
+        if authenticated {
+            let marker = Data("vera-synthetic-bearer-proof-7GkN4".utf8)
+            for catalog in transport.seen() {
+                for tool in catalog { try piCheck(try tool.parameters.piData().range(of: marker) == nil) }
+            }
+            for message in store.conversations.flatMap(\.messages) {
+                try piCheck(!message.text.contains("vera-synthetic-bearer-proof-7GkN4"))
+            }
+            guard let index = arguments.firstIndex(of: "--root") else { throw PiBrokerError.storage }
+            try assertNoPersistedCredential(URL(fileURLWithPath: arguments[index + 1]), marker: marker)
+        }
+    }
+    static func assertNoPersistedCredential(_ root: URL, marker: Data) throws {
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { throw PiBrokerError.storage }
+        for case let file as URL in files where ["sqlite", "sqlite-wal", "json", "jsonl"].contains(file.pathExtension) {
+            guard try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            try piCheck(try Data(contentsOf: file).range(of: marker) == nil)
+        }
     }
     static func errorContract(_ arguments: [String], endpoint: URL) async throws {
         let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic error service", endpoint: endpoint, readTools: ["fixture_read"], allowLoopbackFixture: true)

@@ -25,8 +25,8 @@ final class NativeMCPAuthorization: Sendable, CustomStringConvertible, CustomDeb
               endpoint.scheme == "https" || (allowLoopbackFixture && endpoint.scheme == "http" && ["127.0.0.1", "[::1]"].contains(host)) else {
             throw NativeMCPAuthorizationError.invalidBinding
         }
-        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~+/=".utf8)
-        guard !token.isEmpty, token.utf8.count <= 8192, token.utf8.allSatisfy({ allowed.contains($0) }) else {
+        let punctuation = Set("-._~+/=".utf8)
+        guard !token.isEmpty, token.utf8.count <= 8192, token.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || punctuation.contains($0) }) else {
             throw NativeMCPAuthorizationError.invalidCredential
         }
         let duration = expiresAt.timeIntervalSinceNow
