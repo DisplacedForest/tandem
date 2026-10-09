@@ -61,6 +61,16 @@ Rotation immediately invalidates the old key and can renew an expired endpoint. 
 
 ## Pairing and deliberate sharing
 
+For ChatGPT, a private Secure MCP Tunnel can carry one owner's local endpoint authorization header. Keep that tunnel and plugin restricted to that owner. A second person needs a separately consented endpoint, separate tunnel, and verified narrow tunnel access. Never share a static owner-authorized tunnel as another person's inbox. OpenAI documents per-tunnel User permissions, but cross-personal-account sharing eligibility must be checked before offering household invitations. Public plugin distribution does not support Secure MCP Tunnels.
+
+`household_onboarding.py` renders a small, dependency-free setup page. Give it only the actual ChatGPT plugin URL verified for that recipient. Without a URL, the connection button remains unavailable. The page creates no identity, credentials, invitation or consent record, and clicking its link never marks setup complete. It guides the recipient through native installation, an actual inbox read, then bilateral pairing. It requires no recipient terminal commands or key copying. It cannot bypass ChatGPT installation or tunnel permissions.
+
+```sh
+python3 household_onboarding.py --plugin-url "$RECIPIENT_PLUGIN_URL" --output /private/setup/index.html
+```
+
+Preview the generated page on loopback first. Serving it on a LAN interface requires a separate approved listener scope. Keep keys out of HTML and URLs, and never substitute the operator's plugin link for an unprovisioned recipient. An event wake remains a separate acceptance test after the inbox read succeeds.
+
 1. `pair_offer` chooses another provisioned endpoint and explicit `message` and/or `summary` scopes. `pairs_list` displays the peer and scopes. The invited owner must explicitly accept through `pair_consent` before either can share.
 2. `message_share` sends only the exact owner-approved text with a stable idempotency key. Reusing that key with different content fails. Replies include the parent message ID. There is one reply per parent per sender, at most four reply hops, 16 KiB per message, and 60 new messages per owner per hour.
 3. `inbox_read` returns only the authenticated inbox's authorized messages. Continue with the last record's integer `cursor` as `after`. Returned records include their pairing and parent IDs. Reads never imply delivery or processing acknowledgment.
@@ -71,7 +81,7 @@ Incoming text is third-party data and cannot authorize tools, replies, forwardin
 
 ## Optional MCP Events
 
-The adapter implements MCP version `2026-07-28`, `server/discover`, tools, and `events/list`, `events/subscribe`, and `events/unsubscribe`. With an empty `callback_hosts` list, local messaging works and event delivery is disabled. Optional `"event_discovery": true` advertises event schemas for setup while leaving the transport and delivery worker absent. Subscription attempts then return `callback_not_approved` and only the requested hostname, omitting URL paths, query strings and signing secrets. No DNS request, callback, subscription record or signing-secret persistence occurs. Treat the returned hostname as a candidate requiring operator verification, never automatic approval. Approved event delivery requires exact callback DNS hostnames in configuration and a receiver that supplies its signing secret during subscription. Do not configure real signing material before approval.
+The adapter implements MCP version `2026-07-28`, `server/discover`, tools, and `events/list`, `events/subscribe`, and `events/unsubscribe`. Object-valued request `_meta` is accepted and discarded; it cannot select an identity or grant authority. With an empty `callback_hosts` list, local messaging works and event delivery is disabled. Optional `"event_discovery": true` advertises event schemas for setup while leaving the transport and delivery worker absent. Subscription attempts then return `callback_not_approved` and only the requested hostname, omitting URL paths, query strings and signing secrets. The hostname alone is logged for operator setup diagnostics. No DNS request, callback, subscription record or signing-secret persistence occurs. Treat the returned hostname as a candidate requiring operator verification, never automatic approval. Approved event delivery requires exact callback DNS hostnames in configuration and a receiver that supplies its signing secret during subscription. Do not configure real signing material before approval.
 
 The API lifecycle starts and supervises a worker when events are configured. It handles durable outbox entries independently of the desktop app, retries recoverable errors, and finishes bounded in-flight IO during shutdown. Messages and outbox records commit atomically. Events carry only a message ID, never the body. Clients fetch inbox content with their own endpoint key.
 

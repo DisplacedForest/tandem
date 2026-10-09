@@ -26,6 +26,9 @@ def test_http_authentication_and_protocol(tmp_path):
     tools = call("tools/list").json()["result"]["tools"]
     assert len(tools) == 7
     assert call("events/list").json()["result"] == {"events": []}
+    meta = {"actor": "beta", "authority": "admin", "progressToken": "synthetic"}
+    assert json.loads(call("tools/call", {"name": "inbox_read", "_meta": meta}).json()["result"]["content"][0]["text"]) == {"messages": []}
+    assert "error" in call("tools/call", {"name": "inbox_read", "_meta": []}).json()
     assert "error" in call("tools/call", {"name": "inbox_read", "arguments": {"actor": "beta"}}).json()
     offer = call("tools/call", {"name": "pair_offer", "arguments": {"peer": "beta", "scopes": ["message"]}}).json()
     pair = json.loads(offer["result"]["content"][0]["text"])["pair_id"]

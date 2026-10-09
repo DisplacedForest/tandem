@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import Any, Callable, Literal
 from urllib.parse import urlsplit
@@ -116,6 +117,9 @@ class Gateway:
     def dispatch(self, actor: str, method: str, params: dict) -> dict:
         with self.store.tx() as db:
             self.store.require(db, actor)
+        if not isinstance(params.get("_meta", {}), dict):
+            raise ValueError("Invalid request metadata")
+        params = {key: value for key, value in params.items() if key != "_meta"}
         if method == "server/discover":
             capabilities = {"tools": {}}
             if self.event_discovery:
@@ -178,6 +182,7 @@ async def mcp(request: Request) -> dict:
         data = {"reason": error.reason}
         if error.callback_host:
             data["callback_host"] = error.callback_host
+            logging.getLogger("household").warning("Callback setup requires approved host: %s", error.callback_host)
         return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32015, "message": "Callback verification failed", "data": data}}
     except Denied:
         return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32001, "message": "Access denied"}}

@@ -17,7 +17,7 @@ def test_isolated_entrypoint_imports_no_shared_api_runtime():
     assert result.returncode == 0, result.stderr
 
 
-def test_discovery_only_rejects_without_network_or_secret_storage(tmp_path, monkeypatch):
+def test_discovery_only_rejects_without_network_or_secret_storage(tmp_path, monkeypatch, caplog):
     from household_app import app
     private = tmp_path / "private"
     private.mkdir(mode=0o700)
@@ -41,11 +41,14 @@ def test_discovery_only_rejects_without_network_or_secret_storage(tmp_path, monk
             assert "events" in rpc("server/discover")["result"]["capabilities"]
             assert len(rpc("events/list")["result"]["events"]) == 1
             secret = "whsec_synthetic-not-to-be-persisted"
-            response = rpc("events/subscribe", {"name": "household.message.created", "delivery": {"mode": "webhook", "url": "https://callback.example/opaque?token=synthetic-private", "secret": secret}})
+            response = rpc("events/subscribe", {"_meta": {"actor": "another-owner"}, "name": "household.message.created", "delivery": {"mode": "webhook", "url": "https://callback.example/opaque?token=synthetic-private", "secret": secret}})
             assert response["error"]["code"] == -32015
             assert response["error"]["data"] == {"reason": "callback_not_approved", "callback_host": "callback.example"}
             assert "synthetic-private" not in json.dumps(response)
             assert secret not in json.dumps(response)
+            assert "callback.example" in caplog.text
+            assert "synthetic-private" not in caplog.text
+            assert secret not in caplog.text
             assert app.state.household_gateway.events is None
     with store.tx() as db:
         assert db.execute("SELECT count(*) FROM subscriptions").fetchone()[0] == 0
