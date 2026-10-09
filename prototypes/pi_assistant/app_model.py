@@ -13,6 +13,7 @@ class ModelTransport(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def complete(self, event: dict[str, Any], task_id: str, role: str, mode: str) -> dict[str, Any]: ...
+    async def document_handoff(self, subject: str, task_id: str) -> None: ...
     async def tools(self, subject: str, role: str, mode: str) -> list[dict[str, Any]]: ...
     async def tool_call(self, event: dict[str, Any], subject: str, role: str, mode: str) -> Any: ...
 
@@ -189,6 +190,11 @@ class AppModelTransport:
         if set(result) != {'value'} or len(json.dumps(result['value'], separators=(',', ':'), ensure_ascii=False).encode()) > 8192:
             raise PiFailure('app_tool')
         return result['value']
+
+    async def document_handoff(self, subject: str, task_id: str) -> None:
+        result = await self.tool_request('document_handoff', subject, 'foreground', 'assistant', {'task_id': identifier(task_id)})
+        if result != {'task_id': task_id}:
+            raise PiFailure('app_document_handoff')
 
     async def tool_request(self, op: str, subject: str, role: str, mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         scope = self.scopes.get((subject, role))

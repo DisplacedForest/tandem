@@ -61,6 +61,8 @@ final class PiProviderFixtureState: @unchecked Sendable {
         if worker && count < 3 {
             name = ["read_file", "write_file", "check_python"][count]
             args = .object(name == "write_file" ? ["path": .string("sum.py"), "content": .string("def add(a, b):\n    return a + b\n")] : ["path": .string("sum.py")])
+        } else if names.contains("create_document"), last.pi("role").piString == "user", let text = last.pi("content").piString, text.hasPrefix("Write a workshop plan") {
+            name = "create_document"; args = .object(["title": .string("Workshop plan")])
         } else if names.contains("delegate"), last.pi("role").piString == "user", let text = last.pi("content").piString, text.hasPrefix("/task ") {
             name = "delegate"; args = .object(["objective": .string(String(text.dropFirst(6)))])
         }

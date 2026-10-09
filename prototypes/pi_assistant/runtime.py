@@ -136,6 +136,8 @@ class Runtime:
                     return await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
                 if event.get('type') == 'tool' and event.get('name') in host_names and self.model_transport is not None:
                     return await self.model_transport.tool_call(event, body['message_id'], 'foreground', body['mode'])
+                if event.get('type') == 'tool' and event.get('name') == 'create_document' and body['mode'] == 'assistant':
+                    return await self.documents.from_conversation(body, event.get('args'))
                 if event.get('type') != 'tool' or event.get('name') != 'delegate' or body['mode'] != 'assistant':
                     raise ValueError('Tool unavailable')
                 args = event.get('args')
@@ -154,7 +156,7 @@ class Runtime:
                     history.append({'role': 'user', 'content': item['text'], 'timestamp': 0})
                 else:
                     history.append({'role': 'assistant', 'content': [{'type': 'text', 'text': item['text']}], 'api': 'vera-transport', 'provider': 'vera', 'model': 'explicit-transport', 'stopReason': 'stop', 'timestamp': 0, 'usage': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'totalTokens': 0, 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}}})
-            result = await self.process.run({'role': 'foreground', 'mode': body['mode'], 'text': body['text'], 'session_id': body['assistant_id'], 'transport': self.transport, 'history': history, 'host_tools': host_tools}, host)
+            result = await self.process.run({'role': 'foreground', 'mode': body['mode'], 'text': body['text'], 'session_id': body['assistant_id'], 'transport': self.transport, 'history': history, 'host_tools': host_tools, 'documents': self.model_transport is not None}, host)
             answer = {'message_id': body['message_id'], 'reply_id': str(uuid.uuid5(uuid.NAMESPACE_URL, body['message_id'])), 'text': result['text'], 'task_ids': self.task_ids(body['message_id'])}
             with self.connect() as db:
                 db.execute("UPDATE turns SET state='completed',answer=?,answered=? WHERE id=?", (canonical(answer), time.time(), body['message_id']))

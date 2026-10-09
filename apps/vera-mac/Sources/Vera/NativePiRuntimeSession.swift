@@ -178,9 +178,14 @@ final class NativePiRuntimeSession: @unchecked Sendable {
                     continue
                 }
                 received += 1
-                try piCheck(ready && ["complete", "tool_catalog", "tool_call"].contains(value.pi("op").piString ?? "") && received <= (persistent ? 16000 : 128), .unauthorized)
+                try piCheck(ready && ["complete", "tool_catalog", "tool_call", "document_handoff"].contains(value.pi("op").piString ?? "") && received <= (persistent ? 16000 : 128), .unauthorized)
                 Task {
                     do {
+                        if value.pi("op").piString == "document_handoff" {
+                            try await broker.validateDocumentHandoff(value)
+                            try controller.send(value)
+                            return
+                        }
                         let reply: PiValue
                         if value.pi("op").piString == "complete" { reply = try await broker.complete(value) }
                         else { reply = try await broker.toolOperation(value) }
@@ -208,6 +213,12 @@ final class NativePiRuntimeSession: @unchecked Sendable {
                         let scope = try await broker.authorize(value.pi("binding"))
                         register(scope, id: id)
                         try child.send(.object(["op": .string("scope"), "channel": .string(channel), "binding": scope.wire]))
+                    case "document_handoff_reply":
+                        let ok = value.pi("ok") == .bool(true)
+                        try value.piKeys(["op", "id", "ok", ok ? "result" : "error"])
+                        var reply = value.piObject!
+                        reply["op"] = .string("reply")
+                        try child.send(.object(reply))
                     case "snapshot":
                         try value.piKeys(["op", "id"])
                         try controller.send(.object(["op": .string("snapshot"), "id": .string(id), "requests": try ledger.snapshot()]))

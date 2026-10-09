@@ -3,6 +3,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -77,14 +78,22 @@ def _stop(proc: subprocess.Popen[bytes] | None, graceful: bool) -> None:
             proc.wait(2.0)
             return
         deadline = time.monotonic() + 2.0
+        probe_denied = False
         while time.monotonic() < deadline:
             proc.poll()
             try:
                 os.killpg(proc.pid, 0)
+                probe_denied = False
             except ProcessLookupError:
                 proc.wait(2.0)
                 return
+            except PermissionError:
+                if sys.platform != 'darwin':
+                    raise
+                probe_denied = True
             time.sleep(.02)
+        if probe_denied:
+            raise PermissionError('Owned process group status remained unavailable; preserve this session')
     raise RuntimeError("An owned prototype process did not stop; preserve this session")
 
 

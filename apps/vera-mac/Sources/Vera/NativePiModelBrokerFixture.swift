@@ -64,6 +64,17 @@ enum NativePiModelBrokerFixture {
         let binding = binding()
         let scope = try await broker.authorize(binding)
         let value = request(scope, channel: "fixture-channel")
+        for (role, mode) in [("foreground", "focused"), ("worker", "assistant"), ("document", "assistant")] {
+            let denied = try await broker.authorize(self.binding(role: role, mode: mode))
+            var handoff = request(denied, channel: "fixture-channel").piObject!
+            handoff.removeValue(forKey: "messages")
+            handoff["op"] = .string("document_handoff")
+            handoff["task_id"] = .string(UUID().uuidString.lowercased())
+            let frame = PiValue.object(handoff)
+            try await rejected(.unauthorized) { try await broker.validateDocumentHandoff(frame) }
+            try await rejected(.unauthorized) { try PiModelRequest.arguments(.object(["title": .string("Draft")]), name: "create_document", scope: denied) }
+        }
+        try check(try ledger.snapshot().piArray!.isEmpty)
         for key in ["channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation"] {
             try await rejected(.unauthorized) { _ = try await broker.complete(changed(value, key, .string("wrong"))) }
         }

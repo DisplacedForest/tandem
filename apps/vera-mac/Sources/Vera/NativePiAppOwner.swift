@@ -16,6 +16,7 @@ actor NativePiAppOwner {
     private var closed = false
     private var assistant: String?
     private var bindings: [String: PiValue] = [:]
+    private var activeForeground: Set<String> = []
     private var granting: [String: Task<Void, Error>] = [:]
     private var commandTimers: [String: Task<Void, Never>] = [:]
     init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send, eventTransport: PiOwnedTaskEventTransport = .live, persistent: Bool = false) throws {
@@ -51,12 +52,42 @@ actor NativePiAppOwner {
             ready = frame
             startWaiter?.resume(returning: frame)
             startWaiter = nil
+        } else if frame.pi("op").piString == "document_handoff" {
+            Task { await documentHandoff(frame) }
         } else if let id = frame.pi("id").piString, let waiter = pending.removeValue(forKey: id) {
             commandTimers.removeValue(forKey: id)?.cancel()
             if frame.pi("op").piString == "refused" { waiter.resume(throwing: PiBrokerError.unauthorized) }
             else { waiter.resume(returning: frame) }
         } else if frame.pi("op").piString == "disconnected" { disconnected() }
         else { disconnected() }
+    }
+    private func documentHandoff(_ frame: PiValue) async {
+        let requestID = frame.pi("id")
+        do {
+            let taskID = try await authorizeDocumentHandoff(frame)
+            try channel.send(.object(["op": .string("document_handoff_reply"), "id": requestID, "ok": .bool(true), "result": .object(["task_id": .string(taskID)])]))
+        } catch {
+            try? channel.send(.object(["op": .string("document_handoff_reply"), "id": requestID, "ok": .bool(false), "error": .string("unavailable")]))
+        }
+    }
+    func authorizeDocumentHandoff(_ frame: PiValue) async throws -> String {
+        let subject = try piUUID(frame.pi("subject"))
+        let taskID = try piUUID(frame.pi("task_id"))
+        guard let binding = bindings[subject], let assistant else { throw PiBrokerError.unauthorized }
+        try piCheck(activeForeground.contains(subject) && binding.pi("role") == .string("foreground")
+            && binding.pi("mode") == .string("assistant") && binding.pi("assistant").piString == assistant
+            && binding.pi("conversation") == frame.pi("conversation"), .unauthorized)
+        let inspect = URLRequest(url: try endpoint().appendingPathComponent("tasks/" + taskID))
+        let (data, status) = try await authenticated(inspect)
+        let task = try PiValue.piRead(data, maximumBytes: 1048576), payload = task.pi("payload")
+        try piCheck(status == 200 && task.pi("id").piString == taskID && task.pi("worker_type") == .string("document")
+            && payload.pi("assistant_id").piString == assistant && payload.pi("conversation_id") == binding.pi("conversation")
+            && payload.pi("originating_message_id").piString == subject && activeForeground.contains(subject), .unauthorized)
+        if task.pi("cancel_requested") == .bool(false), ["queued", "running"].contains(task.pi("state").piString ?? "") {
+            try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                "conversation": binding.pi("conversation"), "role": .string("document"), "mode": .string("assistant")]))
+        }
+        return taskID
     }
     private func disconnected() {
         closed = true
@@ -131,6 +162,9 @@ actor NativePiAppOwner {
             guard let query = body.pi("text").piString else { throw PiBrokerError.invalid }
             if body.pi("document") == .null { try await memoryBridge?.authorize(binding, query: query) }
             try await grant(binding)
+            let subject = try identifier(body.pi("message_id"))
+            try piCheck(activeForeground.insert(subject).inserted, .duplicate)
+            defer { activeForeground.remove(subject) }
             let response = try await authenticated(request)
             if response.1 == 200, let reply = try PiValue.piRead(response.0).pi("reply_id").piString {
                 if body.pi("document") == .null {

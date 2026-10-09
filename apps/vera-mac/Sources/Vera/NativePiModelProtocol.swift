@@ -166,10 +166,12 @@ struct PiModelRequest: Sendable {
             return
         }
         if scope.role == "foreground" {
-            try piCheck(scope.mode == "assistant" && name == "delegate", .unauthorized)
-            try args.piKeys(["objective"])
-            guard let text = args.pi("objective").piString else { throw PiBrokerError.invalid }
-            try piCheck(!text.isEmpty && text.count <= 8000)
+            try piCheck(scope.mode == "assistant" && ["delegate", "create_document"].contains(name), .unauthorized)
+            let key = name == "create_document" ? "title" : "objective"
+            try args.piKeys([key])
+            guard let text = args.pi(key).piString else { throw PiBrokerError.invalid }
+            try piCheck(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.unicodeScalars.count <= (name == "create_document" ? 200 : 8000))
+            if name == "create_document" { try piCheck(!text.contains("\r") && !text.contains("\n")) }
         } else {
             try piCheck(["read_file", "write_file", "check_python"].contains(name), .unauthorized)
             try args.piKeys(name == "write_file" ? ["path", "content"] : ["path"])
@@ -208,6 +210,8 @@ struct PiFixtureModel: PiMockModelExecutor {
             content = [.object(["type": .string("text"), "text": .string(String(decoding: try text.piData(), as: UTF8.self))])]
         } else if request.messages.last?.pi("isError") == .bool(true) {
             content = [.object(["type": .string("text"), "text": .string("App-owned mock stopped after a tool failure.")])]
+        } else if request.scope.role == "foreground", request.scope.mode == "assistant", request.messages.last?.pi("role").piString == "user", let text = request.messages.last?.pi("content").piString, text.hasPrefix("Write a workshop plan") {
+            name = "create_document"; args = .object(["title": .string("Workshop plan")])
         } else if request.scope.role == "worker", request.toolCount < 3 {
             name = ["read_file", "write_file", "check_python"][request.toolCount]
             args = .object(name == "write_file" ? ["path": .string("sum.py"), "content": .string("def add(a, b):\n    return a + b\n")] : ["path": .string("sum.py")])

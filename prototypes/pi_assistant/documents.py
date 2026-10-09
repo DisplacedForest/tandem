@@ -37,15 +37,32 @@ class DocumentWorkflow:
         previous = runtime.accept(body, resume=True)
         if previous:
             return previous
-        payload = NativeDocumentPayload(**document.model_dump(), assistant_id=body['assistant_id'],
-            conversation_id=body['conversation_id'], originating_message_id=body['message_id'], transport=runtime.transport)
-        task = runtime.store.create('document', payload.model_dump(), 'document:' + body['message_id'])
+        task = self.enqueue(body, document)
         answer = {'message_id': body['message_id'], 'reply_id': str(uuid.uuid5(uuid.NAMESPACE_URL, body['message_id'])),
                   'text': 'Your document request is saved. Progress and the document appear on its card.', 'task_ids': [task['id']]}
         with runtime.connect() as db:
             import time
             db.execute("UPDATE turns SET state='completed',answer=?,answered=? WHERE id=?", (json.dumps(answer), time.time(), body['message_id']))
         return answer
+
+    def enqueue(self, body: dict[str, Any], document: DocumentRequest) -> dict[str, Any]:
+        runtime = self.runtime
+        if body['mode'] != 'assistant' or runtime.model_transport is None:
+            raise TaskConflict('Document creation requires the shared native assistant')
+        runtime.native.validate_scope(body['message_id'], 'foreground', 'assistant', body['assistant_id'], body['conversation_id'])
+        payload = NativeDocumentPayload(**document.model_dump(), assistant_id=body['assistant_id'],
+            conversation_id=body['conversation_id'], originating_message_id=body['message_id'], transport=runtime.transport)
+        return runtime.store.create('document', payload.model_dump(), 'document:' + body['message_id'])
+
+    async def from_conversation(self, body: dict[str, Any], args: Any) -> dict[str, Any]:
+        if not isinstance(args, dict) or set(args) != {'title'}:
+            raise ValueError('Invalid document request')
+        if len(body['text'].strip()) > 2000:
+            return {'task_created': False, 'message': 'Please put the document brief and source notes in one message of at most 2,000 characters.'}
+        document = DocumentRequest(title=args['title'], brief=body['text'])
+        task = self.enqueue(body, document)
+        await self.runtime.model_transport.document_handoff(body['message_id'], task['id'])
+        return {'task_id': task['id'], 'state': self.runtime.store.get(task['id'])['state']}
 
     async def step(self, task: dict[str, Any]) -> StepResult:
         runtime = self.runtime

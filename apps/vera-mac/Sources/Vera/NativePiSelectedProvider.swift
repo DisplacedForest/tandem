@@ -118,11 +118,12 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
 enum PiProviderCodec {
     static func tools(_ scope: PiModelScope) -> [PiValue] {
         if scope.role == "document" { return [] }
-        let names = scope.role == "worker" ? ["read_file", "write_file", "check_python"] : (scope.mode == "assistant" ? ["delegate"] : [])
+        let names = scope.role == "worker" ? ["read_file", "write_file", "check_python"] : (scope.mode == "assistant" ? ["delegate", "create_document"] : [])
         return names.map { name in
             var properties: [String: PiValue] = name == "delegate" ? ["objective": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(8000)])] : ["path": .object(["type": .string("string"), "enum": .array([.string("sum.py")])])]
+            if name == "create_document" { properties = ["title": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(200), "pattern": .string("^[^\\r\\n]+$")])] }
             if name == "write_file" { properties["content"] = .object(["type": .string("string"), "maxLength": .number(8192)]) }
-            return .object(["type": .string("function"), "function": .object(["name": .string(name), "description": .string(name == "delegate" ? "Accept explicitly requested background work. Execution waits for the user's decision." : "Operate only on the approved disposable sum.py task fixture."), "parameters": .object(["type": .string("object"), "properties": .object(properties), "required": .array(properties.keys.sorted().map(PiValue.string)), "additionalProperties": .bool(false)])])])
+            return .object(["type": .string("function"), "function": .object(["name": .string(name), "description": .string(name == "create_document" ? "Write a Markdown document, draft, plan or report requested in the current message (up to 2000 characters). Uses only that message, without memory or prior conversation. Choose a short title. Progress and results stay with the request." : name == "delegate" ? "Accept explicitly requested background work. Execution waits for the user's decision." : "Operate only on the approved disposable sum.py task fixture."), "parameters": .object(["type": .string("object"), "properties": .object(properties), "required": .array(properties.keys.sorted().map(PiValue.string)), "additionalProperties": .bool(false)])])])
         }
     }
     static func body(_ request: PiModelRequest, model: String) throws -> PiValue {

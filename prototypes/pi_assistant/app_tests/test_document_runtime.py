@@ -142,3 +142,33 @@ def test_document_cancel_active_generation(tmp_path):
 def test_native_document_bounds(patch):
     with pytest.raises(ValueError):
         DocumentRequest.model_validate({**message()['document'], **patch})
+
+
+def test_conversation_document_current_input_and_duplicate_calls(tmp_path):
+    async def scenario():
+        model = Model()
+        handoffs = []
+        async def handoff(subject, task_id):
+            handoffs.append((subject, task_id))
+        model.document_handoff = handoff
+        runtime = Runtime(tmp_path, shutil.which('node'), model_transport=model)
+        body = message(text='Write a workshop plan using only these notes: prepare and discuss.')
+        body.pop('document')
+        runtime.accept(body)
+        first = await runtime.documents.from_conversation(body, {'title': 'Workshop'})
+        assert await runtime.documents.from_conversation(body, {'title': 'Workshop'}) == first
+        with pytest.raises(TaskConflict):
+            await runtime.documents.from_conversation(body, {'title': 'Different title'})
+        with pytest.raises(ValueError):
+            await runtime.documents.from_conversation(body, {'title': 'Workshop', 'inputs': ['Private history']})
+        task = runtime.store.get(first['task_id'])
+        assert len(runtime.store.list()) == 1
+        assert task['payload']['brief'] == body['text'] and task['payload']['inputs'] == []
+        assert handoffs == [(body['message_id'], first['task_id'])] * 2
+        with runtime.connect() as db:
+            assert db.execute('SELECT state,answer FROM turns').fetchone()[:] == ('running', None)
+        long = {**body, 'message_id': str(uuid.uuid4()), 'text': 'x' * 2001}
+        result = await runtime.documents.from_conversation(long, {'title': 'Long'})
+        assert not result['task_created'] and '2,000' in result['message']
+        assert len(runtime.store.list()) == 1 and len(handoffs) == 2
+    asyncio.run(scenario())

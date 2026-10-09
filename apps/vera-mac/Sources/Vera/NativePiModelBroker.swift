@@ -343,6 +343,14 @@ actor NativePiModelBroker {
         try piCheck(value.pi("channel").piString == channel && value.pi("profile").piString == scope.profile && value.pi("subject").piString == scope.subject && value.pi("role").piString == scope.role && value.pi("mode").piString == scope.mode && value.pi("assistant").piString == scope.assistant && value.pi("conversation").piString == scope.conversation, .unauthorized)
         return scope
     }
+    func validateDocumentHandoff(_ value: PiValue) async throws {
+        try value.piKeys(["op", "id", "channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation", "task_id"])
+        _ = try piUUID(value.pi("id"))
+        _ = try piUUID(value.pi("task_id"))
+        let scope = try toolRequestScope(value)
+        try piCheck(scope.role == "foreground" && scope.mode == "assistant", .unauthorized)
+        _ = try await toolSnapshot(scope)
+    }
     func toolOperation(_ value: PiValue) async throws -> PiValue {
         let op = value.pi("op").piString
         var keys: Set<String> = ["op", "id", "channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation"]

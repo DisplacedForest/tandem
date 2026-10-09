@@ -3,14 +3,9 @@ import VeraAssistantUI
 
 struct NativePiSessionStatus: View {
     @ObservedObject var assistant: NativePiPresentation
-    @State private var creatingDocument = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let session = assistant.session {
-                Button("Create document", systemImage: "doc.badge.plus") { creatingDocument = true }
-                    .disabled(!session.canCreateDocument)
-                    .sheet(isPresented: $creatingDocument) { NativeDocumentRequestView(session: session) }
-                Text(session.connectionLabel).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 if let error = session.error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)

@@ -4,6 +4,8 @@ from pathlib import Path
 import signal
 import subprocess
 
+import pytest
+
 from test_app_broker import descendants, gone, wait_for
 from test_candidate import BINARY, arguments
 from test_task_stream import read_report
@@ -21,7 +23,7 @@ def test_native_document_completion_and_reopen(tmp_path):
     root = tmp_path / 'document'
     report = run('complete', root)
     assert report['state'] == 'completed' and report['artifacts'] == 1
-    assert report['fixture_calls'] == 10
+    assert report['fixture_calls'] == 12
     assert report['real_provider_calls'] == report['real_keychain_reads'] == 0
     reopened = run('reopen', root)
     for key in ('task_id', 'conversation_id', 'projected_ids', 'artifacts'):
@@ -55,3 +57,18 @@ def test_native_document_sigkill_draft_retry(tmp_path: Path):
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=8)
+
+
+def test_conversation_document_handoff_precedes_slow_acknowledgment(tmp_path):
+    report = run('delayed', tmp_path / 'delayed')
+    assert report['state'] == 'completed' and report['artifacts'] == 1
+    assert report['fixture_calls'] == 11
+    assert report['real_provider_calls'] == report['real_keychain_reads'] == 0
+
+
+@pytest.mark.parametrize('mode', ['foreign-origin', 'foreign-conversation', 'foreign-task', 'foreign-assistant', 'foreign-worker'])
+def test_conversation_document_rejects_foreign_handoff(tmp_path, mode):
+    report = run(mode, tmp_path / mode)
+    assert report['state'] == 'needs_decision' and report['artifacts'] == 0
+    assert report['fixture_calls'] == 2
+    assert report['real_provider_calls'] == report['real_keychain_reads'] == 0

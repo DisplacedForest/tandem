@@ -91,11 +91,12 @@ enum NativePiProductionSelftest {
                 try piCheck(session.pendingID == nil && session.canCreateDocument)
             }
             print("Production fixture: document")
-            await session.createDocument(title: "Ordinary launch document", brief: "Summarize supplied notes.", inputs: "Prepare and discuss.")
+            session.setDraft("Write a workshop plan. Prepare and discuss the supplied notes.")
+            await session.send()
             let task = try await NativePiTaskStreamFixture.task(session, state: "completed")
             print("Production fixture: completed")
             try piCheck(task.outputs.count == 1 && session.output(taskID: task.id, index: 0) != nil)
-            try piCheck(PiProviderFixtureProtocol.state.calls().filter { $0 == "completions" }.count == 16)
+            try piCheck(PiProviderFixtureProtocol.state.calls().filter { $0 == "completions" }.count == 18)
             await presentation.stop()
             return task.id
         } catch { print("Production fixture: calls \(PiProviderFixtureProtocol.state.calls())"); await presentation.stop(); throw error }

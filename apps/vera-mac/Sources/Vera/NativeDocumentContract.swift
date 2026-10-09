@@ -8,8 +8,24 @@ enum NativeDocumentContract {
         var provider: PiCandidateProviderFixture?
         var stage = "startup"
         do {
-            guard let mode = arguments.first, ["complete", "reopen", "cancel", "hold-draft", "retry"].contains(mode) else { throw PiBrokerError.invalid }
-            let candidate = try await NativePiCandidate.create(Array(arguments.dropFirst()))
+            guard let mode = arguments.first, ["complete", "reopen", "cancel", "hold-draft", "retry", "delayed", "foreign-origin", "foreign-conversation", "foreign-task", "foreign-assistant", "foreign-worker"].contains(mode) else { throw PiBrokerError.invalid }
+            if mode == "delayed" { PiAdmissionFixtureProtocol.state.setGenerationSeconds(8) }
+            defer { PiAdmissionFixtureProtocol.state.setGenerationSeconds(3) }
+            let candidate = try await NativePiCandidate.create(Array(arguments.dropFirst()), httpTransport: { request in
+                let response = try await PiOwnedHTTP.send(request)
+                guard mode.hasPrefix("foreign-"), request.url?.path.hasPrefix("/tasks/") == true,
+                      request.httpMethod == nil || request.httpMethod == "GET" else { return response }
+                var task = try PiValue.piRead(response.0, maximumBytes: 1048576).piObject!
+                var payload = task["payload"]!.piObject!
+                let foreign = PiValue.string(UUID().uuidString.lowercased())
+                if mode == "foreign-origin" { payload["originating_message_id"] = foreign }
+                if mode == "foreign-conversation" { payload["conversation_id"] = foreign }
+                if mode == "foreign-assistant" { payload["assistant_id"] = foreign }
+                if mode == "foreign-task" { task["id"] = foreign }
+                if mode == "foreign-worker" { task["worker_type"] = .string("pi_worker") }
+                task["payload"] = .object(payload)
+                return (try PiValue.object(task).piData(), response.1)
+            })
             provider = candidate.provider
             let native = NativePiPresentation(factory: {
                 NativePiConnection(workspace: candidate.workspace, stop: { await candidate.stop() })
@@ -18,19 +34,31 @@ enum NativeDocumentContract {
             await native.connect()
             guard let session = native.session else { throw PiBrokerError.unavailable }
             stage = "create"
-            if ["complete", "cancel", "hold-draft"].contains(mode) {
+            if ["complete", "cancel", "hold-draft", "delayed"].contains(mode) || mode.hasPrefix("foreign-") {
                 try piCheck(session.canCreateDocument)
-                await session.createDocument(title: "Workshop plan", brief: "Write a workshop plan from the supplied notes.", inputs: "Prepare, discuss, then record next steps.")
+                session.setDraft("Write a workshop plan. Prepare, discuss, then record next steps." + (mode == "delayed" ? " Slow acknowledgment fixture." : ""))
+                await session.send()
+                await session.refresh()
                 try piCheck(session.pendingID == nil && session.tasks.count == 1)
             }
             guard let task = session.tasks.first else { throw PiBrokerError.invalid }
-            if mode == "cancel" {
+            let inactive: PiValue = .object(["subject": .string(task.originatingMessageID!.uuidString.lowercased()),
+                "task_id": .string(task.id), "conversation": .string(session.id.uuidString.lowercased())])
+            var inactiveRejected = false
+            do { _ = try await candidate.owner.authorizeDocumentHandoff(inactive) }
+            catch PiBrokerError.unauthorized { inactiveRejected = true }
+            try piCheck(inactiveRejected)
+            if mode.hasPrefix("foreign-") {
+                _ = try await NativePiTaskStreamFixture.task(session, state: "needs_decision")
+                try piCheck(await candidate.provider.documentCalls() == 0)
+                try piCheck(session.tasks[0].outputs.isEmpty)
+            } else if mode == "cancel" {
                 stage = "cancel"
                 for _ in 0..<100 {
-                    if await candidate.provider.calls() > 0 { break }
+                    if await candidate.provider.documentActive() { break }
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                try piCheck(await candidate.provider.calls() > 0)
+                try piCheck(await candidate.provider.documentActive())
                 await session.stop(taskID: task.id)
                 _ = try await NativePiTaskStreamFixture.task(session, state: "canceled")
                 try piCheck(session.tasks[0].outputs.isEmpty && session.output(taskID: task.id, index: 0) == nil)
