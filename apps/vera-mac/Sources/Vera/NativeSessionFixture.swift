@@ -65,8 +65,81 @@ enum NativeSessionFixture {
         throw NativeTaskFixture.Failure.assertion(message)
     }
 
+    @discardableResult
+    static func acceptLegacyContinuous(_ text: String, store: ChatStore) throws -> Bool {
+        guard let repository = store.repository as? LocalChatRepository,
+              let id = store.selectedID,
+              let index = store.conversations.firstIndex(where: { $0.id == id }) else { return false }
+        let wasSuspended = store.suspendsTurnScheduling
+        store.suspendsTurnScheduling = true
+        defer {
+            store.suspendsTurnScheduling = wasSuspended
+            store.scheduleConversationTurns()
+        }
+        let previousMessages = store.conversations[index].messages
+        guard store.sendText(text), let accepted = try repository.conversationTurns().last else { return false }
+        let user = store.conversations[index].messages.first { $0.id == accepted.userMessageID }!
+        let legacy = NativeConversationTurn(id: accepted.id, conversationID: accepted.conversationID,
+            userMessageID: accepted.userMessageID, assistantMessageID: accepted.assistantMessageID, mode: .continuous,
+            profile: accepted.profile, enabledToolIDs: accepted.enabledToolIDs,
+            persona: accepted.persona, userScope: accepted.userScope, instructions: accepted.instructions,
+            grounding: accepted.grounding, memorySettings: accepted.memorySettings, createdAt: accepted.createdAt,
+            history: NativeTurnHistoryMessage.snapshot(previousMessages, current: user, mode: .continuous))
+        try repository.database.write { db in
+            try LocalChatRepository.writeTurn(legacy, db: db)
+            try db.execute(sql: "UPDATE native_conversation_turns SET mode='continuous' WHERE id=?",
+                           arguments: [legacy.id.uuidString])
+        }
+        store.conversations[index].mode = .continuous
+        try repository.saveConversation(store.conversations[index])
+        return true
+    }
+
+    static func ordinaryAfterLegacy() async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let gate = NativeSessionGate()
+        let transport = NativeSessionFixtureTransport()
+        let store = store(repository, transport: transport, gate: gate)
+        try acceptLegacyContinuous("slow legacy question", store: store)
+        let legacy = try repository.conversationTurns()[0]
+        try await eventually("Accepted legacy work must retain its execution") {
+            store.selected?.messages.first(where: { $0.id == legacy.assistantMessageID })?.toolActivities.isEmpty == false
+        }
+        let original = store.selectedID!
+        let saved = try repository.messages(conversationID: original)
+        store.newConversation()
+        store.select(original)
+        try NativeTaskFixture.require(store.selected?.mode == .continuous,
+                                      "The legacy header remains readable without migration")
+        store.draft = "Ordinary follow-up"
+        store.send()
+        let next = store.selected!.messages.last!.id
+        try NativeTaskFixture.require(store.draft.isEmpty && store.answerStatus(next) == "Waiting to answer",
+                                      "New ordinary input queues behind accepted legacy work")
+        let turns = try repository.conversationTurns()
+        try NativeTaskFixture.require(turns.count == 2 && turns[0].mode == .continuous && turns[1].mode == .chat,
+                                      "New sends cannot inherit the old per-chat Continuous setting")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try NativeTaskFixture.require(turns[0].id == legacy.id && (try encoder.encode(turns[0].history)) == (try encoder.encode(legacy.history)),
+                                      "New input preserves the accepted legacy turn and frozen history")
+        let messages = try repository.messages(conversationID: original)
+        try NativeTaskFixture.require(Array(messages.prefix(saved.count)).map(\.id) == saved.map(\.id),
+                                      "Reopening preserves the original message identities")
+        await gate.release()
+        try await eventually("The ordinary follow-up must finish after its predecessor") {
+            store.conversationTurns.allSatisfy { $0.state == .complete }
+        }
+        let request = transport.histories.first { $0.last?.content == "Ordinary follow-up" }
+        try NativeTaskFixture.require(request?.contains { $0.role == "assistant" && $0.content.contains("Answer for slow legacy") } == true,
+                                      "New ordinary input receives completed predecessor context")
+        try NativeTaskFixture.require(try repository.listConversations().first { $0.id == original }?.mode == .continuous,
+                                      "Compatibility does not rewrite saved conversation headers")
+    }
+
     static func run() async throws {
         try await NativeTurnAuthorityFixture.run()
+        try await ordinaryAfterLegacy()
         try await continuous()
         try await serialChat()
         try await queueBound()
@@ -81,14 +154,12 @@ enum NativeSessionFixture {
         let transport = NativeSessionFixtureTransport()
         let gate = NativeSessionGate()
         let store = store(repository, transport: transport, gate: gate)
-        store.setSessionMode(.continuous)
-        store.sendText("slow first question")
+        try acceptLegacyContinuous("slow first question", store: store)
         let firstID = store.selected!.messages.last!.id
         try await eventually("First turn must reach its real tool executor") {
             store.selected?.messages.first(where: { $0.id == firstID })?.toolActivities.first?.state == .pending
         }
-        store.draft = "fridge question"
-        store.send()
+        try acceptLegacyContinuous("fridge question", store: store)
         let secondID = store.selected!.messages.last!.id
         try NativeTaskFixture.require(store.draft.isEmpty && (try repository.messages(conversationID: store.selectedID!)).count == 4,
                                       "Accepted second input is persisted before the draft clears")
@@ -124,9 +195,8 @@ enum NativeSessionFixture {
         let why = store.selected!.messages.last!.id
         try NativeTaskFixture.require(store.answerStatus(why) == "Waiting to answer" && store.draft.isEmpty,
                                       "Chat accepts and visibly queues the follow-up")
-        store.setSessionMode(.continuous)
-        store.sendText("independent later question")
-        try NativeTaskFixture.require(transport.histories.count == 1, "Mode change must not overtake queued Chat follow-up")
+        try acceptLegacyContinuous("independent later question", store: store)
+        try NativeTaskFixture.require(transport.histories.count == 1, "Accepted legacy work must not overtake queued Chat follow-up")
         await gate.release()
         try await eventually("Chat queue must drain") { store.conversationTurns.allSatisfy { $0.state == .complete } }
         let request = transport.histories.first(where: { $0.last?.role == "user" && $0.last?.content == "Why?" })
@@ -142,8 +212,7 @@ enum NativeSessionFixture {
         let transport = NativeSessionFixtureTransport()
         let gate = NativeSessionGate()
         let store = store(repository, transport: transport, gate: gate)
-        store.setSessionMode(.continuous)
-        for index in 0..<10 { try NativeTaskFixture.require(store.sendText("slow \(index)"), "Queue must accept its bounded capacity") }
+        for index in 0..<10 { try NativeTaskFixture.require(try acceptLegacyContinuous("slow \(index)", store: store), "Queue must accept its bounded capacity") }
         store.draft = "keep this draft"
         store.send()
         try NativeTaskFixture.require(store.draft == "keep this draft" && store.selected?.messages.count == 20,
@@ -168,9 +237,8 @@ enum NativeSessionFixture {
         let gate = NativeSessionGate()
         await gate.release()
         let store = store(repository, transport: NativeSessionFixtureTransport(), gate: gate, confirmation: true)
-        store.setSessionMode(.continuous)
-        store.sendText("slow one")
-        store.sendText("slow two")
+        try acceptLegacyContinuous("slow one", store: store)
+        try acceptLegacyContinuous("slow two", store: store)
         try await eventually("Each simultaneous turn must own a separate confirmation") { store.turnConfirmations.count == 2 }
         let ids = store.selected!.messages.filter { $0.role == .assistant }.map(\.id)
         store.resolveTurnConfirmation(ids[0], approved: true, requestID: "same-call", token: UUID())

@@ -84,9 +84,9 @@ The Knowledge area manages document collections stored in vera-api's document en
 
 When the native app has a Vera engine configured, chat and vision requests reserve foreground capacity before calling the model directly. Background worker generations and automatic memory extraction yield to waiting foreground requests. One background generation per shared endpoint is the default, with a bounded generation deadline. The app keeps its provider key locally; admission sends only an endpoint fingerprint and timing metadata. No engine configured leaves standalone native chat unchanged. See [inference admission](docs/SETUP.md#inference-admission) for failure behavior and configuration.
 
-### Chat and Continuous sessions
+### Vera and ordinary chats
 
-Each conversation saves its mode. **Chat** answers one message at a time in that conversation and saves later messages in a visible queue. **Continuous** permits a second answer while another turn is working and sends research through the existing background task path. There are at most two active foreground turns across the app and eight waiting messages. A full queue keeps your draft and attachments intact.
+The sidebar has one persistent **Vera** destination for the ongoing assistant thread and its background work. **New chat** opens a separate ordinary conversation. Ordinary chats answer one message at a time in each conversation and save later messages in a visible queue. Returning to Vera preserves its thread, draft and tasks. Ordinary chat queues allow at most two active foreground turns across their conversations and eight waiting messages. A full queue keeps your draft and attachments intact.
 
 Each answer has its own Stop control and tool approvals. Stopping an answer does not cancel a separate research task; use the task card's Stop research control for that. Accepted messages are saved before the composer clears. After a restart, unsent messages can resume with their original settings, while interrupted requests stay available for explicit review or retry. An uncertain action is never automatically replayed. Ephemeral keyed configurations without a stable saved profile require a new message after restart.
 

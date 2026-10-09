@@ -132,20 +132,11 @@ private struct Sidebar: View {
                 navigationList
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 8) {
-                VeraMark(size: 18)
-                Text("Vera").font(.system(size: 14, weight: .semibold))
-                Spacer()
-            }
-            .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 6)
-        }
         .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
         .toolbar {
             ToolbarItem {
                 Button {
-                    assistant.isSelected = false
-                    store.newConversation()
+                    assistant.newChat(in: store)
                 } label: {
                     Label("New chat", systemImage: "square.and.pencil")
                 }
@@ -164,7 +155,14 @@ private struct Sidebar: View {
                 }
             } else {
                 Section {
-                    Label("Vera", systemImage: "sparkle").tag(SidebarItem.assistant)
+                    Button {
+                        assistant.newChat(in: store)
+                    } label: {
+                        Label("New chat", systemImage: "square.and.pencil")
+                    }
+                    .buttonStyle(.plain)
+                    Label { Text("Vera") } icon: { VeraMark(size: 18) }
+                        .tag(SidebarItem.assistant)
                     Label("Pulse", systemImage: "newspaper").tag(SidebarItem.pulse)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
@@ -186,7 +184,20 @@ private struct Sidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .labelStyle(NativeSidebarLabelStyle())
+        .tint(Theme.accent)
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
+    }
+}
+
+private struct NativeSidebarLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.icon
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 18)
+            configuration.title
+        }
     }
 }
 
@@ -690,9 +701,6 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if assistant == nil {
-                NativeSessionModeControl(mode: store.selectedSessionMode, onSelect: store.setSessionMode)
-            }
             if assistant == nil, let error = store.attachmentError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle")
