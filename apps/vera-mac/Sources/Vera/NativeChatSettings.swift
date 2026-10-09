@@ -328,12 +328,6 @@ enum NativeChatToolCatalog {
     private static func builtIn(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
         [
             NativeChatToolDescriptor(
-                id: "external-tools",
-                name: "Connected service tools",
-                summary: "Lets the model act through connected services when a native tool runtime is available.",
-                available: false,
-                setup: "Native chat cannot invoke connected service tools in this version."),
-            NativeChatToolDescriptor(
                 id: "apple-reminders",
                 name: "Apple Reminders",
                 summary: "Reads and updates reminder lists after you grant access.",

@@ -46,6 +46,7 @@ final class ChatStore: ObservableObject {
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
+    private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
@@ -56,6 +57,7 @@ final class ChatStore: ObservableObject {
     private var turnMemorySelections: [UUID: [NativeMemoryRanked]] = [:]
     private var nativeMemorySettings: NativeMemorySettings
     private var nativeMemoryService: (any NativeMemoryServing)?
+    let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
     private let usesInjectedToolRegistry: Bool
     private var capabilityDeclarations: [NativeToolDeclaration]
@@ -101,6 +103,7 @@ final class ChatStore: ObservableObject {
     init(veraAPI: VeraAPIClient? = nil,
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
          repository: (any ChatRepository)?, repositoryError: String? = nil,
+         nativeTransportFactory: @escaping (NativeChatConfig) -> (any NativeChatTransport)? = { NativeChatClient.foreground(config: $0) },
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativePersonaID: String? = nil,
          nativeOwnerName: String? = nil,
@@ -111,6 +114,7 @@ final class ChatStore: ObservableObject {
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil,
+         nativeMCP: NativeMCPManager? = nil,
          capabilityDeclarations: [NativeToolDeclaration] = [],
          pulseFeed: (any PulseFeedProviding)? = nil,
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
@@ -147,6 +151,7 @@ final class ChatStore: ObservableObject {
         self.client = veraAPI
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
+        self.nativeTransportFactory = nativeTransportFactory
         self.nativeSystemPrompt = nativeSystemPrompt
         self.nativePersonaID = nativePersonaID
         self.nativeOwnerName = nativeOwnerName
@@ -157,6 +162,7 @@ final class ChatStore: ObservableObject {
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
         self.capabilityDeclarations = capabilityDeclarations
+        self.nativeMCP = nativeMCP
         self.nativeToolRegistry = nativeToolRegistry
             ?? ChatStore.buildToolRegistry(capabilityDeclarations)
         usesInjectedToolRegistry = nativeToolRegistry != nil
@@ -298,7 +304,7 @@ final class ChatStore: ObservableObject {
         capabilityDeclarations: [NativeToolDeclaration]? = nil
     ) {
         nativeConfig = cfg
-        nativeTransport = NativeChatClient.foreground(config: cfg)
+        nativeTransport = nativeTransportFactory(cfg)
         nativeSystemPrompt = systemPrompt
         nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
@@ -1453,7 +1459,7 @@ final class ChatStore: ObservableObject {
 
     func applyNativeOptions(_ cfg: NativeChatConfig) {
         nativeConfig = cfg
-        nativeTransport = NativeChatClient.foreground(config: cfg)
+        nativeTransport = nativeTransportFactory(cfg)
     }
 
     func retryLastTurn(conversationID: String? = nil) {
@@ -1475,7 +1481,8 @@ final class ChatStore: ObservableObject {
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
-        return nativeToolRegistry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
+        let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? [])))
+        return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
     func selectApprovedMemory(_ text: String, settings: NativeMemorySettings? = nil,
@@ -1533,14 +1540,15 @@ final class ChatStore: ObservableObject {
         parameterRejection = nil
         setTurnStatus("Thinking…", turn: turn)
         generating = true
-        var turnRegistry = nativeToolRegistry
+        let sharedDefinitions = nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
+        var turnRegistry = NativeToolRegistry(definitions: sharedDefinitions)
         if let service = nativeTaskService, nativeTaskEngine.base != nil,
            turnCurrent(turn) {
             let origin = NativeTaskOrigin(conversationID: id,
                 userMessageID: turn.userMessageID, assistantMessageID: turn.assistantMessageID)
             let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
             if nativeTaskConfiguration == nil || profile != nil {
-                turnRegistry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + [
+                turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
                         didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])

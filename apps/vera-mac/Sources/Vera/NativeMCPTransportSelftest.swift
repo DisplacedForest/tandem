@@ -60,7 +60,7 @@ enum NativeMCPTransportSelftest {
         try await client.connect()
         _ = try await client.listTools(cursor: nil)
         await client.disconnect()
-        for (path, expected) in [("auth", NativeMCPTransportError.authenticationRequired), ("redirect", .redirectDenied), ("version", .unsupportedProtocol), ("large", .responseTooLarge), ("chunked", .responseTooLarge), ("malformed", .malformedResponse), ("shape", .malformedResponse), ("slow", .timeout), ("remote-error", .remoteFailure), ("disconnect", .network), ("duplicate", .malformedResponse), ("duplicate-sse", .malformedResponse), ("canonical", .malformedResponse)] {
+        for (path, expected) in [("auth", NativeMCPTransportError.authenticationRequired), ("redirect", .redirectDenied), ("version", .unsupportedProtocol), ("large", .responseTooLarge), ("chunked", .responseTooLarge), ("malformed", .malformedResponse), ("shape", .malformedResponse), ("slow", .timeout), ("remote-error", .remoteFailure), ("disconnect", .network), ("duplicate", .malformedResponse), ("duplicate-sse", .malformedResponse), ("canonical", .malformedResponse), ("numeric", .malformedResponse), ("decimal", .malformedResponse), ("invalid-utf8", .malformedResponse)] {
             let candidate = try connection(path, timeout: 0.5)
             do {
                 try await candidate.connect()
@@ -71,6 +71,16 @@ enum NativeMCPTransportSelftest {
             await candidate.disconnect()
         }
         try require(!FileManager.default.fileExists(atPath: portFile.path + ".redirected"), "Redirect followed")
+        let dataSchema = try connection("data-schema")
+        try await dataSchema.connect()
+        do { _ = try await dataSchema.listTools(cursor: nil); throw Failure.assertion("Data URL schema was silently rewritten") }
+        catch NativeMCPTransportError.malformedResponse {}
+        await dataSchema.disconnect()
+        let dataResult = try connection("data-result")
+        try await dataResult.connect()
+        do { _ = try await dataResult.call(name: "fixture_read", arguments: [:]); throw Failure.assertion("Data URL result was silently rewritten") }
+        catch NativeMCPTransportError.malformedResponse {}
+        await dataResult.disconnect()
         let sse = try connection("sse")
         try await sse.connect()
         _ = try await sse.listTools(cursor: nil)

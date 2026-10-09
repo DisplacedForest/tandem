@@ -211,3 +211,5 @@ Issues and PRs are welcome; merged work is credited in the next release's notes.
 ## License
 
 [MIT](LICENSE).
+
+Remote read-only tool connections use the shared native MCP catalog. See [connected service tools](docs/MCP.md) for explicit setup and current boundaries.

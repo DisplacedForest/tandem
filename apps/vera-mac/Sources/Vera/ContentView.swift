@@ -317,7 +317,7 @@ private struct ChatPane: View {
         .task(id: assistant?.session?.id) {
             guard let session = assistant?.session else { return }
             while !Task.isCancelled {
-                await session.refresh()
+                await session.poll()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }

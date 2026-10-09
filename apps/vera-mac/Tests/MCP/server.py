@@ -58,15 +58,25 @@ class Handler(BaseHTTPRequestHandler):
             name = request['params']['name']
             if name == 'slow':
                 time.sleep(4)
-            result = {'content': [{'type': 'text', 'text': 'fixture result'}], 'structuredContent': {'count': 1, 'ok': True}, 'isError': name == 'error'}
+            result = {'content': [{'type': 'text', 'text': 'fixture result'}], 'structuredContent': {'count': 1, 'ok': True}, 'isError': name == 'error' or self.path == '/tool-error'}
+        if self.path == '/data-schema' and method == 'tools/list' and result.get('tools'):
+            result['tools'][0]['inputSchema']['properties']['uri'] = {'const': 'data:,hello'}
+        if self.path == '/data-result' and method == 'tools/call':
+            result['structuredContent'] = {'uri': 'data:,hello'}
         body = json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}).encode()
+        if self.path == '/numeric':
+            body = body.replace(b'"capabilities":', b'"unsupportedPrecision":9007199254740993,"capabilities":')
+        if self.path == '/decimal':
+            body = body.replace(b'"capabilities":', b'"unsupportedPrecision":0.10000000000000001,"capabilities":')
         if self.path == '/remote-error':
             body = json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32099, 'message': 'fixture error'}}).encode()
         if self.path == '/canonical':
             body = body.replace(b'"capabilities":', b'"caf\\u00e9":1,"cafe\\u0301":2,"capabilities":')
         if self.path in ['/duplicate', '/duplicate-sse']:
             body = body.replace(b'"protocolVersion":', b'"protocolVersion":"2025-11-25","protocolVersion":')
-        if self.path in ['/sse', '/duplicate-sse']:
+        if self.path == '/invalid-utf8':
+            body = body.replace(b'synthetic', b'synthetic\xff')
+        if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8']:
             body = b'data: ' + body + b'\n\n'
         if self.path == '/malformed':
             body = b'{broken'
@@ -75,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ['/large', '/chunked']:
             body = b'x' * 40000
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse'] else 'application/json')
+        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8'] else 'application/json')
         self.send_header('Set-Cookie', 'fixture=must-not-persist')
         if self.path == '/chunked':
             self.send_header('Transfer-Encoding', 'chunked')

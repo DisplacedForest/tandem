@@ -47,6 +47,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     func validateRequest(_ request: PiModelRequest) async throws {
         try Task.checkCancellation()
         if let memoryBridge { try await memoryBridge.validate(request) }
+        try await request.validateHostTools()
     }
     func validateOwner() async throws { try await validate() }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
@@ -70,6 +71,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
                 try budget.check()
                 try piCheck(status == 200 && data.count <= 65536, .unavailable)
                 let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
+                try await validateRequest(request)
                 try await accounting.settle(request, reply: reply)
                 try await validateRequest(request)
                 return reply
@@ -124,6 +126,7 @@ enum PiProviderCodec {
             for call in calls {
                 try piCheck(call.pi("type").piString == "function")
                 guard let raw = call.pi("function").pi("arguments").piString else { throw PiBrokerError.invalid }
+                if call.pi("function").pi("name").piString?.hasPrefix("mcp_") == true { try NativeMCPWireJSON.validate(Data(raw.utf8), maximumBytes: 16384) }
                 content.append(.object(["type": .string("toolCall"), "id": call.pi("id"), "name": call.pi("function").pi("name"), "arguments": try PiValue.piRead(Data(raw.utf8))]))
             }
         }

@@ -61,6 +61,15 @@ if arguments.dropFirst().first == "--pi-native-selftest" {
     NativeApplicationEntry.runAsync { await NativeProviderSmoke.run(arguments: arguments) }
 } else if arguments.contains("--provider-smoke-selftest") {
     NativeProviderSmoke.selfTest()
+} else if arguments.contains("--mcp-selftest") {
+    NativeApplicationEntry.runAsync {
+        do {
+            try await NativeMCPAuthoritySelftest.run()
+            try await NativeMCPTransportSelftest.run()
+            try await NativeMCPIntegrationFixture.run(Array(arguments.dropFirst(2)))
+            print("NATIVE MCP SELFTEST OK")
+        } catch { print("NATIVE MCP SELFTEST FAILED: \(error)"); exit(1) }
+    }
 } else if arguments.contains("--domain-state-selftest") {
     NativeApplicationEntry.runAsync {
         do { try NativeDomainStateSelftest.run(); try await NativeDomainRepositorySelftest.run() }

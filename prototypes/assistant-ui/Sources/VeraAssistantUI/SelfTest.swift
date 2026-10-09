@@ -210,6 +210,7 @@ enum PrototypeSelfTest {
             try await CapabilitySelfTest.run(root: root.appendingPathComponent("capabilities"))
             try await FacadeSelfTest.run(root: root.appendingPathComponent("facade"))
             try await AssistantSessionSelfTest.run(root: root.appendingPathComponent("native-session"))
+            try await PollingSelfTest.run(root: root.appendingPathComponent("polling"))
             try await RecoverySelfTest.run(root: root.appendingPathComponent("recovery"))
             print("PASS: identity, navigation, drafts, scoped messages/tasks, lost-response restart retry, decision retry, Stop isolation, output paths, unavailable state")
         } catch {

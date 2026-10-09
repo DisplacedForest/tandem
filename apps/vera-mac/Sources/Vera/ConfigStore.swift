@@ -34,7 +34,10 @@ final class ConfigStore: ObservableObject {
     /// Raw file contents. String values are editable in Settings; unknown keys are preserved.
     @Published private(set) var raw: [String: Any]
     @Published var showOnboarding: Bool
-    @Published var nativeSettings: NativeChatSettings
+    @Published var nativeSettings: NativeChatSettings {
+        didSet { nativeMCP.setEnabled(nativeSettings.enabledToolIDs) }
+    }
+    let nativeMCP: NativeMCPManager
     @Published private var nativeAPIKeys: [String: String]
     @Published var visionBridgeAPIKey: String {
         didSet {
@@ -66,6 +69,7 @@ final class ConfigStore: ObservableObject {
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
          readConfiguration: () -> [String: Any] = { ConfigFile.read() },
+         nativeMCP injectedMCP: NativeMCPManager? = nil,
          writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
         let loaded = readConfiguration()
         let settings = NativeChatSettings.load(from: loaded)
@@ -76,6 +80,7 @@ final class ConfigStore: ObservableObject {
             catch { unavailable.insert(id) }
         }
         raw = loaded
+        nativeMCP = injectedMCP ?? NativeMCPManager(raw: loaded, enabled: settings.enabledToolIDs)
         nativeSettings = settings
         nativeAPIKeys = keys
         savedCredentials = keys
@@ -215,6 +220,7 @@ final class ConfigStore: ObservableObject {
 
     private func piSend(binding: PiSelectedProfileBinding, request: PiModelRequest, body: Data,
                         transport: @escaping PiProviderSend) async throws -> (Data, Int) {
+        try await request.validateHostTools()
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
         guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
         try piCheck(!piContainsCredential(body, key: key), .unauthorized)
@@ -224,7 +230,7 @@ final class ConfigStore: ObservableObject {
         outgoing.timeoutInterval = 30
         outgoing.setValue("application/json", forHTTPHeaderField: "Content-Type")
         outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
-        try await request.memoryAuthority?.validate(request)
+        try request.memoryAuthority?.validate(request)
         try Task.checkCancellation()
         let response = try await transport(outgoing, request)
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)

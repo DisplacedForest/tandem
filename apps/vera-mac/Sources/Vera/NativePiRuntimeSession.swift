@@ -3,16 +3,19 @@ import Darwin
 
 final class PiPrivatePipe: @unchecked Sendable {
     let readHandle: FileHandle
-    let writeHandle: FileHandle
+    private let writeHandle: FileHandle
     private var buffer = Data()
     private let lock = NSLock()
+    private var writeClosed = false
     init(read: FileHandle, write: FileHandle) { readHandle = read; writeHandle = write }
     func next(while alive: () -> Bool = { true }) throws -> PiValue? {
         while alive() {
             if let index = buffer.firstIndex(of: 10) {
                 let data = buffer.prefix(upTo: index)
                 buffer.removeSubrange(...index)
-                return try PiValue.piRead(Data(data))
+                let value = try PiValue.piRead(Data(data))
+                if value.pi("op").piString == "tool_call" { try NativeMCPWireJSON.validate(Data(data), maximumBytes: 65536) }
+                return value
             }
             try piCheck(buffer.count <= 65536)
             var descriptor = pollfd(fd: readHandle.fileDescriptor, events: Int16(POLLIN), revents: 0)
@@ -32,6 +35,7 @@ final class PiPrivatePipe: @unchecked Sendable {
     func send(_ value: PiValue) throws {
         var data = try value.piData(); try piCheck(data.count <= 65536); data.append(10)
         lock.lock(); defer { lock.unlock() }
+        try piCheck(!writeClosed, .unavailable)
         let fd = writeHandle.fileDescriptor
         let flags = fcntl(fd, F_GETFL)
         try piCheck(flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0, .unavailable)
@@ -47,7 +51,17 @@ final class PiPrivatePipe: @unchecked Sendable {
             }
         }
     }
-    func closeWrite() { lock.lock(); defer { lock.unlock() }; try? writeHandle.close() }
+    func writeDescriptor() throws -> Int32 {
+        lock.lock(); defer { lock.unlock() }
+        try piCheck(!writeClosed, .unavailable)
+        return writeHandle.fileDescriptor
+    }
+    func closeWrite() {
+        lock.lock(); defer { lock.unlock() }
+        guard !writeClosed else { return }
+        writeClosed = true
+        try? writeHandle.close()
+    }
 }
 
 final class NativePiRuntimeSession: @unchecked Sendable {
@@ -69,7 +83,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         signal(SIGPIPE, SIG_IGN)
         umask(0o077)
         var info = stat()
-        try piCheck(fstat(injectedController?.readHandle.fileDescriptor ?? STDIN_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO && fstat(injectedController?.writeHandle.fileDescriptor ?? STDOUT_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO, .unauthorized)
+        try piCheck(fstat(injectedController?.readHandle.fileDescriptor ?? STDIN_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO && fstat(try injectedController?.writeDescriptor() ?? STDOUT_FILENO, &info) == 0 && (info.st_mode & S_IFMT) == S_IFIFO, .unauthorized)
         try piCheck(arguments.count == 10)
         var options: [String: String] = [:]
         for offset in stride(from: 0, to: arguments.count, by: 2) {

@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='vera-mcp-test-') as temporary:
     fixture = package / 'Tests' / 'MCP'
     fixture.mkdir(parents=True)
     shutil.copy(root / 'Tests/MCP/server.py', fixture / 'server.py')
-    for name in ['NativeMCPTransport.swift', 'NativeMCPTransportSelftest.swift', 'NativeTaskJSON.swift']:
+    for name in ['NativeMCPTransport.swift', 'NativeMCPTransportSelftest.swift', 'NativeMCPWireJSON.swift', 'NativeTaskJSON.swift']:
         shutil.copy(root / 'Sources/Vera' / name, source / name)
     native = (root / 'Sources/Vera/NativeChatTools.swift').read_text()
     start = native.index('enum NativeJSONValue:')

@@ -203,6 +203,7 @@ actor NativePiModelBroker {
     let executor: any PiMockModelExecutor
     let timeout: Duration
     let tools: (any NativeRuntimeToolServing)?
+    private var toolSnapshots: [String: PiRuntimeToolSnapshot] = [:]
     private var scopes: [String: PiModelScope] = [:]
     private var active: [String: (String, Task<PiValue, Error>, PiModelRace)] = [:]
     private var toolActive: [String: (PiModelScope, Task<PiValue, Error>, PiModelRace)] = [:]
@@ -226,8 +227,8 @@ actor NativePiModelBroker {
         try piCheck(!closed && Date() < expires, .unauthorized)
         try piCheck(!quarantined, .uncertain)
         let scope = try toolRequestScope(value)
-        let hostTools = try await toolCatalog(scope)
-        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel, hostTools: hostTools))
+        let snapshot = try await toolSnapshot(scope)
+        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel, hostTools: snapshot.schemas, hostToolRevision: snapshot.revision, hostToolAuthority: tools))
         try await executor.validateRequest(request)
         try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
         try piCheck(!canceled.contains(request.id), .canceled)
@@ -237,11 +238,14 @@ actor NativePiModelBroker {
             try piCheck(!closed && !quarantined && !canceled.contains(request.id), .unauthorized)
             try await executor.validateRequest(request)
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
-            try piCheck(try await toolCatalog(scope) == request.hostTools, .unauthorized)
+            try piCheck(try await toolSnapshot(scope) == snapshot, .unauthorized)
             try PiModelReply.validate(saved, request: request)
             return saved
         }
-        let operation = Task { try await executor.complete(request) }
+        let operation = Task {
+            try await request.validateHostTools()
+            return try await executor.complete(request)
+        }
         let race = PiModelRace()
         active[request.id] = (scope.role, operation, race)
         let receiver = Task { race.resolve(await operation.result) }
@@ -260,7 +264,7 @@ actor NativePiModelBroker {
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
             try await executor.validateRequest(request)
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
-            try piCheck(try await toolCatalog(scope) == request.hostTools, .unauthorized)
+            try piCheck(try await toolSnapshot(scope) == snapshot, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
             return reply
@@ -271,10 +275,14 @@ actor NativePiModelBroker {
         }
     }
     func toolCatalog(_ scope: PiModelScope) async throws -> [NativeToolSchema] {
+        try await toolSnapshot(scope).schemas
+    }
+    func toolSnapshot(_ scope: PiModelScope) async throws -> PiRuntimeToolSnapshot {
         try await executor.validateOwner()
         try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
-        let result = try await tools?.catalog(scope: scope) ?? []
-        try PiRuntimeTools.validate(result)
+        let result = try await PiRuntimeToolSnapshot.capture(scope: scope, authority: tools)
+        if let expected = toolSnapshots[scope.id] { try piCheck(expected == result, .unauthorized) }
+        else { toolSnapshots[scope.id] = result }
         try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
         return result
     }
@@ -290,17 +298,26 @@ actor NativePiModelBroker {
         try value.piKeys(keys)
         let id = try piUUID(value.pi("id"))
         let scope = try toolRequestScope(value)
-        let catalog = try await toolCatalog(scope)
+        let snapshot = try await toolSnapshot(scope)
+        let catalog = snapshot.schemas
         try piCheck(!canceled.contains(id), .canceled)
         if op == "tool_catalog" { return .object(["tools": PiRuntimeTools.wire(catalog)]) }
         try piCheck(op == "tool_call", .unauthorized)
-        guard let tools, let name = value.pi("name").piString, catalog.contains(where: { $0.name == name }) else { throw PiBrokerError.unauthorized }
+        guard let tools, let revision = snapshot.revision, let name = value.pi("name").piString, catalog.contains(where: { $0.name == name }) else { throw PiBrokerError.unauthorized }
         let callID = try piToolID(value.pi("call_id")), arguments = value.pi("arguments")
         try PiModelRequest.arguments(arguments, name: name, scope: scope, hostTools: catalog)
         try piCheck(toolActive[id] == nil && !toolActive.values.contains(where: { $0.0.id == scope.id }), .duplicate)
-        let digest = piHash(try PiValue.object(["binding": .string(scope.binding), "name": .string(name), "arguments": arguments]).piData())
-        if let saved = try ledger.reserveTool(scope: scope, id: callID, digest: digest) { return .object(["value": saved]) }
-        let operation = Task { try await tools.call(scope: scope, id: callID, name: name, arguments: arguments) }
+        let digest = piHash(try PiValue.object(["binding": .string(scope.binding), "name": .string(name), "arguments": arguments, "revision": snapshot.revision.map(PiValue.string) ?? .null, "catalog": PiRuntimeTools.wire(snapshot.schemas)]).piData())
+        if let saved = try ledger.reserveTool(scope: scope, id: callID, digest: digest) {
+            try piCheck(try await toolSnapshot(scope) == snapshot, .unauthorized)
+            try piCheck(!canceled.contains(id), .canceled)
+            return .object(["value": saved])
+        }
+        let operation = Task {
+            try piCheck(try await self.toolSnapshot(scope) == snapshot, .unauthorized)
+            try Task.checkCancellation()
+            return try await tools.call(scope: scope, id: callID, name: name, arguments: arguments, expectedRevision: revision)
+        }
         let race = PiModelRace()
         toolActive[id] = (scope, operation, race)
         let receiver = Task { race.resolve(await operation.result) }
@@ -314,9 +331,9 @@ actor NativePiModelBroker {
                 try await withCheckedThrowingContinuation { race.install($0) }
             } onCancel: { operation.cancel(); race.resolve(.failure(CancellationError())) }
             try Task.checkCancellation()
-            let current = try await toolCatalog(scope)
+            let current = try await toolSnapshot(scope)
             try piCheck(!canceled.contains(id) && !operation.isCancelled, .canceled)
-            try piCheck(current.contains(where: { $0.name == name && $0 == catalog.first(where: { $0.name == name }) }), .unauthorized)
+            try piCheck(current == snapshot, .unauthorized)
             try piCheck(try result.piData().count <= 8192)
             try ledger.settleTool(scope: scope, id: callID, result: result)
             return .object(["value": result])
@@ -338,7 +355,7 @@ actor NativePiModelBroker {
     }
     func revoke(subject: String) async {
         let owned = scopes.values.filter { $0.subject == subject }
-        for scope in owned { scopes.removeValue(forKey: scope.id) }
+        for scope in owned { scopes.removeValue(forKey: scope.id); toolSnapshots.removeValue(forKey: scope.id) }
         let calls = toolActive.filter { $0.value.0.subject == subject }.map(\.key)
         for id in calls { await cancel(id) }
         for scope in owned { await tools?.cancel(scope: scope) }
@@ -349,6 +366,7 @@ actor NativePiModelBroker {
         for value in active.values { value.1.cancel(); value.2.resolve(.failure(CancellationError())) }
         let owned = Array(scopes.values)
         scopes.removeAll()
+        toolSnapshots.removeAll()
         for scope in owned { await tools?.cancel(scope: scope) }
     }
 }

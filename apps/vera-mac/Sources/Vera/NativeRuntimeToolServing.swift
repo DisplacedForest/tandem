@@ -2,9 +2,34 @@ import Foundation
 import GRDB
 
 protocol NativeRuntimeToolServing: Sendable {
+    func revision(scope: PiModelScope) async throws -> String
     func catalog(scope: PiModelScope) async throws -> [NativeToolSchema]
-    func call(scope: PiModelScope, id: String, name: String, arguments: NativeJSONValue) async throws -> NativeJSONValue
+    func call(scope: PiModelScope, id: String, name: String, arguments: NativeJSONValue, expectedRevision: String) async throws -> NativeJSONValue
     func cancel(scope: PiModelScope) async
+}
+
+extension NativeRuntimeToolServing {
+    func call(scope: PiModelScope, id: String, name: String, arguments: NativeJSONValue) async throws -> NativeJSONValue {
+        let expected = try await revision(scope: scope)
+        return try await call(scope: scope, id: id, name: name, arguments: arguments, expectedRevision: expected)
+    }
+}
+
+struct PiRuntimeToolSnapshot: Equatable, Sendable {
+    let revision: String?
+    let schemas: [NativeToolSchema]
+    static func capture(scope: PiModelScope, authority: (any NativeRuntimeToolServing)?) async throws -> Self {
+        guard let authority else { return Self(revision: nil, schemas: []) }
+        try Task.checkCancellation()
+        let before = try await authority.revision(scope: scope)
+        try piCheck(!before.isEmpty && before.utf8.count <= 1024, .unauthorized)
+        let schemas = try await authority.catalog(scope: scope)
+        let after = try await authority.revision(scope: scope)
+        try Task.checkCancellation()
+        try piCheck(before == after, .unauthorized)
+        try PiRuntimeTools.validate(schemas)
+        return Self(revision: before, schemas: schemas)
+    }
 }
 
 enum PiRuntimeTools {

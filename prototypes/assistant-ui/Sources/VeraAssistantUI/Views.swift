@@ -42,7 +42,7 @@ struct PrototypeView: View {
         .frame(minWidth: 860, minHeight: 600)
         .task(id: store.conversation.id) {
             while !Task.isCancelled {
-                await store.refresh()
+                await store.refresh(background: true)
                 try? await Task.sleep(for: .seconds(2))
             }
         }

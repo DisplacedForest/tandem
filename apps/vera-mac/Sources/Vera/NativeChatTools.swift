@@ -126,6 +126,8 @@ struct NativeToolDefinition: Sendable {
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
+    var argumentValidator: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
+
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
     }
@@ -135,6 +137,12 @@ struct NativeToolDefinition: Sendable {
               let any = try? JSONSerialization.jsonObject(with: data),
               let object = any as? [String: Any] else {
             throw NativeToolError.invalidArguments("Expected a JSON object")
+        }
+        if let argumentValidator {
+            try NativeMCPWireJSON.validate(data, maximumBytes: 16384)
+            guard data.count <= 16384, let values = try NativeJSONValue.piRead(data).piObject else { throw NativeToolError.invalidArguments("Expected a bounded JSON object") }
+            do { try argumentValidator(values) } catch { throw NativeToolError.invalidArguments("Arguments do not match the connected service schema") }
+            return values
         }
         let values = try object.mapValues { try NativeJSONValue(any: $0) }
         guard case .object(let schema) = parameters,
@@ -513,11 +521,6 @@ struct NativeToolLoop: Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let active = registry.active(enabledIDs: enabledToolIDs)
-                    let definitions = Dictionary(
-                        active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-                    var seen: Set<String> = []
-                    let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                     var history = messages
                     var content = ""
                     var activities: [NativeToolActivity] = []
@@ -527,9 +530,16 @@ struct NativeToolLoop: Sendable {
                     var searchResults: [String: NativeJSONValue] = [:]
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
+                        let active = registry.active(enabledIDs: enabledToolIDs)
+                        let definitions = Dictionary(active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                        var seen: Set<String> = []
+                        let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                         var last = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                         do {
-                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas, validateRequest: validateModelRequest) {
+                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas, validateRequest: {
+                                try await validateModelRequest()
+                                guard active.allSatisfy({ $0.isAvailable() }) else { throw NativeToolError.unavailable }
+                            }) {
                                 try Task.checkCancellation()
                                 last = snapshot
                                 for call in snapshot.toolCalls {

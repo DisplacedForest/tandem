@@ -137,7 +137,8 @@ enum NativePiNativeContext {
             foundationHome: FileManager.default.homeDirectoryForCurrentUser,
             accountHome: URL(fileURLWithPath: String(cString: directory)))
         defer { bootstrapSession = nil }
-        let candidate = try await NativePiCandidate.create(arguments, onOwner: { bootstrapSession = $0.session })
+        let fixture = try NativeMCPUIFixture.prepareIfRequested()
+        let candidate = try await NativePiCandidate.create(arguments, onOwner: { bootstrapSession = $0.session }, nativeMCP: fixture?.manager, modelExecutor: fixture?.model)
         do { try Task.checkCancellation() } catch { await candidate.stop(); throw error }
         self.candidate = candidate
         presentation = NativePiPresentation(factory: {

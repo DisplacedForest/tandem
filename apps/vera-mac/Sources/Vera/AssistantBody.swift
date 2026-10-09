@@ -84,10 +84,20 @@ struct AssistantBody: View {
 struct ProseMarkdown: View {
     let text: String
     var body: some View {
+        StableProseMarkdown(text: text).equatable()
+    }
+}
+
+private struct StableProseMarkdown: View, Equatable {
+    let text: String
+    private static let proseTheme = MarkdownUI.Theme.basic
+        .text { ForegroundColor(Theme.textPrimary); FontSize(14) }
+        .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
+        .link { ForegroundColor(Theme.accent) }
+
+    var body: some View {
         Markdown(SourceFormatter.apply(text))
-            .markdownTextStyle { ForegroundColor(Theme.textPrimary); FontSize(14) }
-            .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
-            .markdownTextStyle(\.link) { ForegroundColor(Theme.accent) }
+            .markdownTheme(Self.proseTheme)
             .textSelection(.enabled)
     }
 }

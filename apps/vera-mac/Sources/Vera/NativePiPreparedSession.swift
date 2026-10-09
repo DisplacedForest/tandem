@@ -14,7 +14,7 @@ final class NativePiPreparedSession {
         try await provider.executor.validateOwner()
         let memoryBridge = store.map { NativeRuntimeMemoryBridge(store: $0) }
         let executor = memoryBridge.map { provider.executor.sharingMemory($0) } ?? provider.executor
-        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge, tools: tools)
+        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge, tools: tools ?? store?.nativeMCP?.authority)
         do {
             let ready = try await owner.start()
             guard case .number(let port) = ready.pi("port"), let identity = ready.pi("profile").piString else { throw PiBrokerError.invalid }

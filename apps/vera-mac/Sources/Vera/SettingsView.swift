@@ -411,6 +411,7 @@ struct NativeToolEditor: View {
                     .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
+            NativeMCPToolsEditor(manager: config.nativeMCP)
             Text("Tool declarations load from the \(NativeCapabilityTools.directoryName) folder next to your config file. Saving reloads them.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }

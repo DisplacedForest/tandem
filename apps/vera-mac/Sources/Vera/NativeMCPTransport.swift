@@ -181,7 +181,7 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
         case .double(let value): return .number(value)
         case .bool(let value): return .bool(value)
         case .null: return .null
-        case .data: return .string(try JSONDecoder().decode(String.self, from: JSONEncoder().encode(value)))
+        case .data: throw NativeMCPTransportError.malformedResponse
         }
     }
 }
@@ -340,6 +340,7 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         guard !terminal else { return }
         if let error { finish(error); return }
         guard let response else { finish(NativeMCPTransportError.malformedResponse); return }
+        guard String(data: body, encoding: .utf8) != nil else { guardrail?.fail(.malformedResponse); finish(NativeMCPTransportError.malformedResponse); return }
         if response.mimeType == "application/json", !body.isEmpty,
            (try? JSONSerialization.jsonObject(with: body)) == nil {
             guardrail?.fail(.malformedResponse)
@@ -397,7 +398,7 @@ private actor NativeMCPValidatingTransport: Transport {
                     for try await data in await underlying.receive() {
                         try Task.checkCancellation()
                         do {
-                            try NativeTaskJSON.validate(data, maximumBytes: boundary.maximumBytes)
+                            try NativeMCPWireJSON.validate(data, maximumBytes: boundary.maximumBytes)
                             _ = try JSONSerialization.jsonObject(with: data)
                         } catch {
                             boundary.fail(.malformedResponse)

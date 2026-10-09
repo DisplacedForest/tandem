@@ -417,3 +417,7 @@ Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24
 5. Create a vein (the in-app builder or `POST /pulse/veins`), enable it, and confirm its chip appears; its job in Agentic shows the next run time.
 
 When something doesn't work, check the config report and `docker compose logs vera-api` first.
+
+## Remote service tools
+
+Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior and the current unauthenticated HTTPS boundary.
