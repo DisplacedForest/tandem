@@ -119,6 +119,10 @@ struct NativeResearchReportView: View {
     let artifact: NativeResearchArtifact
     @Environment(\.dismiss) private var dismiss
 
+    var reportText: String {
+        artifact.sources.isEmpty ? artifact.report : PulseMarkers.stripSourcesSection(artifact.report)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -130,8 +134,12 @@ struct NativeResearchReportView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    CitedProse(text: PulseMarkers.stripSourcesSection(artifact.report), sources: NativeResearchReportSafety.sources(artifact.sources))
-                    if !artifact.sources.isEmpty { SourcesRow(sources: NativeResearchReportSafety.sources(artifact.sources)) }
+                    if artifact.sources.isEmpty {
+                        NativeArtifactMarkdown(text: reportText).equatable()
+                    } else {
+                        CitedProse(text: reportText, sources: NativeResearchReportSafety.sources(artifact.sources))
+                        SourcesRow(sources: NativeResearchReportSafety.sources(artifact.sources))
+                    }
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -144,5 +152,21 @@ struct NativeResearchReportView: View {
         .environment(\.openURL, OpenURLAction { url in
             NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
         })
+    }
+}
+
+struct NativeArtifactMarkdown: View, Equatable {
+    let text: String
+    private static let theme = MarkdownUI.Theme.basic
+        .text { ForegroundColor(Theme.textPrimary); FontSize(14) }
+        .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
+        .link { ForegroundColor(Theme.accent) }
+
+    var content: MarkdownContent { MarkdownContent(text) }
+
+    var body: some View {
+        Markdown(content)
+            .markdownTheme(Self.theme)
+            .textSelection(.enabled)
     }
 }

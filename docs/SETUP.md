@@ -123,6 +123,36 @@ The persistent Vera conversation subscribes to the same TaskStore event API thro
 
 Offline tests use temporary databases and a synthetic loopback provider. `mise run native-task-test` builds the app and exercises typed handoff, foreground conversation, lost acknowledgments, cancellation, concurrent app processes, and a process killed after sending a generation request. It also checks transcript restoration, replayed completion, persisted retry keys, stream reconnects, cursor reset, and cancellation responsiveness with eight enrolled tasks. It does not read live credentials or call a paid provider.
 
+### Document tasks
+
+The existing task engine registers a `document` worker. Submit work through `POST /tasks` with a fresh idempotency key:
+
+```json
+{
+  "worker_type": "document",
+  "idempotency_key": "draft-project-plan-1",
+  "payload": {
+    "title": "Project plan",
+    "brief": "Write a practical plan from the supplied notes.",
+    "inputs": ["The first milestone is a working prototype."],
+    "max_sections": 4
+  }
+}
+```
+
+The title is limited to 200 characters, the brief to 5,000, and inputs to eight texts of up to 4,000 characters each. `max_sections` ranges from one to six and defaults to four. No tools, browsing, native model binding, or provider credentials are accepted in this payload. The existing shared model integration must be enabled and configured. Missing configuration pauses work for an explicit retry instead of reading a native app credential or silently choosing another provider. The enabled integration, endpoint, and model are checked again after admission immediately before sending. A queued request whose configuration changed pauses without sending its inputs to the previous endpoint.
+
+The worker saves an outline, drafts each section, revises each section, and assembles Markdown without a final model call. Each section is limited to 3,000 characters. Progress uses the existing task event stream with phase and section counts; it contains no draft text. Cancel preserves the last committed checkpoint. The runtime and task database remain the same as research.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DOCUMENT_STEP_TIMEOUT_SECONDS` | `30` | Total model-step deadline, including admission and structured-output repairs; capped at 90 seconds. |
+| `DOCUMENT_MAX_TOKENS` | `2000` | Maximum tokens per model call, capped at 4,000. |
+
+Invalid or nonpositive values use the default. `STRUCTURED_REPAIR_ATTEMPTS` applies with at most two repairs within that same step deadline. Each generation also follows the existing background admission limit. A persisted intent distinguishes a fresh step from an interrupted request. After an uncertain model request, the task waits in `needs_decision`; reply with the current decision ID, a fresh idempotency key and `{"action":"retry"}`. A retry may repeat provider usage. Finished sections are retained and not regenerated automatically.
+
+A completed task's `result` contains `kind: "document_report"`, `title`, `markdown`, a short `spoken_text`, and `display_blocks` using Vera's existing nested artifact envelope. Artifact identity is the task ID, content is in `artifact.report`, and `sources` is empty. The complete document remains in the task database; no filesystem path or remote image is opened automatically. Source-free Markdown preserves literal reference markers and Sources headings in the native artifact renderer. Native typed decoding and rendering are covered by an engine-result consumer test. Existing native research and persistent-workspace task discovery do not enroll document tasks; creation and retrieval are through the API until document handoff is added.
+
 ## Inference admission
 
 The engine and native app share a generation admission policy. The actual model request still goes directly from the Mac to its configured endpoint with its existing Keychain-owned credential. `POST /inference/admission` reserves a bounded logical window, and `POST /inference/admission/{request_id}/release` retires it after local transport cleanup. The control messages carry a fresh request UUID, a SHA-256 endpoint fingerprint, priority, and requested duration. They contain no provider key, messages, prompt, model output, or credential-bearing URL. Admission metadata lives beside tasks in `tasks.db` and follows `TASK_DB_PATH`.

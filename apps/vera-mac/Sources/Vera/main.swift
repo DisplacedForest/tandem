@@ -17,7 +17,18 @@ if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.
     FileHandle.standardError.write(Data("Unsupported isolated Vera mode\n".utf8))
     exit(2)
 }
-if arguments.dropFirst().first == "--pi-native-selftest" {
+if arguments.dropFirst().first == "--document-artifact-selftest" {
+    if arguments.contains("--shot") {
+        do {
+            try NativeApplicationEntry.prepare { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Document artifact fixture could not render.\n".utf8))
+            exit(1)
+        }
+    }
+    NativeApplicationEntry.runAsync { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }
+} else if arguments.dropFirst().first == "--pi-native-selftest" {
     if arguments.contains("--task-card-shot") {
         do {
             try NativeApplicationEntry.prepare { await NativePiPresentationSelftest.run() }
