@@ -74,7 +74,7 @@ enum PiProviderPreflight {
         for (name, value) in fields where !["prompt", "completion"].contains(name) {
             try piCheck(try amount(value) <= (["input_cache_read", "input_cache_write"].contains(name) ? input : 0))
         }
-        try piCheck(input * 16384 + output * 256 <= Decimal(string: "0.001")!)
+        try piCheck(input * 16384 + output * 1024 <= Decimal(string: "0.001")!)
     }
     static func usage(_ data: Data) throws -> Int64 {
         try nanos(parse(data, limit: 65536).pi("data").pi("usage"))
@@ -88,6 +88,11 @@ struct PiPreparedExecutor: PiMockModelExecutor {
     func validateOwner() async throws { try permit.validate(operation.binding); try await operation.validateOwner() }
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { try await operation.prepareRequest(request) }
     func validateRequest(_ request: PiModelRequest) async throws { try await operation.validateRequest(request) }
+    func retryDocument(_ subject: String) async throws {
+        try await validateOwner()
+        try await operation.retryDocument(subject)
+        try await validateOwner()
+    }
     func sharingMemory(_ bridge: NativeRuntimeMemoryBridge) -> PiPreparedExecutor {
         var operation = operation
         operation.memoryBridge = bridge

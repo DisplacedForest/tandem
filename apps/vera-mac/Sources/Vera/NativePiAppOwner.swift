@@ -125,15 +125,33 @@ actor NativePiAppOwner {
         if method == "POST", path == "/assistant/messages" {
             guard let data = request.httpBody else { throw PiBrokerError.invalid }
             let body = try PiValue.piRead(data)
-            try body.piKeys(["assistant_id", "conversation_id", "message_id", "text", "mode"])
+            try body.piKeys(["assistant_id", "conversation_id", "message_id", "text", "mode", "document"], required: ["assistant_id", "conversation_id", "message_id", "text", "mode"])
             try piCheck(try identifier(body.pi("assistant_id")) == assistant, .unauthorized)
             let binding: PiValue = .object(["subject": .string(try identifier(body.pi("message_id"))), "assistant": .string(assistant), "conversation": .string(try identifier(body.pi("conversation_id"))), "role": .string("foreground"), "mode": body.pi("mode")])
             guard let query = body.pi("text").piString else { throw PiBrokerError.invalid }
-            try await memoryBridge?.authorize(binding, query: query)
+            if body.pi("document") == .null { try await memoryBridge?.authorize(binding, query: query) }
             try await grant(binding)
             let response = try await authenticated(request)
             if response.1 == 200, let reply = try PiValue.piRead(response.0).pi("reply_id").piString {
-                try await memoryBridge?.recordDelivery(subject: identifier(body.pi("message_id")), messageID: reply)
+                if body.pi("document") == .null {
+                    try await memoryBridge?.recordDelivery(subject: identifier(body.pi("message_id")), messageID: reply)
+                } else {
+                    try piCheck(body.pi("mode") == .string("assistant"), .unauthorized)
+                    let answer = try PiValue.piRead(response.0)
+                    guard let ids = answer.pi("task_ids").piArray, ids.count == 1 else { throw PiBrokerError.invalid }
+                    let taskID = try piUUID(ids[0])
+                    let inspect = URLRequest(url: try endpoint().appendingPathComponent("tasks/" + taskID))
+                    let (data, status) = try await authenticated(inspect)
+                    let task = try PiValue.piRead(data, maximumBytes: 1048576), payload = task.pi("payload")
+                    try piCheck(status == 200 && task.pi("id").piString == taskID && task.pi("worker_type") == .string("document")
+                        && payload.pi("assistant_id").piString == assistant
+                        && payload.pi("conversation_id").piString == (try identifier(body.pi("conversation_id")))
+                        && payload.pi("originating_message_id").piString == (try identifier(body.pi("message_id"))), .unauthorized)
+                    if task.pi("cancel_requested") == .bool(false), ["queued", "running"].contains(task.pi("state").piString ?? "") {
+                        try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                            "conversation": payload.pi("conversation_id"), "role": .string("document"), "mode": .string("assistant")]))
+                    }
+                }
             }
             return response
         } else if method == "POST", taskOperation {
@@ -141,8 +159,8 @@ actor NativePiAppOwner {
             let inspect = URLRequest(url: URL(string: "http://127.0.0.1:\(Int(port))/tasks/\(taskID)")!)
             let (bytes, status) = try await authenticated(inspect)
             try piCheck(status == 200, .unavailable)
-            let task = try PiValue.piRead(bytes), payload = task.pi("payload")
-            try piCheck(task.pi("id").piString == taskID && task.pi("worker_type").piString == "pi_worker" && payload.pi("assistant_id").piString == assistant, .unauthorized)
+            let task = try PiValue.piRead(bytes, maximumBytes: 1048576), payload = task.pi("payload")
+            try piCheck(task.pi("id").piString == taskID && ["pi_worker", "document"].contains(task.pi("worker_type").piString ?? "") && payload.pi("assistant_id").piString == assistant, .unauthorized)
             if components[2] == "cancel" {
                 await session.broker.revoke(subject: taskID)
                 await memoryBridge?.revoke(taskID)
@@ -153,6 +171,12 @@ actor NativePiAppOwner {
                 try body.piKeys(["decision_id", "idempotency_key", "reply"])
                 if body.pi("reply") == .object(["approved": .bool(true)]), bindings[taskID] == nil || task.pi("state").piString == "needs_decision" {
                     try piCheck(task.pi("state").piString == "needs_decision" && task.pi("decision").pi("id") == body.pi("decision_id"), .unauthorized)
+                    if task.pi("worker_type") == .string("document") {
+                        try await session.broker.retryDocument(taskID)
+                        try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                            "conversation": payload.pi("conversation_id"), "role": .string("document"), "mode": .string("assistant")]))
+                        return try await authenticated(request)
+                    }
                     await memoryBridge?.pause(taskID)
                     let response = try await authenticated(request)
                     if response.1 == 200 {

@@ -59,7 +59,7 @@ final class NativePiPresentation: ObservableObject {
             message.displayBlocks = tasks(for: message.id).flatMap { task -> [NativeDisplayBlock] in
                 [.taskCard(NativePiTaskSection.card(task))] + task.outputs.map { output in
                     .artifact(NativeResearchArtifact(id: task.id + ":" + String(output.id), title: output.title,
-                        report: "", sources: [], taskOutput: NativeTaskOutputReference(taskID: task.id, index: output.id)))
+                        report: output.markdown ?? "", sources: [], taskOutput: output.markdown == nil ? NativeTaskOutputReference(taskID: task.id, index: output.id) : nil))
                 }
             }
             return message

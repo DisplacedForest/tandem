@@ -80,7 +80,7 @@ final class PrototypeStore: ObservableObject {
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             guard taskEvents?.accepts(token) == true, !Task.isCancelled,
                   version == refreshVersion, !busyConversations.contains(id) else { return false }
-            let scopedTasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+            let scopedTasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
             if saved.taskEventCursor != cursor {
                 var candidate = saved
                 candidate.taskEventCursor = cursor
@@ -176,7 +176,7 @@ final class PrototypeStore: ObservableObject {
             async let newMessages = client.messages(id)
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             if version == refreshVersion {
-                let scopedTasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+                let scopedTasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
                 if tasks != scopedTasks { tasks = scopedTasks }
                 if !busyConversations.contains(id), transcripts[id] != receivedMessages { transcripts[id] = receivedMessages }
             }
@@ -200,6 +200,24 @@ final class PrototypeStore: ObservableObject {
         let waiters = refreshWaiters
         refreshWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+
+    func createDocument(title: String, brief: String, inputs: String) async {
+        guard canSend, destination == .assistant else { return }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputs = inputs.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.unicodeScalars.count <= 200, !title.contains("\n"), !title.contains("\r"),
+              !brief.isEmpty, brief.unicodeScalars.count <= 2000, inputs.unicodeScalars.count <= 2000 else { return }
+        let request = MessageRequest(assistantID: saved.assistantID, conversationID: saved.assistant.id,
+            messageID: UUID(), text: "Create document: " + title + "\n\n" + brief, mode: "assistant",
+            document: DocumentRequest(title: title, brief: brief, inputs: inputs.isEmpty ? [] : [inputs], maxSections: 4))
+        var candidate = saved
+        candidate.pending.append(request)
+        do { try commit(candidate) }
+        catch { conversationErrors[request.conversationID] = error.localizedDescription; return }
+        await deliver(request)
+        await refresh()
     }
 
     func send() async {
@@ -240,7 +258,7 @@ final class PrototypeStore: ObservableObject {
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             guard pending?.messageID == request.messageID, version == refreshVersion else { return }
             capabilities = caps
-            tasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+            tasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
             transcripts[request.conversationID] = receivedMessages
             connectionError = nil
             reviewedReplyID = request.messageID

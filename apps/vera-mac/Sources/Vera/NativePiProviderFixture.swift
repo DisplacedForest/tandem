@@ -48,7 +48,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         }
         guard let data else { throw PiBrokerError.invalid }
         let body = try PiValue.piRead(data)
-        try piCheck(body.pi("model").piString == "qwen/qwen3.8-flash" && body.pi("max_tokens") == .number(256) && body.pi("reasoning").pi("enabled") == .bool(false))
+        try piCheck(body.pi("model").piString == "qwen/qwen3.8-flash" && [PiValue.number(256), .number(1024)].contains(body.pi("max_tokens")) && body.pi("reasoning").pi("enabled") == .bool(false))
         try piCheck(body.pi("provider").pi("max_price").pi("prompt") == .number(behavior.hasPrefix("checkpoint") ? 0.17 : 0.05) && body.pi("provider").pi("allow_fallbacks") == .bool(false))
         let names = body.pi("tools").piArray!.compactMap { $0.pi("function").pi("name").piString }
         let messages = body.pi("messages").piArray!, last = body.pi("messages").piArray!.last!

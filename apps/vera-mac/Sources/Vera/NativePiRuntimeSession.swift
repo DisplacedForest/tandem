@@ -96,7 +96,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         let python = URL(fileURLWithPath: options["--python"]!).resolvingSymlinksInPath()
         let node = URL(fileURLWithPath: options["--node"]!).resolvingSymlinksInPath()
         try piCheck(FileManager.default.isExecutableFile(atPath: python.path) && FileManager.default.isExecutableFile(atPath: node.path))
-        let files = ["app_bridge.py", "app_model.py", "runtime.py", "bridge.py", "process.py", "agent.mjs", "package-lock.json", "native.py"]
+        let files = ["app_bridge.py", "app_model.py", "runtime.py", "documents.py", "bridge.py", "process.py", "agent.mjs", "package-lock.json", "native.py"]
         let source = repo.appendingPathComponent("prototypes/pi_assistant")
         var digest = Data()
         for name in files { digest.append(Data(name.utf8)); digest.append(try Data(contentsOf: source.appendingPathComponent(name))) }

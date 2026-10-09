@@ -23,6 +23,7 @@ from routers.task_store import TaskConflict
 from pi_assistant.process import PiFailure
 from pi_assistant.app_model import ModelTransport
 from pi_assistant.runtime import Runtime
+from pi_assistant.documents import NativeDocumentPayload, DocumentRequest
 
 
 class Message(BaseModel):
@@ -32,6 +33,7 @@ class Message(BaseModel):
     message_id: UUID
     text: str = Field(min_length=1, max_length=8000)
     mode: Literal['assistant', 'focused']
+    document: DocumentRequest | None = None
 
 
 class WorkerPayload(BaseModel):
@@ -77,6 +79,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
             return JSONResponse({'detail': 'JSON required'}, status_code=415)
         return await call_next(request)
     tasks._validators['pi_worker'] = validate_payload
+    tasks._validators['document'] = lambda payload: NativeDocumentPayload.model_validate(payload)
     app.include_router(tasks.router)
     @app.get('/assistant/capabilities')
     async def capabilities():
@@ -84,7 +87,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     @app.post('/assistant/messages')
     async def message(body: Message):
         try:
-            return await runtime.message(body.model_dump(mode='json'))
+            return await runtime.message(body.model_dump(mode='json', exclude_none=True))
         except TaskConflict as exc:
             raise HTTPException(409, str(exc)) from None
         except PiFailure:

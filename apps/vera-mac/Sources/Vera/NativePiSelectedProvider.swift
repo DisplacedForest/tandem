@@ -28,8 +28,15 @@ actor PiSharedAccounting {
         return try ledger.reserve(request)
     }
     func settle(_ request: PiModelRequest, reply: PiValue) throws { try ledger.settle(request.id, reply: reply) }
-    func uncertain(_ request: PiModelRequest) { blocked = true; ledger.uncertain(request.id) }
+    func uncertain(_ request: PiModelRequest) {
+        if request.scope.role != "document" { blocked = true }
+        ledger.uncertain(request.id)
+    }
     func snapshot() throws -> PiValue { try ledger.snapshot() }
+    func retryDocument(_ subject: String) throws {
+        try ledger.retryDocument(subject)
+        blocked = try ledger.hasUncertainty()
+    }
 }
 
 struct PiSelectedProfileOperation: PiMockModelExecutor {
@@ -41,20 +48,21 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     var checkpointPricing: PiCheckpointPricing? = nil
     var memoryBridge: NativeRuntimeMemoryBridge? = nil
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest {
-        if let memoryBridge { return try await memoryBridge.prepare(request) }
+        if request.scope.role != "document", let memoryBridge { return try await memoryBridge.prepare(request) }
         return request
     }
     func validateRequest(_ request: PiModelRequest) async throws {
         try Task.checkCancellation()
-        if let memoryBridge { try await memoryBridge.validate(request) }
+        if request.scope.role != "document", let memoryBridge { try await memoryBridge.validate(request) }
         try await request.validateHostTools()
     }
     func validateOwner() async throws { try await validate() }
+    func retryDocument(_ subject: String) async throws { try await accounting.retryDocument(subject) }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
         let request = try await prepareRequest(request)
         let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
-        try piCheck(body.count <= 16384)
+        try piCheck(body.count <= (request.scope.role == "document" ? 49152 : 16384))
         return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
             try budget.check()
             try await validate()
@@ -85,6 +93,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
 
 enum PiProviderCodec {
     static func tools(_ scope: PiModelScope) -> [PiValue] {
+        if scope.role == "document" { return [] }
         let names = scope.role == "worker" ? ["read_file", "write_file", "check_python"] : (scope.mode == "assistant" ? ["delegate"] : [])
         return names.map { name in
             var properties: [String: PiValue] = name == "delegate" ? ["objective": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(8000)])] : ["path": .object(["type": .string("string"), "enum": .array([.string("sum.py")])])]
@@ -109,7 +118,7 @@ enum PiProviderCodec {
             if !calls.isEmpty { converted["tool_calls"] = .array(calls) }
             return .object(converted)
         }
-        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope) + (try request.hostTools.map { try PiValue.piDecode($0.requestObject) })), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
+        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope) + (try request.hostTools.map { try PiValue.piDecode($0.requestObject) })), "stream": .bool(false), "max_tokens": .number(request.scope.role == "document" ? 1024 : 256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
     }
     static func reply(_ value: PiValue, request: PiModelRequest, model: String) throws -> PiValue {
         try piCheck(value.pi("model").piString == model, .invalid)

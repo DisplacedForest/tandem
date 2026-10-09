@@ -12,7 +12,7 @@ case .reject:
 case .unrelated:
     break
 }
-let piModes: Set<String> = ["--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
+let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
 if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.contains(arguments.dropFirst().first ?? "") {
     FileHandle.standardError.write(Data("Unsupported isolated Vera mode\n".utf8))
     exit(2)
@@ -28,6 +28,8 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         }
     }
     NativeApplicationEntry.runAsync { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }
+} else if arguments.dropFirst().first == "--pi-document-contract" {
+    NativeApplicationEntry.runAsync { await NativeDocumentContract.run(Array(arguments.dropFirst(2))) }
 } else if arguments.dropFirst().first == "--pi-native-selftest" {
     if arguments.contains("--task-card-shot") {
         do {

@@ -19,7 +19,7 @@ struct PiRuntimeToolSnapshot: Equatable, Sendable {
     let revision: String?
     let schemas: [NativeToolSchema]
     static func capture(scope: PiModelScope, authority: (any NativeRuntimeToolServing)?) async throws -> Self {
-        guard let authority else { return Self(revision: nil, schemas: []) }
+        guard scope.role != "document", let authority else { return Self(revision: nil, schemas: []) }
         try Task.checkCancellation()
         let before = try await authority.revision(scope: scope)
         try piCheck(!before.isEmpty && before.utf8.count <= 1024, .unauthorized)

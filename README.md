@@ -98,7 +98,7 @@ The optional API stores queued work, checkpoints, decisions, results, and ordere
 
 ### Background document drafting
 
-The task API accepts `document` work with a title, brief, and supplied text. It outlines, drafts, and revises one section at a time, saves progress between bounded model calls, and stores the finished Markdown with an artifact display block. It uses the existing enabled shared model integration. An interrupted model call waits for an explicit retry; completed sections remain saved. This is an engine API capability. Native chat handoff and automatic discovery of document tasks are not enabled. See [document tasks](docs/SETUP.md#document-tasks).
+The task API accepts `document` work with a title, brief, and supplied text. It outlines, drafts, and revises one section at a time, saves progress between bounded model calls, and stores the finished Markdown with an artifact display block. It uses the existing enabled shared model integration. An interrupted model call waits for an explicit retry; completed sections remain saved. In the native assistant, choose **Create document** to supply a title, brief, and optional notes. The same shared assistant runtime drafts it in the background and keeps progress, Stop, retry, Markdown preview, and Finder reveal on the original task card. Document generation uses only the supplied brief and notes, without tools or memory retrieval. See [document tasks](docs/SETUP.md#document-tasks).
 
 ### Pulse: scheduled research briefings
 

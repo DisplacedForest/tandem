@@ -85,7 +85,7 @@ class AppModelTransport:
             identifier(value['subject'])
             identifier(value['assistant'])
             identifier(value['conversation'])
-            if value['profile'] != self.profile or value['role'] not in {'foreground', 'worker'} or value['mode'] not in {'assistant', 'focused'} or (value['role'] == 'worker' and value['mode'] != 'assistant'):
+            if value['profile'] != self.profile or value['role'] not in {'foreground', 'worker', 'document'} or value['mode'] not in {'assistant', 'focused'} or (value['role'] != 'foreground' and value['mode'] != 'assistant'):
                 raise PiFailure('app_scope')
             key = (value['subject'], value['role'])
             if key in self.scopes or len(self.scopes) >= 16:

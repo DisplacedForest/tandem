@@ -125,6 +125,10 @@ Offline tests use temporary databases and a synthetic loopback provider. `mise r
 
 ### Document tasks
 
+In the native assistant, choose **Create document**, then enter a title (up to 200 characters), brief and optional notes (up to 2,000 characters each). Drafting uses only that supplied text and up to four sections. Progress, Stop, a read-only Markdown preview and Show in Finder remain attached to the original request. No editor or new tool is enabled. The selected shared model and background admission still apply.
+
+A saved request retries with the same identity after an unconfirmed response. On restart, completed documents reopen without a model request; unfinished writing waits for an explicit resume while keeping completed sections. An uncertain step may consume model usage again on explicit retry, and its earlier reservation remains accounted for. Native documents keep the existing twelve-request session limit; one four-section document requires nine successful model calls. If that limit or the selected model is unavailable, the card preserves progress and reports that writing needs attention.
+
 The existing task engine registers a `document` worker. Submit work through `POST /tasks` with a fresh idempotency key:
 
 ```json
@@ -151,7 +155,7 @@ The worker saves an outline, drafts each section, revises each section, and asse
 
 Invalid or nonpositive values use the default. `STRUCTURED_REPAIR_ATTEMPTS` applies with at most two repairs within that same step deadline. Each generation also follows the existing background admission limit. A persisted intent distinguishes a fresh step from an interrupted request. After an uncertain model request, the task waits in `needs_decision`; reply with the current decision ID, a fresh idempotency key and `{"action":"retry"}`. A retry may repeat provider usage. Finished sections are retained and not regenerated automatically.
 
-A completed task's `result` contains `kind: "document_report"`, `title`, `markdown`, a short `spoken_text`, and `display_blocks` using Vera's existing nested artifact envelope. Artifact identity is the task ID, content is in `artifact.report`, and `sources` is empty. The complete document remains in the task database; no filesystem path or remote image is opened automatically. Source-free Markdown preserves literal reference markers and Sources headings in the native artifact renderer. Native typed decoding and rendering are covered by an engine-result consumer test. Existing native research and persistent-workspace task discovery do not enroll document tasks; creation and retrieval are through the API until document handoff is added.
+A completed task's `result` contains `kind: "document_report"`, `title`, `markdown`, a short `spoken_text`, and `display_blocks` using Vera's existing nested artifact envelope. Artifact identity is the task ID, content is in `artifact.report`, and `sources` is empty. The complete document remains in the task database; no filesystem path or remote image is opened automatically. Source-free Markdown preserves literal reference markers and Sources headings in the native artifact renderer. Native typed decoding and rendering are covered by an engine-result consumer test. The native Create document action also runs this worker through the shared assistant runtime and presents progress and the scoped result in its existing task cards.
 
 ## Inference admission
 

@@ -15,6 +15,7 @@ from routers.task_store import StepResult, TaskConflict, TaskStore
 from .process import PiFailure, PiProcess
 from .native import NativeMockTransport
 from .app_model import ModelTransport
+from .documents import DocumentWorkflow
 
 
 def canonical(value: Any) -> str:
@@ -46,6 +47,8 @@ class Runtime:
         self.worker_delay_ms = worker_delay_ms
         self.dispatcher = Dispatcher(self.store, poll_seconds=0.02)
         self.dispatcher.register('pi_worker', self.worker, 160 if self.native else 20, ('read_file', 'write_file', 'check_python'))
+        self.documents = DocumentWorkflow(self)
+        self.dispatcher.register('document', self.documents.step, 35, ('model',))
         self.foreground_lock = asyncio.Lock()
         self.active: set[str] = set()
         with self.connect() as db:
@@ -84,7 +87,7 @@ class Runtime:
             if self.native:
                 await self.native.stop()
 
-    def accept(self, body: dict[str, Any]) -> dict[str, Any] | None:
+    def accept(self, body: dict[str, Any], resume: bool = False) -> dict[str, Any] | None:
         encoded = canonical(body)
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -94,6 +97,8 @@ class Runtime:
                     raise TaskConflict('Message identity has different content')
                 if row['state'] == 'completed':
                     return json.loads(row['answer'])
+                if resume:
+                    return None
                 raise TaskConflict('Message is in progress or interrupted; inspect its tasks before submitting again')
             conversation = db.execute('SELECT * FROM conversations WHERE id=?', (body['conversation_id'],)).fetchone()
             if conversation and (conversation['assistant'], conversation['mode']) != (body['assistant_id'], body['mode']):
@@ -109,6 +114,8 @@ class Runtime:
             return [r['id'] for r in db.execute('SELECT id,payload FROM tasks') if json.loads(r['payload']).get('originating_message_id') == message_id]
 
     async def message(self, body: dict[str, Any]) -> dict[str, Any]:
+        if body.get("document") is not None:
+            return self.documents.create(body)
         if self.native:
             async with self.foreground_lock:
                 return await self._message(body)

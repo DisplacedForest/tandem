@@ -109,6 +109,7 @@ enum NativePiProviderSelftest {
             try piCheck(PiProviderFixtureProtocol.state.calls().count == 3 && fixtureCredentials.reads == 2 && credentials.reads == 0)
             try await expiredReplay(config: config, binding: binding, http: http, root: root)
             try await failurePaths(config: config, binding: binding, http: http, admission: admission, root: root)
+            try await documentRetry(config: config, binding: binding, http: http, admission: admission, root: root)
             if !arguments.isEmpty {
                 try await workflow(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
                 try await memoryReplay(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
@@ -120,6 +121,36 @@ enum NativePiProviderSelftest {
             FileHandle.standardError.write(Data("Provider wiring fixture failed: \(type(of: error)) \(error)\n".utf8))
             exit(1)
         }
+    }
+    static func documentRetry(config: ConfigStore, binding: PiSelectedProfileBinding, http: PiProviderHTTP,
+                              admission: NativeInferenceAdmission, root: URL) async throws {
+        PiProviderFixtureProtocol.state.configure("normal")
+        let provider = try await PiPreparedProvider.prepare(owner: config, admission: admission, permit: permit(binding),
+            accountingRoot: root.appendingPathComponent("document-accounting"), http: http, transport: .providerFixture)
+        let ledger = try PiModelLedger(root: root.appendingPathComponent("document-broker"), manifest: "fixture")
+        let broker = NativePiModelBroker(ledger: ledger, channel: "fixture", executor: provider.executor)
+        let scope = try await broker.authorize(NativePiModelBrokerFixture.binding(role: "document"))
+        let wire = NativePiModelBrokerFixture.request(scope, channel: "fixture")
+        let request = try PiModelRequest(wire, scope: scope, channel: "fixture")
+        try piCheck(PiProviderCodec.tools(scope).isEmpty && request.hostTools.isEmpty)
+        try await reject { try PiModelRequest.arguments(.object([:]), name: "delegate", scope: scope) }
+        PiProviderFixtureProtocol.state.configure("status")
+        try await reject { _ = try await broker.complete(wire) }
+        PiProviderFixtureProtocol.state.configure("normal")
+        try await reject { _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture")) }
+        try piCheck(PiProviderFixtureProtocol.state.calls().isEmpty)
+        let foreground = try await broker.authorize(NativePiModelBrokerFixture.binding())
+        _ = try await broker.complete(NativePiModelBrokerFixture.request(foreground, channel: "fixture"))
+        try await broker.retryDocument(scope.subject)
+        _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture"))
+        let shared = try await provider.accounting.snapshot().piArray!
+        let local = try ledger.snapshot().piArray!
+        try piCheck(shared.count == 3 && local.count == 3)
+        for rows in [shared, local] {
+            try piCheck(rows[0].pi("status") == .string("abandoned") && rows[0].pi("reserved") == .number(1_000_000)
+                && rows[0].pi("charged") == .null && rows[2].pi("status") == .string("completed"))
+        }
+        await broker.close()
     }
     static func expiredReplay(config: ConfigStore, binding: PiSelectedProfileBinding, http: PiProviderHTTP, root: URL) async throws {
         let configuration = URLSessionConfiguration.ephemeral

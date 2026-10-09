@@ -25,7 +25,7 @@ final class PiProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendabl
         try piCheck(allowed.contains(url.absoluteString) && request.httpBodyStream == nil, .unauthorized)
         let completion = url.path.hasSuffix("/chat/completions")
         try piCheck(request.httpMethod == (completion ? "POST" : "GET") && (request.httpBody != nil) == completion, .unauthorized)
-        try piCheck((request.httpBody?.count ?? 0) <= 16384)
+        try piCheck((request.httpBody?.count ?? 0) <= 49152)
         guard let credential = request.value(forHTTPHeaderField: "Authorization"), credential.hasPrefix("Bearer "), credential.utf8.count > 7, credential.utf8.count <= 4103, !credential.contains("\r"), !credential.contains("\n") else { throw PiBrokerError.unauthorized }
         let headers = Set((request.allHTTPHeaderFields ?? [:]).keys.map { $0.lowercased() })
         try piCheck(headers.isSubset(of: ["authorization", "content-type", "accept"]), .unauthorized)

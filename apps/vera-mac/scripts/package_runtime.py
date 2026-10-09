@@ -20,11 +20,11 @@ APP = Path(__file__).resolve().parents[1]
 REPO = APP.parents[1]
 SOURCES = [
     'prototypes/pi_assistant/' + name for name in (
-        '__init__.py', 'app_bridge.py', 'app_model.py', 'runtime.py', 'bridge.py',
+        '__init__.py', 'app_bridge.py', 'app_model.py', 'runtime.py', 'documents.py', 'bridge.py',
         'process.py', 'agent.mjs', 'native.py', 'package.json', 'package-lock.json',
     )
 ] + ['services/vera-api/routers/' + name for name in (
-    '__init__.py', 'tasks.py', 'task_store.py', 'task_runtime.py', 'inference_admission.py',
+    '__init__.py', 'tasks.py', 'task_store.py', 'task_runtime.py', 'inference_admission.py', 'task_document_core.py', 'structured.py',
 )] + ['LICENSE']
 
 

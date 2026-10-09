@@ -91,18 +91,48 @@ final class PiModelLedger: @unchecked Sendable {
             let charged: Int64?, reply: Data?
             switch chargedValue.storage { case .null: charged = nil; case .int64(let value): charged = value; default: throw PiBrokerError.storage }
             switch replyValue.storage { case .null: reply = nil; case .blob(let value): reply = value; default: throw PiBrokerError.storage }
-            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain"].contains(status) && reserved == 1_000_000, .storage)
+            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain", "abandoned"].contains(status) && reserved == 1_000_000, .storage)
             if status == "completed" {
                 try piCheck(charged != nil && reply != nil, .storage)
                 let saved = try PiValue.piRead(reply!)
                 try PiModelReply.validate(saved)
                 try piCheck(charged == PiModelReply.costNanos(saved), .storage)
             } else { try piCheck(charged == nil && reply == nil, .storage) }
+            let document = try isDocument(db, subject: subject)
+            try piCheck(status != "abandoned" || document, .storage)
+            if let reply {
+                let output = try PiValue.piRead(reply).pi("usage").pi("output")
+                guard case .number(let count) = output else { throw PiBrokerError.storage }
+                try piCheck(count <= (document ? 1024 : 256), .storage)
+            }
             counts[subject, default: 0] += 1
-            try piCheck(counts[subject]! <= 4, .storage)
+            try piCheck(counts[subject]! <= (document ? 12 : 4), .storage)
             exposure += charged ?? reserved
         }
         try piCheck(exposure <= budget, .storage)
+    }
+    static func isDocument(_ db: Database, subject: String) throws -> Bool {
+        let binding = try storedString(db, sql: "SELECT binding FROM bindings WHERE subject=?", arguments: [subject])
+        let parts = binding?.split(separator: ":") ?? []
+        return parts.count == 6 && parts[3] == "document" && parts[4] == "assistant"
+    }
+    static func unresolved(_ db: Database, subject: String? = nil) throws -> Bool {
+        for row in try Row.fetchAll(db, sql: "SELECT subject FROM requests WHERE status='uncertain'") {
+            let owner: String = row["subject"]
+            let document = try isDocument(db, subject: owner)
+            if owner == subject || !document { return true }
+        }
+        return false
+    }
+    func hasUncertainty() throws -> Bool { try database.read { try Self.unresolved($0) } }
+    func retryDocument(_ subject: String) throws {
+        try database.write { db in
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE subject=?", arguments: [subject]) ?? 0
+            if count == 0 { return }
+            try piCheck(try Self.isDocument(db, subject: subject), .unauthorized)
+            try db.execute(sql: "UPDATE requests SET status='abandoned' WHERE subject=? AND status='uncertain'", arguments: [subject])
+            try Self.validateRows(db, budget: budget - baseline)
+        }
     }
     func bind(_ scope: PiModelScope) throws {
         try database.write { db in
@@ -118,11 +148,11 @@ final class PiModelLedger: @unchecked Sendable {
                 guard row["status"] as String == "completed", let data: Data = row["reply"] else { throw PiBrokerError.uncertain }
                 return try PiValue.piRead(data)
             }
-            try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved')") == 0, .uncertain)
+            try piCheck(try !Self.unresolved(db, subject: request.scope.subject), .uncertain)
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests") ?? 12
             let own = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE subject=?", arguments: [request.scope.subject]) ?? 4
             let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
-            try piCheck(count < 12 && own < 4 && exposure <= budget - baseline - 1_000_000, .budget)
+            try piCheck(count < 12 && own < (request.scope.role == "document" ? 12 : 4) && exposure <= budget - baseline - 1_000_000, .budget)
             try db.execute(sql: "INSERT INTO requests VALUES(?,?,?,'reserved',1000000,NULL,NULL)", arguments: [request.id, request.scope.subject, request.digest])
             return nil
         }
@@ -157,7 +187,7 @@ enum PiModelReply {
         try reply.piKeys(["content", "usage"])
         try reply.pi("usage").piKeys(["input", "output", "cost_usd"])
         guard case .number(let input) = reply.pi("usage").pi("input"), case .number(let output) = reply.pi("usage").pi("output") else { throw PiBrokerError.invalid }
-        try piCheck(input.isFinite && input.rounded() == input && (0...16384).contains(input) && output.isFinite && output.rounded() == output && (0...256).contains(output) && costNanos(reply) >= 0 && (try reply.piData()).count <= 65536)
+        try piCheck(input.isFinite && input.rounded() == input && (0...16384).contains(input) && output.isFinite && output.rounded() == output && (0...(request == nil || request?.scope.role == "document" ? 1024 : 256)).contains(output) && costNanos(reply) >= 0 && (try reply.piData()).count <= 65536)
         guard let content = reply.pi("content").piArray, !content.isEmpty, content.count <= 9 else { throw PiBrokerError.invalid }
         var ids = Set<String>()
         for block in content {
@@ -214,6 +244,12 @@ actor NativePiModelBroker {
         self.tools = tools
         self.ledger = ledger; self.channel = channel; self.executor = executor; self.expires = expires; self.timeout = timeout
     }
+    func retryDocument(_ subject: String) async throws {
+        try piCheck(!closed && Date() < expires, .unauthorized)
+        try await executor.retryDocument(subject)
+        try ledger.retryDocument(subject)
+        quarantined = try ledger.hasUncertainty()
+    }
     func authorize(_ value: PiValue) throws -> PiModelScope {
         try piCheck(!closed && !quarantined && Date() < expires && scopes.count < 16, .unauthorized)
         let scope = try PiModelScope(value, profile: ledger.profile)
@@ -269,7 +305,7 @@ actor NativePiModelBroker {
             try ledger.settle(request.id, reply: reply)
             return reply
         } catch {
-            quarantined = true
+            if request.scope.role != "document" { quarantined = true }
             ledger.uncertain(request.id)
             throw error
         }

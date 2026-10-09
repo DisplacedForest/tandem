@@ -64,7 +64,9 @@ enum NativePiCandidateSelftest {
             try PiModelReply.validate(result)
             try piCheck(PiModelReply.costNanos(result) == 41200)
             let wrong = NativePiModelBrokerFixture.changed(result, "usage", .object(["input": .number(71), "output": .number(300), "cost_usd": .number(0.0000412)]))
-            try await rejected(.invalid) { try PiModelReply.validate(wrong) }
+            try await rejected(.invalid) { try PiModelReply.validate(wrong, request: request) }
+            let oversized = NativePiModelBrokerFixture.changed(result, "usage", .object(["input": .number(71), "output": .number(1025), "cost_usd": .number(0.0000412)]))
+            try await rejected(.invalid) { try PiModelReply.validate(oversized) }
             if arguments.first == "--scope-timeout" { try await scopeTimeout(Array(arguments.dropFirst())) }
             else if !arguments.isEmpty {
                 try await refusedDecision(arguments)
