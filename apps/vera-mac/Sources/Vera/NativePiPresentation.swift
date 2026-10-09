@@ -21,8 +21,8 @@ final class NativePiConnection {
         stopping = task
         await task.value
     }
-    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore) async throws -> NativePiConnection {
-        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider, store: store)
+    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore, tools: (any NativeRuntimeToolServing)? = nil) async throws -> NativePiConnection {
+        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider, store: store, tools: tools)
         return NativePiConnection(workspace: session.workspace, memoryBridge: session.memoryBridge, stop: { await session.owner.stop() })
     }
 }

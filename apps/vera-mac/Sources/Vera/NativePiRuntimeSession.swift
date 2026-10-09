@@ -63,7 +63,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
     private var ended = false
     private var ownedGroup: Int32?
     private var grants: [String: (String, PiModelScope)] = [:]
-    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock) throws {
+    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock, tools: (any NativeRuntimeToolServing)? = nil) throws {
         let arguments = try NativePiRuntimePaths.expanded(arguments)
         self.transport = transport
         signal(SIGPIPE, SIG_IGN)
@@ -92,7 +92,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding, transport: transport)
         channel = UUID().uuidString.lowercased()
         capability = UUID().uuidString.lowercased() + UUID().uuidString.lowercased()
-        broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, timeout: .seconds(requestTimeout))
+        broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, timeout: .seconds(requestTimeout), tools: tools)
         controller = injectedController ?? PiPrivatePipe(read: .standardInput, write: .standardOutput)
         let input = Pipe(), output = Pipe()
         process = Process()
@@ -162,10 +162,12 @@ final class NativePiRuntimeSession: @unchecked Sendable {
                     continue
                 }
                 received += 1
-                try piCheck(ready && value.pi("op").piString == "complete" && received <= 32, .unauthorized)
+                try piCheck(ready && ["complete", "tool_catalog", "tool_call"].contains(value.pi("op").piString ?? "") && received <= 128, .unauthorized)
                 Task {
                     do {
-                        let reply = try await broker.complete(value)
+                        let reply: PiValue
+                        if value.pi("op").piString == "complete" { reply = try await broker.complete(value) }
+                        else { reply = try await broker.toolOperation(value) }
                         try child.send(.object(["op": .string("reply"), "id": .string(id), "ok": .bool(true), "result": reply]))
                     } catch {
                         try? child.send(.object(["op": .string("reply"), "id": .string(id), "ok": .bool(false), "error": .string((error as? PiBrokerError)?.rawValue ?? "unavailable")]))

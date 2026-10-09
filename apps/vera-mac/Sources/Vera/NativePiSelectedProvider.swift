@@ -107,7 +107,7 @@ enum PiProviderCodec {
             if !calls.isEmpty { converted["tool_calls"] = .array(calls) }
             return .object(converted)
         }
-        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope)), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
+        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope) + (try request.hostTools.map { try PiValue.piDecode($0.requestObject) })), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
     }
     static func reply(_ value: PiValue, request: PiModelRequest, model: String) throws -> PiValue {
         try piCheck(value.pi("model").piString == model, .invalid)

@@ -66,6 +66,8 @@ final class PiModelLedger: @unchecked Sendable {
             try db.execute(sql: "INSERT OR IGNORE INTO metadata VALUES('profile',?)", arguments: [generated])
             guard let profile = try Self.storedString(db, sql: "SELECT value FROM metadata WHERE key='profile'") else { throw PiBrokerError.storage }
             _ = try piUUID(.string(profile))
+            try db.execute(sql: "CREATE TABLE IF NOT EXISTS runtime_tools(subject TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,state TEXT NOT NULL,result BLOB,PRIMARY KEY(subject,id))")
+            try db.execute(sql: "UPDATE runtime_tools SET state='uncertain' WHERE state='reserved'")
             try db.execute(sql: "UPDATE requests SET status='uncertain' WHERE status='reserved'")
             try Self.validateRows(db, budget: budget - baseline)
             return profile
@@ -167,7 +169,7 @@ enum PiModelReply {
                 try piCheck(ids.insert(id).inserted && ids.count <= 8)
                 if let request {
                     try piCheck(request.toolCount + ids.count <= 8 && !request.toolIDs.contains(id))
-                    try PiModelRequest.arguments(block.pi("arguments"), name: block.pi("name").piString ?? "", scope: request.scope)
+                    try PiModelRequest.arguments(block.pi("arguments"), name: block.pi("name").piString ?? "", scope: request.scope, hostTools: request.hostTools)
                 } else {
                     try piCheck(block.pi("name").piString != nil && block.pi("arguments").piObject != nil)
                 }
@@ -200,12 +202,15 @@ actor NativePiModelBroker {
     let expires: Date
     let executor: any PiMockModelExecutor
     let timeout: Duration
+    let tools: (any NativeRuntimeToolServing)?
     private var scopes: [String: PiModelScope] = [:]
     private var active: [String: (String, Task<PiValue, Error>, PiModelRace)] = [:]
+    private var toolActive: [String: (PiModelScope, Task<PiValue, Error>, PiModelRace)] = [:]
     private var canceled = Set<String>()
     private var closed = false
     private var quarantined = false
-    init(ledger: PiModelLedger, channel: String, executor: any PiMockModelExecutor = PiFixtureModel(), expires: Date = Date().addingTimeInterval(600), timeout: Duration = .seconds(3)) {
+    init(ledger: PiModelLedger, channel: String, executor: any PiMockModelExecutor = PiFixtureModel(), expires: Date = Date().addingTimeInterval(600), timeout: Duration = .seconds(3), tools: (any NativeRuntimeToolServing)? = nil) {
+        self.tools = tools
         self.ledger = ledger; self.channel = channel; self.executor = executor; self.expires = expires; self.timeout = timeout
     }
     func authorize(_ value: PiValue) throws -> PiModelScope {
@@ -220,8 +225,9 @@ actor NativePiModelBroker {
         try await executor.validateOwner()
         try piCheck(!closed && Date() < expires, .unauthorized)
         try piCheck(!quarantined, .uncertain)
-        guard let scope = scopes[value.pi("scope").piString ?? ""] else { throw PiBrokerError.unauthorized }
-        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel))
+        let scope = try toolRequestScope(value)
+        let hostTools = try await toolCatalog(scope)
+        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel, hostTools: hostTools))
         try await executor.validateRequest(request)
         try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
         try piCheck(!canceled.contains(request.id), .canceled)
@@ -231,6 +237,7 @@ actor NativePiModelBroker {
             try piCheck(!closed && !quarantined && !canceled.contains(request.id), .unauthorized)
             try await executor.validateRequest(request)
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
+            try piCheck(try await toolCatalog(scope) == request.hostTools, .unauthorized)
             try PiModelReply.validate(saved, request: request)
             return saved
         }
@@ -253,6 +260,7 @@ actor NativePiModelBroker {
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
             try await executor.validateRequest(request)
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
+            try piCheck(try await toolCatalog(scope) == request.hostTools, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
             return reply
@@ -262,14 +270,85 @@ actor NativePiModelBroker {
             throw error
         }
     }
-    func cancel(_ id: String) {
-        guard canceled.count < 24 else { close(); return }
+    func toolCatalog(_ scope: PiModelScope) async throws -> [NativeToolSchema] {
+        try await executor.validateOwner()
+        try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
+        let result = try await tools?.catalog(scope: scope) ?? []
+        try PiRuntimeTools.validate(result)
+        try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
+        return result
+    }
+    func toolRequestScope(_ value: PiValue) throws -> PiModelScope {
+        guard let scope = scopes[value.pi("scope").piString ?? ""] else { throw PiBrokerError.unauthorized }
+        try piCheck(value.pi("channel").piString == channel && value.pi("profile").piString == scope.profile && value.pi("subject").piString == scope.subject && value.pi("role").piString == scope.role && value.pi("mode").piString == scope.mode && value.pi("assistant").piString == scope.assistant && value.pi("conversation").piString == scope.conversation, .unauthorized)
+        return scope
+    }
+    func toolOperation(_ value: PiValue) async throws -> PiValue {
+        let op = value.pi("op").piString
+        var keys: Set<String> = ["op", "id", "channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation"]
+        if op == "tool_call" { keys.formUnion(["call_id", "name", "arguments"]) }
+        try value.piKeys(keys)
+        let id = try piUUID(value.pi("id"))
+        let scope = try toolRequestScope(value)
+        let catalog = try await toolCatalog(scope)
+        try piCheck(!canceled.contains(id), .canceled)
+        if op == "tool_catalog" { return .object(["tools": PiRuntimeTools.wire(catalog)]) }
+        try piCheck(op == "tool_call", .unauthorized)
+        guard let tools, let name = value.pi("name").piString, catalog.contains(where: { $0.name == name }) else { throw PiBrokerError.unauthorized }
+        let callID = try piToolID(value.pi("call_id")), arguments = value.pi("arguments")
+        try PiModelRequest.arguments(arguments, name: name, scope: scope, hostTools: catalog)
+        try piCheck(toolActive[id] == nil && !toolActive.values.contains(where: { $0.0.id == scope.id }), .duplicate)
+        let digest = piHash(try PiValue.object(["binding": .string(scope.binding), "name": .string(name), "arguments": arguments]).piData())
+        if let saved = try ledger.reserveTool(scope: scope, id: callID, digest: digest) { return .object(["value": saved]) }
+        let operation = Task { try await tools.call(scope: scope, id: callID, name: name, arguments: arguments) }
+        let race = PiModelRace()
+        toolActive[id] = (scope, operation, race)
+        let receiver = Task { race.resolve(await operation.result) }
+        let timer = Task {
+            try? await Task.sleep(for: .seconds(20))
+            if !Task.isCancelled { operation.cancel(); race.resolve(.failure(PiBrokerError.unavailable)) }
+        }
+        defer { timer.cancel(); receiver.cancel(); toolActive.removeValue(forKey: id) }
+        do {
+            let result = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { race.install($0) }
+            } onCancel: { operation.cancel(); race.resolve(.failure(CancellationError())) }
+            try Task.checkCancellation()
+            let current = try await toolCatalog(scope)
+            try piCheck(!canceled.contains(id) && !operation.isCancelled, .canceled)
+            try piCheck(current.contains(where: { $0.name == name && $0 == catalog.first(where: { $0.name == name }) }), .unauthorized)
+            try piCheck(try result.piData().count <= 8192)
+            try ledger.settleTool(scope: scope, id: callID, result: result)
+            return .object(["value": result])
+        } catch {
+            operation.cancel()
+            ledger.uncertainTool(scope: scope, id: callID)
+            await tools.cancel(scope: scope)
+            throw error
+        }
+    }
+    func cancel(_ id: String) async {
+        guard canceled.count < 128 else { await close(); return }
         canceled.insert(id)
+        if let value = toolActive[id] {
+            value.1.cancel(); value.2.resolve(.failure(CancellationError()))
+            await tools?.cancel(scope: value.0)
+        }
         if let value = active[id] { value.1.cancel(); value.2.resolve(.failure(CancellationError())) }
     }
-    func close() {
+    func revoke(subject: String) async {
+        let owned = scopes.values.filter { $0.subject == subject }
+        for scope in owned { scopes.removeValue(forKey: scope.id) }
+        let calls = toolActive.filter { $0.value.0.subject == subject }.map(\.key)
+        for id in calls { await cancel(id) }
+        for scope in owned { await tools?.cancel(scope: scope) }
+    }
+    func close() async {
         closed = true
+        for value in toolActive.values { value.1.cancel(); value.2.resolve(.failure(CancellationError())) }
         for value in active.values { value.1.cancel(); value.2.resolve(.failure(CancellationError())) }
+        let owned = Array(scopes.values)
         scopes.removeAll()
+        for scope in owned { await tools?.cancel(scope: scope) }
     }
 }

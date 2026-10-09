@@ -15,13 +15,13 @@ actor NativePiAppOwner {
     private var bindings: [String: PiValue] = [:]
     private var granting: [String: Task<Void, Error>] = [:]
     private var commandTimers: [String: Task<Void, Never>] = [:]
-    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
+    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
         self.httpTransport = httpTransport
         self.memoryBridge = memoryBridge
         let input = Pipe(), output = Pipe()
         channel = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         let control = PiPrivatePipe(read: input.fileHandleForReading, write: output.fileHandleForWriting)
-        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33, transport: transport)
+        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33, transport: transport, tools: tools)
         self.session = session
         runner = Task.detached { await session.run() }
     }
@@ -138,7 +138,10 @@ actor NativePiAppOwner {
             try piCheck(status == 200, .unavailable)
             let task = try PiValue.piRead(bytes), payload = task.pi("payload")
             try piCheck(task.pi("id").piString == taskID && task.pi("worker_type").piString == "pi_worker" && payload.pi("assistant_id").piString == assistant, .unauthorized)
-            if components[2] == "cancel" { await memoryBridge?.revoke(taskID) }
+            if components[2] == "cancel" {
+                await session.broker.revoke(subject: taskID)
+                await memoryBridge?.revoke(taskID)
+            }
             if components[2] == "decision" {
                 guard let data = request.httpBody else { throw PiBrokerError.invalid }
                 let body = try PiValue.piRead(data)

@@ -122,9 +122,13 @@ class Runtime:
             return previous
         self.active.add(body['message_id'])
         try:
+            host_tools = await self.model_transport.tools(body['message_id'], 'foreground', body['mode']) if self.model_transport is not None else []
+            host_names = {tool['name'] for tool in host_tools}
             async def host(event: dict[str, Any]) -> dict[str, Any]:
                 if event.get('type') == 'model' and self.native:
                     return await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
+                if event.get('type') == 'tool' and event.get('name') in host_names and self.model_transport is not None:
+                    return await self.model_transport.tool_call(event, body['message_id'], 'foreground', body['mode'])
                 if event.get('type') != 'tool' or event.get('name') != 'delegate' or body['mode'] != 'assistant':
                     raise ValueError('Tool unavailable')
                 args = event.get('args')
@@ -143,7 +147,7 @@ class Runtime:
                     history.append({'role': 'user', 'content': item['text'], 'timestamp': 0})
                 else:
                     history.append({'role': 'assistant', 'content': [{'type': 'text', 'text': item['text']}], 'api': 'vera-transport', 'provider': 'vera', 'model': 'explicit-transport', 'stopReason': 'stop', 'timestamp': 0, 'usage': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'totalTokens': 0, 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}}})
-            result = await self.process.run({'role': 'foreground', 'mode': body['mode'], 'text': body['text'], 'session_id': body['assistant_id'], 'transport': self.transport, 'history': history}, host)
+            result = await self.process.run({'role': 'foreground', 'mode': body['mode'], 'text': body['text'], 'session_id': body['assistant_id'], 'transport': self.transport, 'history': history, 'host_tools': host_tools}, host)
             answer = {'message_id': body['message_id'], 'reply_id': str(uuid.uuid5(uuid.NAMESPACE_URL, body['message_id'])), 'text': result['text'], 'task_ids': self.task_ids(body['message_id'])}
             with self.connect() as db:
                 db.execute("UPDATE turns SET state='completed',answer=?,answered=? WHERE id=?", (canonical(answer), time.time(), body['message_id']))
@@ -224,6 +228,10 @@ class Runtime:
                     file.write('def add(a, b):\n    return a - b\n')
         finally:
             os.close(directory_fd)
+        if self.canceled(task) or not self.store.get(task['id'])['checkpoint'].get('approved'):
+            raise PiFailure('canceled')
+        host_tools = await self.model_transport.tools(task['id'], 'worker', 'assistant') if self.model_transport is not None else []
+        host_names = {tool['name'] for tool in host_tools}
         receipts: dict[str, dict[str, Any]] = {}
         tool_failed = False
         async def host(event: dict[str, Any]) -> dict[str, Any]:
@@ -234,6 +242,13 @@ class Runtime:
                 return await self.native.complete(event, task['id'], 'worker', 'assistant')
             if event.get('type') != 'tool':
                 raise ValueError('Model transport unavailable')
+            if event.get('name') in host_names and self.model_transport is not None:
+                if not self.store.get(task['id'])['checkpoint'].get('approved'):
+                    raise PiFailure('permission_denied')
+                result = await self.model_transport.tool_call(event, task['id'], 'worker', 'assistant')
+                if self.canceled(task) or not self.store.get(task['id'])['checkpoint'].get('approved'):
+                    raise PiFailure('canceled')
+                return result
             try:
                 receipt = self.file_tool(task, directory, event)
             except (ValueError, OSError, SyntaxError):
@@ -242,7 +257,7 @@ class Runtime:
             receipts[event['name']] = receipt
             return receipt
         try:
-            output = await self.process.run({'role': 'worker', 'text': task['payload']['objective'], 'session_id': task['id'], 'transport': self.transport, 'delay_ms': self.worker_delay_ms}, host, lambda: self.canceled(task))
+            output = await self.process.run({'role': 'worker', 'text': task['payload']['objective'], 'session_id': task['id'], 'transport': self.transport, 'delay_ms': self.worker_delay_ms, 'host_tools': host_tools}, host, lambda: self.canceled(task))
         except PiFailure:
             return StepResult(state='needs_decision', checkpoint=checkpoint, event='worker_interrupted', decision={'prompt': 'The worker stopped before completion. Retry after checking its saved edits?', 'choices': ['approve', 'decline']})
         if self.canceled(task):

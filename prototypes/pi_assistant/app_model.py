@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import re
+import uuid
 from typing import Any, Protocol
 
 from .native import NativeMockTransport, identifier
@@ -11,6 +13,8 @@ class ModelTransport(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def complete(self, event: dict[str, Any], task_id: str, role: str, mode: str) -> dict[str, Any]: ...
+    async def tools(self, subject: str, role: str, mode: str) -> list[dict[str, Any]]: ...
+    async def tool_call(self, event: dict[str, Any], subject: str, role: str, mode: str) -> Any: ...
 
 
 def decode_frame(data: bytes) -> dict[str, Any]:
@@ -155,6 +159,50 @@ class AppModelTransport:
         except (asyncio.CancelledError, asyncio.TimeoutError):
             if not future.done():
                 self.send({'op': 'cancel', 'id': request_id, 'channel': self.channel})
+                future.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+            raise
+        except BaseException:
+            if future.done():
+                future.exception()
+            raise
+
+    async def tools(self, subject: str, role: str, mode: str) -> list[dict[str, Any]]:
+        result = await self.tool_request('tool_catalog', subject, role, mode)
+        catalog = result.get('tools')
+        if not isinstance(catalog, list) or len(catalog) > 16:
+            raise PiFailure('app_catalog')
+        names = set()
+        for tool in catalog:
+            if not isinstance(tool, dict) or set(tool) != {'name', 'description', 'parameters'} or not isinstance(tool['name'], str) or not re.fullmatch(r'mcp_[a-f0-9]{40}', tool['name']) or tool['name'] in names or not isinstance(tool['description'], str) or not isinstance(tool['parameters'], dict):
+                raise PiFailure('app_catalog')
+            names.add(tool['name'])
+        if len(json.dumps(catalog, separators=(',', ':'), ensure_ascii=False).encode()) > 8192:
+            raise PiFailure('app_catalog')
+        return catalog
+
+    async def tool_call(self, event: dict[str, Any], subject: str, role: str, mode: str) -> Any:
+        call_id, name, arguments = event.get('call_id'), event.get('name'), event.get('args')
+        if not isinstance(call_id, str) or not 1 <= len(call_id.encode()) <= 128 or any(ord(c) < 32 or ord(c) == 127 for c in call_id) or not isinstance(name, str) or not re.fullmatch(r'mcp_[a-f0-9]{40}', name) or not isinstance(arguments, dict):
+            raise PiFailure('app_tool')
+        result = await self.tool_request('tool_call', subject, role, mode, {'call_id': call_id, 'name': name, 'arguments': arguments})
+        if set(result) != {'value'} or len(json.dumps(result['value'], separators=(',', ':'), ensure_ascii=False).encode()) > 8192:
+            raise PiFailure('app_tool')
+        return result['value']
+
+    async def tool_request(self, op: str, subject: str, role: str, mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        scope = self.scopes.get((subject, role))
+        if scope is None or scope['mode'] != mode or self.closed.is_set():
+            raise PiFailure('app_unauthorized')
+        request_id = str(uuid.uuid4())
+        future = asyncio.get_running_loop().create_future()
+        self.pending[request_id] = future
+        try:
+            self.send({'op': op, 'id': request_id, 'channel': self.channel, **scope, **(payload or {})})
+            return await asyncio.wait_for(asyncio.shield(future), 23)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            if not future.done():
+                if not self.closed.is_set():
+                    self.send({'op': 'cancel', 'id': request_id, 'channel': self.channel})
                 future.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
             raise
         except BaseException:

@@ -25,18 +25,35 @@ function call(name, args) { return { type: 'toolCall', id: crypto.randomUUID(), 
 async function run(config) {
   let rounds = 0;
   let calls = 0;
-  const tools = (config.role === 'worker' ? [
+  const builtins = (config.role === 'worker' ? [
     ['read_file', Type.Object({ path: Type.String() })],
     ['write_file', Type.Object({ path: Type.String(), content: Type.String() })],
     ['check_python', Type.Object({ path: Type.String() })],
   ] : config.mode === 'assistant' ? [['delegate', Type.Object({ objective: Type.String({ minLength: 1, maxLength: 8000 }) })]] : []).map(([name, parameters]) => ({
     name, label: name, description: name === 'delegate' ? 'Accept explicitly requested background work. Returns immediately with a durable task identity. Execution waits for approval.' : 'Operate only on files granted for this task.', parameters,
-    execute: async (_id, args) => {
+    execute: async (call_id, args) => {
       if (++calls > 8) throw new Error('tool_limit');
-      const result = await hostCall('tool', { name, args });
+      const result = await hostCall('tool', { call_id, name, args });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], details: {} };
     },
   }));
+  const schemas = config.host_tools ?? [];
+  if (!Array.isArray(schemas) || schemas.length > 16 || Buffer.byteLength(JSON.stringify(schemas)) > 8192) throw new Error('catalog_limit');
+  const names = new Set(builtins.map(tool => tool.name));
+  const tools = [...builtins, ...schemas.map(schema => {
+    if (!schema || typeof schema.name !== 'string' || schema.name.length !== 44 || !/^mcp_[a-f0-9]{40}$/.test(schema.name) || names.has(schema.name) || typeof schema.description !== 'string' || !schema.parameters || schema.parameters.type !== 'object') throw new Error('catalog_invalid');
+    names.add(schema.name);
+    return {
+      name: schema.name, label: schema.name, description: schema.description, parameters: schema.parameters,
+      execute: async (call_id, args) => {
+        if (++calls > 8) throw new Error('tool_limit');
+        const result = await hostCall('tool', { call_id, name: schema.name, args });
+        const text = JSON.stringify(result);
+        if (Buffer.byteLength(text) > 8192) throw new Error('result_limit');
+        return { content: [{ type: 'text', text }], details: {} };
+      },
+    };
+  })];
   const streamFn = (_model, context) => {
     const stream = new EventStream(x => x.type === 'done' || x.type === 'error', x => x.message ?? x.error);
     Promise.resolve().then(async () => {
