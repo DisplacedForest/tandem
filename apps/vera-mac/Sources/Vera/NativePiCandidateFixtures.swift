@@ -41,8 +41,11 @@ final class PiAdmissionFixtureState: @unchecked Sendable {
     private var active: [String: String] = [:]
     private var priorities: [String] = []
     private var released = 0
+    private var unavailable = false
+    func setUnavailable(_ value: Bool) { lock.lock(); defer { lock.unlock() }; unavailable = value }
     func response(_ request: URLRequest) throws -> Data {
         lock.lock(); defer { lock.unlock() }
+        try piCheck(!unavailable, .unavailable)
         let path = request.url?.path ?? ""
         let id: String, state: String
         if path.hasSuffix("/release") {

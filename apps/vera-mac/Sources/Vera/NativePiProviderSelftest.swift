@@ -111,6 +111,7 @@ enum NativePiProviderSelftest {
             try await failurePaths(config: config, binding: binding, http: http, admission: admission, root: root)
             try await documentRetry(config: config, binding: binding, http: http, admission: admission, root: root)
             if !arguments.isEmpty {
+                try await NativePiProductionSelftest.run(arguments, config: config, http: http, admission: admission, root: root)
                 try await workflow(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
                 try await memoryReplay(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
                 try await NativeRuntimeMemoryRetryContract.run(arguments, config: config, binding: binding, admission: admission, root: root)

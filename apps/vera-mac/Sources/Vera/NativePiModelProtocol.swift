@@ -81,6 +81,7 @@ struct PiModelRequest: Sendable {
     let hostTools: [NativeToolSchema]
     let hostToolRevision: String?
     let hostToolAuthority: (any NativeRuntimeToolServing)?
+    var spendingChecked = false
     var memoryContext: NativeRuntimeMemoryContext? = nil
     var memoryAuthority: NativeRuntimeMemoryBridge? = nil
     init(_ value: PiValue, scope: PiModelScope, channel: String, hostTools: [NativeToolSchema] = [], hostToolRevision: String? = nil, hostToolAuthority: (any NativeRuntimeToolServing)? = nil) throws {

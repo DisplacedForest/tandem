@@ -395,3 +395,24 @@ async def test_deliveries_keep_chronological_order_and_recent_context(tmp_path):
         assert captured[-1]['content'][0]['text'] == reply['text']
     finally:
         await runtime.stop()
+
+
+@pytest.mark.parametrize('persistent', [False, True])
+def test_owned_http_session_lifetime(tmp_path, monkeypatch, persistent):
+    from types import SimpleNamespace
+    from pi_assistant import bridge
+    from pi_assistant.app_model import AppModelTransport
+    clock = [0]
+    monkeypatch.setattr(bridge, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    capability = str(uuid.uuid4()) + str(uuid.uuid4())
+    transport = AppModelTransport(str(uuid.uuid4()), str(uuid.uuid4()), persistent=persistent)
+    app = create_app(tmp_path, NODE, model_transport=transport, ui_capability=capability, persistent=persistent)
+    client = TestClient(app)
+    try:
+        clock[0] = 601
+        result = client.get('/assistant/capabilities', headers={'Authorization': 'Bearer ' + capability})
+        assert result.status_code == (200 if persistent else 403)
+        assert client.get('/assistant/capabilities').status_code == 403
+        assert client.get('/assistant/capabilities', headers={'Authorization': 'Bearer ' + capability, 'Origin': 'https://example.invalid'}).status_code == 403
+    finally:
+        client.close()

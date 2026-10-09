@@ -34,9 +34,10 @@ def decode_frame(data: bytes) -> dict[str, Any]:
 
 
 class AppModelTransport:
-    def __init__(self, channel: str, profile: str, request_timeout: float = 5, kind: str = 'app-owned-mock'):
+    def __init__(self, channel: str, profile: str, request_timeout: float = 5, kind: str = 'app-owned-mock', persistent: bool = False):
         if kind not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
             raise PiFailure('app_transport')
+        self.request_limit = 1000 if persistent else 12
         self.kind = kind
         if not isinstance(request_timeout, (float, int)) or not 1 <= request_timeout <= 35:
             raise PiFailure("app_deadline")
@@ -88,7 +89,7 @@ class AppModelTransport:
             if value['profile'] != self.profile or value['role'] not in {'foreground', 'worker', 'document'} or value['mode'] not in {'assistant', 'focused'} or (value['role'] != 'foreground' and value['mode'] != 'assistant'):
                 raise PiFailure('app_scope')
             key = (value['subject'], value['role'])
-            if key in self.scopes or len(self.scopes) >= 16:
+            if key in self.scopes or len(self.scopes) >= self.request_limit + 4:
                 raise PiFailure('app_scope')
             self.scopes[key] = value
             self.scope_changed.set()
@@ -141,7 +142,7 @@ class AppModelTransport:
         if event.get('type') != 'model' or scope is None or scope['mode'] != mode or self.closed.is_set():
             raise PiFailure('app_unauthorized')
         request_id = identifier(event.get('id'))
-        if request_id in self.seen or len(self.seen) >= 12:
+        if request_id in self.seen or len(self.seen) >= self.request_limit:
             raise PiFailure('app_limit')
         messages = NativeMockTransport._messages(event.get('context'))
         for message in messages:

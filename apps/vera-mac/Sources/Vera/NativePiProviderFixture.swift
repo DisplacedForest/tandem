@@ -49,7 +49,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         guard let data else { throw PiBrokerError.invalid }
         let body = try PiValue.piRead(data)
         try piCheck(body.pi("model").piString == "qwen/qwen3.8-flash" && [PiValue.number(256), .number(1024)].contains(body.pi("max_tokens")) && body.pi("reasoning").pi("enabled") == .bool(false))
-        try piCheck(body.pi("provider").pi("max_price").pi("prompt") == .number(behavior.hasPrefix("checkpoint") ? 0.17 : 0.05) && body.pi("provider").pi("allow_fallbacks") == .bool(false))
+        try piCheck(body.pi("provider").pi("max_price").pi("prompt") == .number(behavior.hasPrefix("checkpoint") ? 0.17 : behavior == "production" ? 0.06 : 0.05) && body.pi("provider").pi("allow_fallbacks") == .bool(false))
         let names = body.pi("tools").piArray!.compactMap { $0.pi("function").pi("name").piString }
         let messages = body.pi("messages").piArray!, last = body.pi("messages").piArray!.last!
         let worker = names.contains("write_file")
@@ -65,6 +65,12 @@ final class PiProviderFixtureState: @unchecked Sendable {
             name = "delegate"; args = .object(["objective": .string(String(text.dropFirst(6)))])
         }
         var message: [String: PiValue] = ["role": .string("assistant"), "content": .string(behavior.hasPrefix("checkpoint") ? "OK" : "HTTP provider fixture reply.")]
+        if behavior == "production", body.pi("max_tokens") == .number(1024) {
+            let document: PiValue = prompt.contains("Plan at most")
+                ? .object(["sections": .array([.object(["heading": .string("Plan"), "instructions": .string("Use notes")])])])
+                : .object(["text": .string("Prepare, then discuss the supplied notes.")])
+            message["content"] = .string(String(decoding: try document.piData(), as: UTF8.self))
+        }
         if let name {
             message["content"] = .null
             message["tool_calls"] = .array([.object(["id": .string(UUID().uuidString.lowercased()), "type": .string("function"), "function": .object(["name": .string(name), "arguments": .string(String(decoding: try args.piData(), as: UTF8.self))])])])

@@ -19,8 +19,8 @@ struct PiSelectedProfileBinding: Equatable, Sendable {
 actor PiSharedAccounting {
     let ledger: PiModelLedger
     private var blocked = false
-    init(root: URL, baselineNanos: Int64, budgetNanos: Int64 = 200_000_000_000, ownerBinding: String = "fixture", transport: PiTransportKind = .mock) throws {
-        ledger = try PiModelLedger(root: root, manifest: "app-shared-accounting-v1", budget: budgetNanos, baseline: baselineNanos, ownerBinding: ownerBinding, transport: transport)
+    init(root: URL, baselineNanos: Int64, budgetNanos: Int64 = 200_000_000_000, ownerBinding: String = "fixture", transport: PiTransportKind = .mock, requestLimit: Int = 12) throws {
+        ledger = try PiModelLedger(root: root, manifest: "app-shared-accounting-v1", budget: budgetNanos, baseline: baselineNanos, ownerBinding: ownerBinding, transport: transport, requestLimit: requestLimit)
     }
     func reserve(_ request: PiModelRequest) throws -> PiValue? {
         try piCheck(!blocked, .uncertain)
@@ -39,6 +39,15 @@ actor PiSharedAccounting {
     }
 }
 
+struct PiInferenceNotDispatched: Error {}
+
+final class PiAdmissionDispatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    func enter() { lock.lock(); defer { lock.unlock() }; started = true }
+    var didEnter: Bool { lock.lock(); defer { lock.unlock() }; return started }
+}
+
 struct PiSelectedProfileOperation: PiMockModelExecutor {
     let binding: PiSelectedProfileBinding
     let admission: NativeInferenceAdmission
@@ -46,10 +55,18 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     let validate: @Sendable () async throws -> Void
     let send: @Sendable (PiModelRequest, Data) async throws -> (Data, Int)
     var checkpointPricing: PiCheckpointPricing? = nil
+    var productionPricing: PiProductionPricing? = nil
+    var preflight: (@Sendable () async throws -> Void)? = nil
     var memoryBridge: NativeRuntimeMemoryBridge? = nil
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest {
-        if request.scope.role != "document", let memoryBridge { return try await memoryBridge.prepare(request) }
-        return request
+        var prepared = request
+        if request.scope.role != "document", let memoryBridge { prepared = try await memoryBridge.prepare(request) }
+        if !request.spendingChecked, let preflight {
+            _ = try productionPricing?.body(prepared)
+            try await preflight()
+            prepared.spendingChecked = true
+        } else { prepared.spendingChecked = request.spendingChecked }
+        return prepared
     }
     func validateRequest(_ request: PiModelRequest) async throws {
         try Task.checkCancellation()
@@ -61,32 +78,39 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
         let request = try await prepareRequest(request)
-        let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
+        let body = try checkpointPricing?.body(request) ?? productionPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
         try piCheck(body.count <= (request.scope.role == "document" ? 49152 : 16384))
-        return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
-            try budget.check()
-            try await validate()
-            try await validateRequest(request)
-            if let saved = try await accounting.reserve(request) {
+        let dispatch = PiAdmissionDispatch()
+        do {
+            return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
+                dispatch.enter()
+                try budget.check()
                 try await validate()
                 try await validateRequest(request)
-                try PiModelReply.validate(saved, request: request)
-                return saved
+                if let saved = try await accounting.reserve(request) {
+                    try await validate()
+                    try await validateRequest(request)
+                    try PiModelReply.validate(saved, request: request)
+                    return saved
+                }
+                do {
+                    try await validateRequest(request)
+                    let (data, status) = try await send(request, body)
+                    try budget.check()
+                    try piCheck(status == 200 && data.count <= 65536, .unavailable)
+                    let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
+                    try await validateRequest(request)
+                    try await accounting.settle(request, reply: reply)
+                    try await validateRequest(request)
+                    return reply
+                } catch {
+                    await accounting.uncertain(request)
+                    throw PiBrokerError.unavailable
+                }
             }
-            do {
-                try await validateRequest(request)
-                let (data, status) = try await send(request, body)
-                try budget.check()
-                try piCheck(status == 200 && data.count <= 65536, .unavailable)
-                let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
-                try await validateRequest(request)
-                try await accounting.settle(request, reply: reply)
-                try await validateRequest(request)
-                return reply
-            } catch {
-                await accounting.uncertain(request)
-                throw PiBrokerError.unavailable
-            }
+        } catch {
+            if productionPricing != nil && !dispatch.didEnter && !Task.isCancelled { throw PiInferenceNotDispatched() }
+            throw error
         }
     }
 }

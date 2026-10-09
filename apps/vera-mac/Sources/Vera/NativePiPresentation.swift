@@ -113,7 +113,7 @@ final class NativePiPresentation: ObservableObject {
             guard generation == revision, !stopped else { return }
             result.workspace.session.startEventTracking()
         } catch {
-            if generation == revision { failure = "Vera couldn't connect. Your saved work is preserved." }
+            if generation == revision { failure = (error as? NativePiProduction.Failure)?.message ?? "Vera couldn't connect. Your saved work is preserved." }
         }
         if generation == revision { starting = false; startup = nil }
     }

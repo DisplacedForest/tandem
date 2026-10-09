@@ -73,13 +73,15 @@ final class NativePiRuntimeSession: @unchecked Sendable {
     let channel: String
     let capability: String
     let transport: PiTransportKind
+    let persistent: Bool
     private let lock = NSLock()
     private var ended = false
     private var ownedGroup: Int32?
     private var grants: [String: (String, PiModelScope)] = [:]
-    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock, tools: (any NativeRuntimeToolServing)? = nil) throws {
+    init(arguments: [String], controller injectedController: PiPrivatePipe? = nil, executor: any PiMockModelExecutor = PiFixtureModel(), ownerBinding: String = "fixture", requestTimeout: Double = 3, transport: PiTransportKind = .mock, tools: (any NativeRuntimeToolServing)? = nil, persistent: Bool = false) throws {
         let arguments = try NativePiRuntimePaths.expanded(arguments)
         self.transport = transport
+        self.persistent = persistent
         signal(SIGPIPE, SIG_IGN)
         umask(0o077)
         var info = stat()
@@ -103,10 +105,10 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         let runtimeManifest = repo.deletingLastPathComponent().appendingPathComponent("manifest.json")
         if FileManager.default.fileExists(atPath: runtimeManifest.path) { digest.append(try Data(contentsOf: runtimeManifest)) }
         digest.append(try Data(contentsOf: python)); digest.append(try Data(contentsOf: node))
-        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: piHash(digest), ownerBinding: ownerBinding, transport: transport)
+        ledger = try PiModelLedger(root: URL(fileURLWithPath: options["--root"]!), manifest: persistent ? "native-assistant-runtime-v1" : piHash(digest), ownerBinding: ownerBinding, transport: transport, requestLimit: persistent ? 1000 : 12)
         channel = UUID().uuidString.lowercased()
         capability = UUID().uuidString.lowercased() + UUID().uuidString.lowercased()
-        broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, timeout: .seconds(requestTimeout), tools: tools)
+        broker = NativePiModelBroker(ledger: ledger, channel: channel, executor: executor, expires: persistent ? .distantFuture : Date().addingTimeInterval(600), timeout: .seconds(requestTimeout), tools: tools)
         controller = injectedController ?? PiPrivatePipe(read: .standardInput, write: .standardOutput)
         let input = Pipe(), output = Pipe()
         process = Process()
@@ -119,7 +121,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
         child = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         try process.run()
         rememberGroup()
-        do { try child.send(.object(["op": .string("initialize"), "transport": .string(transport.rawValue), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port)), "request_timeout": .number(requestTimeout + 2)])) }
+        do { try child.send(.object(["op": .string("initialize"), "transport": .string(transport.rawValue), "channel": .string(channel), "profile": .string(ledger.profile), "ui_capability": .string(capability), "root": .string(ledger.owner.url.appendingPathComponent("runtime").path), "node": .string(node.path), "port": .number(Double(port)), "request_timeout": .number(requestTimeout + 2), "persistent": .bool(persistent)])) }
         catch { child.closeWrite(); Self.killGroup(process); throw error }
     }
     static func killGroup(_ process: Process) {
@@ -176,7 +178,7 @@ final class NativePiRuntimeSession: @unchecked Sendable {
                     continue
                 }
                 received += 1
-                try piCheck(ready && ["complete", "tool_catalog", "tool_call"].contains(value.pi("op").piString ?? "") && received <= 128, .unauthorized)
+                try piCheck(ready && ["complete", "tool_catalog", "tool_call"].contains(value.pi("op").piString ?? "") && received <= (persistent ? 16000 : 128), .unauthorized)
                 Task {
                     do {
                         let reply: PiValue

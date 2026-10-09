@@ -50,7 +50,7 @@ def validate_payload(payload: dict) -> None:
     WorkerPayload.model_validate(payload)
 
 
-def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None, model_transport: ModelTransport | None = None, ui_capability: str | None = None) -> FastAPI:
+def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None, model_transport: ModelTransport | None = None, ui_capability: str | None = None, persistent: bool = False) -> FastAPI:
     if (model_transport is None) != (ui_capability is None) or (ui_capability is not None and len(ui_capability) != 72):
         raise ValueError("App model transport requires its private UI capability")
     capability_deadline = time.monotonic() + 600
@@ -68,7 +68,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     app.state.runtime = runtime
     @app.middleware('http')
     async def local_boundary(request: Request, call_next):
-        if ui_capability is not None and (time.monotonic() >= capability_deadline or not hmac.compare_digest(request.headers.get('authorization', '').encode(), ('Bearer ' + ui_capability).encode())):
+        if ui_capability is not None and ((not persistent and time.monotonic() >= capability_deadline) or not hmac.compare_digest(request.headers.get('authorization', '').encode(), ('Bearer ' + ui_capability).encode())):
             from fastapi.responses import JSONResponse
             return JSONResponse({'detail': 'Session authentication required'}, status_code=403)
         if request.headers.get('origin') or request.headers.get('host', '').split(':')[0] not in {'127.0.0.1', 'localhost', 'testserver'}:

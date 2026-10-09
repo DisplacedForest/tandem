@@ -111,3 +111,5 @@ Session checks use injected model transports and isolated local databases. Run `
 Credential lifecycle checks inject both Keychain operations and configuration I/O. Run `VERA_CREDENTIAL_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for the focused mock suite. It covers unchanged saves, denied reads, explicit edits/removal, retry after failure, and guarded legacy migration without accessing real credentials or configuration.
 
 Native MCP changes must pass `mise run native-mcp-test` and `mise run check`. Tests use synthetic loopback servers. Live service setup, credential grants and built-in adapter removal require their own qualification and parity evidence.
+
+The production assistant factory is covered through injected HTTP in the provider wiring selftest: usage outages before dispatch, price changes, lifetime allowance, more than twelve replies, document completion and reopening without new inference. This is local regression coverage. Delivery acceptance also requires an ordinary installed launch and real connected reply/document, with existing credentials and an explicitly authorized spending limit.

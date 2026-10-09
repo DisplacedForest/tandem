@@ -27,12 +27,12 @@ def validate_runtime_files(root: Path) -> None:
 
 async def serve(boot: dict) -> None:
     import uvicorn
-    transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'], boot['transport'])
+    transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'], boot['transport'], persistent=boot.get('persistent', False))
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', boot['port']))
         listener.listen(16)
         listener.setblocking(False)
-        app = create_app(Path(boot['root']), boot['node'], instance_id=boot['channel'], model_transport=transport, ui_capability=boot['ui_capability'])
+        app = create_app(Path(boot['root']), boot['node'], instance_id=boot['channel'], model_transport=transport, ui_capability=boot['ui_capability'], persistent=boot.get('persistent', False))
         server = uvicorn.Server(uvicorn.Config(app, access_log=False, log_level='warning', timeout_graceful_shutdown=2))
         async def supervise() -> None:
             while not server.started:
@@ -58,8 +58,10 @@ def main() -> None:
     if os.getpgrp() != os.getpid():
         os.setsid()
     boot = decode_frame(sys.stdin.buffer.readline(65538))
-    if set(boot) != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port', 'request_timeout'} or boot['op'] != 'initialize' or boot['transport'] not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
+    if set(boot) - {'persistent'} != {'op', 'transport', 'channel', 'profile', 'ui_capability', 'root', 'node', 'port', 'request_timeout'} or boot['op'] != 'initialize' or boot['transport'] not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
         raise ValueError('app bootstrap required')
+    if type(boot.get('persistent', False)) is not bool:
+        raise ValueError('session lifecycle')
     cap = boot['ui_capability']
     if not isinstance(cap, str) or len(cap) != 72 or any(c not in '0123456789abcdef-' for c in cap):
         raise ValueError('capability required')
