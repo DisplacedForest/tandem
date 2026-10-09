@@ -5,6 +5,7 @@ struct NativeMCPToolsEditor: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var oauthReview: NativeMCPOAuthReview?
+    @State private var readTest: NativeMCPReadTestController?
     @State private var temporaryTokens: [String: String] = [:]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -57,6 +58,8 @@ struct NativeMCPToolsEditor: View {
                                 if let reason = tool.reason { Text(reason).font(.caption).foregroundStyle(.orange) }
                             }
                         }.disabled(!tool.callable)
+                        Button("Test read") { readTest = NativeMCPReadTestController(manager: manager, record: tool) }
+                            .disabled(NativeMCPReadTestController.scope(authority: manager.authority, record: tool) == nil)
                         DisclosureGroup("Inspect service tool") {
                             Text("Service-provided description").font(.caption).foregroundStyle(Theme.textSecondary)
                             Text(tool.description).font(.caption).textSelection(.enabled)
@@ -73,7 +76,74 @@ struct NativeMCPToolsEditor: View {
         .sheet(item: $oauthReview) { review in
             NativeMCPOAuthReviewEditor(manager: manager, review: review)
         }
-        .onDisappear { temporaryTokens.removeAll(); manager.cancelPendingOAuth() }
+        .sheet(item: $readTest) { controller in
+            NativeMCPReadTestEditor(controller: controller)
+        }
+        .onDisappear { temporaryTokens.removeAll(); manager.cancelPendingOAuth(); readTest?.close(); readTest = nil }
+    }
+}
+
+private struct NativeMCPReadTestEditor: View {
+    @ObservedObject var controller: NativeMCPReadTestController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Test read").font(.title2)
+                Text(verbatim: controller.record.server.name + " · " + controller.record.remoteName)
+                    .font(.callout).foregroundStyle(Theme.textSecondary)
+                Text("Run this enabled read directly. No model is used.").font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            if controller.usesPageURL {
+                TextField("Page URL", text: input)
+                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("mcp-read-page-url")
+                    .disabled(controller.running)
+            } else {
+                Text("Arguments").font(.headline)
+                TextEditor(text: input).font(.system(.body, design: .monospaced))
+                    .frame(height: 100).border(Theme.textSecondary.opacity(0.3))
+                    .accessibilityLabel("Read arguments as JSON").accessibilityIdentifier("mcp-read-arguments")
+                    .disabled(controller.running)
+                Text("Enter a JSON object, up to 16 KB.").font(.caption).foregroundStyle(Theme.textSecondary)
+                DisclosureGroup("Argument format") {
+                    ScrollView {
+                        Text(verbatim: String(decoding: (try? controller.record.schema.piData()) ?? Data(), as: UTF8.self))
+                            .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 110)
+                }
+            }
+            if controller.running { ProgressView("Reading…").controlSize(.small) }
+            if let error = controller.error { Text(verbatim: error).font(.callout).foregroundStyle(.orange) }
+            if let result = controller.result {
+                Text("Service response").font(.headline)
+                ScrollView {
+                    Text(verbatim: result.text).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("mcp-read-result")
+                }.frame(minHeight: 100, maxHeight: 250)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Source").font(.caption).foregroundStyle(Theme.textSecondary)
+                Text(verbatim: controller.record.server.endpoint.absoluteString)
+                    .font(.caption).textSelection(.enabled).accessibilityIdentifier("mcp-read-source")
+            }
+            HStack {
+                Spacer()
+                Button(controller.running ? "Cancel" : "Close") { controller.close(); dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(controller.usesPageURL ? "Read page" : "Run read") { controller.run() }
+                    .disabled(!controller.canRun).keyboardShortcut(.defaultAction)
+            }
+        }.padding(24).frame(width: 560)
+            .onAppear { controller.checkCurrent(); if controller.invalidated { dismiss() } }
+            .onChange(of: controller.invalidated) { _, invalidated in if invalidated { dismiss() } }
+            .onDisappear { controller.close() }
+    }
+
+    private var input: Binding<String> {
+        Binding(get: { controller.input }, set: { controller.updateInput($0) })
     }
 }
 

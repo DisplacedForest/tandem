@@ -138,7 +138,15 @@ final class NativeMCPAccess: @unchecked Sendable {
         previous.1.forEach { $0.revoke() }
         previous.2?()
     }
-    func setEnabled(_ ids: Set<String>) { lock.withLock { if enabled != ids { revision += 1 }; enabled = ids } }
+    func setEnabled(_ ids: Set<String>) {
+        let notify = lock.withLock { () -> (@Sendable () -> Void)? in
+            guard enabled != ids else { return nil }
+            revision += 1
+            enabled = ids
+            return observer
+        }
+        notify?()
+    }
     func permissionRevision() -> Int { lock.withLock { revision } }
     func catalogRevision(scope: String) -> String {
         lock.withLock { piHash(Data(([identity, String(revision), scope] + states.map { $0.id + ":" + $0.generation.uuidString + ":" + String($0.connected) + ":" + String(authorized($0.configuration)) }).joined(separator: "\n").utf8)) }
