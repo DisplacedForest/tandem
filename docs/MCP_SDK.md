@@ -1,0 +1,29 @@
+# Native MCP transport
+
+Vera uses the [official Swift MCP SDK](https://github.com/modelcontextprotocol/swift-sdk) without a protocol fork. `apps/vera-mac/Package.swift` pins release **0.12.1** exactly. `Package.resolved` records commit `a0ae212ebf6eab5f754c3129608bc5557637e605` and all resolved dependencies.
+
+The SDK provides initialization, tool discovery, pagination, tool calls, JSON-RPC decoding, negotiated protocol headers, and finite SSE response decoding. Its supported revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`. The adapter rejects an unrecognized negotiated revision or a server without tool support. Discovery preserves nested input schemas through the SDK value type. Results retain `content`, `structuredContent`, and `isError`.
+
+## Dependency review
+
+The audit covered the package manifests, license, security policy, client lifecycle, pending requests, HTTP transport, JSON values, and the release's upstream concurrency changes. Release 0.11.0 fails the current Swift compiler's concurrency checking in its network transport. Release 0.12.1 includes the upstream correction and negotiated HTTP header correction. No compiler diagnostics were disabled and no SDK source was patched.
+
+The SDK's [license](https://github.com/modelcontextprotocol/swift-sdk/blob/0.12.1/LICENSE) records an Apache-2.0 transition with retained MIT contributions. The app resource folder `Resources/MCP-Licenses` retains upstream license and notice texts for the new resolved dependency graph. Distributors must preserve those files. Runtime dependencies are Apple's Swift System and Swift Log plus EventSource, an MIT-licensed package maintained by its named upstream author. The resolved dependency graph also contains Apple's Swift NIO, Atomics and Collections. SDK and EventSource manifests have alternate manifests and optional products; only the MCP product is requested. No SDK executable, build plugin, OAuth authorizer, or external server is activated by Vera's adapter. The lockfile is part of the review surface for dependency updates.
+
+The [upstream advisory page](https://github.com/modelcontextprotocol/swift-sdk/security/advisories) showed no published advisories during this review. This is a source and dependency review, not a proof that the dependency has no vulnerabilities. The upstream security policy directs private reports through GitHub Security Advisories.
+
+## Network boundary
+
+`NativeMCPSDKConnection` accepts an explicit host-selected HTTPS URL, or HTTP on literal loopback and localhost for fixtures. User information, fragments, and query credentials are rejected. It does not read app configuration or credentials. The host remains responsible for enabling the destination, validating schemas and arguments, and authorizing each tool call.
+
+The SDK's public HTTP initializer accepts a session configuration but does not expose its session delegate or a body limit. Vera supplies a custom URL protocol only in this SDK session. It forwards HTTP through a separate ephemeral session, strips credential and cookie headers, disables credential and cookie storage, rejects redirects, and cancels authentication challenges other than ordinary TLS server trust. No process-wide protocol is registered. Authentication responses become a recoverable authentication-required failure without starting OAuth or retrying with credentials.
+
+The boundary checks declared content length and counts actual received bytes before forwarding a response to the SDK. The default limit is 1 MiB per HTTP response. An oversized chunked or decompressed body is cancelled as soon as it exceeds the cap. A transport decorator applies Vera's existing JSON ambiguity and depth guard to every SDK-framed message before the client decodes it, including SSE data. Duplicate and canonically equal object keys are rejected. Nesting must remain below 20 levels. Bounded bodies are held until completion; this slice supports finite JSON and SSE POST responses, not a persistent server event subscription. The SDK's server push connection is disabled. The default operation deadline is 20 seconds and includes connection initialization. A timed-out or cancelled operation closes the connection. The host must explicitly reconnect. Neither reconnect nor cancellation replays a tool call.
+
+Cancellation promptly stops local waiting and HTTP I/O. A remote server might already have performed an action or might ignore a closed connection. This adapter does not promise rollback, exactly-once execution, or remote task cancellation. Durable jobs and approval remain owned by Vera's existing host services. One operation runs on a connection at a time; concurrent attempts receive a busy failure.
+
+## Synthetic verification
+
+Run `python3 apps/vera-mac/Tests/MCP/run.py` from the repository. It creates an isolated Swift executable using the same transport sources and pinned SDK, then starts a disposable Python HTTP fixture on loopback. `NativeMCPTransportSelftest.run()` can also be invoked by the native selftest entry point when built from the repository.
+
+Coverage includes negotiation and negotiated headers, paginated tools, nested schema structure, numeric versus Boolean values, structured results, tool error results, explicit reconnect, authentication refusal, redirect refusal with no redirected request, fixed-length and chunked size limits, malformed JSON and response shape, duplicate and canonically equal object keys in JSON or SSE, unknown protocol, remote errors, dropped connections, finite SSE, deadline and prompt cancellation. No private configuration, credentials, live server, model call, or native UI is used. This transport evidence does not establish installed or live MCP functionality.
