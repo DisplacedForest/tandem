@@ -53,6 +53,8 @@ The API suite is hermetic (every store runs against a temp dir; no live endpoint
 `pytest.ini` sets the import path. `pytest` works from `services/vera-api` or as
 `pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
 
+`mise run domain-state-test` checks typed memory projections, source-backed review, SQLite migration/restoration, privacy and shared native/Pi retrieval using synthetic local data.
+
 Task-engine tests include deterministic fake workers, process-kill recovery, cancellation, replay, and duplicate-request checks. They do not call models or external tools. Native admission tests additionally launch the built app against a synthetic loopback engine and provider, exercising real streaming, cancellation, memory generation, and restart recovery without saved credentials. `mise run native-task-test` exercises synthetic native background handoff, crash recovery, persistent transcript cards, reconnects, explicit retries, and eight-task control responsiveness. Task-card screenshots use a pure offscreen host before any saved configuration is loaded: `.build/debug/Vera --shot /tmp/task-card.png --view task-card`. Variants include `task-card-complete`, `task-card-stopped`, `task-card-retry`, `task-card-offline`, `task-card-report`, and `task-card-report-unsafe`; append `-narrow` for the smaller layout. Synthetic screenshot sources are nonlinked, and embedded report images do not fetch. `mise run native-admission-test` builds and runs those tests.
 
 `mise run signing-test` validates local signing configuration, exact certificate selection, and failure behavior with mocked signing commands. It does not access Keychain identities or change trust settings.

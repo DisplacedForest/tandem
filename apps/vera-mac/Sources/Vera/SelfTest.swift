@@ -428,6 +428,8 @@ enum SelfTest {
         await runNativeWebTools()
         await runNativeCapabilityTools()
         do {
+            try NativeDomainStateSelftest.run()
+            try await NativeDomainRepositorySelftest.run()
             try await NativeMemoryEvidenceSelftest.run()
             try await NativeRuntimeMemorySelftest.run()
         }

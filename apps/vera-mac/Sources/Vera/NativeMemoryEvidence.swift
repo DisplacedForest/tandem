@@ -7,6 +7,7 @@ struct NativeMemoryEvidence: Identifiable, Sendable {
     let record: NativeMemoryRecord
     let sourceText: String?
     let sourceVersion: String?
+    var domainSources: [NativeDomainCitation] = []
     var id: Int { revision }
 }
 
@@ -112,7 +113,8 @@ extension LocalChatRepository {
                     let json: String = row["record_json"]
                     return NativeMemoryEvidence(revision: row["revision"],
                         record: try JSONDecoder().decode(NativeMemoryRecord.self, from: Data(json.utf8)),
-                        sourceText: row["source_text"], sourceVersion: row["source_version"])
+                        sourceText: row["source_text"], sourceVersion: row["source_version"],
+                        domainSources: try Self.domainCitations(id, revision: row["revision"], db: db))
                 }
         }
     }

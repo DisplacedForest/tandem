@@ -690,9 +690,23 @@ final class ChatStore: ObservableObject {
         select(conversationID)
     }
 
-    func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) {
-        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+    func proposeDomainRecord(_ entry: NativeDomainEntry, label: String) throws {
+        guard nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else { throw NativeDomainError.changed }
+        _ = try local.stageDomainProposal(entry, label: label)
+        reloadNativeMemory()
+    }
+
+    @discardableResult
+    func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) -> Bool {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return false }
         do {
+            if proposal.domain != nil {
+                guard editedDetails == nil, let local = repository as? LocalChatRepository else { throw NativeDomainError.invalid }
+                try local.approveDomainProposal(proposal)
+                reloadNativeMemory()
+                indexApprovedMemoryIfNeeded()
+                return true
+            }
             switch proposal.kind {
             case .create:
                 let memory = NativeMemoryRecord(
@@ -706,7 +720,7 @@ final class ChatStore: ObservableObject {
                     memory, decision: editedDetails == nil ? .accepted : .edited,
                     note: "Approved memory proposal")
             case .update, .merge, .consolidate:
-                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return false }
                 let expected = target
                 target.title = proposal.title
                 target.summary = proposal.summary
@@ -729,7 +743,7 @@ final class ChatStore: ObservableObject {
                     for id in proposal.targetIDs where id != target.id { try memoryRepository.deleteMemory(id) }
                 }
             case .suppress:
-                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return false }
                 let expected = target
                 target.status = .suppressed
                 target.embedding = nil
@@ -741,8 +755,10 @@ final class ChatStore: ObservableObject {
             try memoryRepository.decideProposal(proposal.id, status: .accepted)
             reloadNativeMemory()
             indexApprovedMemoryIfNeeded()
+            return true
         } catch {
             memoryServiceState = .failed("The proposal could not be applied: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -1468,6 +1484,7 @@ final class ChatStore: ObservableObject {
         guard settings.enabled, nativeMemorySettings.enabled else { return [] }
         var selected: [NativeMemoryRanked] = []
         do {
+            if let local = repository as? LocalChatRepository { try local.refreshDomainProjections() }
             if settings.embeddingsModel.isEmpty, let local = repository as? LocalChatRepository {
                 selected = try local.recallMemory(text, bankScope: settings.bankScope)
             } else if !NativeMemorySafety.containsSensitiveData(text),
@@ -1492,7 +1509,10 @@ final class ChatStore: ObservableObject {
     func memorySelectionIsCurrent(_ selected: [NativeMemoryRanked]) -> Bool {
         guard !selected.isEmpty else { return true }
         guard nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else { return false }
-        do { return try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope).count == selected.count }
+        do {
+            try local.refreshDomainProjections()
+            return try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope).count == selected.count
+        }
         catch { return false }
     }
 

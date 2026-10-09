@@ -12,6 +12,7 @@ struct MemoryView: View {
     @State private var selected: NativeMemoryRecord?
     @State private var changeRequest = ""
     @State private var showClear = false
+    @State private var showDomainRecord = false
 
     private var visible: [NativeMemoryRecord] {
         let filter = NativeMemoryLibraryFilter(
@@ -41,6 +42,7 @@ struct MemoryView: View {
         }
         .background(Theme.bg)
         .sheet(item: $selected) { MemoryDetailView(memory: $0) }
+        .sheet(isPresented: $showDomainRecord) { NativeDomainRecordView() }
         .confirmationDialog(
             "Clear all approved memory?", isPresented: $showClear,
             titleVisibility: .visible
@@ -61,6 +63,8 @@ struct MemoryView: View {
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
+            Button("Record from evidence") { showDomainRecord = true }
+                .disabled(!config.nativeSettings.memory.enabled)
             Text("\(visible.count) shown")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 5)
@@ -355,6 +359,7 @@ private struct MemoryProposalReviewView: View {
     @Environment(\.dismiss) var dismiss
     let proposal: NativeMemoryProposal
     @State private var details: String
+    @State private var reviewError: String?
 
     init(proposal: NativeMemoryProposal) {
         self.proposal = proposal
@@ -371,8 +376,14 @@ private struct MemoryProposalReviewView: View {
             }
             Text(proposal.summary).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             Text("Proposed details").font(.system(size: 12, weight: .semibold))
-            TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
-                .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            if proposal.domain != nil {
+                ScrollView { Text(details).font(.system(size: 13)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(minHeight: 180)
+            } else {
+                TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
+                    .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let reviewError { Text(reviewError).font(.system(size: 12)).foregroundStyle(.red) }
             HStack {
                 if let source = proposal.sourceConversationID {
                     Button("Open source conversation") {
@@ -385,11 +396,11 @@ private struct MemoryProposalReviewView: View {
                 }
                 Spacer()
                 Button("Dismiss") { store.dismissMemoryProposal(proposal); dismiss() }
-                Button("Accept edited proposal") {
-                    store.acceptMemoryProposal(
-                        proposal,
-                        editedDetails: details.split(whereSeparator: \.isNewline).map(String.init))
-                    dismiss()
+                Button(proposal.domain == nil ? "Accept edited proposal" : "Accept record") {
+                    if store.acceptMemoryProposal(proposal,
+                        editedDetails: proposal.domain == nil ? details.split(whereSeparator: \.isNewline).map(String.init) : nil) {
+                        dismiss()
+                    } else if case .failed(let reason) = store.memoryServiceState { reviewError = reason }
                 }.buttonStyle(.borderedProminent)
             }
         }.padding(24).frame(width: 620, height: 430)
@@ -428,11 +439,16 @@ struct MemoryDetailView: View {
                 Text("This memory has changed since the answer. Saving edits the current memory.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
-            TextField("Name", text: $title).textFieldStyle(.roundedBorder)
-            TextField("Summary", text: $summary).textFieldStyle(.roundedBorder)
+            TextField("Name", text: $title).textFieldStyle(.roundedBorder).disabled(memory.domainEntityID != nil)
+            TextField("Summary", text: $summary).textFieldStyle(.roundedBorder).disabled(memory.domainEntityID != nil)
             Text("Durable details").font(.system(size: 12, weight: .semibold))
             TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
                 .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                .disabled(memory.domainEntityID != nil)
+            if memory.domainEntityID != nil {
+                Text("Calculated from approved evidence. Changes require a new reviewed record.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
             if let saveError {
                 Text(saveError).font(.system(size: 12)).foregroundStyle(.red)
             }
@@ -449,7 +465,11 @@ struct MemoryDetailView: View {
                                         Text("Used in this answer").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.accent)
                                     }
                                     Text(item.record.summary).font(.system(size: 12, weight: .medium))
-                                    if let text = item.sourceText {
+                                    ForEach(item.domainSources) { source in
+                                        Text(source.text).font(.system(size: 12)).textSelection(.enabled)
+                                        Button("Open source conversation") { store.openMemorySource(conversationID: source.source.conversationID); dismiss() }
+                                    }
+                                    if item.domainSources.isEmpty, let text = item.sourceText {
                                         Text(text).font(.system(size: 12)).textSelection(.enabled)
                                     } else {
                                         Text(item.record.sourceConversationID == nil ? "Saved in Memory" : "Original source unavailable")
@@ -481,7 +501,7 @@ struct MemoryDetailView: View {
                     } else if case .failed(let detail) = store.memoryServiceState {
                         saveError = detail
                     }
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.borderedProminent).disabled(memory.domainEntityID != nil)
             }
         }
         .padding(24).frame(width: 620, height: 620)

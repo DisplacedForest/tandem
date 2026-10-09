@@ -242,6 +242,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("runtimeMemorySourcesV15") { db in
             try Self.migrateRuntimeMemorySources(db)
         }
+        migrator.registerMigration("nativeDomainStateV16") { db in
+            try Self.migrateDomainState(db)
+        }
         try migrator.migrate(database)
     }
 
@@ -525,6 +528,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                           userInfo: [NSLocalizedDescriptionKey: "Memory cannot store credentials or secrets"])
         }
         try database.write { db in
+            if try memory.domainEntityID != nil || (String.fetchOne(db,
+                sql: "SELECT json_extract(record_json, '$.domainEntityID') FROM native_memories WHERE id = ?",
+                arguments: [memory.id])) != nil { throw NativeDomainError.changed }
             if let expected {
                 guard let json = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [memory.id]),
                       Self.decode(json, as: NativeMemoryRecord.self) == expected else { throw NativeMemoryEvidenceError.changed }
@@ -554,6 +560,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     }
 
     func saveProposal(_ proposal: NativeMemoryProposal) throws {
+        guard proposal.domain == nil else { throw NativeDomainError.invalid }
         guard proposal.durability == .durable || proposal.expiry != nil else {
             throw NSError(domain: "NativeMemory", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Episodic proposal requires an absolute expiry date"])
@@ -565,6 +572,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         let raw = try Self.encode(proposal)
         let targets = try Self.encode(proposal.targetIDs)
         try database.write { db in
+            if try String.fetchOne(db, sql: "SELECT json_extract(proposal_json, '$.domain') FROM native_memory_proposals WHERE id = ?", arguments: [proposal.id]) != nil {
+                throw NativeDomainError.changed
+            }
             try db.execute(sql: """
                 INSERT INTO native_memory_proposals
                     (id, kind, status, target_ids_json, source_conversation_id,
@@ -590,6 +600,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             guard let row = try Row.fetchOne(
                 db, sql: "SELECT proposal_json FROM native_memory_proposals WHERE id = ?", arguments: [id]),
                   var proposal = Self.decode(row["proposal_json"], as: NativeMemoryProposal.self) else { return }
+            if proposal.domain != nil {
+                guard status == .dismissed, proposal.status == .pending else { throw NativeDomainError.changed }
+            }
             proposal.status = status
             try db.execute(
                 sql: "UPDATE native_memory_proposals SET status = ?, proposal_json = ? WHERE id = ?",
@@ -607,7 +620,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             guard let row = try Row.fetchOne(
                 db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [id]),
                   var memory = Self.decode(row["record_json"], as: NativeMemoryRecord.self) else { return }
+            try Self.redactDomainMemory(id, db: db)
             memory.status = .deleted
+            memory.domainEntityID = nil
+            memory.domainRevision = nil
             memory.title = "Removed memory"
             memory.summary = ""
             memory.details = []
@@ -845,7 +861,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             ])
     }
 
-    private static func writeChange(_ change: NativeMemoryChange, db: Database) throws {
+    static func writeChange(_ change: NativeMemoryChange, db: Database) throws {
         try db.execute(sql: """
             INSERT INTO native_memory_changes
                 (id, memory_id, proposal_id, decision, note, created_at, change_json)

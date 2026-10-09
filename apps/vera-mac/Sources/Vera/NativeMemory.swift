@@ -150,6 +150,8 @@ struct NativeMemoryRecord: Codable, Identifiable, Hashable, Sendable {
     var sourceMessageID: String?
     var createdAt: Date
     var updatedAt: Date
+    var domainEntityID: UUID? = nil
+    var domainRevision: Int? = nil
 
     var embeddingState: NativeMemoryEmbeddingState {
         guard let embedding else { return .missing }
@@ -208,6 +210,7 @@ struct NativeMemoryProposal: Codable, Identifiable, Hashable, Sendable {
     var sourceMessageID: String?
     var createdAt: Date
     var status: NativeMemoryProposalStatus
+    var domain: NativeDomainProposal? = nil
 }
 
 struct NativeMemoryChange: Codable, Identifiable, Sendable {

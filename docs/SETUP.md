@@ -319,7 +319,7 @@ Settings, Memory controls the optional native personal-memory feature. It starts
 
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 
-See [Native memory](NATIVE_MEMORY.md) for the recall budgets, the privacy boundary, and the behavior it guarantees.
+For explicit facts, stock changes, and care records, use **Record from evidence** in Memory, select a saved user message, and review the proposal before accepting it. This needs no extraction model and does not synchronize live inventory. See [Native memory](NATIVE_MEMORY.md) for recall budgets, source deletion, corrections, and the privacy boundary.
 
 ### Conversation ingestion (opt-in)
 
