@@ -33,3 +33,24 @@ def test_package_rejects_unverified_identifier_shapes_before_writing(tmp_path, a
     with pytest.raises(ValueError):
         package(app_id, output)
     assert not output.exists()
+
+
+def test_update_preserves_existing_internal_identity_and_mapping(tmp_path):
+    app_id = 'asdk_app_' + 'a1' * 16
+    name = 'dev-' + 'a1' * 16
+    output = tmp_path / 'update.zip'
+    package(app_id, output, plugin_name=name, version='1.0.1')
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('plugin.json'))
+        assert manifest['name'] == name
+        assert manifest['version'] == '1.0.1'
+        assert json.loads(archive.read('.app.json')) == {'apps': {name: {'id': app_id}}}
+        assert manifest['extensions']['com.openai']['onboardingSkill'] in ('./skills/household-inbox-setup/SKILL.md',)
+
+
+@pytest.mark.parametrize('name,version', [('Bad Name', '1.0.1'), ('../inbox', '1.0.1'), ('', '1.0.1'), ('inbox', '1'), ('inbox', '01.0.1'), ('inbox', '1.0.1?key=secret')])
+def test_invalid_update_identity_does_not_write_output(tmp_path, name, version):
+    output = tmp_path / 'update.zip'
+    with pytest.raises(ValueError):
+        package('asdk_app_' + 'a1' * 16, output, name, version)
+    assert not output.exists()
