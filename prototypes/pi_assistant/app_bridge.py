@@ -12,6 +12,19 @@ from pi_assistant.app_model import AppModelTransport, decode_frame
 from pi_assistant.bridge import create_app
 
 
+def validate_runtime_files(root: Path) -> None:
+    workspace = root / 'workspaces'
+    for file in root.rglob('*') if root.exists() else ():
+        info = file.lstat()
+        metadata = file.name == '.DS_Store' and workspace in file.parents
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or (stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
+            raise ValueError('private runtime required')
+        if metadata and not stat.S_ISREG(info.st_mode):
+            raise ValueError('private runtime required')
+        if info.st_mode & (0o133 if metadata else 0o077):
+            raise ValueError('private runtime required')
+
+
 async def serve(boot: dict) -> None:
     import uvicorn
     transport = AppModelTransport(boot['channel'], boot['profile'], boot['request_timeout'], boot['transport'])
@@ -56,10 +69,7 @@ def main() -> None:
     home = Path.home() / '.vera'
     if not root.is_absolute() or root != root.resolve() or home == root or home in root.parents or root in home.parents:
         raise ValueError('isolated root required')
-    for file in root.rglob('*') if root.exists() else ():
-        info = file.lstat()
-        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or (stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
-            raise ValueError('private runtime required')
+    validate_runtime_files(root)
     node = Path(boot['node'])
     if not node.is_absolute() or not os.access(node, os.X_OK):
         raise ValueError('node')
