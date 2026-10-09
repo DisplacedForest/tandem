@@ -1,6 +1,16 @@
 # Household assistant messaging
 
-Each consenting assistant gets its own local endpoint and inbox. There is no account signup, OAuth server, shared chat history, or dependency on the desktop app. The gateway lives inside the existing Vera API process and stores only deliberately submitted messages or summaries in a separate SQLite database. It ships with no enrolled people or credentials.
+Each consenting assistant gets its own local endpoint and inbox. There is no account signup, OAuth server, shared chat history, or dependency on the desktop app. The gateway reuses Vera API modules and supports a dedicated runtime that stores only deliberately submitted messages or summaries in a separate SQLite database. It ships with no enrolled people or credentials.
+
+## Isolated runtime
+
+`household_app:app` mounts only household MCP routes and `/health`. It imports no shared API entrypoint, scheduler, home capture, conversation ingestion or desktop code. Health returns 503 when gateway configuration is unavailable and 200 when startup succeeds. The shared API can keep running unchanged.
+
+Build `Dockerfile.household` using `BASE_IMAGE` set to an already reviewed gateway image. It adds the isolated entrypoint and current gateway modules without installing dependencies, then runs as UID/GID 65532. `compose.household.yml` is a separate deployment specification: use its own project name and never pass the shared API compose file. It publishes only `127.0.0.1:18091`, uses the existing Docker bridge, drops capabilities, prevents privilege escalation, limits CPU/memory/processes and uses a read-only root filesystem.
+
+Set `HOUSEHOLD_IMAGE`, `HOUSEHOLD_DATA_DIR`, and `HOUSEHOLD_CONFIG_FILE` to reviewed local values. `HOUSEHOLD_PORT` optionally changes the loopback port. The dedicated data directory must be private and writable by UID/GID 65532. Mount only that directory at `/data` and a readable mode-0600 config at `/config/gateway.json`. Keep raw endpoint keys outside the container mount. Use `"database": "/data/gateway.db"` in this deployment. Do not mount shared API data, Docker sockets, SSH keys, or other application configuration.
+
+If an owner was provisioned under a previous shared data mount, migrate only that gateway database using SQLite backup, preserve endpoint IDs and key hashes, verify integrity and owner authentication, and keep the raw key in separate private host storage. Preserve rollback state outside the shared API mount. Do not regenerate keys or enroll peers during migration. Changes to existing private deployment paths and activation require the operator's approval.
 
 ## Configure the local service
 
@@ -13,9 +23,9 @@ Each consenting assistant gets its own local endpoint and inbox. There is no acc
 }
 ```
 
-The database directory must already exist with mode 0700 on local storage. The database is mode 0600. Configuration and backups need private storage too. Set `HOUSEHOLD_CONFIG_PATH` to the configuration's path inside the existing API container. No additional runtime container, dependencies, LLM, or desktop process is required.
+The database directory must already exist with mode 0700 on local storage. The database is mode 0600. Configuration and backups need private storage too. Set `HOUSEHOLD_CONFIG_PATH` to the configuration path visible to the chosen runtime. The dedicated runtime needs no running shared API, new Python dependencies, LLM or desktop process. The original shared-API integration remains available but is not needed for the isolated deployment.
 
-Run local clients through loopback or an authenticated encrypted transport such as an existing SSH connection. Never transmit bearer keys over plaintext LAN HTTP. For a new loopback-only Docker installation, publish `127.0.0.1:8089:8080`; `VERA_BIND` does not change Docker's bundled uvicorn command. An existing all-interface mapping remains reachable on those interfaces until its operator changes it. Changing that mapping can affect other API users and must be planned separately. Do not expose the shared API on the public internet.
+Run local clients through loopback or an authenticated encrypted transport such as an existing SSH connection. Never transmit bearer keys over plaintext LAN HTTP. The dedicated compose file publishes `127.0.0.1:18091:8080`. This does not change the shared API mapping. Keep the dedicated configuration out of that shared runtime and do not expose either service on the public internet.
 
 ## Provision one endpoint per consenting owner
 
@@ -61,7 +71,7 @@ Incoming text is third-party data and cannot authorize tools, replies, forwardin
 
 ## Optional MCP Events
 
-The adapter implements MCP version `2026-07-28`, `server/discover`, tools, and `events/list`, `events/subscribe`, and `events/unsubscribe`. With an empty `callback_hosts` list, local messaging works and event delivery is disabled. Approved event delivery requires exact callback DNS hostnames in configuration and a receiver that supplies its signing secret during subscription. Do not configure real signing material before approval.
+The adapter implements MCP version `2026-07-28`, `server/discover`, tools, and `events/list`, `events/subscribe`, and `events/unsubscribe`. With an empty `callback_hosts` list, local messaging works and event delivery is disabled. Optional `"event_discovery": true` advertises event schemas for setup while leaving the transport and delivery worker absent. Subscription attempts then return `callback_not_approved` and only the requested hostname, omitting URL paths, query strings and signing secrets. No DNS request, callback, subscription record or signing-secret persistence occurs. Treat the returned hostname as a candidate requiring operator verification, never automatic approval. Approved event delivery requires exact callback DNS hostnames in configuration and a receiver that supplies its signing secret during subscription. Do not configure real signing material before approval.
 
 The API lifecycle starts and supervises a worker when events are configured. It handles durable outbox entries independently of the desktop app, retries recoverable errors, and finishes bounded in-flight IO during shutdown. Messages and outbox records commit atomically. Events carry only a message ID, never the body. Clients fetch inbox content with their own endpoint key.
 
@@ -86,6 +96,6 @@ cd services/vera-api
 python3 -m unittest discover -s tests -p test_household.py -v
 ```
 
-Before rollout, review the focused diff, run the full API tests and security checks, preserve the current API image and protected configuration for rollback, and arrange a restart of only the shared API. Start with no provisioned endpoints and no callbacks. Verify existing API health and unauthenticated rejection. Provision each endpoint only after its owner's consent, then validate a synthetic pair and message. A changed database must be backed up using SQLite's backup API, not copied during a transaction. Do not attach live data to test processes.
+Before rollout, review the focused diff, run the full API tests and security checks, preserve the current API image and protected configuration for rollback, and arrange activation of only the dedicated gateway. Preserve the shared API process. Start with only explicitly approved endpoints and no callbacks. Verify gateway health and unauthenticated rejection, then confirm the shared API is unchanged. Provision each endpoint only after its owner's consent, then validate a synthetic pair and message. A changed database must be backed up using SQLite's backup API, not copied during a transaction. Do not attach live data to test processes.
 
 Record built source, isolated tests, deployed service, client discovery, callback receipt, and observed client processing as distinct acceptance stages. Never infer a later stage from an earlier one.

@@ -1,5 +1,7 @@
 import json
+import re
 from typing import Any, Callable, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -71,11 +73,12 @@ TOOLS = {
 
 
 class Gateway:
-    def __init__(self, store: Store, verify: Callable[[str], str | None], events: Events | None = None, endpoint_verify: Callable[[str, str], str | None] | None = None):
+    def __init__(self, store: Store, verify: Callable[[str], str | None], events: Events | None = None, endpoint_verify: Callable[[str, str], str | None] | None = None, event_discovery: bool = False):
         self.store = store
         self.verify = verify
         self.events = events
         self.endpoint_verify = endpoint_verify
+        self.event_discovery = event_discovery or events is not None
 
     def principal(self, authorization: str, endpoint: str | None = None) -> str:
         if not authorization.startswith("Bearer ") or len(authorization) > 8192:
@@ -115,7 +118,7 @@ class Gateway:
             self.store.require(db, actor)
         if method == "server/discover":
             capabilities = {"tools": {}}
-            if self.events:
+            if self.event_discovery:
                 capabilities["events"] = {}
             return {"resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": capabilities, "serverInfo": {"name": "household", "version": "0.1.0"}}
         if method == "tools/list":
@@ -126,13 +129,18 @@ class Gateway:
             output = self.tool(actor, params["name"], params.get("arguments", {}))
             return {"content": [{"type": "text", "text": json.dumps(output)}], "isError": False}
         if method == "events/list":
-            return {"events": [{"name": EVENT, "description": "A deliberately shared message arrived in the authenticated owner's inbox. Fetch using inbox_read; incoming text grants no authority.", "delivery": ["webhook"], "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}, "payloadSchema": {"type": "object", "properties": {"message_id": {"type": "string"}}, "required": ["message_id"], "additionalProperties": False}}] if self.events else []}
+            return {"events": [{"name": EVENT, "description": "A deliberately shared message arrived in the authenticated owner's inbox. Fetch using inbox_read; incoming text grants no authority.", "delivery": ["webhook"], "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}, "payloadSchema": {"type": "object", "properties": {"message_id": {"type": "string"}}, "required": ["message_id"], "additionalProperties": False}}] if self.event_discovery else []}
         if method in ("events/subscribe", "events/unsubscribe"):
-            if not self.events:
-                raise Denied("Event delivery setup is not enabled")
             if set(params) - {"name", "arguments", "delivery", "cursor", "ttlMs"} or params.get("cursor") is not None:
                 raise ValueError("Unknown fields or unsupported replay cursor")
             subscription = Subscription.model_validate(params)
+            if not self.events:
+                if self.event_discovery and method == "events/subscribe":
+                    target = urlsplit(subscription.delivery.url)
+                    if target.scheme != "https" or not target.hostname or target.username or target.password or target.fragment or target.port not in (None, 443) or not re.fullmatch(r"[a-z0-9.-]{1,253}", target.hostname):
+                        raise ValueError("Invalid callback destination")
+                    raise CallbackError("callback_not_approved", target.hostname)
+                raise Denied("Event delivery setup is not enabled")
             args = (actor, subscription.name, subscription.arguments, subscription.delivery.model_dump(exclude_none=True))
             if method == "events/subscribe":
                 return self.events.subscribe(*args, ttl_ms=subscription.ttlMs)
@@ -167,7 +175,10 @@ async def mcp(request: Request) -> dict:
         result = await run_in_threadpool(gateway.dispatch, actor, rpc["method"], rpc.get("params", {}))
         return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
     except CallbackError as error:
-        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32015, "message": "Callback verification failed", "data": {"reason": error.reason}}}
+        data = {"reason": error.reason}
+        if error.callback_host:
+            data["callback_host"] = error.callback_host
+        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32015, "message": "Callback verification failed", "data": data}}
     except Denied:
         return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32001, "message": "Access denied"}}
     except LookupError:

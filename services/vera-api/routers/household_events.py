@@ -21,8 +21,9 @@ EVENT = "household.message.created"
 _RESOLVER = ThreadPoolExecutor(max_workers=2)
 _RESOLVER_SLOTS = threading.BoundedSemaphore(2)
 class CallbackError(ValueError):
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, callback_host: str | None = None):
         self.reason = reason
+        self.callback_host = callback_host
         super().__init__(reason)
 
 

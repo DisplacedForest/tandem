@@ -1,0 +1,23 @@
+services:
+  household-gateway:
+    image: ${HOUSEHOLD_IMAGE:?Set the reviewed gateway image}
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:${HOUSEHOLD_PORT:-18091}:8080"
+    volumes:
+      - "${HOUSEHOLD_DATA_DIR:?Set private data directory}:/data"
+      - "${HOUSEHOLD_CONFIG_FILE:?Set private configuration file}:/config/gateway.json:ro"
+    environment:
+      HOUSEHOLD_CONFIG_PATH: /config/gateway.json
+      PYTHONDONTWRITEBYTECODE: "1"
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    restart: unless-stopped
+    stop_grace_period: 25s

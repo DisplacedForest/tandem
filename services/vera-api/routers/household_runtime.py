@@ -33,12 +33,15 @@ def configured_gateway() -> Gateway | None:
     if metadata.st_mode & 0o022:
         raise ValueError("Household config cannot be writable by other users")
     raw = json.loads(path.read_text())
-    if not isinstance(raw, dict) or set(raw) - {"database", "callback_hosts"}:
+    if not isinstance(raw, dict) or set(raw) - {"database", "callback_hosts", "event_discovery"}:
         raise ValueError("Invalid household config fields")
     database = Path(raw.get("database", ""))
     if not database.is_absolute() or not database.parent.is_dir() or database.parent.stat().st_mode & 0o077:
         raise ValueError("Household database requires an existing private directory")
     hosts = raw.get("callback_hosts", [])
+    discovery = raw.get("event_discovery", False)
+    if type(discovery) is not bool:
+        raise ValueError("Event discovery must be a boolean")
     if not isinstance(hosts, list) or len(hosts) > 8:
         raise ValueError("Invalid callback host allowlist")
     for host in hosts:
@@ -52,7 +55,7 @@ def configured_gateway() -> Gateway | None:
             raise ValueError("Callback hosts cannot be IP literals")
     store = Store(str(database))
     keys = EndpointKeys(store)
-    return Gateway(store, lambda _: None, Events(store, PublicHTTPS(set(hosts))) if hosts else None, endpoint_verify=keys.verify)
+    return Gateway(store, lambda _: None, Events(store, PublicHTTPS(set(hosts))) if hosts else None, endpoint_verify=keys.verify, event_discovery=discovery)
 
 
 async def worker(gateway: Gateway, stop: asyncio.Event) -> None:
