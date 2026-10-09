@@ -123,6 +123,7 @@ struct NativeToolDefinition: Sendable {
     let parameters: NativeJSONValue
     let confirmation: NativeToolConfirmation
     var timeout: Duration? = nil
+    var resultByteBudget = NativeToolResultBudget.defaultBytes
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
@@ -603,6 +604,7 @@ struct NativeToolLoop: Sendable {
                         var stopped = false
                         for call in last.toolCalls {
                             try Task.checkCancellation()
+                            let resultBudget = definitions[call.name]?.resultByteBudget ?? NativeToolResultBudget.defaultBytes
                             let result: String
                             let state: NativeToolActivityState
                             do {
@@ -654,13 +656,13 @@ struct NativeToolLoop: Sendable {
                                     }
                                 }
                                 try Task.checkCancellation()
-                                result = try Self.serializedResult(value)
+                                result = try NativeToolResultBudget.serialized(value, maximumBytes: resultBudget)
                                 state = Self.resultFailed(value, toolName: call.name) ? .failed : .succeeded
                                 if isSearch && webSearchCount >= maximumWebSearchCalls { stopped = true }
                             } catch is CancellationError {
                                 throw CancellationError()
                             } catch {
-                                result = Self.errorJSON(error.localizedDescription)
+                                result = try NativeToolResultBudget.serializedError(error.localizedDescription, maximumBytes: resultBudget)
                                 state = .failed
                             }
                             if let index = activities.firstIndex(where: { $0.id == call.id }) {
@@ -847,7 +849,7 @@ struct NativeToolLoop: Sendable {
     }
 
     static func serializedResult(_ value: NativeJSONValue) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys, .fragmentsAllowed])
         return String(decoding: data, as: UTF8.self)
     }
 
