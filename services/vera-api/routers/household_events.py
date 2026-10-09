@@ -52,6 +52,39 @@ def headers(event_id: str, sub_id: str, body: bytes, secret: str, old: str | Non
             "X-MCP-Subscription-Id": sub_id}
 
 
+class PinnedTLSConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, address: tuple, family: int, socktype: int, proto: int):
+        super().__init__(host, 443, timeout=5)
+        self.destination = address
+        self.socket_args = (family, socktype, proto)
+        self.expired = threading.Event()
+        self.active_socket = None
+
+    def connect(self) -> None:
+        if self.expired.is_set():
+            raise TimeoutError("Callback deadline exceeded")
+        self.sock = socket.socket(*self.socket_args)
+        self.active_socket = self.sock
+        self.sock.settimeout(5)
+        self.sock.connect(self.destination)
+        self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=self.host, do_handshake_on_connect=False)
+        self.active_socket = self.sock
+        self.sock.do_handshake()
+        if self.expired.is_set():
+            self.close()
+            raise TimeoutError("Callback deadline exceeded")
+
+    def expire(self) -> None:
+        self.expired.set()
+        target = self.active_socket
+        if target:
+            try:
+                target.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            target.close()
+
+
 class PublicHTTPS:
     def __init__(self, approved_hosts: set[str]):
         self.approved_hosts = approved_hosts
@@ -68,32 +101,23 @@ class PublicHTTPS:
         if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
             raise ValueError("Callback requires public addresses")
         family, socktype, proto, _, address = addresses[0]
-        connection = http.client.HTTPSConnection(parsed.hostname, 443, timeout=5)
-        raw = socket.socket(family, socktype, proto)
-        raw.settimeout(5)
-        def close_connection() -> None:
-            target = connection.sock or raw
-            try:
-                target.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            target.close()
-        timer = threading.Timer(10, close_connection)
+        connection = PinnedTLSConnection(parsed.hostname, address, family, socktype, proto)
+        timer = threading.Timer(10, connection.expire)
         timer.daemon = True
         timer.start()
         try:
-            raw.connect(address)
-            connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=parsed.hostname)
             path = parsed.path or "/"
             if parsed.query:
                 path += "?" + parsed.query
             connection.request("POST", path, body, request_headers)
-            response = connection.getresponse()
-            return response.status, response.read(4097)
+            with connection.getresponse() as response:
+                result = response.status, response.read(4097)
+            if connection.expired.is_set():
+                raise TimeoutError("Callback deadline exceeded")
+            return result
         finally:
             timer.cancel()
             connection.close()
-            raw.close()
 
 
 class Events:

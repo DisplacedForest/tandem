@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any, Callable, Literal
 
@@ -72,15 +71,19 @@ TOOLS = {
 
 
 class Gateway:
-    def __init__(self, store: Store, verify: Callable[[str], str | None], events: Events | None = None):
+    def __init__(self, store: Store, verify: Callable[[str], str | None], events: Events | None = None, endpoint_verify: Callable[[str, str], str | None] | None = None):
         self.store = store
         self.verify = verify
         self.events = events
+        self.endpoint_verify = endpoint_verify
 
-    def principal(self, authorization: str) -> str:
+    def principal(self, authorization: str, endpoint: str | None = None) -> str:
         if not authorization.startswith("Bearer ") or len(authorization) > 8192:
             raise Denied("Authentication required")
-        actor = self.verify(authorization[7:])
+        if self.endpoint_verify:
+            actor = self.endpoint_verify(endpoint, authorization[7:]) if endpoint else None
+        else:
+            actor = self.verify(authorization[7:]) if endpoint is None else None
         if not actor:
             raise Denied("Authentication required")
         with self.store.tx() as db:
@@ -137,23 +140,18 @@ class Gateway:
         raise LookupError("Unknown method")
 
 
-    async def run_events(self) -> None:
-        while True:
-            if self.events:
-                await asyncio.to_thread(self.events.tick)
-            await asyncio.sleep(1)
-
-
 @router.post("/mcp")
+@router.post("/inboxes/{endpoint}/mcp")
 async def mcp(request: Request) -> dict:
+    endpoint = request.path_params.get("endpoint")
     gateway = getattr(request.app.state, "household_gateway", None)
     if gateway is None:
         raise HTTPException(503, "Household gateway is unconfigured")
     try:
         from starlette.concurrency import run_in_threadpool
-        actor = await run_in_threadpool(gateway.principal, request.headers.get("authorization", ""))
+        actor = await run_in_threadpool(gateway.principal, request.headers.get("authorization", ""), endpoint)
     except Denied as error:
-        raise HTTPException(401, "Authentication required") from error
+        raise HTTPException(401, "Authentication required", headers={"WWW-Authenticate": 'Bearer realm="household"'}) from error
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)

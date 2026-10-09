@@ -12,6 +12,7 @@ log = logging.getLogger("vera.config")
 # (group, vars). Everything optional by design: an unset integration degrades
 # gracefully — this report is how you see what's off and why.
 GROUPS: list[tuple[str, list[str]]] = [
+    ("household",     ["HOUSEHOLD_CONFIG_PATH"]),
     ("core llm",      ["VERA_BASE", "VERA_MODEL", "VERA_CHAT_TEMPLATE_KWARGS",
                        "VERA_THINK_KWARGS_ON", "VERA_THINK_KWARGS_OFF"]),
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),

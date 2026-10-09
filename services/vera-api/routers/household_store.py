@@ -26,6 +26,7 @@ class Store:
         os.close(fd)
         with self.tx() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS inbox_endpoints(endpoint TEXT PRIMARY KEY, principal TEXT UNIQUE NOT NULL, key_hash TEXT NOT NULL, expires REAL NOT NULL, enabled INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS members(id TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS pairs(id TEXT PRIMARY KEY, sender TEXT NOT NULL,
                     recipient TEXT NOT NULL, scopes TEXT NOT NULL, state TEXT NOT NULL);
@@ -73,6 +74,9 @@ class Store:
         row = db.execute("SELECT enabled FROM members WHERE id=?", (principal,)).fetchone()
         if not row or not row[0]:
             raise Denied("Member access denied")
+        endpoint = db.execute("SELECT enabled,expires FROM inbox_endpoints WHERE principal=?", (principal,)).fetchone()
+        if endpoint and (not endpoint[0] or endpoint[1] <= time.time()):
+            raise Denied("Endpoint access expired or revoked")
 
     def disable(self, principal: str) -> None:
         with self.tx() as db:
@@ -100,8 +104,9 @@ class Store:
                 raise Denied("Pair access denied")
             if accept and (actor != row["recipient"] or row["state"] not in ("pending", "active")):
                 raise Denied("Only the invited member may accept a pending pair")
-            self.require(db, row["sender"])
-            self.require(db, row["recipient"])
+            if accept:
+                self.require(db, row["sender"])
+                self.require(db, row["recipient"])
             db.execute("UPDATE pairs SET state=? WHERE id=?", ("active" if accept else "revoked", pair_id))
             if not accept:
                 db.execute("UPDATE outbox SET state='canceled' WHERE message_id IN (SELECT id FROM messages WHERE pair_id=?) AND state='pending'", (pair_id,))
@@ -154,11 +159,11 @@ class Store:
     def inbox(self, actor: str, after: int = 0) -> list[dict]:
         with self.tx() as db:
             self.require(db, actor)
-            rows = db.execute("SELECT m.rowid AS cursor,m.* FROM messages m JOIN pairs p ON p.id=m.pair_id JOIN members s ON s.id=m.sender WHERE m.recipient=? AND p.state='active' AND s.enabled=1 AND m.rowid>? ORDER BY m.rowid LIMIT 100", (actor, after))
-            return [self.public(r) for r in rows]
+            rows = db.execute("SELECT m.rowid AS cursor,m.* FROM messages m JOIN pairs p ON p.id=m.pair_id JOIN members s ON s.id=m.sender LEFT JOIN inbox_endpoints e ON e.principal=m.sender WHERE m.recipient=? AND p.state='active' AND s.enabled=1 AND m.rowid>? AND (e.principal IS NULL OR (e.enabled=1 AND e.expires>?)) ORDER BY m.rowid LIMIT 100", (actor, after, time.time()))
+            return [self.public(row) for row in rows]
 
     def public(self, row: sqlite3.Row) -> dict:
-        return {k: row[k] for k in ("id", "cursor", "sender", "recipient", "kind", "body", "parent", "created", "delivered", "processed")} | {"trust": "third_party_data", "grants_tool_authority": False}
+        return {k: row[k] for k in ("id", "pair_id", "cursor", "sender", "recipient", "kind", "body", "parent", "created", "delivered", "processed")} | {"trust": "third_party_data", "grants_tool_authority": False}
 
     def acknowledge(self, actor: str, message_id: str, stage: str) -> None:
         if stage not in ("delivered", "processed"):

@@ -289,4 +289,4 @@ When something doesn't work, check the config report and `docker compose logs ve
 
 ## Household assistant gateway
 
-The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter within the existing API. It is disabled until an authenticated host integration is supplied. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
+The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter within the existing API. It is disabled until `HOUSEHOLD_CONFIG_PATH` points to a valid private configuration. Each consenting local assistant receives a distinct endpoint and revocable key; no account signup or OAuth server is required. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
