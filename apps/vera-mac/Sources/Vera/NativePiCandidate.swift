@@ -17,7 +17,7 @@ final class NativePiCandidate {
         self.root = root; self.config = config; self.credentials = credentials; self.provider = provider
         self.accounting = accounting; self.owner = owner; self.workspace = workspace; self.admission = admission
     }
-    static func create(_ arguments: [String], httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) async throws -> NativePiCandidate {
+    static func create(_ arguments: [String], onOwner: @MainActor (NativePiAppOwner) -> Void = { _ in }, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) async throws -> NativePiCandidate {
         let arguments = try NativePiRuntimePaths.expanded(arguments)
         try piCheck(arguments.count == 10)
         var options: [String: String] = [:]
@@ -65,8 +65,10 @@ final class NativePiCandidate {
         var runtimeArguments = arguments
         if let index = runtimeArguments.firstIndex(of: "--root") { runtimeArguments[index + 1] = root.url.appendingPathComponent("model").path }
         let owner = try NativePiAppOwner(arguments: runtimeArguments, executor: executor, ownerBinding: binding.digest, httpTransport: httpTransport)
+        onOwner(owner)
         do {
             let ready = try await owner.start()
+            try Task.checkCancellation()
             guard case .number(let port) = ready.pi("port"), let identity = ready.pi("profile").piString else { throw PiBrokerError.invalid }
             let workspace = try AssistantWorkspace(dataRoot: root.url.appendingPathComponent("ui"), endpoint: URL(string: "http://127.0.0.1:\(Int(port))")!, workspaceRoot: root.url.appendingPathComponent("model/runtime/workspaces"), runtimeIdentity: piHash(Data((root.url.path + ":" + identity).utf8))) { request in
                 try await owner.http(request)

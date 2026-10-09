@@ -262,6 +262,7 @@ enum NativeRuntimeMemorySelftest {
         await gate.release()
         try await rejected { _ = try await task.value }
         try piCheck(await provider.requests.isEmpty)
+        try piCheck(PiAdmissionFixtureProtocol.state.evidence().pi("active") == .number(0))
     }
 }
 

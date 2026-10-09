@@ -89,10 +89,10 @@ enum NativePiCandidateSelftest {
         } catch { await candidate.stop(); throw error }
     }
     static func refusedDecision(_ arguments: [String]) async throws {
-        let candidate = try await NativePiCandidate.create(arguments) { request in
+        let candidate = try await NativePiCandidate.create(arguments, httpTransport: { request in
             if request.url?.path.hasSuffix("/decision") == true { return (Data("{\"detail\":\"fixture refusal\"}".utf8), 409) }
             return try await PiOwnedHTTP.send(request)
-        }
+        })
         do {
             let ready = try await candidate.owner.session.ledger.snapshot()
             try piCheck(ready.piArray?.isEmpty == true)

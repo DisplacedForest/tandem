@@ -18,62 +18,68 @@ if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.
     exit(2)
 }
 if arguments.dropFirst().first == "--pi-native-selftest" {
-    await NativePiPresentationSelftest.run()
+    NativeApplicationEntry.runAsync { await NativePiPresentationSelftest.run() }
 } else if ["--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract"].contains(arguments.dropFirst().first ?? "") {
-    await NativePiNativeContract.run(Array(arguments.dropFirst(2)), recovery: arguments[1] == "--pi-native-recovery-contract", reopen: arguments[1] == "--pi-native-reopen-contract")
+    NativeApplicationEntry.runAsync { await NativePiNativeContract.run(Array(arguments.dropFirst(2)), recovery: arguments[1] == "--pi-native-recovery-contract", reopen: arguments[1] == "--pi-native-reopen-contract") }
 } else if arguments.dropFirst().first == "--pi-checkpoint-selftest" {
-    await NativePiCheckpointSelftest.run(Array(arguments.dropFirst(2)))
+    NativeApplicationEntry.runAsync { await NativePiCheckpointSelftest.run(Array(arguments.dropFirst(2))) }
 } else if arguments.dropFirst().first == "--pi-checkpoint" {
-    await NativePiCheckpoint.main(Array(arguments.dropFirst(2)))
+    NativeApplicationEntry.runAsync { await NativePiCheckpoint.main(Array(arguments.dropFirst(2))) }
 } else if arguments.dropFirst().first == "--pi-candidate-mock" {
     do {
-        try await NativePiNativeContext.prepareFixture(Array(arguments.dropFirst(2)))
+        try NativeApplicationEntry.prepare(onTimeout: NativePiNativeContext.cancelBootstrap) { try await NativePiNativeContext.prepareFixture(Array(arguments.dropFirst(2))) }
         VeraApp.main()
     } catch {
         FileHandle.standardError.write(Data("The isolated assistant could not start. Saved work was preserved.\n".utf8))
         exit(1)
     }
 } else if arguments.dropFirst().first == "--pi-provider-wiring-selftest" {
-    await NativePiProviderSelftest.run(Array(arguments.dropFirst(2)))
+    NativeApplicationEntry.runAsync { await NativePiProviderSelftest.run(Array(arguments.dropFirst(2))) }
 } else if arguments.dropFirst().first == "--pi-candidate-selftest" {
-    await NativePiCandidateSelftest.run(Array(arguments.dropFirst(2)))
+    NativeApplicationEntry.runAsync { await NativePiCandidateSelftest.run(Array(arguments.dropFirst(2))) }
 } else if ["--pi-candidate-contract", "--pi-candidate-recovery-contract"].contains(arguments.dropFirst().first ?? "") {
-    await NativePiCandidate.main(Array(arguments.dropFirst(2)), contract: arguments[1] == "--pi-candidate-contract", recovery: arguments[1] == "--pi-candidate-recovery-contract")
+    NativeApplicationEntry.runAsync { await NativePiCandidate.main(Array(arguments.dropFirst(2)), contract: arguments[1] == "--pi-candidate-contract", recovery: arguments[1] == "--pi-candidate-recovery-contract") }
 } else if arguments.dropFirst().first == "--pi-broker-selftest" {
-    await NativePiModelBrokerFixture.run()
+    NativeApplicationEntry.runAsync { await NativePiModelBrokerFixture.run() }
 } else if arguments.dropFirst().first == "--pi-broker-mock" {
-    await NativePiRuntimeSession.main(Array(arguments.dropFirst(2)))
+    NativeApplicationEntry.runAsync { await NativePiRuntimeSession.main(Array(arguments.dropFirst(2))) }
 } else if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     let path = arguments[idx + 1]
     let view = arguments.firstIndex(of: "--view").map { arguments[$0 + 1] } ?? "chat"
     let appearance = arguments.firstIndex(of: "--appearance").map { arguments[$0 + 1] } ?? "dark"
-    await Shot.render(view: view, to: path, appearance: appearance)
+    Shot.render(view: view, to: path, appearance: appearance)
 } else if let idx = arguments.firstIndex(of: "--voice-e2e"), idx + 1 < arguments.count {
     // DEBUG-ONLY: stream a sample wav through the real Wyoming servers, print transcript.
-    await SelfTest.voiceE2E(wavPath: arguments[idx + 1])
+    NativeApplicationEntry.runAsync { await SelfTest.voiceE2E(wavPath: arguments[idx + 1]) }
 } else if arguments.contains("--reminders-serve") {
     // DEBUG-ONLY: start the in-app EventKit bridge and block, to validate the native
     // Reminders path (macOS prompt + HTTP contract) independent of the UI.
     try? RemindersBridge.shared.start()
     print("vera-reminders bridge serving on :\(RemindersBridge.shared.port), ctrl-c to stop")
-    while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+    NativeApplicationEntry.runAsync { while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) } }
 } else if arguments.contains("--openrouter-smoke") {
-    await NativeProviderSmoke.run(arguments: arguments)
+    NativeApplicationEntry.runAsync { await NativeProviderSmoke.run(arguments: arguments) }
 } else if arguments.contains("--provider-smoke-selftest") {
     NativeProviderSmoke.selfTest()
 } else if arguments.contains("--domain-state-selftest") {
-    do { try NativeDomainStateSelftest.run(); try await NativeDomainRepositorySelftest.run() }
-    catch { print("domain-state: FAIL \(error.localizedDescription)"); exit(1) }
+    NativeApplicationEntry.runAsync {
+        do { try NativeDomainStateSelftest.run(); try await NativeDomainRepositorySelftest.run() }
+        catch { print("domain-state: FAIL \(error.localizedDescription)"); exit(1) }
+    }
 } else if arguments.contains("--shared-runtime-memory-selftest") {
-    do { try await NativeRuntimeMemorySelftest.run() }
-    catch { print("shared-runtime-memory: FAIL \(error.localizedDescription)"); exit(1) }
+    NativeApplicationEntry.runAsync {
+        do { try await NativeRuntimeMemorySelftest.run() }
+        catch { print("shared-runtime-memory: FAIL \(error.localizedDescription)"); exit(1) }
+    }
 } else if arguments.contains("--memory-evidence-selftest") {
-    do { try await NativeMemoryEvidenceSelftest.run() }
-    catch { print("native-memory-evidence: FAIL \(error.localizedDescription)"); exit(1) }
+    NativeApplicationEntry.runAsync {
+        do { try await NativeMemoryEvidenceSelftest.run() }
+        catch { print("native-memory-evidence: FAIL \(error.localizedDescription)"); exit(1) }
+    }
 } else if arguments.contains("--selftest") {
-    await SelfTest.run()
+    NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {
-    await SelfTest.dumpContext()
+    SelfTest.dumpContext()
 } else {
     VeraApp.main()
 }

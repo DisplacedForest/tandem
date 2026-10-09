@@ -249,3 +249,45 @@ def test_native_session_contract(tmp_path: Path) -> None:
     assert saved['projected_ids'] == report['projected_ids']
     assert saved['conversation_id'] == report['conversation_id']
     assert saved['task_ids'] == sorted([report['completed_task_id'], report['stopped_task_id']])
+
+
+def test_native_fixture_startup_failure_closes_descendants(tmp_path: Path) -> None:
+    import time
+    from test_app_broker import gone, wait_for
+
+    repo = tmp_path / 'checkout'
+    source = repo / 'prototypes/pi_assistant'
+    source.mkdir(parents=True)
+    for name in ('app_model.py', 'runtime.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
+        shutil.copyfile(REPO / 'prototypes/pi_assistant' / name, source / name)
+    marker = tmp_path / 'children.json'
+    (source / 'app_bridge.py').write_text(
+        'import json,os,subprocess,time\n'
+        'if os.getpgrp()!=os.getpid(): os.setsid()\n'
+        'child=subprocess.Popen(["/bin/sleep","60"])\n'
+        f'open({str(marker)!r},"w").write(json.dumps([os.getpid(),child.pid]))\n'
+        'time.sleep(60)\n'
+    )
+    home = tmp_path / 'home'
+    home.mkdir()
+    environment = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'CFFIXED_USER_HOME': str(home), 'VERA_CONFIG_DIR': str(home / '.vera')}
+    process = subprocess.Popen([str(BINARY), '--pi-candidate-mock', *arguments(home / 'runtime', repo)],
+                               env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    children = []
+    try:
+        wait_for(marker.exists, bool)
+        children = json.loads(marker.read_text())
+        assert len(children) == 2 and all(not gone(pid) for pid in children)
+        started = time.monotonic()
+        _, error = process.communicate(timeout=18)
+        assert process.returncode == 1
+        assert b'The isolated assistant could not start' in error
+        assert time.monotonic() - started < 17
+        wait_for(lambda: all(gone(pid) for pid in children), bool)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=3)
+        for pid in children:
+            if not gone(pid):
+                os.kill(pid, 9)
