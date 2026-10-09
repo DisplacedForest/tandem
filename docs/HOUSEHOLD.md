@@ -127,3 +127,67 @@ python3 -m unittest discover -s tests -p test_household.py -v
 Before rollout, review the focused diff, run the full API tests and security checks, preserve the current API image and protected configuration for rollback, and arrange activation of only the dedicated gateway. Preserve the shared API process. Start with only explicitly approved endpoints and no callbacks. Verify gateway health and unauthenticated rejection, then confirm the shared API is unchanged. Provision each endpoint only after its owner's consent, then validate a synthetic pair and message. A changed database must be backed up using SQLite's backup API, not copied during a transaction. Do not attach live data to test processes.
 
 Record built source, isolated tests, deployed service, client discovery, callback receipt, and observed client processing as distinct acceptance stages. Never infer a later stage from an earlier one.
+
+## Direct HTTPS connection with OAuth
+
+An optional OAuth adapter lets every household member add the same public HTTPS
+MCP URL to ChatGPT. It needs no household account signup and no recipient-managed
+network connection. Set `HOUSEHOLD_PUBLIC_ORIGIN` to the canonical HTTPS origin
+without a trailing slash. The MCP address is that origin plus `/mcp`. Leave the
+variable unset to disable all public OAuth routes. Existing private inbox URLs and
+keys keep their existing behavior.
+
+Publish only `/mcp`, `/oauth/authorize`, `/oauth/token`, `/oauth/register`,
+`/oauth/revoke`, `/.well-known/oauth-authorization-server`,
+`/.well-known/oauth-protected-resource`, and
+`/.well-known/oauth-protected-resource/mcp`. Keep health, private inbox routes,
+configuration, and the database off public ingress. Terminate HTTPS at an approved
+reverse proxy and disable request body, authorization header, cookie, and query
+logging. OAuth authorization queries contain state and PKCE metadata. Do not log
+callback URLs containing authorization codes. No proxy may cache these responses.
+The gateway must retain its single worker and existing event worker.
+
+After the member opts in, an administrator provisions their separate inbox with
+the existing operator workflow. The administrator then calls
+`OAuth(store, public_origin).enroll(endpoint)` locally on the server to issue one
+random connection code for that inbox. This operation never exposes the inbox
+key. Deliver the result privately to that member, never through a URL or shared
+page. A new code replaces previous unused codes for the same inbox. It expires
+within ten minutes and can authorize one connection only. There is deliberately
+no public enrollment or administration API.
+
+The member adds the canonical MCP URL in ChatGPT, uses OAuth, enters their
+connection code on the consent page, and chooses **Connect**. No OpenAI Platform
+workspace or tunnel setup is needed. The page grants access to that inbox only;
+it does not create a sharing pair, enroll another member, copy private histories,
+or subscribe to events. The member must still ask their dot to enable incoming
+notifications. Reuse an existing matching subscription. Actual event wake,
+message fetch, delivery acknowledgement, and processing acknowledgement remain
+separate acceptance checks.
+
+The adapter uses dynamic registration for public clients, the documented ChatGPT
+redirect addresses, authorization codes with S256 PKCE, explicit resource and
+scope binding, and issuer identification. Enrollment codes, authorization codes,
+and tokens are stored as SHA-256 hashes. Browser consent uses a secure HttpOnly
+SameSite cookie and matching form token, an exact Origin check, and five attempts
+per short-lived session. Request sizes, registration counts, live grants, and
+request rates are bounded. Under registration pressure, the oldest unused client
+registration is reclaimed. Clients with pending consent, authorization codes, or
+existing grants are preserved. A household connection code is a temporary bearer
+credential; give it only to its intended member.
+
+Access tokens expire within one hour. Rotating refresh tokens stop at the grant's
+30-day lifetime or the inbox's earlier expiry. Reusing a rotated refresh token
+revokes that grant. Revocation of either an access or refresh token revokes its
+whole grant. Endpoint revocation, expiry, member disablement, or endpoint key
+rotation immediately invalidates its OAuth grants and unused enrollment codes.
+These checks also apply after a gateway restart. Revoking an OAuth grant prevents
+further calls and subscription renewal; use endpoint revocation when event
+subscriptions must be canceled immediately too.
+
+Verify discovery, authorization, token refresh, inbox isolation, event delivery,
+and revocation from the actual ChatGPT connection before calling a public setup
+ready. Passing isolated OAuth tests does not establish cloud reachability or an
+actual dot wake. The implementation follows the official
+[OpenAI authentication guide](https://developers.openai.com/plugins/build/auth)
+and [MCP authorization specification](https://modelcontextprotocol.io/specification/latest/basic/authorization).
