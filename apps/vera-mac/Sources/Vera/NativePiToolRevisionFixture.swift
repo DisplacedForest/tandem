@@ -31,8 +31,8 @@ enum NativePiToolRevisionFixture {
         try await NativePiRuntimeToolFixture.refuses { _ = try await broker.complete(modelWire) }
         try await NativePiRuntimeToolFixture.refuses { _ = try await broker.toolOperation(toolWire) }
         try await NativePiRuntimeToolFixture.refuses { _ = try await broker.toolOperation(NativePiRuntimeToolFixture.operation(scope, callID: "not-yet-dispatched")) }
-        try piCheck(await service.calls == 1)
-        try piCheck(await model.calls == 1)
+        try NativePiModelBrokerFixture.check(await service.calls == 1)
+        try NativePiModelBrokerFixture.check(await model.calls == 1)
         await broker.close()
         let reopened = NativePiModelBroker(ledger: ledger, channel: "tools-channel", executor: model, tools: service)
         let repeated = try await reopened.authorize(binding)
@@ -72,7 +72,7 @@ enum NativePiToolRevisionFixture {
         await service.configure(enabled: true)
         await gate.release()
         try await NativePiRuntimeToolFixture.refuses { _ = try await running.value }
-        try piCheck(await gate.sends == 0)
+        try NativePiModelBrokerFixture.check(await gate.sends == 0)
     }
     @MainActor
     static func heldOwnerEntry(_ root: URL) async throws {
@@ -108,10 +108,10 @@ enum NativePiToolRevisionFixture {
         await entry.release()
         var rejected = false
         do { _ = try await running.value } catch { rejected = true }
-        try piCheck(rejected)
+        try NativePiModelBrokerFixture.check(rejected)
         let sends = await counter.sends
         if sends != 0 { print("FAIL: owner fixture transport ran after revocation") }
-        try piCheck(sends == 0)
+        try NativePiModelBrokerFixture.check(sends == 0)
     }
     @MainActor
     static func memoryDigest(_ root: URL) async throws {
@@ -125,15 +125,15 @@ enum NativePiToolRevisionFixture {
         let request = try PiModelRequest(wire, scope: scope, channel: "memory", hostTools: first.schemas, hostToolRevision: first.revision, hostToolAuthority: service)
         let context = NativeRuntimeMemoryContext(authority: UUID(), binding: scope.wire, generation: scope.subject, selected: [], prompt: "Fixture memory", digest: "fixture-context")
         let augmented = try request.withMemoryContext(context, authority: memory)
-        try piCheck(augmented.hostToolRevision == request.hostToolRevision && augmented.hostTools == request.hostTools)
+        try NativePiModelBrokerFixture.check(augmented.hostToolRevision == request.hostToolRevision && augmented.hostTools == request.hostTools)
         try await augmented.validateHostTools()
         await service.reconnect()
         let next = try await PiRuntimeToolSnapshot.capture(scope: scope, authority: service)
         let changed = try PiModelRequest(wire, scope: scope, channel: "memory", hostTools: next.schemas, hostToolRevision: next.revision, hostToolAuthority: service)
         let changedMemory = try changed.withMemoryContext(context, authority: memory)
-        try piCheck(request.digest != changed.digest && augmented.digest != changedMemory.digest)
+        try NativePiModelBrokerFixture.check(request.digest != changed.digest && augmented.digest != changedMemory.digest)
         var rejected = false
         do { try await augmented.validateHostTools() } catch { rejected = true }
-        try piCheck(rejected)
+        try NativePiModelBrokerFixture.check(rejected)
     }
 }

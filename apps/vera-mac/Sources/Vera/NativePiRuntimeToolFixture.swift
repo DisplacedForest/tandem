@@ -61,7 +61,7 @@ enum NativePiRuntimeToolFixture {
         let scope = try await broker.authorize(binding)
         _ = try await broker.toolOperation(operation(scope, callID: "completed"))
         try await refuses { _ = try await broker.toolOperation(operation(scope, callID: "uncertain")) }
-        try piCheck(await service.calls == 0)
+        try NativePiModelBrokerFixture.check(await service.calls == 0)
         await broker.close()
     }
     static func exercise(_ root: URL) async throws {
@@ -72,9 +72,9 @@ enum NativePiRuntimeToolFixture {
             let scope = try await broker.authorize(NativePiModelBrokerFixture.binding(role: role, mode: mode))
             let request = operation(scope)
             let first = try await broker.toolOperation(request)
-            try piCheck(first.pi("value").pi("answer") == .string("fixture value"))
+            try NativePiModelBrokerFixture.check(first.pi("value").pi("answer") == .string("fixture value"))
             let replay = try await broker.toolOperation(request)
-            try piCheck(first == replay)
+            try NativePiModelBrokerFixture.check(first == replay)
             for field in ["scope", "channel", "profile", "subject", "role", "mode", "assistant", "conversation"] {
                 try await refuses { _ = try await broker.toolOperation(NativePiModelBrokerFixture.changed(request, field, .string("wrong"))) }
             }
@@ -82,7 +82,7 @@ enum NativePiRuntimeToolFixture {
             let schemas = try await broker.toolCatalog(scope)
             let model = try PiModelRequest(NativePiModelBrokerFixture.request(scope, channel: "tools-channel"), scope: scope, channel: "tools-channel", hostTools: schemas)
             let body = try PiProviderCodec.body(model, model: "fixture")
-            try piCheck(body.pi("tools").piArray?.contains(where: { $0.pi("function").pi("name") == .string(PiToolFixtureService.name) }) == true)
+            try NativePiModelBrokerFixture.check(body.pi("tools").piArray?.contains(where: { $0.pi("function").pi("name") == .string(PiToolFixtureService.name) }) == true)
             let block: PiValue = .object(["type": .string("toolCall"), "id": .string("history-call"), "name": .string(PiToolFixtureService.name), "arguments": .object(["query": .string("fixture")])])
             let reply: PiValue = .object(["content": .array([block]), "usage": .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0)])])
             try PiModelReply.validate(reply, request: model)
@@ -93,7 +93,7 @@ enum NativePiRuntimeToolFixture {
             try await refuses { try PiModelReply.validate(reply, request: PiModelRequest(NativePiModelBrokerFixture.request(scope, channel: "tools-channel"), scope: scope, channel: "tools-channel")) }
             await service.configure()
         }
-        try piCheck(await service.calls == 3)
+        try NativePiModelBrokerFixture.check(await service.calls == 3)
         let stopped = try await broker.authorize(NativePiModelBrokerFixture.binding(role: "worker"))
         await broker.revoke(subject: stopped.subject)
         try await refuses { _ = try await broker.toolOperation(operation(stopped)) }
@@ -123,7 +123,7 @@ enum NativePiRuntimeToolFixture {
         while await service.calls < 7 { try await Task.sleep(for: .milliseconds(5)) }
         await broker.close()
         try await refuses { _ = try await disconnected.value }
-        try piCheck(await service.cancellations > 0)
+        try NativePiModelBrokerFixture.check(await service.cancellations > 0)
         try await refuses { _ = try await broker.toolOperation(operation(scope, callID: "closed")) }
     }
 }
@@ -168,7 +168,7 @@ extension NativePiRuntimeToolFixture {
                 var request = URLRequest(url: endpoint.appendingPathComponent(path))
                 if let body { request.httpMethod = "POST"; request.httpBody = try body.piData() }
                 let (data, status) = try await owner.http(request)
-                try piCheck(status == 200)
+                try NativePiModelBrokerFixture.check(status == 200)
                 return try PiValue.piRead(data)
             }
             func message(_ text: String, mode: String) async throws -> PiValue {
@@ -176,7 +176,7 @@ extension NativePiRuntimeToolFixture {
             }
             for mode in ["assistant", "focused"] {
                 let result = try await message("Read host fixture", mode: mode)
-                try piCheck(result.pi("text") == .string("Host tools completed"))
+                try NativePiModelBrokerFixture.check(result.pi("text") == .string("Host tools completed"))
             }
             let delegated = try await message("/task read fixture", mode: "assistant")
             guard let taskID = delegated.pi("task_ids").piArray?.first?.piString else { throw PiBrokerError.invalid }
@@ -192,7 +192,7 @@ extension NativePiRuntimeToolFixture {
                 task = try await snapshot()
             }
             let beforeApproval = if let callCount { await callCount() } else { await service.calls }
-            try piCheck(task.pi("state") == .string("needs_decision") && beforeApproval == 2)
+            try NativePiModelBrokerFixture.check(task.pi("state") == .string("needs_decision") && beforeApproval == 2)
             _ = try await send("tasks/" + taskID + "/decision", .object(["decision_id": task.pi("decision").pi("id"), "idempotency_key": .string(UUID().uuidString.lowercased()), "reply": .object(["approved": .bool(true)])]))
             for _ in 0..<150 {
                 task = try await snapshot()
@@ -200,7 +200,7 @@ extension NativePiRuntimeToolFixture {
                 try await Task.sleep(for: .milliseconds(20))
             }
             let afterApproval = if let callCount { await callCount() } else { await service.calls }
-            try piCheck(task.pi("state") == .string("completed") && afterApproval == 3)
+            try NativePiModelBrokerFixture.check(task.pi("state") == .string("completed") && afterApproval == 3)
             await owner.stop()
         } catch { await owner.stop(); throw error }
     }

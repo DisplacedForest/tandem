@@ -242,14 +242,14 @@ actor NativePiModelBroker {
             try PiModelReply.validate(saved, request: request)
             return saved
         }
-        let operation = Task {
+        let operation = Task { [executor] in
             try await request.validateHostTools()
             return try await executor.complete(request)
         }
         let race = PiModelRace()
         active[request.id] = (scope.role, operation, race)
         let receiver = Task { race.resolve(await operation.result) }
-        let timer = Task {
+        let timer = Task { [timeout] in
             try? await Task.sleep(for: timeout)
             if !Task.isCancelled { operation.cancel(); race.resolve(.failure(PiBrokerError.unavailable)) }
         }
