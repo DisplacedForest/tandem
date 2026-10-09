@@ -290,3 +290,5 @@ When something doesn't work, check the config report and `docker compose logs ve
 ## Household assistant gateway
 
 The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter in a dedicated loopback runtime that reuses the API modules. The shared API can keep running unchanged. It is disabled until `HOUSEHOLD_CONFIG_PATH` points to a valid private configuration. Each consenting local assistant receives a distinct endpoint and revocable key; no account signup or OAuth server is required. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
+
+For a direct ChatGPT connection, the optional `HOUSEHOLD_PUBLIC_ORIGIN` setting enables an accountless OAuth adapter at one shared HTTPS MCP address. Members use a private one-time inbox code in ChatGPT's connection flow. The [gateway guide](HOUSEHOLD.md#direct-https-connection-with-oauth) covers approved HTTPS ingress, code issuance, revocation, setup-page generation, and actual event acceptance.

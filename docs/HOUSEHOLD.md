@@ -191,3 +191,17 @@ ready. Passing isolated OAuth tests does not establish cloud reachability or an
 actual dot wake. The implementation follows the official
 [OpenAI authentication guide](https://developers.openai.com/plugins/build/auth)
 and [MCP authorization specification](https://modelcontextprotocol.io/specification/latest/basic/authorization).
+
+Once the public connection is verified, render a shared setup page with the exact
+MCP address. It contains no inbox code or private key:
+
+```sh
+python services/vera-api/household_onboarding.py \
+  --mcp-url "$HOUSEHOLD_PUBLIC_ORIGIN/mcp" \
+  --output /tmp/household-connect.html
+```
+
+The page links to ChatGPT Plugins, explains the OAuth connection, and includes a
+copyable notification setup request with the same MCP address. Publish it only
+after verifying that address. The renderer rejects embedded credentials, query
+parameters, fragments, and mixed plugin/public destinations.

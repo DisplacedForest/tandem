@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from household_onboarding import SETUP_REQUEST, render, setup_request
+from household_onboarding import SETUP_REQUEST, render, render_public, setup_request
 
 
 APP_ID = 'asdk_app_' + '1' * 32
@@ -75,3 +75,41 @@ def test_cli_passes_destination_and_rejects_incomplete_config_without_output(tmp
     assert subprocess.run(command + ['--app-id', APP_ID], capture_output=True).returncode == 0
     assert output.read_text() == render(PLUGIN_URL, APP_ID)
     assert subprocess.run(command + ['--app-id', APP_ID], capture_output=True).returncode != 0
+
+
+def test_public_connection_includes_destination_in_copy_and_setup():
+    url = 'https://inbox.example.com/mcp'
+    page = render_public(url)
+    assert f'value="{url}"' in page
+    request = html.unescape(re.search(r'<textarea[^>]*>(.*?)</textarea>', page, re.S).group(1))
+    assert url in request
+    assert 'household.message.created' in request
+    assert 'reusing any matching subscription' in request
+    assert 'after the event wakes my dot' in request
+    assert 'Add custom MCP server' in page and 'OAuth' in page
+    for forbidden in ('platform.openai.com', 'tunnel_id', 'plugin_asdk_app_', 'fetch(', 'localStorage', '<form'):
+        assert forbidden not in page
+
+
+@pytest.mark.parametrize('url', [
+    'http://inbox.example.com/mcp',
+    'https://key@inbox.example.com/mcp',
+    'https://inbox.example.com/mcp?key=secret',
+    'https://inbox.example.com/mcp#secret',
+    'https://inbox.example.com/private/secret',
+    'https://inbox.example.com/mcp"onclick="bad',
+])
+def test_public_connection_rejects_embedded_credentials_and_wrong_paths(url):
+    with pytest.raises(ValueError):
+        render_public(url)
+
+
+def test_cli_public_connection_rejects_mixed_destination(tmp_path):
+    script = Path(__file__).parents[1] / 'household_onboarding.py'
+    output = tmp_path / 'index.html'
+    url = 'https://inbox.example.com/mcp'
+    command = [sys.executable, str(script), '--mcp-url', url, '--output', str(output)]
+    assert subprocess.run(command + ['--app-id', APP_ID], capture_output=True).returncode != 0
+    assert not output.exists()
+    assert subprocess.run(command, capture_output=True).returncode == 0
+    assert output.read_text() == render_public(url)
