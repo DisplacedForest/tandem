@@ -55,6 +55,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
 
     func updateInput(_ value: String) {
         guard !closed else { return }
+        if !inputRejected && value.utf8.elementsEqual(input.utf8) { return }
         cancelOperation()
         guard value.utf8.count <= (usesPageURL ? 2048 : 16384) else {
             inputRejected = true

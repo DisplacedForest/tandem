@@ -67,6 +67,8 @@ enum NativeMCPReadTestSelftest {
         try require(controller.result == nil, "Editing arguments must clear the previous result")
         controller.updateInput(String(repeating: "x", count: 2049))
         try require(!controller.canRun && controller.error != nil, "Oversized input must not run a previously accepted draft")
+        controller.updateInput(controller.input)
+        try require(controller.canRun && controller.error == nil, "Explicitly restoring the retained input must clear rejection")
         controller.close()
         try require(controller.input.isEmpty && controller.result == nil && !controller.canRun, "Close must clear transient read state")
         let unapproved = manager.servers[0].tools.first { $0.remoteName == "unapproved" }!
@@ -84,6 +86,7 @@ enum NativeMCPReadTestSelftest {
         assistantController?.close()
         await assistant.disconnect(assistantRecord.server.id)
         try await complexArguments()
+        try await repeatedInput()
         for event in ["disable", "toggle", "disconnect", "reconnect", "replace", "close", "edit"] { try await lateResponse(event: event) }
         try await revokeAuthorization()
         do {
@@ -92,6 +95,29 @@ enum NativeMCPReadTestSelftest {
         } catch NativeToolError.unavailable {}
         print("PASS MCP read controller: existing scoped authority, full arguments, literal output, lifecycle fences")
         try await sdkFixture()
+    }
+
+    @MainActor
+    private static func repeatedInput() async throws {
+        let (manager, connection, record) = try await fixture()
+        guard let controller = NativeMCPReadTestController(manager: manager, record: record) else { throw NativeToolError.unavailable }
+        await connection.hold()
+        let input = "https://example.invalid/page"
+        controller.updateInput(input)
+        controller.run()
+        controller.updateInput(input)
+        try require(controller.running, "A repeated binding update must not cancel a scheduled read")
+        try await wait { await connection.entered }
+        controller.updateInput(input)
+        try require(controller.running && controller.error == nil, "A repeated binding update must preserve an in-flight read")
+        await connection.release()
+        try await wait { !controller.running }
+        guard let result = controller.result else { throw NativeToolError.failed("A repeated binding update lost the read result") }
+        controller.updateInput(input)
+        try require(controller.result == result, "A repeated binding update must preserve the completed result")
+        try require(await connection.calls == 1, "Repeated binding updates must not issue another read")
+        controller.close()
+        await manager.disconnect(record.server.id)
     }
 
     @MainActor
