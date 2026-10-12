@@ -149,11 +149,24 @@ final class NativeMCPAccess: @unchecked Sendable {
     }
     func permissionRevision() -> Int { lock.withLock { revision } }
     func catalogRevision(scope: String) -> String {
-        lock.withLock { piHash(Data(([identity, String(revision), scope] + states.map { $0.id + ":" + $0.generation.uuidString + ":" + String($0.connected) + ":" + String(authorized($0.configuration)) }).joined(separator: "\n").utf8)) }
+        lock.withLock {
+            var lines = [identity, String(revision), scope]
+            for state in states {
+                let parts = [state.id, state.generation.uuidString, String(state.connected), String(authorized(state.configuration))]
+                lines.append(parts.joined(separator: ":"))
+            }
+            return piHash(Data(lines.joined(separator: "\n").utf8))
+        }
     }
     func allowed(_ record: NativeMCPToolRecord, scope: String, revision expected: Int? = nil) -> Bool {
-        lock.withLock { (expected == nil || expected == revision) && enabled.contains(record.id) && authorized(record.server) && record.callable && record.server.scopes.contains(scope)
-            && states.contains { $0.id == record.server.id && $0.generation == record.generation && $0.connected && $0.tools.contains(where: { $0.id == record.id && $0.callable }) } }
+        lock.withLock {
+            guard expected == nil || expected == revision else { return false }
+            guard enabled.contains(record.id), authorized(record.server), record.callable, record.server.scopes.contains(scope) else { return false }
+            return states.contains { state in
+                state.id == record.server.id && state.generation == record.generation && state.connected
+                    && state.tools.contains { $0.id == record.id && $0.callable }
+            }
+        }
     }
 }
 
