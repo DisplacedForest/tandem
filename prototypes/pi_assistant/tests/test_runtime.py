@@ -463,9 +463,9 @@ def text_reply(text):
     return {'content': [{'type': 'text', 'text': text}]}
 
 
-def delegate_reply(objective, text=None):
+def delegate_reply(objective, text=None, call_id=None):
     blocks = [{'type': 'text', 'text': text}] if text else []
-    return {'content': blocks + [{'type': 'toolCall', 'id': str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
+    return {'content': blocks + [{'type': 'toolCall', 'id': call_id or str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
 
 
 def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
@@ -473,7 +473,7 @@ def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
         system = {'role': 'system', 'content': SYSTEM_PROMPT, 'toolsAdded': [{'name': 'delegate'}], 'timestamp': 0}
         return {'messages': [system] + [{'role': 'user', 'content': item, 'timestamp': 0} for item in history] + [{'role': 'user', 'content': [{'type': 'text', 'text': turn}], 'timestamp': 0}]}
     trimmed = context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question')
-    assert fit_request(trimmed, 3) <= CONTEXT_LIMIT
+    assert fit_request(trimmed, 3) == (request_size(trimmed), 1)
     assert [message['role'] for message in trimmed['messages']] == ['system', 'user', 'user', 'user']
     assert [str(message['content'])[:1] for message in trimmed['messages'][1:]] == ['b', 'c', '[']
     assert request_size(trimmed) == len(encoded([{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': 'b' * 3000}, {'role': 'user', 'content': 'c' * 3000}, {'role': 'user', 'content': 'current question'}]))
@@ -499,6 +499,30 @@ async def test_delegate_objective_must_fit_the_continuation(tmp_path):
         with pytest.raises(PiFailure):
             await runtime.message(body('/task ' + 'x' * (MESSAGE_BYTES - 6)))
         assert len(runtime.store.list(10, None)) == 1
+        assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_delegation_admission_matches_the_real_continuation(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    long_id = 'i' * 128
+    runtime.native = RecordingNative([
+        delegate_reply('o' * 1000, text='t' * 2949, call_id=long_id), text_reply('refused'),
+        text_reply('seed'),
+        delegate_reply('o' * 1500), text_reply('accepted'),
+    ])
+    runtime.transport = 'native-mock'
+    await runtime.start()
+    try:
+        first = await runtime.message(body('/task ' + 'x' * 3469))
+        assert first['text'] == 'refused' and first['task_ids'] == [] and len(runtime.store.list(10, None)) == 0
+        conversation = body('m' * 3400, mode='assistant')
+        await runtime.message(conversation)
+        later = body('/task ' + 'y' * 2994, assistant_id=conversation['assistant_id'], conversation_id=conversation['conversation_id'])
+        second = await runtime.message(later)
+        assert second['text'] == 'accepted' and len(second['task_ids']) == 1
         assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
     finally:
         await runtime.stop()

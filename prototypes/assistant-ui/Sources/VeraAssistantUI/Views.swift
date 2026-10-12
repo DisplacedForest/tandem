@@ -90,7 +90,7 @@ struct PrototypeView: View {
                 if store.pending != nil && !store.busyConversations.contains(store.conversation.id) {
                     unconfirmedReply
                 }
-                if !trimmedDraft.isEmpty && !store.accepts(trimmedDraft) {
+                if store.capabilities != nil && !trimmedDraft.isEmpty && !store.accepts(trimmedDraft) {
                     Text("This message is too long to send. Shorten it and try again.").font(.caption).foregroundStyle(.red)
                 }
                 HStack(alignment: .bottom, spacing: 12) {

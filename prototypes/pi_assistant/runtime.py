@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -52,7 +53,7 @@ def request_size(context: Any) -> int:
     return len(encoded(NativeMockTransport._messages(context)))
 
 
-def fit_request(context: Any, history_len: int) -> int:
+def fit_request(context: Any, history_len: int) -> tuple[int, int]:
     size = request_size(context)
     messages = context['messages']
     start = 1 if messages and isinstance(messages[0], dict) and messages[0].get('role') == 'system' else 0
@@ -63,15 +64,24 @@ def fit_request(context: Any, history_len: int) -> int:
         size = request_size(context)
     if size > CONTEXT_LIMIT:
         raise PiFailure('native_context_limit')
-    return size
+    return size, dropped
 
 
-def reply_growth(reply: Any) -> int:
+def continuation(context: Any, reply: Any) -> dict[str, Any]:
     content = reply.get('content') if isinstance(reply, dict) else None
+    projected = copy.deepcopy(context)
     if not isinstance(content, list):
-        return ASSISTANT_OVERHEAD
-    calls = sum(1 for block in content if isinstance(block, dict) and block.get('type') == 'toolCall')
-    return len(encoded(content)) + ASSISTANT_OVERHEAD + calls * TOOL_RESULT_OVERHEAD
+        return projected
+    projected['messages'].append({'role': 'assistant', 'content': content})
+    for block in content:
+        if not isinstance(block, dict) or block.get('type') != 'toolCall':
+            continue
+        if block.get('name') == 'delegate':
+            text = json.dumps({'task_id': '0' * 36, 'state': 'needs_decision'})
+        else:
+            text = 'x' * 256
+        projected['messages'].append({'role': 'toolResult', 'toolCallId': block.get('id', ''), 'toolName': block.get('name', ''), 'content': [{'type': 'text', 'text': text}], 'isError': False})
+    return projected
 
 
 class Runtime:
@@ -188,21 +198,25 @@ class Runtime:
         if previous:
             return previous
         self.active.add(body['message_id'])
-        budget = {'history': 0, 'last': 0, 'growth': 0}
+        budget: dict[str, Any] = {'history': 0, 'sent': None, 'remaining': 0}
         try:
             async def host(event: dict[str, Any]) -> dict[str, Any]:
                 if event.get('type') == 'model' and self.native:
-                    budget['last'] = fit_request(event.get('context'), budget['history'])
+                    _, dropped = fit_request(event.get('context'), budget['history'])
                     reply = await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
-                    budget['growth'] = reply_growth(reply)
+                    budget['sent'] = continuation(event['context'], reply)
+                    budget['remaining'] = budget['history'] - dropped
                     return reply
                 if event.get('type') != 'tool' or event.get('name') != 'delegate' or body['mode'] != 'assistant':
                     raise ValueError('Tool unavailable')
                 args = event.get('args')
                 if not isinstance(args, dict) or set(args) != {'objective'} or not isinstance(args['objective'], str) or not 1 <= len(args['objective']) <= 8000 or len(encoded(args['objective'])) - 2 > MESSAGE_BYTES:
                     raise ValueError('Invalid task objective')
-                if self.native and budget['last'] + budget['growth'] > CONTEXT_LIMIT:
-                    raise ValueError('Task objective too long for the remaining context')
+                if self.native and budget['sent'] is not None:
+                    try:
+                        fit_request(copy.deepcopy(budget['sent']), budget['remaining'])
+                    except PiFailure:
+                        raise ValueError('Task objective too long for the remaining context') from None
                 payload = {key: body[key] for key in ('assistant_id', 'conversation_id')}
                 payload.update(originating_message_id=body['message_id'], objective=args['objective'], workspace_ref='task-private', transport=self.transport)
                 task = self.store.create('pi_worker', payload, 'pi:' + body['message_id'])
