@@ -67,35 +67,53 @@ class OAuth:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS oauth_clients(id TEXT PRIMARY KEY, redirects TEXT NOT NULL, expires REAL NOT NULL, provisional INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS oauth_enrollment(hash TEXT PRIMARY KEY, endpoint TEXT NOT NULL, key_hash TEXT NOT NULL, expires REAL NOT NULL);
-                CREATE TABLE IF NOT EXISTS oauth_pending(hash TEXT PRIMARY KEY, payload TEXT NOT NULL, attempts INTEGER NOT NULL, expires REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS oauth_secret(id INTEGER PRIMARY KEY CHECK (id = 1), value BLOB NOT NULL);
+                DROP TABLE IF EXISTS oauth_pending;
                 CREATE TABLE IF NOT EXISTS oauth_codes(hash TEXT PRIMARY KEY, payload TEXT NOT NULL, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_grants(id TEXT PRIMARY KEY, client TEXT NOT NULL, endpoint TEXT NOT NULL, key_hash TEXT NOT NULL, resource TEXT NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_tokens(hash TEXT PRIMARY KEY, grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, kind TEXT NOT NULL, expires REAL NOT NULL, used INTEGER NOT NULL);
             """)
             if "provisional" not in {row[1] for row in db.execute("PRAGMA table_info(oauth_clients)")}:
                 db.execute("ALTER TABLE oauth_clients ADD COLUMN provisional INTEGER NOT NULL DEFAULT 0")
+            db.execute("INSERT OR IGNORE INTO oauth_secret VALUES (1, ?)", (secrets.token_bytes(32),))
+            self.secret = bytes(db.execute("SELECT value FROM oauth_secret WHERE id=1").fetchone()[0])
             self.cleanup(db)
 
-    def rate(self, route: str, limit: int = 120, client: str | None = None) -> None:
+    def rate(self, route: str, limit: int = 120, key: str | None = None) -> None:
         now = time.monotonic()
         with self.lock:
-            for key, cap in ((route, limit * 10), (route + ":" + (client or "anonymous"), limit)):
-                queue = self.rates.setdefault(key, deque())
+            for stale in [name for name, queue in self.rates.items() if not queue or queue[-1] <= now - 60]:
+                del self.rates[stale]
+            buckets = [(route, limit * 10 if key is not None else limit)]
+            if key is not None:
+                buckets.append((route + ":" + key, limit))
+            for name, cap in buckets:
+                queue = self.rates.setdefault(name, deque())
                 while queue and queue[0] <= now - 60:
                     queue.popleft()
                 if len(queue) >= cap:
                     raise OAuthError("temporarily_unavailable", 429)
-            for key in [key for key, queue in self.rates.items() if not queue and ":" in key]:
-                del self.rates[key]
-            for key in (route, route + ":" + (client or "anonymous")):
-                self.rates.setdefault(key, deque()).append(now)
+            for name, _ in buckets:
+                self.rates[name].append(now)
 
-    def known(self, client: str | None) -> str | None:
-        if not isinstance(client, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", client):
-            return None
+    def secret_key(self, data: dict) -> str:
+        candidates = [value for value in (data.get("refresh_token"), data.get("code"), data.get("token")) if isinstance(value, str) and value]
+        if not candidates:
+            return "anonymous"
         with self.store.tx() as db:
-            row = db.execute("SELECT 1 FROM oauth_clients WHERE id=? AND expires>?", (client, time.time())).fetchone()
-        return client if row else None
+            for value in candidates:
+                hashed = digest(value)
+                if db.execute("SELECT 1 FROM oauth_tokens WHERE hash=? AND expires>?", (hashed, time.time())).fetchone() or db.execute("SELECT 1 FROM oauth_codes WHERE hash=? AND expires>?", (hashed, time.time())).fetchone():
+                    return hashed
+        return "anonymous"
+
+    def bearer_key(self, authorization: str) -> str:
+        if not authorization.startswith("Bearer ") or len(authorization) > 1024:
+            return "anonymous"
+        hashed = digest(authorization[7:])
+        with self.store.tx() as db:
+            row = db.execute("SELECT 1 FROM oauth_tokens WHERE hash=? AND kind='access' AND expires>?", (hashed, time.time())).fetchone()
+        return hashed if row else "anonymous"
 
     def cleanup(self, db: sqlite3.Connection) -> None:
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
@@ -107,18 +125,17 @@ class OAuth:
             SELECT id, row_number() OVER (PARTITION BY endpoint ORDER BY rowid DESC) AS position FROM oauth_grants) WHERE position>8)""")
         for statement in (
             "DELETE FROM oauth_enrollment WHERE expires<=?",
-            "DELETE FROM oauth_pending WHERE expires<=?",
             "DELETE FROM oauth_codes WHERE expires<=?",
             "DELETE FROM oauth_grants WHERE revoked=1 OR expires<=?",
             "DELETE FROM oauth_clients WHERE expires<=?",
         ):
             db.execute(statement, (time.time(),))
+        db.execute("""UPDATE oauth_clients SET provisional=1, expires=min(expires, ?) WHERE provisional=0
+            AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=oauth_clients.id)
+            AND NOT EXISTS (SELECT 1 FROM oauth_codes c WHERE json_extract(c.payload,'$.client_id')=oauth_clients.id)""", (time.time() + 600,))
 
     def room(self, db: sqlite3.Connection, table: str, limit: int) -> None:
         self.cleanup(db)
-        if table == "oauth_pending":
-            db.execute("DELETE FROM oauth_pending WHERE hash IN (SELECT hash FROM oauth_pending ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET ?)", (limit - 1,))
-            return
         if table == "oauth_clients":
             db.execute("DELETE FROM oauth_clients WHERE provisional=1 AND id IN (SELECT id FROM oauth_clients WHERE provisional=1 ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET ?)", (limit - 1,))
             return
@@ -175,35 +192,42 @@ class OAuth:
     def authorize(self, data: dict[str, str]) -> str:
         if set(data) - {"client_id", "redirect_uri", "response_type", "scope", "state", "resource", "code_challenge", "code_challenge_method"} or data.get("response_type") != "code" or data.get("scope") != SCOPE or data.get("resource") != self.resource or data.get("code_challenge_method") != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", data.get("code_challenge", "")) or not data.get("state") or len(data["state"]) > 1024:
             raise OAuthError()
-        session = random_value()
         with self.store.tx() as db:
             self.client(db, data.get("client_id", ""), data.get("redirect_uri", ""))
-            self.room(db, "oauth_pending", 1024)
-            db.execute("INSERT INTO oauth_pending VALUES (?,?,0,?)", (digest(session), json.dumps(data), time.time() + 600))
-        return session
+        payload = base64.urlsafe_b64encode(json.dumps({**data, "exp": time.time() + 600, "nonce": random_value()}, separators=(",", ":")).encode()).decode().rstrip("=")
+        return payload + "." + hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()
+
+    def session(self, value: str) -> dict:
+        if not isinstance(value, str) or value.count(".") != 1 or len(value) > 8192:
+            raise OAuthError("access_denied", 403)
+        payload, signature = value.split(".")
+        if not hmac.compare_digest(hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest(), signature):
+            raise OAuthError("access_denied", 403)
+        try:
+            data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        except (ValueError, UnicodeError):
+            raise OAuthError("access_denied", 403) from None
+        if not isinstance(data, dict) or not isinstance(data.get("exp"), (int, float)) or data["exp"] <= time.time():
+            raise OAuthError("access_denied", 403)
+        return data
 
     def consent(self, session: str, csrf: str, enrollment: str) -> str:
         if not session or not hmac.compare_digest(session.encode(), csrf.encode()):
             raise OAuthError("access_denied", 403)
+        data = {key: value for key, value in self.session(session).items() if key not in ("exp", "nonce")}
         failure = False
         with self.store.tx() as db:
-            pending = db.execute("SELECT * FROM oauth_pending WHERE hash=? AND expires>? AND attempts<5", (digest(session), time.time())).fetchone()
-            if not pending:
-                raise OAuthError("access_denied", 403)
-            db.execute("UPDATE oauth_pending SET attempts=attempts+1 WHERE hash=?", (digest(session),))
             entry = db.execute("SELECT * FROM oauth_enrollment WHERE hash=? AND expires>?", (digest(enrollment), time.time())).fetchone()
             if not entry:
                 failure = True
             else:
                 row = self.endpoint(db, entry["endpoint"], entry["key_hash"])
-                data = json.loads(pending["payload"])
                 self.client(db, data["client_id"], data["redirect_uri"])
                 data.update(endpoint=row["endpoint"], key_hash=row["key_hash"])
                 self.room(db, "oauth_codes", 128)
                 value = random_value()
                 db.execute("INSERT INTO oauth_codes VALUES (?,?,?)", (digest(value), json.dumps(data), min(time.time() + 300, row["expires"])))
                 db.execute("DELETE FROM oauth_enrollment WHERE hash=?", (entry["hash"],))
-                db.execute("DELETE FROM oauth_pending WHERE hash=?", (pending["hash"],))
         if failure:
             raise OAuthError("access_denied", 403)
         return data["redirect_uri"] + "?" + urlencode({"code": value, "state": data["state"], "iss": self.origin})
@@ -239,11 +263,6 @@ class OAuth:
                     SELECT id FROM oauth_grants WHERE endpoint=? ORDER BY rowid DESC LIMIT 7)""", (value["endpoint"], value["endpoint"]))
                 self.room(db, "oauth_grants", 128)
                 if db.execute("SELECT provisional FROM oauth_clients WHERE id=?", (data["client_id"],)).fetchone()[0]:
-                    if db.execute("SELECT count(*) FROM oauth_clients WHERE provisional=0").fetchone()[0] >= 128:
-                        db.execute("""DELETE FROM oauth_clients WHERE id=(SELECT c.id FROM oauth_clients c WHERE c.provisional=0
-                            AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=c.id)
-                            AND NOT EXISTS (SELECT 1 FROM oauth_codes p WHERE json_extract(p.payload,'$.client_id')=c.id)
-                            ORDER BY c.expires LIMIT 1)""")
                     if db.execute("SELECT count(*) FROM oauth_clients WHERE provisional=0").fetchone()[0] >= 128:
                         raise OAuthError("temporarily_unavailable", 429)
                 grant_id = random_value()
@@ -356,7 +375,10 @@ async def exchange(request: Request) -> JSONResponse:
     route = request.url.path.rsplit("/", 1)[-1]
     try:
         data = await body(request, route == "register")
-        oauth.rate(route, 20 if route == "register" else 120, None if route == "register" else await run_in_threadpool(oauth.known, data.get("client_id")))
+        if route == "register":
+            oauth.rate(route, 20)
+        else:
+            oauth.rate(route, 120, await run_in_threadpool(oauth.secret_key, data))
         if request.headers.get("authorization") or "client_secret" in data or "client_assertion" in data:
             raise OAuthError("invalid_client")
         result = await run_in_threadpool(getattr(oauth, route), data)
@@ -371,7 +393,6 @@ async def authorize(request: Request) -> Response:
     try:
         if len(request.url.query) > 4096 or len(request.query_params.multi_items()) != len(request.query_params):
             raise OAuthError()
-        oauth.rate("authorize", 30, await run_in_threadpool(oauth.known, request.query_params.get("client_id")))
         session = await run_in_threadpool(oauth.authorize, dict(request.query_params))
         page = Template('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect your inbox</title><main><h1>Connect your inbox</h1><p>Enter your one-time inbox code. Connecting lets ChatGPT read your inbox, receive notifications, and share messages only when you ask. Your other conversations stay separate.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="$csrf"><label>Inbox code <input name="enrollment" type="password" required maxlength="128" autocomplete="off"></label><button type="submit" name="action" value="connect">Connect</button></form><p>Close this window to cancel.</p></main></html>').substitute(csrf=html.escape(session, quote=True))
         response = HTMLResponse(page, headers=HEADERS)
@@ -404,7 +425,7 @@ async def consent(request: Request) -> Response:
 async def public_mcp(request: Request) -> Response:
     oauth = configured(request)
     try:
-        oauth.rate("mcp", 600)
+        oauth.rate("mcp", 600, await run_in_threadpool(oauth.bearer_key, request.headers.get("authorization", "")))
         actor = await run_in_threadpool(oauth.principal, request.headers.get("authorization", ""))
     except OAuthError as error:
         headers = HEADERS | {"WWW-Authenticate": 'Bearer resource_metadata="' + oauth.origin + '/.well-known/oauth-protected-resource/mcp", scope="' + SCOPE + '"'}

@@ -149,10 +149,7 @@ def test_enrollment_single_use_attempt_limit_and_csrf(setup):
     for _ in range(5):
         with pytest.raises(OAuthError):
             oauth.consent(session, session, "wrong")
-    with pytest.raises(OAuthError):
-        oauth.consent(session, session, enrollment)
-    fresh = oauth.authorize(authorization(oauth))
-    oauth.consent(fresh, fresh, enrollment)
+    oauth.consent(session, session, enrollment)
     other = oauth.authorize(authorization(oauth))
     with pytest.raises(OAuthError):
         oauth.consent(other, other, enrollment)
@@ -288,7 +285,7 @@ def test_concurrent_code_redemption_has_one_winner(setup):
     assert sum(value is not None for value in results) == 1
 
 
-@pytest.mark.parametrize("table", ["oauth_enrollment", "oauth_pending", "oauth_codes", "oauth_clients"])
+@pytest.mark.parametrize("table", ["oauth_enrollment", "oauth_codes", "oauth_clients"])
 def test_short_lived_artifacts_expire(setup, table):
     oauth, _, _ = setup
     data = authorization(oauth)
@@ -300,7 +297,7 @@ def test_short_lived_artifacts_expire(setup, table):
     with oauth.store.tx() as db:
         db.execute(f"UPDATE {table} SET expires=0")
     with pytest.raises(OAuthError):
-        if table in ("oauth_enrollment", "oauth_pending"):
+        if table == "oauth_enrollment":
             oauth.consent(session, session, enrollment)
         else:
             oauth.token(request)
@@ -457,3 +454,53 @@ def test_upgrade_bounds_existing_grant_hoards(setup):
     assert reopened.principal("Bearer " + beta["access_token"]) == "beta"
     with reopened.store.tx() as db:
         assert db.execute("SELECT count(*) FROM oauth_grants WHERE endpoint='alpha'").fetchone()[0] == 8
+
+
+def test_consent_sessions_are_signed_and_expire(setup, monkeypatch):
+    oauth, _, _ = setup
+    session = oauth.authorize(authorization(oauth))
+    payload, signature = session.split(".")
+    with pytest.raises(OAuthError):
+        oauth.consent(payload + ".0" + signature[1:], payload + ".0" + signature[1:], oauth.enroll("alpha"))
+    with pytest.raises(OAuthError):
+        oauth.consent(session + "x", session + "x", oauth.enroll("alpha"))
+    real = time.time
+    monkeypatch.setattr(__import__("routers.household_oauth", fromlist=["time"]).time, "time", lambda: real() + 601)
+    with pytest.raises(OAuthError):
+        oauth.consent(session, session, oauth.enroll("alpha"))
+
+
+def test_unauthenticated_floods_cannot_evict_or_starve_other_flows(setup):
+    oauth, client, _ = setup
+    victim = authorization(oauth)
+    live = oauth.authorize(victim)
+    flooders = [oauth.register({"redirect_uris": [REDIRECT]})["client_id"] for _ in range(10)]
+    for _ in range(120):
+        for flooder in flooders:
+            oauth.authorize(authorization(oauth, flooder))
+    assert oauth.consent(live, live, oauth.enroll("alpha")).startswith(REDIRECT)
+    other = authorization(oauth)
+    assert client.get("/oauth/authorize", params=other).status_code == 200
+    beta, beta_client = tokens(oauth, "beta")
+    for _ in range(130):
+        client.post("/oauth/token", data={"grant_type": "refresh_token", "client_id": beta_client, "refresh_token": "junk", "resource": oauth.resource})
+    assert client.post("/oauth/token", data=refresh(oauth, beta, beta_client)).status_code == 200
+    with oauth.lock:
+        assert all(queue for queue in oauth.rates.values()) and len(oauth.rates) <= 8
+
+
+def test_idle_durable_clients_are_demoted_not_deleted(setup):
+    oauth, _, _ = setup
+    result, connected = tokens(oauth)
+    oauth.revoke({"client_id": connected, "token": result["refresh_token"]})
+    session = oauth.authorize({**authorization(oauth, connected)})
+    with oauth.store.tx() as db:
+        oauth.cleanup(db)
+        row = db.execute("SELECT provisional, expires FROM oauth_clients WHERE id=?", (connected,)).fetchone()
+    assert row["provisional"] == 1 and row["expires"] > time.time() + 500
+    target = oauth.consent(session, session, oauth.enroll("alpha"))
+    grant_code = parse_qs(urlsplit(target).query)["code"][0]
+    renewed = oauth.token({"grant_type": "authorization_code", "client_id": connected, "redirect_uri": REDIRECT, "resource": oauth.resource, "code": grant_code, "code_verifier": VERIFIER})
+    assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
+    with oauth.store.tx() as db:
+        assert db.execute("SELECT provisional FROM oauth_clients WHERE id=?", (connected,)).fetchone()[0] == 0
