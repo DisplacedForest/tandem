@@ -319,7 +319,8 @@ def test_registration_churn_preserves_active_flow_and_grants(setup):
     oauth.token(code_request)
     oauth.consent(pending, pending, oauth.enroll("alpha"))
     with oauth.store.tx() as db:
-        assert db.execute("SELECT count(*) FROM oauth_clients").fetchone()[0] == 128
+        assert db.execute("SELECT count(*) FROM oauth_clients WHERE provisional=0").fetchone()[0] == 2
+        assert db.execute("SELECT count(*) FROM oauth_clients").fetchone()[0] <= 1024
 
 
 def test_dcr_grant_order_and_non_ascii_csrf(setup):
@@ -340,8 +341,8 @@ def test_refresh_churn_stays_isolated_per_grant_and_revocation_releases_capacity
     for _ in range(100):
         current = oauth.token(refresh(oauth, current, alpha_client))
     with oauth.store.tx() as db:
-        counts = {row[0]: row[1] for row in db.execute("SELECT g.endpoint, count(*) FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id GROUP BY g.endpoint")}
-    assert counts["alpha"] <= 40 and counts["beta"] == 2
+        counts = {row[0]: row[1] for row in db.execute("SELECT g.endpoint, count(*) FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id WHERE t.used=0 GROUP BY g.endpoint")}
+    assert counts["alpha"] <= 6 and counts["beta"] == 2
     rotated = oauth.token(refresh(oauth, beta, beta_client))
     assert oauth.principal("Bearer " + rotated["access_token"]) == "beta"
     assert oauth.principal("Bearer " + current["access_token"]) == "alpha"
@@ -372,7 +373,7 @@ def test_saturated_database_heals_and_revoked_grants_release_their_slots(setup):
     rotated = oauth.token(refresh(oauth, beta, beta_client))
     assert oauth.principal("Bearer " + rotated["access_token"]) == "beta"
     with oauth.store.tx() as db:
-        assert db.execute("SELECT count(*) FROM oauth_tokens WHERE grant_id=?", (grant,)).fetchone()[0] <= 40
+        assert db.execute("SELECT count(*) FROM oauth_tokens WHERE grant_id=? AND used=0", (grant,)).fetchone()[0] <= 5
     for _ in range(128):
         current, client = tokens(oauth)
         oauth.revoke({"client_id": client, "token": current["refresh_token"]})
@@ -383,28 +384,76 @@ def test_saturated_database_heals_and_revoked_grants_release_their_slots(setup):
 
 
 def test_one_inbox_or_client_cannot_take_every_slot(setup):
-    oauth, _, _ = setup
+    oauth, client, _ = setup
     keep = [tokens(oauth)[0] for _ in range(12)]
     with oauth.store.tx() as db:
         assert db.execute("SELECT count(*) FROM oauth_grants WHERE endpoint='alpha'").fetchone()[0] == 8
     with pytest.raises(OAuthError):
         oauth.principal("Bearer " + keep[0]["access_token"])
     assert oauth.principal("Bearer " + keep[-1]["access_token"]) == "alpha"
-    flooder = oauth.register({"redirect_uris": [REDIRECT]})["client_id"]
-    for _ in range(200):
-        oauth.authorize(authorization(oauth, flooder))
-    with oauth.store.tx() as db:
-        assert db.execute("SELECT count(*) FROM oauth_pending").fetchone()[0] == 8
-    other = authorization(oauth)
-    session = oauth.authorize(other)
+    victim = authorization(oauth)
+    live = oauth.authorize(victim)
+    flooders = [oauth.register({"redirect_uris": [REDIRECT]})["client_id"] for _ in range(16)]
+    for flooder in flooders:
+        for _ in range(8):
+            oauth.authorize(authorization(oauth, flooder))
+    for _ in range(300):
+        oauth.register({"redirect_uris": [REDIRECT]})
+    for _ in range(8):
+        oauth.authorize(authorization(oauth, victim["client_id"]))
+    newcomer = oauth.register({"redirect_uris": [REDIRECT]})["client_id"]
+    session = oauth.authorize(authorization(oauth, newcomer))
     assert oauth.consent(session, session, oauth.enroll("beta")).startswith(REDIRECT)
-    for _ in range(140):
-        oauth.authorize(authorization(oauth))
-    assert oauth.register({"redirect_uris": [REDIRECT]})["client_id"]
+    assert oauth.consent(live, live, oauth.enroll("alpha")).startswith(REDIRECT)
     with oauth.store.tx() as db:
         db.executemany("INSERT INTO oauth_enrollment VALUES (?,?,?,?)", [("fill" + str(index), "endpoint" + str(index), "k", time.time() + 600) for index in range(31)])
     first = oauth.enroll("alpha")
     second = oauth.enroll("alpha")
     with oauth.store.tx() as db:
         assert db.execute("SELECT count(*) FROM oauth_enrollment").fetchone()[0] == 32
+        db.execute("DELETE FROM oauth_enrollment WHERE hash LIKE 'fill%'")
     assert first != second
+    beta, beta_client = tokens(oauth, "beta")
+    for _ in range(130):
+        client.post("/oauth/token", data={"grant_type": "refresh_token", "client_id": "unknown", "refresh_token": "x", "resource": oauth.resource})
+    assert client.post("/oauth/token", data=refresh(oauth, beta, beta_client)).status_code == 200
+
+
+def test_older_replay_still_revokes_the_family_after_many_rotations(setup):
+    oauth, _, _ = setup
+    original, client = tokens(oauth)
+    current = original
+    for _ in range(40):
+        current = oauth.token(refresh(oauth, current, client))
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, original, client))
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + current["access_token"])
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, current, client))
+
+
+def test_runaway_rotation_revokes_the_family_instead_of_forgetting_history(setup):
+    oauth, _, _ = setup
+    original, client = tokens(oauth)
+    with oauth.store.tx() as db:
+        grant = db.execute("SELECT grant_id FROM oauth_tokens WHERE hash=?", (__import__("routers.household_oauth", fromlist=["digest"]).digest(original["refresh_token"]),)).fetchone()[0]
+        db.executemany("INSERT INTO oauth_tokens VALUES (?,?,'refresh',?,1)", [("used" + str(index), grant, time.time() + 86400) for index in range(2048)])
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, original, client))
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + original["access_token"])
+
+
+def test_upgrade_bounds_existing_grant_hoards(setup):
+    oauth, _, _ = setup
+    seed, _ = tokens(oauth)
+    with oauth.store.tx() as db:
+        row = db.execute("SELECT * FROM oauth_grants").fetchone()
+        db.executemany("INSERT INTO oauth_grants VALUES (?,?,?,?,?,?,0)", [("hoard" + str(index), row["client"], "alpha", row["key_hash"], row["resource"], row["expires"]) for index in range(127)])
+        assert db.execute("SELECT count(*) FROM oauth_grants").fetchone()[0] == 128
+    reopened = OAuth(oauth.store, ORIGIN)
+    beta, _ = tokens(reopened, "beta")
+    assert reopened.principal("Bearer " + beta["access_token"]) == "beta"
+    with reopened.store.tx() as db:
+        assert db.execute("SELECT count(*) FROM oauth_grants WHERE endpoint='alpha'").fetchone()[0] == 8

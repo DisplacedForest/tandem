@@ -65,31 +65,46 @@ class OAuth:
         self.rates: dict[str, deque[float]] = {}
         with store.tx() as db:
             db.executescript("""
-                CREATE TABLE IF NOT EXISTS oauth_clients(id TEXT PRIMARY KEY, redirects TEXT NOT NULL, expires REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS oauth_clients(id TEXT PRIMARY KEY, redirects TEXT NOT NULL, expires REAL NOT NULL, provisional INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS oauth_enrollment(hash TEXT PRIMARY KEY, endpoint TEXT NOT NULL, key_hash TEXT NOT NULL, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_pending(hash TEXT PRIMARY KEY, payload TEXT NOT NULL, attempts INTEGER NOT NULL, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_codes(hash TEXT PRIMARY KEY, payload TEXT NOT NULL, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_grants(id TEXT PRIMARY KEY, client TEXT NOT NULL, endpoint TEXT NOT NULL, key_hash TEXT NOT NULL, resource TEXT NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_tokens(hash TEXT PRIMARY KEY, grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, kind TEXT NOT NULL, expires REAL NOT NULL, used INTEGER NOT NULL);
             """)
+            if "provisional" not in {row[1] for row in db.execute("PRAGMA table_info(oauth_clients)")}:
+                db.execute("ALTER TABLE oauth_clients ADD COLUMN provisional INTEGER NOT NULL DEFAULT 0")
             self.cleanup(db)
 
-    def rate(self, route: str, limit: int = 120) -> None:
+    def rate(self, route: str, limit: int = 120, client: str | None = None) -> None:
         now = time.monotonic()
         with self.lock:
-            queue = self.rates.setdefault(route, deque())
-            while queue and queue[0] <= now - 60:
-                queue.popleft()
-            if len(queue) >= limit:
-                raise OAuthError("temporarily_unavailable", 429)
-            queue.append(now)
+            for key, cap in ((route, limit * 10), (route + ":" + (client or "anonymous"), limit)):
+                queue = self.rates.setdefault(key, deque())
+                while queue and queue[0] <= now - 60:
+                    queue.popleft()
+                if len(queue) >= cap:
+                    raise OAuthError("temporarily_unavailable", 429)
+            for key in [key for key, queue in self.rates.items() if not queue and ":" in key]:
+                del self.rates[key]
+            for key in (route, route + ":" + (client or "anonymous")):
+                self.rates.setdefault(key, deque()).append(now)
+
+    def known(self, client: str | None) -> str | None:
+        if not isinstance(client, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", client):
+            return None
+        with self.store.tx() as db:
+            row = db.execute("SELECT 1 FROM oauth_clients WHERE id=? AND expires>?", (client, time.time())).fetchone()
+        return client if row else None
 
     def cleanup(self, db: sqlite3.Connection) -> None:
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
         db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (time.time(),))
         db.execute("""DELETE FROM oauth_tokens WHERE rowid IN (SELECT rowid FROM (
             SELECT rowid, kind, used, row_number() OVER (PARTITION BY grant_id, kind, used ORDER BY rowid DESC) AS position FROM oauth_tokens)
-            WHERE (kind='access' AND used=0 AND position>4) OR (kind='refresh' AND used=1 AND position>32))""")
+            WHERE kind='access' AND used=0 AND position>4)""")
+        db.execute("""DELETE FROM oauth_grants WHERE id IN (SELECT id FROM (
+            SELECT id, row_number() OVER (PARTITION BY endpoint ORDER BY rowid DESC) AS position FROM oauth_grants) WHERE position>8)""")
         for statement in (
             "DELETE FROM oauth_enrollment WHERE expires<=?",
             "DELETE FROM oauth_pending WHERE expires<=?",
@@ -101,13 +116,17 @@ class OAuth:
 
     def room(self, db: sqlite3.Connection, table: str, limit: int) -> None:
         self.cleanup(db)
+        if table == "oauth_pending":
+            db.execute("DELETE FROM oauth_pending WHERE hash IN (SELECT hash FROM oauth_pending ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET ?)", (limit - 1,))
+            return
+        if table == "oauth_clients":
+            db.execute("DELETE FROM oauth_clients WHERE provisional=1 AND id IN (SELECT id FROM oauth_clients WHERE provisional=1 ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET ?)", (limit - 1,))
+            return
         statements = {
             "oauth_enrollment": "SELECT count(*) FROM oauth_enrollment",
-            "oauth_pending": "SELECT count(*) FROM oauth_pending",
             "oauth_codes": "SELECT count(*) FROM oauth_codes",
             "oauth_grants": "SELECT count(*) FROM oauth_grants",
-            "oauth_clients": "SELECT count(*) FROM oauth_clients",
-            "oauth_tokens": "SELECT count(*) FROM oauth_tokens",
+            "oauth_tokens": "SELECT count(*) FROM oauth_tokens WHERE used=0",
         }
         if db.execute(statements[table]).fetchone()[0] >= limit:
             raise OAuthError("temporarily_unavailable", 429)
@@ -144,19 +163,8 @@ class OAuth:
             raise OAuthError("invalid_client_metadata")
         client = random_value()
         with self.store.tx() as db:
-            self.cleanup(db)
-            if db.execute("SELECT count(*) FROM oauth_clients").fetchone()[0] >= 128:
-                idle = """SELECT c.id FROM oauth_clients c
-                    WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=c.id)
-                    AND NOT EXISTS (SELECT 1 FROM oauth_codes p WHERE json_extract(p.payload,'$.client_id')=c.id)"""
-                evicted = db.execute(idle + " AND NOT EXISTS (SELECT 1 FROM oauth_pending p WHERE json_extract(p.payload,'$.client_id')=c.id) ORDER BY c.expires LIMIT 1").fetchone()
-                if not evicted:
-                    evicted = db.execute(idle + " ORDER BY (SELECT min(p.expires) FROM oauth_pending p WHERE json_extract(p.payload,'$.client_id')=c.id), c.expires LIMIT 1").fetchone()
-                if evicted:
-                    db.execute("DELETE FROM oauth_pending WHERE json_extract(payload,'$.client_id')=?", (evicted[0],))
-                    db.execute("DELETE FROM oauth_clients WHERE id=?", (evicted[0],))
-            self.room(db, "oauth_clients", 128)
-            db.execute("INSERT INTO oauth_clients VALUES (?,?,?)", (client, json.dumps(redirects), time.time() + 90 * 86400))
+            self.room(db, "oauth_clients", 1024)
+            db.execute("INSERT INTO oauth_clients VALUES (?,?,?,1)", (client, json.dumps(redirects), time.time() + 600))
         return {"client_id": client, "redirect_uris": redirects, "token_endpoint_auth_method": "none", "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"], "scope": SCOPE}
 
     def client(self, db: sqlite3.Connection, client: str, redirect: str | None = None) -> None:
@@ -170,9 +178,7 @@ class OAuth:
         session = random_value()
         with self.store.tx() as db:
             self.client(db, data.get("client_id", ""), data.get("redirect_uri", ""))
-            db.execute("""DELETE FROM oauth_pending WHERE json_extract(payload,'$.client_id')=? AND hash NOT IN (
-                SELECT hash FROM oauth_pending WHERE json_extract(payload,'$.client_id')=? ORDER BY rowid DESC LIMIT 7)""", (data["client_id"], data["client_id"]))
-            self.room(db, "oauth_pending", 128)
+            self.room(db, "oauth_pending", 1024)
             db.execute("INSERT INTO oauth_pending VALUES (?,?,0,?)", (digest(session), json.dumps(data), time.time() + 600))
         return session
 
@@ -232,18 +238,26 @@ class OAuth:
                 db.execute("""DELETE FROM oauth_grants WHERE endpoint=? AND id NOT IN (
                     SELECT id FROM oauth_grants WHERE endpoint=? ORDER BY rowid DESC LIMIT 7)""", (value["endpoint"], value["endpoint"]))
                 self.room(db, "oauth_grants", 128)
+                if db.execute("SELECT provisional FROM oauth_clients WHERE id=?", (data["client_id"],)).fetchone()[0]:
+                    if db.execute("SELECT count(*) FROM oauth_clients WHERE provisional=0").fetchone()[0] >= 128:
+                        db.execute("""DELETE FROM oauth_clients WHERE id=(SELECT c.id FROM oauth_clients c WHERE c.provisional=0
+                            AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=c.id)
+                            AND NOT EXISTS (SELECT 1 FROM oauth_codes p WHERE json_extract(p.payload,'$.client_id')=c.id)
+                            ORDER BY c.expires LIMIT 1)""")
+                    if db.execute("SELECT count(*) FROM oauth_clients WHERE provisional=0").fetchone()[0] >= 128:
+                        raise OAuthError("temporarily_unavailable", 429)
                 grant_id = random_value()
                 db.execute("INSERT INTO oauth_grants VALUES (?,?,?,?,?,?,0)", (grant_id, data["client_id"], value["endpoint"], value["key_hash"], self.resource, min(time.time() + 30 * 86400, endpoint["expires"])))
                 grant = db.execute("SELECT * FROM oauth_grants WHERE id=?", (grant_id,)).fetchone()
                 result = self.mint(db, grant)
-                db.execute("UPDATE oauth_clients SET expires=? WHERE id=?", (time.time() + 90 * 86400, data["client_id"]))
+                db.execute("UPDATE oauth_clients SET expires=?, provisional=0 WHERE id=?", (time.time() + 90 * 86400, data["client_id"]))
                 db.execute("DELETE FROM oauth_codes WHERE hash=?", (row["hash"],))
             elif data.get("grant_type") == "refresh_token":
                 token = db.execute("SELECT * FROM oauth_tokens WHERE hash=? AND kind='refresh' AND expires>?", (digest(data.get("refresh_token", "")), time.time())).fetchone()
                 grant = db.execute("SELECT * FROM oauth_grants WHERE id=? AND client=?", (token["grant_id"], data["client_id"])).fetchone() if token else None
                 if not grant:
                     raise OAuthError("invalid_grant")
-                if token["used"]:
+                if token["used"] or db.execute("SELECT count(*) FROM oauth_tokens WHERE grant_id=? AND kind='refresh' AND used=1", (grant["id"],)).fetchone()[0] >= 2048:
                     db.execute("UPDATE oauth_grants SET revoked=1 WHERE id=?", (grant["id"],))
                     replay = True
                 else:
@@ -341,8 +355,8 @@ async def exchange(request: Request) -> JSONResponse:
     oauth = configured(request)
     route = request.url.path.rsplit("/", 1)[-1]
     try:
-        oauth.rate(route, 20 if route == "register" else 120)
         data = await body(request, route == "register")
+        oauth.rate(route, 20 if route == "register" else 120, None if route == "register" else await run_in_threadpool(oauth.known, data.get("client_id")))
         if request.headers.get("authorization") or "client_secret" in data or "client_assertion" in data:
             raise OAuthError("invalid_client")
         result = await run_in_threadpool(getattr(oauth, route), data)
@@ -355,9 +369,9 @@ async def exchange(request: Request) -> JSONResponse:
 async def authorize(request: Request) -> Response:
     oauth = configured(request)
     try:
-        oauth.rate("authorize", 30)
         if len(request.url.query) > 4096 or len(request.query_params.multi_items()) != len(request.query_params):
             raise OAuthError()
+        oauth.rate("authorize", 30, await run_in_threadpool(oauth.known, request.query_params.get("client_id")))
         session = await run_in_threadpool(oauth.authorize, dict(request.query_params))
         page = Template('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect your inbox</title><main><h1>Connect your inbox</h1><p>Enter your one-time inbox code. Connecting lets ChatGPT read your inbox, receive notifications, and share messages only when you ask. Your other conversations stay separate.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="$csrf"><label>Inbox code <input name="enrollment" type="password" required maxlength="128" autocomplete="off"></label><button type="submit" name="action" value="connect">Connect</button></form><p>Close this window to cancel.</p></main></html>').substitute(csrf=html.escape(session, quote=True))
         response = HTMLResponse(page, headers=HEADERS)
