@@ -12,10 +12,10 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-from .household import Gateway
+from .household_gateway import Gateway
 from .household_auth import EndpointKeys
 from .household_events import Events, PublicHTTPS
-from .household_store import Store
+from .household_gateway_store import Store
 
 log = logging.getLogger("vera.household")
 

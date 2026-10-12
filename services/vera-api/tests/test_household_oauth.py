@@ -7,10 +7,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routers.household import Gateway, router as private_router
+from routers.household_gateway import Gateway, router as private_router
 from routers.household_auth import EndpointKeys
 from routers.household_oauth import COOKIE, SCOPE, OAuth, OAuthError, challenge, lifespan, router
-from routers.household_store import Store
+from routers.household_gateway_store import Store
 
 ORIGIN = "https://inbox.example.com"
 REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect"

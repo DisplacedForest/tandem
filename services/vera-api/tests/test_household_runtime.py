@@ -15,11 +15,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routers.household import Gateway, router
+from routers.household_gateway import Gateway, router
 from routers.household_auth import EndpointKeys
 from routers.household_events import Events, PinnedTLSConnection
 from routers.household_runtime import configured_gateway, lifespan, worker
-from routers.household_store import Denied, Store
+from routers.household_gateway_store import Denied, Store
 
 ALPHA = "a" * 43
 BETA = "b" * 43

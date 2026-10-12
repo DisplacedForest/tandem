@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .household_events import EVENT, CallbackError, Events
-from .household_store import Denied, Store
+from .household_gateway_store import Denied, Store
 
 router = APIRouter(prefix="/household", tags=["household"])
 

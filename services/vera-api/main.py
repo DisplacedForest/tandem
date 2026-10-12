@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_runtime, identity_migrate, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household_gateway, household_runtime, identity_migrate, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="vera-api", version=VERSION, lifespan=lifespan)
 
 CAPABILITIES = {
-    "household": household.router,
+    "household_gateway": household_gateway.router,
     "search": websearch.router,
     "images": images.router,
     "feedback": feedback.router,

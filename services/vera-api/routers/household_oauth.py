@@ -20,10 +20,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from .household import Gateway
+from .household_gateway import Gateway
 from .household_events import CallbackError
 from .household_runtime import lifespan as gateway_lifespan
-from .household_store import Denied, Store
+from .household_gateway_store import Denied, Store
 
 router = APIRouter()
 SCOPE = "household/inbox"

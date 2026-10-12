@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from routers.household_events import EVENT, Events, PublicHTTPS
-from routers.household_store import Denied, Store
+from routers.household_gateway_store import Denied, Store
 
 SECRET = "whsec_" + base64.b64encode(b"synthetic-test-key-only-0123456789").decode()
 
@@ -187,7 +187,7 @@ class HouseholdTests(unittest.TestCase):
 
     def test_pagination_with_same_timestamp(self):
         self.active()
-        with patch("routers.household_store.time.time", return_value=100):
+        with patch("routers.household_gateway_store.time.time", return_value=100):
             for i in range(60):
                 self.send(str(i))
         first = self.store.inbox("beta")

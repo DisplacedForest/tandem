@@ -5,9 +5,9 @@ import time
 import pytest
 from pydantic import ValidationError
 
-from routers.household import Gateway
+from routers.household_gateway import Gateway
 from routers.household_events import EVENT, Events
-from routers.household_store import Denied, Store
+from routers.household_gateway_store import Denied, Store
 
 
 @pytest.fixture

@@ -3,8 +3,8 @@ import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routers.household import Gateway, router
-from routers.household_store import Store
+from routers.household_gateway import Gateway, router
+from routers.household_gateway_store import Store
 
 
 def test_http_authentication_and_protocol(tmp_path):

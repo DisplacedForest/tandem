@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from routers.household_auth import EndpointKeys
-from routers.household_store import Store
+from routers.household_gateway_store import Store
 
 
 def test_isolated_entrypoint_imports_no_shared_api_runtime():

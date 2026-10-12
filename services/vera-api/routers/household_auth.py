@@ -3,7 +3,7 @@ import hmac
 import re
 import time
 
-from .household_store import Denied, Store
+from .household_gateway_store import Denied, Store
 
 
 class EndpointKeys:

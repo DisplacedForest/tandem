@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from routers.household import router
+from routers.household_gateway import router
 from routers.household_oauth import lifespan, router as oauth_router
 
 app = FastAPI(title="Household inbox gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

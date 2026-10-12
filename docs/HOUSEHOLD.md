@@ -115,13 +115,13 @@ Official references, verified October 9, 2026: [MCP Events](https://developers.o
 
 ## Verification and rollout
 
-Run `mise run api-test` for the complete API suite. Focused coverage lives in `tests/test_household.py`, `tests/test_household_mcp.py`, and `tests/test_household_runtime.py`. Tests use temporary private databases, synthetic identities and credentials, and fake callbacks. Integration tests run the actual FastAPI lifecycle and durable delivery worker, then check that callback receipt leaves delivery and processing unset. A socketpair regression checks deadlines on slow, connection-closing HTTP responses. No production credential or callback is needed.
+Run `mise run api-test` for the complete API suite. Focused coverage lives in `tests/test_household_gateway.py`, `tests/test_household_mcp.py`, and `tests/test_household_runtime.py`. Tests use temporary private databases, synthetic identities and credentials, and fake callbacks. Integration tests run the actual FastAPI lifecycle and durable delivery worker, then check that callback receipt leaves delivery and processing unset. A socketpair regression checks deadlines on slow, connection-closing HTTP responses. No production credential or callback is needed.
 
 The core store/event suite can also run without installed third-party packages:
 
 ```sh
 cd services/vera-api
-python3 -m unittest discover -s tests -p test_household.py -v
+python3 -m unittest discover -s tests -p test_household_gateway.py -v
 ```
 
 Before rollout, review the focused diff, run the full API tests and security checks, preserve the current API image and protected configuration for rollback, and arrange activation of only the dedicated gateway. Preserve the shared API process. Start with only explicitly approved endpoints and no callbacks. Verify gateway health and unauthenticated rejection, then confirm the shared API is unchanged. Provision each endpoint only after its owner's consent, then validate a synthetic pair and message. A changed database must be backed up using SQLite's backup API, not copied during a transaction. Do not attach live data to test processes.

@@ -5,7 +5,7 @@ import secrets
 from pathlib import Path
 
 from routers.household_auth import EndpointKeys
-from routers.household_store import Store
+from routers.household_gateway_store import Store
 
 
 def main() -> None:

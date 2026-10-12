@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Callable
 from urllib.parse import urlsplit
 
-from .household_store import Denied, Store, canonical
+from .household_gateway_store import Denied, Store, canonical
 
 EVENT = "household.message.created"
 _RESOLVER = ThreadPoolExecutor(max_workers=2)

@@ -1,6 +1,6 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 COPY household_app.py /app/
-COPY routers/household.py routers/household_runtime.py routers/household_events.py routers/household_store.py routers/household_auth.py routers/household_oauth.py /app/routers/
+COPY routers/household_gateway.py routers/household_runtime.py routers/household_events.py routers/household_gateway_store.py routers/household_auth.py routers/household_oauth.py /app/routers/
 USER 65532:65532
 CMD ["uvicorn", "household_app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-access-log"]
