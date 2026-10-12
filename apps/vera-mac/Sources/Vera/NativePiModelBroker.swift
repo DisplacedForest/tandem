@@ -243,24 +243,27 @@ actor NativePiModelBroker {
             if !Task.isCancelled { operation.cancel(); race.resolve(.failure(PiBrokerError.unavailable)) }
         }
         defer { timer.cancel(); receiver.cancel(); active.removeValue(forKey: request.id) }
+        let reply: PiValue
+        var rejection: Error?
         do {
-            let reply = try await withTaskCancellationHandler {
+            reply = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { race.install($0) }
             } onCancel: {
                 operation.cancel(); race.resolve(.failure(CancellationError()))
             }
             try Task.checkCancellation()
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
-            try await executor.validateRequest(request)
+            do { try await executor.validateRequest(request) } catch { rejection = error }
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
-            return reply
         } catch {
             quarantined = true
             ledger.uncertain(request.id)
             throw error
         }
+        if let rejection { throw rejection }
+        return reply
     }
     func cancel(_ id: String) {
         guard canceled.count < 24 else { close(); return }
