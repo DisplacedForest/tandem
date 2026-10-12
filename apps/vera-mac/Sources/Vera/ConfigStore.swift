@@ -215,9 +215,13 @@ final class ConfigStore: ObservableObject {
 
     private func piSend(binding: PiSelectedProfileBinding, request: PiModelRequest, body: Data,
                         transport: @escaping PiProviderSend) async throws -> (Data, Int) {
-        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
-        guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
-        try piCheck(!piContainsCredential(body, key: key), .unauthorized)
+        let key: String
+        do {
+            try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+            guard let committed = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
+            key = committed
+            try piCheck(!piContainsCredential(body, key: key), .unauthorized)
+        } catch { throw PiNoSpendRejection(error: error) }
         var outgoing = URLRequest(url: binding.endpoint.appendingPathComponent("chat/completions"))
         outgoing.httpMethod = "POST"
         outgoing.httpBody = body

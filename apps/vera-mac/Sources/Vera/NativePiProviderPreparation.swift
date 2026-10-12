@@ -94,7 +94,7 @@ struct PiPreparedExecutor: PiMockModelExecutor {
         return PiPreparedExecutor(operation: operation, permit: permit, journal: journal)
     }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
-        try await validateOwner()
+        do { try await validateOwner() } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
         let reply = try await operation.complete(request)
         try await validateOwner()
         if let journal {
@@ -157,7 +157,7 @@ final class PiPreparedProvider {
         let baseline = try permit.baseline(observedProviderUsage: usage)
         let accounting = try PiSharedAccounting(root: accountingRoot, baselineNanos: baseline, budgetNanos: baseline + permit.runAllowance, ownerBinding: permit.digest, transport: transport)
         let baseOperation = try owner.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { request, _ in
-            try permit.validate(binding)
+            do { try permit.validate(binding) } catch { throw PiNoSpendRejection(error: error) }
             let response = try await http.send(request)
             try permit.validate(binding)
             return response

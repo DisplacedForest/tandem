@@ -57,7 +57,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
         do { try await validateRequest(request) } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
     }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
-        try await validate()
+        do { try await validate() } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
         let request = try await prepareBeforeDispatch(request)
         let body: Data
         do {

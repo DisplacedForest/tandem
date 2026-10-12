@@ -5,7 +5,11 @@ import GRDB
 enum NativePiCandidateSelftest {
     static func rejected(_ expected: PiBrokerError, _ operation: () async throws -> Void) async throws {
         do { try await operation() }
-        catch let error as PiBrokerError { try piCheck(error == expected); return }
+        catch {
+            let unwrapped = (error as? PiNoSpendRejection)?.error ?? error
+            guard let category = unwrapped as? PiBrokerError else { throw PiBrokerError.invalid }
+            try piCheck(category == expected); return
+        }
         throw PiBrokerError.invalid
     }
     static func config(_ credentials: PiCandidateCredentials, profileID: String, writer: @escaping ([String: Any]) throws -> Void = { _ in }) -> ConfigStore {
