@@ -72,6 +72,7 @@ class OAuth:
                 CREATE TABLE IF NOT EXISTS oauth_grants(id TEXT PRIMARY KEY, client TEXT NOT NULL, endpoint TEXT NOT NULL, key_hash TEXT NOT NULL, resource TEXT NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS oauth_tokens(hash TEXT PRIMARY KEY, grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE, kind TEXT NOT NULL, expires REAL NOT NULL, used INTEGER NOT NULL);
             """)
+            self.cleanup(db)
 
     def rate(self, route: str, limit: int = 120) -> None:
         now = time.monotonic()
@@ -86,11 +87,14 @@ class OAuth:
     def cleanup(self, db: sqlite3.Connection) -> None:
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
         db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (time.time(),))
+        db.execute("""DELETE FROM oauth_tokens WHERE rowid IN (SELECT rowid FROM (
+            SELECT rowid, kind, used, row_number() OVER (PARTITION BY grant_id, kind, used ORDER BY rowid DESC) AS position FROM oauth_tokens)
+            WHERE (kind='access' AND used=0 AND position>4) OR (kind='refresh' AND used=1 AND position>32))""")
         for statement in (
             "DELETE FROM oauth_enrollment WHERE expires<=?",
             "DELETE FROM oauth_pending WHERE expires<=?",
             "DELETE FROM oauth_codes WHERE expires<=?",
-            "DELETE FROM oauth_grants WHERE expires<=?",
+            "DELETE FROM oauth_grants WHERE revoked=1 OR expires<=?",
             "DELETE FROM oauth_clients WHERE expires<=?",
         ):
             db.execute(statement, (time.time(),))
@@ -124,8 +128,8 @@ class OAuth:
         value = random_value()
         with self.store.tx() as db:
             row = self.endpoint(db, endpoint)
-            self.room(db, "oauth_enrollment", 32)
             db.execute("DELETE FROM oauth_enrollment WHERE endpoint=?", (endpoint,))
+            self.room(db, "oauth_enrollment", 32)
             db.execute("INSERT INTO oauth_enrollment VALUES (?,?,?,?)", (digest(value), endpoint, row["key_hash"], min(time.time() + ttl, row["expires"])))
         return value
 
@@ -142,11 +146,15 @@ class OAuth:
         with self.store.tx() as db:
             self.cleanup(db)
             if db.execute("SELECT count(*) FROM oauth_clients").fetchone()[0] >= 128:
-                db.execute("""DELETE FROM oauth_clients WHERE id=(SELECT c.id FROM oauth_clients c
+                idle = """SELECT c.id FROM oauth_clients c
                     WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=c.id)
-                    AND NOT EXISTS (SELECT 1 FROM oauth_pending p WHERE json_extract(p.payload,'$.client_id')=c.id)
-                    AND NOT EXISTS (SELECT 1 FROM oauth_codes p WHERE json_extract(p.payload,'$.client_id')=c.id)
-                    ORDER BY c.expires LIMIT 1)""")
+                    AND NOT EXISTS (SELECT 1 FROM oauth_codes p WHERE json_extract(p.payload,'$.client_id')=c.id)"""
+                evicted = db.execute(idle + " AND NOT EXISTS (SELECT 1 FROM oauth_pending p WHERE json_extract(p.payload,'$.client_id')=c.id) ORDER BY c.expires LIMIT 1").fetchone()
+                if not evicted:
+                    evicted = db.execute(idle + " ORDER BY (SELECT min(p.expires) FROM oauth_pending p WHERE json_extract(p.payload,'$.client_id')=c.id), c.expires LIMIT 1").fetchone()
+                if evicted:
+                    db.execute("DELETE FROM oauth_pending WHERE json_extract(payload,'$.client_id')=?", (evicted[0],))
+                    db.execute("DELETE FROM oauth_clients WHERE id=?", (evicted[0],))
             self.room(db, "oauth_clients", 128)
             db.execute("INSERT INTO oauth_clients VALUES (?,?,?)", (client, json.dumps(redirects), time.time() + 90 * 86400))
         return {"client_id": client, "redirect_uris": redirects, "token_endpoint_auth_method": "none", "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"], "scope": SCOPE}
@@ -162,6 +170,8 @@ class OAuth:
         session = random_value()
         with self.store.tx() as db:
             self.client(db, data.get("client_id", ""), data.get("redirect_uri", ""))
+            db.execute("""DELETE FROM oauth_pending WHERE json_extract(payload,'$.client_id')=? AND hash NOT IN (
+                SELECT hash FROM oauth_pending WHERE json_extract(payload,'$.client_id')=? ORDER BY rowid DESC LIMIT 7)""", (data["client_id"], data["client_id"]))
             self.room(db, "oauth_pending", 128)
             db.execute("INSERT INTO oauth_pending VALUES (?,?,0,?)", (digest(session), json.dumps(data), time.time() + 600))
         return session
@@ -202,16 +212,7 @@ class OAuth:
         expires = min(now + 3600, grant["expires"], endpoint["expires"])
         db.execute("INSERT INTO oauth_tokens VALUES (?,?, 'access',?,0)", (digest(access), grant["id"], expires))
         db.execute("INSERT INTO oauth_tokens VALUES (?,?, 'refresh',?,0)", (digest(refresh), grant["id"], grant["expires"]))
-        self.retain(db, grant["id"], "access", 0, 4)
-        self.retain(db, grant["id"], "refresh", 1, 32)
         return {"access_token": access, "refresh_token": refresh, "token_type": "Bearer", "expires_in": max(0, int(expires - now)), "scope": SCOPE}
-
-    @staticmethod
-    def retain(db: sqlite3.Connection, grant_id: str, kind: str, used: int, keep: int) -> None:
-        db.execute(
-            "DELETE FROM oauth_tokens WHERE grant_id=? AND kind=? AND used=? AND rowid NOT IN (SELECT rowid FROM oauth_tokens WHERE grant_id=? AND kind=? AND used=? ORDER BY rowid DESC LIMIT ?)",
-            (grant_id, kind, used, grant_id, kind, used, keep),
-        )
 
     def token(self, data: dict[str, str]) -> dict:
         replay = False
@@ -228,6 +229,8 @@ class OAuth:
                 if value["client_id"] != data["client_id"] or value["redirect_uri"] != data.get("redirect_uri") or value["resource"] != data["resource"] or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier) or not hmac.compare_digest(challenge(verifier), value["code_challenge"]):
                     raise OAuthError("invalid_grant")
                 endpoint = self.endpoint(db, value["endpoint"], value["key_hash"])
+                db.execute("""DELETE FROM oauth_grants WHERE endpoint=? AND id NOT IN (
+                    SELECT id FROM oauth_grants WHERE endpoint=? ORDER BY rowid DESC LIMIT 7)""", (value["endpoint"], value["endpoint"]))
                 self.room(db, "oauth_grants", 128)
                 grant_id = random_value()
                 db.execute("INSERT INTO oauth_grants VALUES (?,?,?,?,?,?,0)", (grant_id, data["client_id"], value["endpoint"], value["key_hash"], self.resource, min(time.time() + 30 * 86400, endpoint["expires"])))
