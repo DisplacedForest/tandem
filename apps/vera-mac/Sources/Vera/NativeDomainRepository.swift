@@ -307,7 +307,21 @@ extension LocalChatRepository {
 
     static func redactDomainMemory(_ id: String, db: Database) throws {
         guard let stream = try Row.fetchOne(db, sql: "SELECT entity_id, scope FROM native_domain_streams WHERE memory_id = ?", arguments: [id]) else { return }
-        let entity: String = stream["entity_id"], scope: String = stream["scope"]
+        try redactDomainStream(stream["entity_id"], scope: stream["scope"], db: db)
+    }
+
+    func revokeUnprojectedDomainStreams() throws {
+        try database.write { db in
+            for row in try Row.fetchAll(db, sql: """
+                SELECT entity_id, scope FROM native_domain_streams s WHERE disabled = 0 AND memory_id IS NULL
+                  AND EXISTS (SELECT 1 FROM native_domain_entries e WHERE e.entity_id = s.entity_id AND e.scope = s.scope)
+                """) {
+                try Self.redactDomainStream(row["entity_id"], scope: row["scope"], db: db)
+            }
+        }
+    }
+
+    static func redactDomainStream(_ entity: String, scope: String, db: Database) throws {
         try db.execute(sql: "UPDATE native_domain_streams SET disabled = 1 WHERE entity_id = ? AND scope = ?", arguments: [entity, scope])
         try db.execute(sql: "DELETE FROM native_memory_proposals WHERE json_extract(proposal_json, '$.domain.entry.entityID') = ? AND json_extract(proposal_json, '$.domain.entry.scope') = ?", arguments: [entity, scope])
         try db.execute(sql: """

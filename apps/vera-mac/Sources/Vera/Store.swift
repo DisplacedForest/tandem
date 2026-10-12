@@ -820,6 +820,7 @@ final class ChatStore: ObservableObject {
             for memory in try memoryRepository.approvedMemories() {
                 try memoryRepository.deleteMemory(memory.id)
             }
+            if let local = repository as? LocalChatRepository { try local.revokeUnprojectedDomainStreams() }
             reloadNativeMemory()
         } catch {
             memoryServiceState = .failed("The memory library could not be cleared: \(error.localizedDescription)")
