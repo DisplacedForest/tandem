@@ -6,6 +6,8 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var failReads = false
     var failReadsAfterAcceptance = true
     var failTurnWrites = false
+    var failCurrencyReads = false
+    var currencyReadFailures = 0
     var historyReads = 0
     var transcriptReads = 0
     var polledRecords = 0
@@ -40,7 +42,14 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     }
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws { try base.enrollLegacyTurn(turn) }
     func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? { try base.claimTurn(id, attempt: attempt) }
-    func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool { try base.turnIsCurrent(id, attempt: attempt) }
+    func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
+        let failing = lock.withLock {
+            if failCurrencyReads { currencyReadFailures += 1 }
+            return failCurrencyReads
+        }
+        if failing { throw NativeToolError.failed("synthetic currency read failure") }
+        return try base.turnIsCurrent(id, attempt: attempt)
+    }
     func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws { try base.markTurnDispatch(id, attempt: attempt, activity: activity) }
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic checkpoint failure") }
@@ -112,6 +121,7 @@ enum NativeSessionSafetyFixture {
         try terminalRefreshRetry()
         try fastExternalCompletion()
         try await foregroundOverrideCredential()
+        try await NativeTurnCurrencyFixture.run()
         print("NATIVE SESSION SAFETY FIXTURE OK")
     }
 
