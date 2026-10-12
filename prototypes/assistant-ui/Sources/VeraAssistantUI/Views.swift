@@ -93,7 +93,7 @@ struct PrototypeView: View {
                     Text("Messages can contain up to 8,000 characters.").font(.caption).foregroundStyle(.red)
                 }
                 HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Message Vera", text: Binding(get: { store.conversation.draft }, set: store.setDraft), axis: .vertical)
+                    TextField("Message Vera", text: Binding(get: { store.conversation.draft }, set: { store.setDraft($0) }), axis: .vertical)
                         .textFieldStyle(.plain).lineLimit(2...7)
                         .focused($composerFocused).accessibilityLabel("Message Vera")
                         .accessibilityIdentifier("message-composer")
