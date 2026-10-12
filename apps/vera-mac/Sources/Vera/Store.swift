@@ -1407,11 +1407,11 @@ final class ChatStore: ObservableObject {
         conversation.isPersisted = true
         let scopes = resolvePromptScopes(conversationID: id)
         let turn = NativeConversationTurn(id: UUID(), conversationID: id,
-            userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
+            userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
             profile: turnProfile(for: user.routeNote), enabledToolIDs: NativeTurnToolAuthority(text).filter(nativeEnabledToolIDs),
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
-            history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: conversation.mode))
+            history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])

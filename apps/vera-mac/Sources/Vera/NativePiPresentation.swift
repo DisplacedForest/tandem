@@ -17,7 +17,8 @@ final class NativePiConnection {
     func stop() async {
         if let stopping { await stopping.value; return }
         let action = stopAction
-        let task = Task { await action() }
+        let session = workspace.session
+        let task = Task { await session.stopEventTracking(); await action() }
         stopping = task
         await task.value
     }
@@ -52,14 +53,43 @@ final class NativePiPresentation: ObservableObject {
     var conversation: Conversation? {
         guard let session else { return nil }
         return Conversation(id: session.id.uuidString, title: "Vera", messages: session.messages.map {
-            Message(id: Self.messageID(conversation: session.id, source: $0.id), role: $0.isUser ? .user : .assistant,
+            var message = Message(id: Self.messageID(conversation: session.id, source: $0.id), role: $0.isUser ? .user : .assistant,
                     text: $0.text, createdAt: Date(timeIntervalSince1970: 0), sources: connection?.memoryBridge?.sources(conversation: session.id.uuidString.lowercased(), message: $0.id) ?? [])
+            message.spokenText = $0.text
+            message.displayBlocks = tasks(for: message.id).flatMap { task -> [NativeDisplayBlock] in
+                [.taskCard(NativePiTaskSection.card(task))] + task.outputs.map { output in
+                    .artifact(NativeResearchArtifact(id: task.id + ":" + String(output.id), title: output.title,
+                        report: output.markdown ?? "", sources: [], taskOutput: output.markdown == nil ? NativeTaskOutputReference(taskID: task.id, index: output.id) : nil))
+                }
+            }
+            return message
         }, createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))
+    }
+    func tasks(for messageID: UUID?) -> [AssistantSessionTask] {
+        guard let session else { return [] }
+        return session.tasks.filter { task in
+            let handoff = session.messages.first {
+                !$0.isUser && !$0.id.lowercased().hasPrefix("task:") && $0.taskIDs.contains {
+                    UUID(uuidString: $0) == UUID(uuidString: task.id)
+                }
+            }
+            let origin = session.messages.first {
+                guard let origin = task.originatingMessageID else { return false }
+                return $0.isUser && UUID(uuidString: $0.id) == origin
+            }
+            let source = handoff ?? origin
+            let target = source.map { Self.messageID(conversation: session.id, source: $0.id) }
+            return target == messageID
+        }
     }
     static func messageID(conversation: UUID, source: String) -> UUID {
         let normalized = UUID(uuidString: source)?.uuidString.lowercased() ?? source
         let bytes = Array(SHA256.hash(data: Data(("vera.pi.message:" + conversation.uuidString.lowercased() + ":" + normalized).utf8)).prefix(16))
         return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+    func newChat(in store: ChatStore) {
+        isSelected = false
+        store.newConversation()
     }
     func send() { guard canSend, let session else { return }; Task { await session.send() } }
     func connect() async {
@@ -84,8 +114,10 @@ final class NativePiPresentation: ObservableObject {
             }
             connection = result
             await result.workspace.session.refresh()
+            guard generation == revision, !stopped else { return }
+            result.workspace.session.startEventTracking()
         } catch {
-            if generation == revision { failure = "Vera couldn't connect. Your saved work is preserved." }
+            if generation == revision { failure = (error as? NativePiProduction.Failure)?.message ?? "Vera couldn't connect. Your saved work is preserved." }
         }
         if generation == revision { starting = false; startup = nil }
     }

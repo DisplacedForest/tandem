@@ -12,13 +12,37 @@ case .reject:
 case .unrelated:
     break
 }
-let piModes: Set<String> = ["--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
+let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
 if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.contains(arguments.dropFirst().first ?? "") {
     FileHandle.standardError.write(Data("Unsupported isolated Vera mode\n".utf8))
     exit(2)
 }
-if arguments.dropFirst().first == "--pi-native-selftest" {
+if arguments.dropFirst().first == "--document-artifact-selftest" {
+    if arguments.contains("--shot") {
+        do {
+            try NativeApplicationEntry.prepare { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Document artifact fixture could not render.\n".utf8))
+            exit(1)
+        }
+    }
+    NativeApplicationEntry.runAsync { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }
+} else if arguments.dropFirst().first == "--pi-document-contract" {
+    NativeApplicationEntry.runAsync { await NativeDocumentContract.run(Array(arguments.dropFirst(2))) }
+} else if arguments.dropFirst().first == "--pi-native-selftest" {
+    if arguments.contains("--task-card-shot") {
+        do {
+            try NativeApplicationEntry.prepare { await NativePiPresentationSelftest.run() }
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("The transcript fixture could not render.\n".utf8))
+            exit(1)
+        }
+    }
     NativeApplicationEntry.runAsync { await NativePiPresentationSelftest.run() }
+} else if arguments.dropFirst().first == "--pi-task-stream-contract" {
+    NativeApplicationEntry.runAsync { await NativePiTaskStreamFixture.run(Array(arguments.dropFirst(2))) }
 } else if ["--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract"].contains(arguments.dropFirst().first ?? "") {
     NativeApplicationEntry.runAsync { await NativePiNativeContract.run(Array(arguments.dropFirst(2)), recovery: arguments[1] == "--pi-native-recovery-contract", reopen: arguments[1] == "--pi-native-reopen-contract") }
 } else if arguments.dropFirst().first == "--pi-checkpoint-selftest" {

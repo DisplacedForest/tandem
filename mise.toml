@@ -2,6 +2,12 @@
 dir = "services/vera-api"
 run = "python -m pytest -q"
 
+[tasks.task-engine-contract]
+run = "python scripts/tests/task_engine_contract.py"
+
+[tasks.task-engine-package-test]
+run = "python scripts/tests/task_engine_contract.py --engine services/vera-api/dist/vera-api/vera-api"
+
 [tasks.mac-build]
 dir = "apps/vera-mac"
 run = "swift build"
@@ -49,7 +55,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "shared-runtime-memory-test", "domain-state-test", "native-entry-test", "native-mcp-test", "native-prepared-invocation-test"]
+depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "shared-runtime-memory-test", "domain-state-test", "native-entry-test", "native-mcp-test", "native-prepared-invocation-test", "native-document-test"]
 
 [tasks.selected-credential-authorization-test]
 run = "bash apps/vera-mac/scripts/test-selected-credential-authorization.sh"
@@ -120,3 +126,9 @@ run = "sh scripts/test-native-mcp.sh"
 
 [tasks.native-prepared-invocation-test]
 run = "python3 apps/vera-mac/Tests/PreparedInvocation/run.py"
+
+[tasks.native-document-test]
+depends = ["mac-build"]
+dir = "services/vera-api"
+env = { VERA_NATIVE_DOCUMENT_TEST = "1", PYTHONDONTWRITEBYTECODE = "1" }
+run = "../../apps/vera-mac/.build/debug/Vera --document-artifact-selftest && python -m pytest -q tests/test_task_document_native.py"

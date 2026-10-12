@@ -81,7 +81,13 @@ struct AgenticCanvasView: View {
         case .ready:
             if let graph = graphStore.graph {
                 if let id = drilled, graph.flow(id) != nil {
-                    WorkflowEditor(store: workflowEditor)
+                    Group {
+                        if workflowEditor.flowID == id {
+                            WorkflowEditor(store: workflowEditor)
+                        } else {
+                            ProgressView("Loading workflow")
+                        }
+                    }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
                         .task(id: id) { await workflowEditor.select(id) }

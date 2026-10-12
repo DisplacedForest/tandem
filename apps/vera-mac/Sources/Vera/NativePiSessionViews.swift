@@ -7,7 +7,6 @@ struct NativePiSessionStatus: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let session = assistant.session {
-                Text(session.connectionLabel).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 if let error = session.error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -40,9 +39,11 @@ struct NativePiSessionStatus: View {
 
 struct NativePiTaskSection: View {
     @ObservedObject var assistant: NativePiPresentation
+    var messageID: UUID? = nil
+    @State private var document: NativeResearchArtifact?
     var body: some View {
         if let session = assistant.session {
-            ForEach(session.tasks) { task in
+            ForEach(assistant.tasks(for: messageID)) { task in
                 VStack(alignment: .leading, spacing: 8) {
                     NativeTaskCardView(card: Self.card(task), statusTitle: task.status, stopTitle: "Stop",
                         onCancel: { Task { await session.stop(taskID: task.id) } })
@@ -58,6 +59,14 @@ struct NativePiTaskSection: View {
                         Text(error).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(task.outputs) { output in
+                        if let markdown = output.markdown {
+                            Button {
+                                document = NativeResearchArtifact(id: task.id, title: output.title, report: markdown, sources: [])
+                            } label: {
+                                ArtifactChip(artifact: Artifact(id: task.id, title: output.title, type: .unknown,
+                                    language: "markdown", content: markdown), detail: "Read document")
+                            }.buttonStyle(.plain).accessibilityLabel("Read document: " + output.title)
+                        }
                         Button {
                             if let url = session.output(taskID: task.id, index: output.id) {
                                 NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -67,9 +76,12 @@ struct NativePiTaskSection: View {
                                 type: .unknown, language: "", content: ""), detail: "Show in Finder")
                         }
                         .buttonStyle(.plain)
+                        .disabled(session.output(taskID: task.id, index: output.id) == nil)
+                        .accessibilityLabel("Reveal document: " + output.title)
                     }
                 }
             }
+            .sheet(item: $document) { NativeResearchReportView(artifact: $0).frame(minWidth: 600, minHeight: 500) }
         }
     }
     static func card(_ task: AssistantSessionTask) -> NativeTaskCardPresentation {

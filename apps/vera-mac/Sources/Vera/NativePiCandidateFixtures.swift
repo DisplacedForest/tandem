@@ -14,6 +14,10 @@ final class PiCandidateCredentials: NativeCredentialStore {
 
 actor PiCandidateProviderFixture {
     private var count = 0
+    private var activeDocuments = 0
+    private var documentCount = 0
+    func documentCalls() -> Int { documentCount }
+    func documentActive() -> Bool { activeDocuments > 0 }
     func send(_ outgoing: URLRequest, request: PiModelRequest) async throws -> (Data, Int) {
         try piCheck(outgoing.url?.absoluteString == "https://openrouter.ai/api/v1/chat/completions" && outgoing.httpMethod == "POST" && outgoing.value(forHTTPHeaderField: "Authorization") == "Bearer " + PiCandidateCredentials.key)
         guard let data = outgoing.httpBody else { throw PiBrokerError.invalid }
@@ -21,6 +25,12 @@ actor PiCandidateProviderFixture {
         let expected = try PiProviderCodec.body(request, model: "qwen/qwen3.8-flash")
         try piCheck(parsed == expected)
         count += 1
+        if request.scope.role == "document" { activeDocuments += 1; documentCount += 1 }
+        defer { if request.scope.role == "document" { activeDocuments -= 1 } }
+        if request.scope.role == "foreground", request.toolCount > 0,
+           request.messages.contains(where: { $0.pi("role").piString == "user" && ($0.pi("content").piString?.contains("Slow acknowledgment fixture.") ?? false) }) {
+            try await Task.sleep(for: .seconds(4))
+        }
         let fixture = try await PiFixtureModel().complete(request)
         let block = fixture.pi("content").piArray![0]
         var message: [String: PiValue] = ["role": .string("assistant"), "content": .null]
@@ -41,8 +51,13 @@ final class PiAdmissionFixtureState: @unchecked Sendable {
     private var active: [String: String] = [:]
     private var priorities: [String] = []
     private var released = 0
+    private var unavailable = false
+    private var generationSeconds = 3.0
+    func setGenerationSeconds(_ seconds: Double) { lock.lock(); defer { lock.unlock() }; generationSeconds = seconds }
+    func setUnavailable(_ value: Bool) { lock.lock(); defer { lock.unlock() }; unavailable = value }
     func response(_ request: URLRequest) throws -> Data {
         lock.lock(); defer { lock.unlock() }
+        try piCheck(!unavailable, .unavailable)
         let path = request.url?.path ?? ""
         let id: String, state: String
         if path.hasSuffix("/release") {
@@ -70,7 +85,7 @@ final class PiAdmissionFixtureState: @unchecked Sendable {
             state = active.count < 2 || active[id] != nil ? "admitted" : "pending"
             if state == "admitted", active[id] == nil { active[id] = priority; priorities.append(priority) }
         }
-        return try PiValue.object(["request_id": .string(id), "state": .string(state), "generation_seconds_remaining": .number(3), "lease_seconds_remaining": .number(4), "poll_seconds": .number(0.01), "queue_seconds": .number(3), "queue_wait_seconds": .number(0)]).piData()
+        return try PiValue.object(["request_id": .string(id), "state": .string(state), "generation_seconds_remaining": .number(generationSeconds), "lease_seconds_remaining": .number(generationSeconds + 1), "poll_seconds": .number(0.01), "queue_seconds": .number(3), "queue_wait_seconds": .number(0)]).piData()
     }
     func evidence() -> PiValue {
         lock.lock(); defer { lock.unlock() }

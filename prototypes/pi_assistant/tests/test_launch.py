@@ -227,3 +227,53 @@ with SessionState(root,port) as state:
                 os.killpg(ui_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_cleanup_darwin_retries_zombie_group_probe(monkeypatch):
+    from pi_assistant import _session_process as session_process
+    from unittest.mock import Mock
+    process = Mock(pid=43210, stdin=None)
+    operations = []
+    def killpg(pid, sig):
+        assert pid == process.pid
+        operations.append(sig)
+        if len(operations) == 2:
+            raise PermissionError()
+        if len(operations) == 3:
+            raise ProcessLookupError()
+    monkeypatch.setattr(session_process.sys, 'platform', 'darwin')
+    monkeypatch.setattr(session_process.os, 'killpg', killpg)
+    _stop(process, False)
+    assert operations == [signal.SIGTERM, 0, 0]
+    process.wait.assert_called_once_with(2.0)
+
+
+def test_cleanup_does_not_ignore_signal_permission_failure(monkeypatch):
+    from pi_assistant import _session_process as session_process
+    from unittest.mock import Mock
+    process = Mock(pid=43210, stdin=None)
+    def denied(pid, sig):
+        raise PermissionError()
+    monkeypatch.setattr(session_process.os, 'killpg', denied)
+    with pytest.raises(PermissionError):
+        _stop(process, False)
+    process.wait.assert_not_called()
+
+
+def test_cleanup_darwin_persistent_probe_denial_preserves_session(monkeypatch):
+    from pi_assistant import _session_process as session_process
+    from unittest.mock import Mock
+    process = Mock(pid=43210, stdin=None)
+    operations = []
+    def killpg(pid, sig):
+        operations.append(sig)
+        if sig == 0:
+            raise PermissionError()
+    clock = iter([0.0, 0.1, 2.1])
+    monkeypatch.setattr(session_process.sys, 'platform', 'darwin')
+    monkeypatch.setattr(session_process.os, 'killpg', killpg)
+    monkeypatch.setattr(session_process.time, 'monotonic', lambda: next(clock))
+    with pytest.raises(PermissionError, match='preserve this session'):
+        _stop(process, False)
+    assert operations == [signal.SIGTERM, 0]
+    process.wait.assert_not_called()

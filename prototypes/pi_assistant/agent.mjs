@@ -29,8 +29,8 @@ async function run(config) {
     ['read_file', Type.Object({ path: Type.String() })],
     ['write_file', Type.Object({ path: Type.String(), content: Type.String() })],
     ['check_python', Type.Object({ path: Type.String() })],
-  ] : config.mode === 'assistant' ? [['delegate', Type.Object({ objective: Type.String({ minLength: 1, maxLength: 8000 }) })]] : []).map(([name, parameters]) => ({
-    name, label: name, description: name === 'delegate' ? 'Accept explicitly requested background work. Returns immediately with a durable task identity. Execution waits for approval.' : 'Operate only on files granted for this task.', parameters,
+  ] : config.mode === 'assistant' ? [['delegate', Type.Object({ objective: Type.String({ minLength: 1, maxLength: 8000 }) })], ...(config.documents ? [['create_document', Type.Object({ title: Type.String({ minLength: 1, maxLength: 200, pattern: '^[^\\r\\n]+$' }) })]] : [])] : []).map(([name, parameters]) => ({
+    name, label: name, description: name === 'create_document' ? 'Write a Markdown document in the background when the current user asks for a written deliverable. Uses only the current message (up to 2000 characters). Choose a short title. Progress and the finished document appear with the request.' : name === 'delegate' ? 'Accept explicitly requested background work. Returns immediately with a durable task identity. Execution waits for approval.' : 'Operate only on files granted for this task.', parameters,
     execute: async (call_id, args) => {
       if (++calls > 8) throw new Error('tool_limit');
       const result = await hostCall('tool', { call_id, name, args });

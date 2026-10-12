@@ -51,6 +51,7 @@ final class ConfigStore: ObservableObject {
     private var savedCredentials: [String: String]
     private var piCommittedSettings: NativeChatSettings
     private var piCommittedCredentials: [String: String]
+    private var piCredentialIdentities: [String: String]
     private var piCommitValid = true
     private var unavailableCredentials: Set<String>
     private var pendingCredentials: [String: String] = [:]
@@ -85,6 +86,7 @@ final class ConfigStore: ObservableObject {
         nativeAPIKeys = keys
         savedCredentials = keys
         piCommittedCredentials = keys
+        piCredentialIdentities = keys.mapValues { piHash(Data($0.utf8)) }
         piCommittedSettings = settings
         unavailableCredentials = unavailable
         visionBridgeAPIKey = keys[Self.visionBridgeCredentialID] ?? ""
@@ -153,6 +155,7 @@ final class ConfigStore: ObservableObject {
                 guard let value = pendingCredentials[id] else { continue }
                 try credentialStore.set(value.isEmpty ? nil : value, for: id)
                 savedCredentials[id] = value
+                piCredentialIdentities[id] = value.isEmpty ? nil : piHash(Data(value.utf8))
                 unavailableCredentials.remove(id)
                 pendingCredentials.removeValue(forKey: id)
             }
@@ -160,6 +163,7 @@ final class ConfigStore: ObservableObject {
                 guard let value = legacyCredentials[id] else { continue }
                 try credentialStore.addIfAbsent(value, for: id)
                 savedCredentials[id] = value
+                piCredentialIdentities[id] = value.isEmpty ? nil : piHash(Data(value.utf8))
                 legacyCredentials.removeValue(forKey: id)
             }
             credentialError = unavailableCredentials.isEmpty ? nil : NativeCredentialError.read.localizedDescription
@@ -184,7 +188,56 @@ final class ConfigStore: ObservableObject {
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
     }
 
-    func piSelectedProfileBinding() throws -> PiSelectedProfileBinding {
+    enum PiConnectionError: Error, Equatable {
+        case profile, credentialAccess, credentialMissing, credentialFormat, credentialChanged
+    }
+
+    func piConnectSelectedProfile() throws -> PiSelectedProfileBinding {
+        let binding: PiSelectedProfileBinding
+        do { binding = try piSelectedProfileConfiguration() }
+        catch { throw PiConnectionError.profile }
+        let id = binding.profileID
+        let credential: String?
+        do { credential = try credentialStore.readForStartup(for: id) }
+        catch NativeCredentialError.format {
+            piClearCachedCredential(id, unavailable: true)
+            throw PiConnectionError.credentialFormat
+        } catch {
+            piClearCachedCredential(id, unavailable: true)
+            throw PiConnectionError.credentialAccess
+        }
+        guard let credential, !credential.isEmpty else {
+            piClearCachedCredential(id, unavailable: false)
+            throw PiConnectionError.credentialMissing
+        }
+        guard credential.utf8.count <= 4096, !credential.contains("\r"), !credential.contains("\n") else {
+            piClearCachedCredential(id, unavailable: true)
+            throw PiConnectionError.credentialFormat
+        }
+        let identity = piHash(Data(credential.utf8))
+        if let expected = piCredentialIdentities[id], expected != identity {
+            piClearCachedCredential(id, unavailable: true)
+            throw PiConnectionError.credentialChanged
+        }
+        piCredentialIdentities[id] = identity
+        nativeAPIKeys[id] = credential
+        savedCredentials[id] = credential
+        piCommittedCredentials[id] = credential
+        unavailableCredentials.remove(id)
+        credentialError = unavailableCredentials.isEmpty ? nil : NativeCredentialError.read.localizedDescription
+        return binding
+    }
+
+    private func piClearCachedCredential(_ id: String, unavailable: Bool) {
+        nativeAPIKeys.removeValue(forKey: id)
+        savedCredentials.removeValue(forKey: id)
+        piCommittedCredentials.removeValue(forKey: id)
+        if unavailable { unavailableCredentials.insert(id) }
+        else { unavailableCredentials.remove(id) }
+        credentialError = unavailableCredentials.isEmpty ? nil : NativeCredentialError.read.localizedDescription
+    }
+
+    private func piSelectedProfileConfiguration() throws -> PiSelectedProfileBinding {
         guard piCommitValid, let committed = piCommittedSettings.activeProfile,
               let current = nativeSettings.activeProfile,
               committed.id == current.id, committed.baseURL == current.baseURL,
@@ -192,14 +245,21 @@ final class ConfigStore: ObservableObject {
               nativeSettings.profiles.filter({ $0.id == current.id }).count == 1,
               committed.selectedModel == current.selectedModel,
               pendingCredentials[committed.id] == nil, legacyCredentials[committed.id] == nil,
-              !unavailableCredentials.contains(committed.id), blockedLegacyMigrationID != committed.id,
-              let key = piCommittedCredentials[committed.id], !key.isEmpty,
-              key == savedCredentials[committed.id], key == nativeAPIKeys[committed.id],
-              key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw PiBrokerError.unauthorized }
+              blockedLegacyMigrationID != committed.id else { throw PiBrokerError.unauthorized }
         let initial = Array(piHash(Data([committed.id, committed.baseURL, committed.selectedModel].joined(separator: "\n").utf8)).prefix(32))
         let derived = [String(initial[0..<8]), String(initial[8..<12]), String(initial[12..<16]), String(initial[16..<20]), String(initial[20..<32])].joined(separator: "-")
         let revision = (raw["pi_profile_revisions"] as? [String: String])?[committed.id] ?? derived
         return try PiSelectedProfileBinding(profileID: committed.id, revision: revision, endpoint: committed.baseURL, model: committed.selectedModel)
+    }
+
+    func piSelectedProfileBinding() throws -> PiSelectedProfileBinding {
+        let binding = try piSelectedProfileConfiguration()
+        let id = binding.profileID
+        guard !unavailableCredentials.contains(id),
+              let key = piCommittedCredentials[id], !key.isEmpty,
+              key == savedCredentials[id], key == nativeAPIKeys[id],
+              key.utf8.count <= 4096, !key.contains("\r"), !key.contains("\n") else { throw PiBrokerError.unauthorized }
+        return binding
     }
 
     func piSelectedProfileOperation(binding: PiSelectedProfileBinding, admission: NativeInferenceAdmission,

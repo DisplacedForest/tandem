@@ -178,6 +178,19 @@ enum NativePiPresentationSelftest {
             ready.draft = "Draft through native adapter"
             try piCheck(changes > 0 && ready.draft == workspace.session.draft && ready.canSend)
             let identifier = workspace.session.id
+            let chats = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try LocalChatRepository(inMemory: true), artifactPersistenceEnabled: false)
+            chats.newConversation()
+            let ordinaryID = chats.selectedID
+            ready.isSelected = true
+            ready.newChat(in: chats)
+            try piCheck(!ready.isSelected && chats.selectedID == ordinaryID && chats.section == .chat)
+            try piCheck(ready.session?.id == identifier && ready.draft == "Draft through native adapter" && readyGate.stops == 0)
+            chats.draft = "Ordinary draft"
+            ready.isSelected = true
+            try piCheck(chats.draft == "Ordinary draft" && ready.draft == "Draft through native adapter")
+            ready.isSelected = false
+            ready.isSelected = true
+            try piCheck(ready.session?.id == identifier && ready.connection?.workspace === workspace && readyGate.stops == 0)
             let source = UUID().uuidString
             try piCheck(NativePiPresentation.messageID(conversation: identifier, source: source)
                 == NativePiPresentation.messageID(conversation: identifier, source: source.lowercased()))
@@ -187,6 +200,7 @@ enum NativePiPresentationSelftest {
             await ready.stop()
             await ready.stop()
             try piCheck(readyGate.stops == 1 && ready.connection == nil)
+            try await NativePiTranscriptSelftest.run(root: root)
             print("PASS: transcript image fences, idle isolation, direct observation, late startup cancellation, concurrent shutdown and stable projection namespace")
         } catch {
             FileHandle.standardError.write(Data("Native presentation selftest failed: \(type(of: error))\n".utf8))

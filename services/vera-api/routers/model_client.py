@@ -1,4 +1,5 @@
 import os
+from typing import Callable
 
 import aiohttp
 
@@ -68,7 +69,8 @@ async def _post(url: str, body: dict, timeout: float) -> dict:
 async def complete(messages, *, workload: str = "main", temperature: float = 0.4,
                    think: str | None = None, tools=None, max_tokens: int | None = None,
                    timeout: int | None = None,
-                   priority: inference_admission.Priority | None = None) -> dict:
+                   priority: inference_admission.Priority | None = None,
+                   configuration_guard: Callable[[dict], None] | None = None) -> dict:
     reason = unavailable_reason(workload)
     if reason:
         raise ModelUnavailable(reason)
@@ -83,6 +85,8 @@ async def complete(messages, *, workload: str = "main", temperature: float = 0.4
     if max_tokens:
         body["max_tokens"] = max_tokens
     async def operation(seconds: float) -> dict:
+        if configuration_guard is not None:
+            configuration_guard(c)
         return await _post(f"{c['base']}/chat/completions", body, seconds)
 
     d = await inference_admission.run(c["base"], operation, timeout or c["timeout"], priority)

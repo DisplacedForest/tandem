@@ -9,7 +9,7 @@ import data_root
 DATA_ROOT = data_root.apply()
 
 from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
-from routers import native_generation, task_research
+from routers import native_generation, task_document, task_research
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -37,6 +37,8 @@ def _version() -> str:
 VERSION = _version()
 tasks.register_worker("research", task_research.step, timeout_seconds=180,
                       tools=task_research.TOOLS, validate_payload=task_research.validate_payload)
+tasks.register_worker("document", task_document.step, timeout_seconds=task_document.STEP_TIMEOUT_SECONDS + 5,
+                      tools=task_document.TOOLS, validate_payload=task_document.validate_payload)
 
 
 @asynccontextmanager

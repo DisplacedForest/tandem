@@ -21,9 +21,9 @@ extension NativeJSONValue {
     func piData() throws -> Data {
         try JSONSerialization.data(withJSONObject: any, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
     }
-    static func piRead(_ data: Data) throws -> Self {
-        try piCheck(data.count <= 65536)
-        try NativeTaskJSON.validate(data)
+    static func piRead(_ data: Data, maximumBytes: Int = 65536) throws -> Self {
+        try piCheck(data.count <= maximumBytes)
+        try NativeTaskJSON.validate(data, maximumBytes: maximumBytes)
         return try piDecode(JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
     }
     static func piDecode(_ value: Any) throws -> Self {
@@ -63,7 +63,7 @@ struct PiModelScope: Sendable {
         assistant = try piUUID(value.pi("assistant"))
         conversation = try piUUID(value.pi("conversation"))
         guard let role = value.pi("role").piString, let mode = value.pi("mode").piString else { throw PiBrokerError.invalid }
-        try piCheck(["foreground", "worker"].contains(role) && ["assistant", "focused"].contains(mode) && (role != "worker" || mode == "assistant"))
+        try piCheck(["foreground", "worker", "document"].contains(role) && ["assistant", "focused"].contains(mode) && (role == "foreground" || mode == "assistant"))
         self.role = role; self.mode = mode; self.profile = profile
         id = UUID().uuidString.lowercased()
     }
@@ -81,6 +81,7 @@ struct PiModelRequest: Sendable {
     let hostTools: [NativeToolSchema]
     let hostToolRevision: String?
     let hostToolAuthority: (any NativeRuntimeToolServing)?
+    var spendingChecked = false
     var memoryContext: NativeRuntimeMemoryContext? = nil
     var memoryAuthority: NativeRuntimeMemoryBridge? = nil
     init(_ value: PiValue, scope: PiModelScope, channel: String, hostTools: [NativeToolSchema] = [], hostToolRevision: String? = nil, hostToolAuthority: (any NativeRuntimeToolServing)? = nil) throws {
@@ -92,7 +93,7 @@ struct PiModelRequest: Sendable {
         id = try piUUID(value.pi("id"))
         try piCheck(value.pi("op").piString == "complete" && value.pi("channel").piString == channel && value.pi("scope").piString == scope.id && value.pi("profile").piString == scope.profile && value.pi("subject").piString == scope.subject && value.pi("role").piString == scope.role && value.pi("mode").piString == scope.mode && value.pi("assistant").piString == scope.assistant && value.pi("conversation").piString == scope.conversation, .unauthorized)
         guard let messages = value.pi("messages").piArray else { throw PiBrokerError.invalid }
-        try piCheck(!messages.isEmpty && messages.count <= 32 && (try value.pi("messages").piData()).count <= 8192)
+        try piCheck(!messages.isEmpty && messages.count <= 32 && (try value.pi("messages").piData()).count <= (scope.role == "document" ? 32768 : 8192))
         self.scope = scope; self.messages = messages
         var pending: [String: String] = [:], seen = Set<String>(), count = 0
         for (index, message) in messages.enumerated() {
@@ -159,15 +160,18 @@ struct PiModelRequest: Sendable {
         try piCheck(block.pi("type").piString == "text" && block.pi("text").piString != nil)
     }
     static func arguments(_ args: PiValue, name: String, scope: PiModelScope, hostTools: [NativeToolSchema] = []) throws {
+        try piCheck(scope.role != "document", .unauthorized)
         if let schema = hostTools.first(where: { $0.name == name }) {
             try NativeMCPJSONSchema(schema.parameters).validate(args)
             return
         }
         if scope.role == "foreground" {
-            try piCheck(scope.mode == "assistant" && name == "delegate", .unauthorized)
-            try args.piKeys(["objective"])
-            guard let text = args.pi("objective").piString else { throw PiBrokerError.invalid }
-            try piCheck(!text.isEmpty && text.count <= 8000)
+            try piCheck(scope.mode == "assistant" && ["delegate", "create_document"].contains(name), .unauthorized)
+            let key = name == "create_document" ? "title" : "objective"
+            try args.piKeys([key])
+            guard let text = args.pi(key).piString else { throw PiBrokerError.invalid }
+            try piCheck(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.unicodeScalars.count <= (name == "create_document" ? 200 : 8000))
+            if name == "create_document" { try piCheck(!text.contains("\r") && !text.contains("\n")) }
         } else {
             try piCheck(["read_file", "write_file", "check_python"].contains(name), .unauthorized)
             try args.piKeys(name == "write_file" ? ["path", "content"] : ["path"])
@@ -179,6 +183,7 @@ struct PiModelRequest: Sendable {
 
 protocol PiMockModelExecutor: Sendable {
     func validateOwner() async throws
+    func retryDocument(_ subject: String) async throws
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest
     func validateRequest(_ request: PiModelRequest) async throws
     func complete(_ request: PiModelRequest) async throws -> PiValue
@@ -186,16 +191,27 @@ protocol PiMockModelExecutor: Sendable {
 
 extension PiMockModelExecutor {
     func validateOwner() async throws {}
+    func retryDocument(_ subject: String) async throws {}
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { request }
     func validateRequest(_ request: PiModelRequest) async throws { try await request.validateHostTools() }
 }
 
 struct PiFixtureModel: PiMockModelExecutor {
     func complete(_ request: PiModelRequest) async throws -> PiValue {
-        try await Task.sleep(for: .milliseconds(request.scope.role == "worker" ? 600 : 30))
+        try await Task.sleep(for: .milliseconds(request.scope.role == "foreground" ? 30 : 600))
         var content: [PiValue] = [], name: String?, args: PiValue = .object([:])
-        if request.messages.last?.pi("isError") == .bool(true) {
+        if request.scope.role == "document" {
+            let prompt = request.messages.first?.pi("content").piString ?? ""
+            let text: PiValue = prompt.contains("Plan at most")
+                ? .object(["sections": .array(["Purpose", "Preparation", "Discussion", "Next steps"].map {
+                    .object(["heading": .string($0), "instructions": .string("Use the supplied notes.")])
+                })])
+                : .object(["text": .string("Keep literal [1] and [2, 3].\n\n```text\nvalues[1] = retained\n```\n\n## Sources\n\nSupplied workshop notes.\n\n[Unsafe link](file:///private/example) and [safe link](https://reference.example/notes).\n\n![Omitted image](https://image.example/notes.png)")])
+            content = [.object(["type": .string("text"), "text": .string(String(decoding: try text.piData(), as: UTF8.self))])]
+        } else if request.messages.last?.pi("isError") == .bool(true) {
             content = [.object(["type": .string("text"), "text": .string("App-owned mock stopped after a tool failure.")])]
+        } else if request.scope.role == "foreground", request.scope.mode == "assistant", request.messages.last?.pi("role").piString == "user", let text = request.messages.last?.pi("content").piString, text.hasPrefix("Write a workshop plan") {
+            name = "create_document"; args = .object(["title": .string("Workshop plan")])
         } else if request.scope.role == "worker", request.toolCount < 3 {
             name = ["read_file", "write_file", "check_python"][request.toolCount]
             args = .object(name == "write_file" ? ["path": .string("sum.py"), "content": .string("def add(a, b):\n    return a + b\n")] : ["path": .string("sum.py")])

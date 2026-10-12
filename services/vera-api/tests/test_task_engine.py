@@ -643,3 +643,39 @@ def test_lifespan_cleans_existing_services_when_task_shutdown_fails(tmp_path: Pa
         assert calls == ['home-start', 'scheduler-start', 'task-start', 'task-stop', 'scheduler-stop', 'home-stop']
 
     asyncio.run(run())
+
+
+def test_compact_task_listing_drops_document_bodies():
+    from routers.tasks import compact_snapshot
+    task = {"id": "t", "state": "completed", "checkpoint": {"phase": "assemble", "outline": [1], "drafts": ["d"], "revisions": ["r"], "retry": False},
+            "result": {"kind": "document_report", "title": "T", "summary": "s", "markdown": "m" * 10, "spoken_text": "x", "display_blocks": [1], "artifacts": [{"kind": "file"}]}}
+    task["payload"] = {"title": "T", "brief": "b" * 10, "inputs": ["i"], "assistant_id": "a"}
+    compact = compact_snapshot(task)
+    assert compact["payload"] == {"title": "T", "assistant_id": "a"}
+    assert compact["checkpoint"] == {"phase": "assemble", "retry": False}
+    assert compact["result"] == {"kind": "document_report", "title": "T", "summary": "s", "markdown": "m" * 10, "artifacts": [{"kind": "file"}]}
+    assert "markdown" in task["result"]
+
+
+def test_listing_filters_by_state(tmp_path):
+    from routers.task_store import TaskStore
+    store = TaskStore(str(tmp_path / "t.db"))
+    first = store.create("pi_worker", {"objective": "one"}, "k1")
+    second = store.create("pi_worker", {"objective": "two"}, "k2")
+    claimed = store.claim(("pi_worker",))
+    assert claimed is not None
+    running = [task["id"] for task in store.list(10, None, ["running"])]
+    queued = [task["id"] for task in store.list(10, None, ["queued"])]
+    assert set(running + queued) == {first["id"], second["id"]} and len(running) == 1
+    assert len(store.list(10, None, ["bogus"])) == 2
+
+
+def test_snapshots_never_expose_the_raw_request(tmp_path):
+    from routers.task_store import TaskStore
+    from routers.tasks import compact_snapshot
+    store = TaskStore(str(tmp_path / "t.db"))
+    task = store.create("document", {"title": "T", "brief": " " * 100000 + "b"}, "k1", lambda payload: {"title": payload["title"], "brief": payload["brief"].strip()})
+    assert "request" not in task and task["payload"]["brief"] == "b"
+    listed = store.list(10, None)[0]
+    assert "request" not in listed and "request" not in compact_snapshot(listed)
+    assert len(json.dumps(compact_snapshot(listed))) < 1000

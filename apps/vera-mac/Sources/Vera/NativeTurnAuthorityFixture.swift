@@ -49,13 +49,12 @@ enum NativeTurnAuthorityFixture {
             nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
             nativeTaskClient: client, artifactPersistenceEnabled: false)
         store.newConversation()
-        store.setSessionMode(.continuous)
-        try require(store.sendText(first), "First request accepted")
+        try require(try NativeSessionFixture.acceptLegacyContinuous(first, store: store), "First request accepted")
         let firstReply = store.selected!.messages.last!.id
         try await NativeSessionFixture.eventually("First handoff must be saved while acknowledgment is still running") {
             (try? repository.taskReferences(conversationID: nil).count) == 1 && transport.firstWaiting
         }
-        try require(store.sendText(second), "Second request accepted concurrently")
+        try require(try NativeSessionFixture.acceptLegacyContinuous(second, store: store), "Second request accepted concurrently")
         let secondReply = store.selected!.messages.last!.id
         try await NativeSessionFixture.eventually("Arithmetic answer must complete while first acknowledgment waits") {
             store.selected?.messages.first(where: { $0.id == secondReply })?.state == .complete
@@ -76,12 +75,12 @@ enum NativeTurnAuthorityFixture {
         let toolResults = transport.records.flatMap(\.messages).filter { $0.role == "tool" }.map(\.content)
         try require(toolResults.allSatisfy { !$0.contains("task_reference") && !$0.contains(references[0].id.uuidString) },
                     "Internal identifiers never enter model-facing task receipts")
-        try require(store.sendText("What did I ask you to research?"), "Context question accepted")
+        try require(try NativeSessionFixture.acceptLegacyContinuous("What did I ask you to research?", store: store), "Context question accepted")
         try await NativeSessionFixture.eventually("Pending context supports recall without reenrollment") {
             store.selected?.messages.last?.text == "You asked for NASA sources about lunar water ice."
         }
         try require(try repository.taskReferences(conversationID: nil).count == 1, "Recall does not authorize new work")
-        try require(store.sendText("Separately, please research Mars ice using public sources."), "Independent research request accepted")
+        try require(try NativeSessionFixture.acceptLegacyContinuous("Separately, please research Mars ice using public sources.", store: store), "Independent research request accepted")
         try await NativeSessionFixture.eventually("A newly authorized independent research request remains possible") {
             (try? repository.taskReferences(conversationID: nil).count) == 2
         }

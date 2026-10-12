@@ -13,6 +13,7 @@ class ModelTransport(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def complete(self, event: dict[str, Any], task_id: str, role: str, mode: str) -> dict[str, Any]: ...
+    async def document_handoff(self, subject: str, task_id: str) -> None: ...
     async def tools(self, subject: str, role: str, mode: str) -> list[dict[str, Any]]: ...
     async def tool_call(self, event: dict[str, Any], subject: str, role: str, mode: str) -> Any: ...
 
@@ -34,9 +35,10 @@ def decode_frame(data: bytes) -> dict[str, Any]:
 
 
 class AppModelTransport:
-    def __init__(self, channel: str, profile: str, request_timeout: float = 5, kind: str = 'app-owned-mock'):
+    def __init__(self, channel: str, profile: str, request_timeout: float = 5, kind: str = 'app-owned-mock', persistent: bool = False):
         if kind not in ('app-owned-mock', 'app-owned-provider-fixture', 'app-owned-openrouter'):
             raise PiFailure('app_transport')
+        self.request_limit = 1000 if persistent else 12
         self.kind = kind
         if not isinstance(request_timeout, (float, int)) or not 1 <= request_timeout <= 35:
             raise PiFailure("app_deadline")
@@ -85,10 +87,10 @@ class AppModelTransport:
             identifier(value['subject'])
             identifier(value['assistant'])
             identifier(value['conversation'])
-            if value['profile'] != self.profile or value['role'] not in {'foreground', 'worker'} or value['mode'] not in {'assistant', 'focused'} or (value['role'] == 'worker' and value['mode'] != 'assistant'):
+            if value['profile'] != self.profile or value['role'] not in {'foreground', 'worker', 'document'} or value['mode'] not in {'assistant', 'focused'} or (value['role'] != 'foreground' and value['mode'] != 'assistant'):
                 raise PiFailure('app_scope')
             key = (value['subject'], value['role'])
-            if key in self.scopes or len(self.scopes) >= 16:
+            if key in self.scopes or len(self.scopes) >= self.request_limit + 4:
                 raise PiFailure('app_scope')
             self.scopes[key] = value
             self.scope_changed.set()
@@ -141,7 +143,7 @@ class AppModelTransport:
         if event.get('type') != 'model' or scope is None or scope['mode'] != mode or self.closed.is_set():
             raise PiFailure('app_unauthorized')
         request_id = identifier(event.get('id'))
-        if request_id in self.seen or len(self.seen) >= 12:
+        if request_id in self.seen or len(self.seen) >= self.request_limit:
             raise PiFailure('app_limit')
         messages = NativeMockTransport._messages(event.get('context'))
         for message in messages:
@@ -188,6 +190,11 @@ class AppModelTransport:
         if set(result) != {'value'} or len(json.dumps(result['value'], separators=(',', ':'), ensure_ascii=False).encode()) > 8192:
             raise PiFailure('app_tool')
         return result['value']
+
+    async def document_handoff(self, subject: str, task_id: str) -> None:
+        result = await self.tool_request('document_handoff', subject, 'foreground', 'assistant', {'task_id': identifier(task_id)})
+        if result != {'task_id': task_id}:
+            raise PiFailure('app_document_handoff')
 
     async def tool_request(self, op: str, subject: str, role: str, mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         scope = self.scopes.get((subject, role))

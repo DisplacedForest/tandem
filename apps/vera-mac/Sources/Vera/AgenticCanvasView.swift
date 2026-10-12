@@ -181,7 +181,6 @@ struct OrganismMap: View {
     let graph: AgenticGraph
     let jobs: [String: SchedulerJob]
     let size: CGSize
-    var selected: String?
     var pulses: [CanvasPulse] = []
     var animated: Bool = true
     var onSelect: (String) -> Void = { _ in }
@@ -191,15 +190,8 @@ struct OrganismMap: View {
         OrganismLayout(graph: graph, viewport: size)
     }
 
-    /// With a selection active, everything outside its neighborhood recedes.
-    private func dimmed(_ id: String, neighbors: Set<String>) -> Bool {
-        guard let selected else { return false }
-        return id != selected && !neighbors.contains(id)
-    }
-
     var body: some View {
         let layout = self.layout
-        let neighbors: Set<String> = selected.flatMap { graph.flow($0).map { Set($0.feeds) } } ?? []
         ZStack(alignment: .topLeading) {
             DotGrid()
             edgeLayer(layout)
@@ -213,16 +205,13 @@ struct OrganismMap: View {
             ForEach(graph.surfaces) { surface in
                 if let rect = layout.surfaceRects[surface.id] {
                     SurfaceNode(surface: surface)
-                        .opacity(selected != nil && !neighbors.contains(surface.id) ? 0.45 : 1)
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)
                 }
             }
             ForEach(graph.flows) { flow in
                 if let rect = layout.flowRects[flow.id] {
-                    FlowNode(flow: flow, job: jobs[flow.id],
-                             isSelected: selected == flow.id, animated: animated)
-                        .opacity(dimmed(flow.id, neighbors: neighbors) ? 0.45 : 1)
+                    FlowNode(flow: flow, job: jobs[flow.id], animated: animated)
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)
                         .contextMenu {
@@ -252,9 +241,8 @@ struct OrganismMap: View {
             Canvas { ctx, _ in
                 let now = context.date
                 for e in edges {
-                    let isSelected = selected == e.flow.id
                     let hasPulse = pulses.contains { $0.flowID == e.flow.id && $0.surfaceID == e.surface }
-                    let color: Color = (isSelected || hasPulse)
+                    let color: Color = hasPulse
                         ? Theme.accent.opacity(0.42)
                         : .white.opacity(0.10)
                     ctx.stroke(edgePath(e.a, e.b), with: .color(color), lineWidth: 1.5)
@@ -304,7 +292,6 @@ struct DotGrid: View {
 struct FlowNode: View {
     let flow: GraphFlow
     let job: SchedulerJob?
-    var isSelected: Bool = false
     var animated: Bool = true
     @State private var breathing = false
 
@@ -326,7 +313,6 @@ struct FlowNode: View {
     }
 
     private var borderColor: Color {
-        if isSelected { return Theme.accent.opacity(0.85) }
         if flow.running { return Theme.accent.opacity(0.55) }
         switch status {
         case .warn: return FlowStatus.warn.dotColor.opacity(0.42)
@@ -375,7 +361,7 @@ struct FlowNode: View {
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12)
-            .stroke(borderColor, lineWidth: isSelected ? 1.5 : 1))
+            .stroke(borderColor, lineWidth: 1))
         .overlay(alignment: .leading) { PortDot().offset(x: -3.5) }
         .overlay(alignment: .trailing) { PortDot().offset(x: 3.5) }
         .shadow(color: glowColor, radius: flow.running ? (breathing ? 16 : 9) : 0)

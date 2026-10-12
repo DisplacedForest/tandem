@@ -87,6 +87,17 @@ enum NativePiModelBrokerFixture {
         let binding = binding()
         let scope = try await broker.authorize(binding)
         let value = request(scope, channel: "fixture-channel")
+        for (role, mode) in [("foreground", "focused"), ("worker", "assistant"), ("document", "assistant")] {
+            let denied = try await broker.authorize(self.binding(role: role, mode: mode))
+            var handoff = request(denied, channel: "fixture-channel").piObject!
+            handoff.removeValue(forKey: "messages")
+            handoff["op"] = .string("document_handoff")
+            handoff["task_id"] = .string(UUID().uuidString.lowercased())
+            let frame = PiValue.object(handoff)
+            try await rejected(.unauthorized) { try await broker.validateDocumentHandoff(frame) }
+            try await rejected(.unauthorized) { try PiModelRequest.arguments(.object(["title": .string("Draft")]), name: "create_document", scope: denied) }
+        }
+        try check(try ledger.snapshot().piArray!.isEmpty)
         for key in ["channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation"] {
             try await rejected(.unauthorized) { _ = try await broker.complete(changed(value, key, .string("wrong"))) }
         }
@@ -236,6 +247,25 @@ enum NativePiModelBrokerFixture {
         try budgetLedger.settle(fourth.id, reply: spent)
         try await rejected(.budget) { _ = try budgetLedger.reserve(third) }
         try piCheck(try budgetLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
+        let documentLedger = try PiModelLedger(root: root.appendingPathComponent("document"), manifest: "fixture", budget: 10_000_000, requestLimit: 13)
+        let fifth = try parsed(root, id: UUID().uuidString.lowercased())
+        let sixth = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try documentLedger.reserve(fifth) == nil)
+        documentLedger.reject(fifth.id)
+        try piCheck(try documentLedger.reserve(sixth) == nil)
+        let partial: PiValue = .object(["content": .array([.object(["type": .string("text"), "text": .string("fixture")])]), "usage": .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0.006)])])
+        try documentLedger.settle(sixth.id, reply: partial)
+        try await rejected(.budget) { _ = try documentLedger.reserve(fifth) }
+        try piCheck(try documentLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
+        let unsentLedger = try PiModelLedger(root: root.appendingPathComponent("unsent"), manifest: "fixture")
+        let seventh = try parsed(root, id: UUID().uuidString.lowercased())
+        let eighth = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try unsentLedger.reserve(seventh) == nil)
+        unsentLedger.reject(seventh.id)
+        try piCheck(try unsentLedger.reserve(eighth) == nil)
+        try unsentLedger.notSent(eighth.id)
+        try piCheck(try unsentLedger.reserve(seventh) == nil)
+        try piCheck(try unsentLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["reserved", "not_sent"])
     }
     static func cancellationDuringValidation(_ root: URL) async throws {
         for (name, checksCancellation) in [("throwing", true), ("silent", false)] {
@@ -260,6 +290,7 @@ enum NativePiModelBrokerFixture {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("pi-app-selftest-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            try await NativePiTaskEventSelftest.run()
             try await stage("pipe lifecycle") { try await NativePiPipeFixture.exercise() }
             try await stage("runtime tools") { try await NativePiRuntimeToolFixture.exercise(root.appendingPathComponent("runtime-tools")) }
             try await stage("runtime tool restart") { try await NativePiRuntimeToolFixture.restart(root.appendingPathComponent("runtime-tools-restart")) }

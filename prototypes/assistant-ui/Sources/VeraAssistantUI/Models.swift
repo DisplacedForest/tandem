@@ -121,10 +121,19 @@ struct MessageRequest: Codable, Sendable {
     let messageID: UUID
     let text: String
     let mode: String
+    var document: DocumentRequest? = nil
     enum CodingKeys: String, CodingKey {
         case assistantID = "assistant_id", conversationID = "conversation_id", messageID = "message_id"
-        case text, mode
+        case text, mode, document
     }
+}
+
+struct DocumentRequest: Codable, Sendable {
+    let title: String
+    let brief: String
+    let inputs: [String]
+    let maxSections: Int
+    enum CodingKeys: String, CodingKey { case title, brief, inputs; case maxSections = "max_sections" }
 }
 
 struct MessageResponse: Decodable, Sendable {
@@ -144,8 +153,9 @@ struct TaskPayload: Decodable, Equatable, Sendable {
     let conversationID: UUID?
     let originatingMessageID: UUID?
     let objective: String?
+    let title: String?
     enum CodingKeys: String, CodingKey {
-        case assistantID = "assistant_id", conversationID = "conversation_id", originatingMessageID = "originating_message_id", objective
+        case assistantID = "assistant_id", conversationID = "conversation_id", originatingMessageID = "originating_message_id", objective, title
     }
 }
 
@@ -175,6 +185,14 @@ struct TaskArtifact: Decodable, Equatable, Sendable {
 struct TaskResult: Decodable, Equatable, Sendable {
     let summary: String?
     let artifacts: [TaskArtifact]?
+    let kind: String?
+    let title: String?
+    let markdown: String?
+}
+
+struct TaskCheckpoint: Decodable, Equatable, Sendable {
+    let approved: Bool?
+    let phase: String?
 }
 
 struct TaskSnapshot: Decodable, Identifiable, Equatable, Sendable {
@@ -186,13 +204,28 @@ struct TaskSnapshot: Decodable, Identifiable, Equatable, Sendable {
     let decision: TaskDecision?
     let cancelRequested: Bool
     let updatedAt: Double
+    let checkpoint: TaskCheckpoint?
     enum CodingKeys: String, CodingKey {
-        case id, payload, state, result, decision
+        case id, payload, state, result, decision, checkpoint
         case workerType = "worker_type", cancelRequested = "cancel_requested", updatedAt = "updated_at"
     }
     var terminal: Bool { ["completed", "failed", "canceled"].contains(state) }
     var canStop: Bool { ["queued", "running", "blocked", "needs_decision"].contains(state) && !cancelRequested }
-    var title: String { payload.objective?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty ?? "Untitled task" }
+    var title: String { (payload.title ?? payload.objective)?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty ?? "Untitled task" }
+    var milestone: String {
+        if state == "needs_decision", let prompt = decision?.prompt.nonempty { return prompt }
+        if let summary = result?.summary?.nonempty { return summary }
+        if workerType == "document", ["running", "queued"].contains(state), !cancelRequested {
+            switch checkpoint?.phase {
+            case "draft": return "Drafting the document."
+            case "revise": return "Revising the sections."
+            case "assemble": return "Preparing your document."
+            default: return "Planning the document."
+            }
+        }
+        if state == "running", checkpoint?.approved == true, !cancelRequested { return "Working in the task workspace." }
+        return ""
+    }
     var status: String {
         if cancelRequested && !terminal { return "Stopping" }
         switch state {
@@ -229,6 +262,7 @@ struct SavedState: Codable, Sendable {
     var decisions: [String: DecisionRequest] = [:]
     var endpoint: URL?
     var runtimeIdentity: String?
+    var taskEventCursor: Int64?
 }
 
 extension String {

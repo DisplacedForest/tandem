@@ -8,8 +8,6 @@ final class SchedulerStore: ObservableObject {
     @Published var phase: Phase = .loading
     @Published var masterEnabled = true
     @Published var jobs: [SchedulerJob] = []
-    @Published var busy: Set<String> = []            // job ids with an in-flight PUT/POST
-    @Published var rowNote: [String: String] = [:]   // job id → transient outcome note
 
     private var client: SchedulerClient?
     var baseDescription: String { client?.base.absoluteString ?? "vera-api" }
@@ -30,36 +28,6 @@ final class SchedulerStore: ObservableObject {
             masterEnabled = state.masterEnabled
             jobs = state.jobs
             phase = .ready
-        }
-    }
-
-    /// Toggle a job on/off — optimistic, reverted if the server refuses.
-    func setEnabled(_ job: SchedulerJob, _ on: Bool) {
-        guard let client, let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
-        jobs[i].enabled = on
-        busy.insert(job.id)
-        Task {
-            let ok = await client.update(id: job.id, enabled: on)
-            if !ok, let j = jobs.firstIndex(where: { $0.id == job.id }) {
-                jobs[j].enabled = !on
-                rowNote[job.id] = "Change refused by the server"
-            }
-            busy.remove(job.id)
-            await refresh()
-        }
-    }
-
-    /// Fire a job immediately.
-    func runNow(_ job: SchedulerJob) {
-        guard let client else { return }
-        busy.insert(job.id)
-        Task {
-            let ok = await client.runNow(id: job.id)
-            rowNote[job.id] = ok ? "Run triggered" : "Trigger refused"
-            busy.remove(job.id)
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            rowNote[job.id] = nil
-            await refresh()
         }
     }
 }
@@ -123,17 +91,23 @@ struct AgenticView: View {
             async let s: Void = sched.refresh()
             async let a: Void = activity.refresh()
             async let g: Void = graphStore.refresh()
-            async let w: Void = workflowEditor.refresh()
+            async let w: Void = refreshSelectedWorkflow()
             _ = await (s, a, g, w)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                do { try await Task.sleep(nanoseconds: 30 * 1_000_000_000) }
+                catch { return }
                 async let s2: Void = sched.refresh()
                 async let a2: Void = activity.refresh()
                 async let g2: Void = graphStore.refresh()
-                async let w2: Void = workflowEditor.refresh()
+                async let w2: Void = refreshSelectedWorkflow()
                 _ = await (s2, a2, g2, w2)
             }
         }
+    }
+
+    private func refreshSelectedWorkflow() async {
+        guard !Task.isCancelled, store.agenticPane == .canvas, store.agenticFlowID != nil else { return }
+        await workflowEditor.refresh()
     }
 }
 

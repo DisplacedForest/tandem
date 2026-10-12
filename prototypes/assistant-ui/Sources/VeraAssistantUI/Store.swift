@@ -24,10 +24,14 @@ final class PrototypeStore: ObservableObject {
     @Published private(set) var reviewedReplyID: UUID?
     private let stateURL: URL
     private var refreshVersion = 0
-    private var refreshInFlight = false
+    private var refreshOwner: UUID?
+    private var refreshInFlight: Bool { refreshOwner != nil }
     private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
+    private var taskEvents: AssistantTaskEventTracking?
 
-    init(configuration: PrototypeConfiguration, client: PrototypeClient? = nil) throws {
+    init(configuration: PrototypeConfiguration, client: PrototypeClient? = nil,
+         events: (@Sendable (Int64) async throws -> AsyncThrowingStream<AssistantTaskEvent, Error>)? = nil) throws {
+        guard events == nil || configuration.runtimeIdentity != nil else { throw PrototypeError.configuration }
         self.configuration = configuration
         self.client = client ?? configuration.endpoint.map { PrototypeClient(base: $0) }
         stateURL = configuration.dataRoot.appendingPathComponent("assistant-ui.json")
@@ -35,6 +39,7 @@ final class PrototypeStore: ObservableObject {
         let fm = FileManager.default
         if fm.fileExists(atPath: stateURL.path) {
             saved = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: stateURL))
+            guard (saved.taskEventCursor ?? 0) >= 0 else { throw PrototypeError.configuration }
             guard saved.runtimeIdentity == configuration.runtimeIdentity else { throw PrototypeError.configuration }
             if configuration.runtimeIdentity == nil {
                 guard saved.endpoint == configuration.endpoint else { throw PrototypeError.configuration }
@@ -50,6 +55,47 @@ final class PrototypeStore: ObservableObject {
             try fm.createDirectory(at: configuration.dataRoot, withIntermediateDirectories: true)
             saved = SavedState(endpoint: configuration.endpoint, runtimeIdentity: configuration.runtimeIdentity)
             try JSONEncoder().encode(saved).write(to: stateURL, options: .atomic)
+        }
+        if let events { taskEvents = AssistantTaskEventTracking(store: self, events: events) }
+    }
+
+    var taskEventsHealthy: Bool { taskEvents?.healthy == true }
+    func startEventTracking() { taskEvents?.start() }
+    func stopEventTracking() async { await taskEvents?.stop() }
+    func retireTaskEventRefresh(_ token: UUID) { finishRefresh(token) }
+
+    func reconcileTaskEvents(cursor: Int64, token: UUID) async throws -> Bool {
+        await waitForRefresh()
+        let id = saved.assistant.id
+        guard let client, taskEvents?.accepts(token) == true, !Task.isCancelled,
+              !refreshing, !reviewingReply, !busyConversations.contains(id) else { return false }
+        refreshOwner = token
+        defer { finishRefresh(token) }
+        let version = refreshVersion
+        do {
+            let caps = try await client.capabilities()
+            guard caps.supported else { throw PrototypeError.invalidResponse }
+            async let newTasks = client.tasks()
+            async let newMessages = client.messages(id)
+            let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
+            guard taskEvents?.accepts(token) == true, !Task.isCancelled,
+                  version == refreshVersion, !busyConversations.contains(id) else { return false }
+            let scopedTasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
+            if saved.taskEventCursor != cursor {
+                var candidate = saved
+                candidate.taskEventCursor = cursor
+                try commit(candidate)
+            }
+            if capabilities != caps { capabilities = caps }
+            if tasks != scopedTasks { tasks = scopedTasks }
+            if transcripts[id] != receivedMessages { transcripts[id] = receivedMessages }
+            if connectionError != nil { connectionError = nil }
+            return true
+        } catch {
+            guard taskEvents?.accepts(token) == true, !Task.isCancelled else { return false }
+            if connectionError != error.localizedDescription { connectionError = error.localizedDescription }
+            if reviewedReplyID != nil { reviewedReplyID = nil }
+            throw error
         }
     }
 
@@ -118,13 +164,9 @@ final class PrototypeStore: ObservableObject {
         defer { if !background { refreshing = false } }
         if !background { await waitForRefresh() }
         guard !Task.isCancelled, !reviewingReply else { return }
-        refreshInFlight = true
-        defer {
-            refreshInFlight = false
-            let waiters = refreshWaiters
-            refreshWaiters.removeAll()
-            waiters.forEach { $0.resume() }
-        }
+        let owner = UUID()
+        refreshOwner = owner
+        defer { finishRefresh(owner) }
         let id = conversation.id
         let version = refreshVersion
         do {
@@ -135,7 +177,7 @@ final class PrototypeStore: ObservableObject {
             async let newMessages = client.messages(id)
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             if version == refreshVersion {
-                let scopedTasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+                let scopedTasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
                 if tasks != scopedTasks { tasks = scopedTasks }
                 if !busyConversations.contains(id), transcripts[id] != receivedMessages { transcripts[id] = receivedMessages }
             }
@@ -151,6 +193,32 @@ final class PrototypeStore: ObservableObject {
         while refreshInFlight {
             await withCheckedContinuation { refreshWaiters.append($0) }
         }
+    }
+
+    private func finishRefresh(_ owner: UUID) {
+        guard refreshOwner == owner else { return }
+        refreshOwner = nil
+        let waiters = refreshWaiters
+        refreshWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func createDocument(title: String, brief: String, inputs: String) async {
+        guard canSend, destination == .assistant else { return }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputs = inputs.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.unicodeScalars.count <= 200, !title.contains("\n"), !title.contains("\r"),
+              !brief.isEmpty, brief.unicodeScalars.count <= 2000, inputs.unicodeScalars.count <= 2000 else { return }
+        let request = MessageRequest(assistantID: saved.assistantID, conversationID: saved.assistant.id,
+            messageID: UUID(), text: "Create document: " + title + "\n\n" + brief, mode: "assistant",
+            document: DocumentRequest(title: title, brief: brief, inputs: inputs.isEmpty ? [] : [inputs], maxSections: 4))
+        var candidate = saved
+        candidate.pending.append(request)
+        do { try commit(candidate) }
+        catch { conversationErrors[request.conversationID] = error.localizedDescription; return }
+        await deliver(request)
+        await refresh()
     }
 
     func send() async {
@@ -191,7 +259,7 @@ final class PrototypeStore: ObservableObject {
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             guard pending?.messageID == request.messageID, version == refreshVersion else { return }
             capabilities = caps
-            tasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+            tasks = receivedTasks.filter { ["pi_worker", "document"].contains($0.workerType) && $0.payload.assistantID == saved.assistantID }
             transcripts[request.conversationID] = receivedMessages
             connectionError = nil
             reviewedReplyID = request.messageID

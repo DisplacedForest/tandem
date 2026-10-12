@@ -66,7 +66,7 @@ def fake_repo(tmp_path, mode):
     repo = tmp_path / 'repo'
     source = repo / 'prototypes/pi_assistant'
     source.mkdir(parents=True)
-    for name in ('app_model.py', 'runtime.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
+    for name in ('app_model.py', 'runtime.py', 'documents.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
         shutil.copyfile(REPO / 'prototypes/pi_assistant' / name, source / name)
     (source / 'app_bridge.py').write_text(RUNTIME.replace('MODE', repr(mode)))
     return repo

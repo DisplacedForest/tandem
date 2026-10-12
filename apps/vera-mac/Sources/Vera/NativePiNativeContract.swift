@@ -13,6 +13,7 @@ enum NativePiNativeContract {
     }
     static func run(_ arguments: [String], recovery: Bool = false, reopen: Bool = false) async {
         var current: NativePiPresentation?
+        var stage = "startup"
         do {
             let candidate = try await NativePiCandidate.create(arguments)
             let presentation = NativePiPresentation(factory: {
@@ -57,12 +58,15 @@ enum NativePiNativeContract {
                 if session.messages.count == 2 && session.pendingID == nil { break }
                 try await Task.sleep(for: .milliseconds(50))
             }
+            stage = "approval wait"
             let first = try await task(session, state: "needs_decision")
             guard let decision = first.decisionID else { throw PiBrokerError.invalid }
             await session.reply(taskID: first.id, decisionID: UUID().uuidString, approved: true)
             try piCheck(session.tasks.first?.state == "needs_decision")
+            stage = "approved work"
             await session.reply(taskID: first.id, decisionID: decision, approved: true)
             _ = try await task(session, state: "running")
+            stage = "foreground reply"
             route.draft = "What are you working on?"
             await session.send()
             await session.refresh()
@@ -70,24 +74,29 @@ enum NativePiNativeContract {
                 && session.tasks.contains { $0.id == first.id && $0.state == "running" })
             presentation.isSelected = false
             try piCheck(presentation.connection != nil && classic.conversations == conversations && classic.draft == "Keep this focused draft")
+            stage = "completion"
             let finished = try await task(session, state: "completed")
             try piCheck(finished.id == first.id)
             guard let output = session.output(taskID: first.id, index: 0) else { throw PiBrokerError.invalid }
             await session.refresh()
+            stage = "stable projection"
             let projected = presentation.conversation!.messages
             await session.refresh()
             await session.refresh()
             try piCheck(presentation.conversation!.messages == projected)
             let resultID = NativePiPresentation.messageID(conversation: id, source: "task:" + first.id)
             try piCheck(projected.filter { $0.id == resultID }.count == 1)
+            stage = "second task"
             presentation.draft = "/task Check another isolated example"
             await session.send()
             let second = try await task(session, state: "needs_decision")
             try piCheck(second.id != first.id)
+            stage = "task cancellation"
             await session.stop(taskID: second.id)
             await session.refresh()
             try piCheck(session.tasks.contains { $0.id == second.id && $0.state == "canceled" })
             try piCheck(classic.conversations == conversations && classic.draft == "Keep this focused draft")
+            stage = "final projection"
             let finalIDs = presentation.conversation!.messages.map(\.id)
             await presentation.stop()
             try piCheck(presentation.connection == nil && !presentation.canSend)
@@ -100,7 +109,7 @@ enum NativePiNativeContract {
             FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) + Data([10]))
         } catch {
             if let current { await current.stop() }
-            FileHandle.standardError.write(Data("Native assistant contract failed: \(type(of: error))\n".utf8))
+            FileHandle.standardError.write(Data("Native assistant contract failed during \(stage): \(type(of: error))\n".utf8))
             exit(1)
         }
     }

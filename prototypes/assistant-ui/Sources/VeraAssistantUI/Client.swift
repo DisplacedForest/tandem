@@ -62,20 +62,31 @@ struct PrototypeClient: Sendable {
     }
     func tasks() async throws -> [TaskSnapshot] {
         var tasks: [TaskSnapshot] = []
-        var seen = Set<String>()
-        var before: String?
-        for _ in 0..<100 {
-            var query = [URLQueryItem(name: "limit", value: "200")]
-            if let before { query.append(.init(name: "before", value: before)) }
-            let page: TaskPage = try await request("tasks", query: query)
-            for task in page.tasks {
-                guard UUID(uuidString: task.id) != nil, seen.insert(task.id).inserted else { throw PrototypeError.invalidResponse }
-                tasks.append(task)
+        var index: [String: Int] = [:]
+        func walk(states: String?, pages: Int) async throws -> Bool {
+            var before: String?
+            for _ in 0..<pages {
+                var query = [URLQueryItem(name: "limit", value: "25"), URLQueryItem(name: "compact", value: "true")]
+                if let states { query.append(.init(name: "states", value: states)) }
+                if let before { query.append(.init(name: "before", value: before)) }
+                let page: TaskPage = try await request("tasks", query: query)
+                for task in page.tasks {
+                    guard UUID(uuidString: task.id) != nil else { throw PrototypeError.invalidResponse }
+                    if let position = index[task.id] {
+                        if task.updatedAt >= tasks[position].updatedAt { tasks[position] = task }
+                    } else {
+                        index[task.id] = tasks.count
+                        tasks.append(task)
+                    }
+                }
+                if page.tasks.count < 25 { return true }
+                before = page.tasks.last?.id
             }
-            if page.tasks.count < 200 { return tasks }
-            before = page.tasks.last?.id
+            return false
         }
-        throw PrototypeError.invalidResponse
+        if try await walk(states: nil, pages: 100) { return tasks }
+        guard try await walk(states: "queued,running,blocked,needs_decision", pages: 4000) else { throw PrototypeError.invalidResponse }
+        return tasks
     }
     func cancel(_ id: String) async throws -> TaskSnapshot {
         guard UUID(uuidString: id) != nil else { throw PrototypeError.invalidResponse }

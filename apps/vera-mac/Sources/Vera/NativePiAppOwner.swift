@@ -1,10 +1,13 @@
 import Foundation
+import VeraAssistantUI
 
 actor NativePiAppOwner {
     let session: NativePiRuntimeSession
     let channel: PiPrivatePipe
     let runner: Task<Void, Never>
     let httpTransport: @Sendable (URLRequest) async throws -> (Data, Int)
+    let eventTransport: PiOwnedTaskEventTransport
+    private var eventStreams: [UUID: (Task<Void, Never>, PiOwnedTaskEventConnection, AsyncThrowingStream<AssistantTaskEvent, Error>.Continuation)] = [:]
     let memoryBridge: NativeRuntimeMemoryBridge?
     private var reader: Task<Void, Never>?
     private var pending: [String: CheckedContinuation<PiValue, Error>] = [:]
@@ -13,15 +16,17 @@ actor NativePiAppOwner {
     private var closed = false
     private var assistant: String?
     private var bindings: [String: PiValue] = [:]
+    private var activeForeground: Set<String> = []
     private var granting: [String: Task<Void, Error>] = [:]
     private var commandTimers: [String: Task<Void, Never>] = [:]
-    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send) throws {
+    init(arguments: [String], executor: any PiMockModelExecutor, ownerBinding: String, transport: PiTransportKind = .mock, memoryBridge: NativeRuntimeMemoryBridge? = nil, tools: (any NativeRuntimeToolServing)? = nil, httpTransport: @escaping @Sendable (URLRequest) async throws -> (Data, Int) = PiOwnedHTTP.send, eventTransport: PiOwnedTaskEventTransport = .live, persistent: Bool = false) throws {
         self.httpTransport = httpTransport
+        self.eventTransport = eventTransport
         self.memoryBridge = memoryBridge
         let input = Pipe(), output = Pipe()
         channel = PiPrivatePipe(read: output.fileHandleForReading, write: input.fileHandleForWriting)
         let control = PiPrivatePipe(read: input.fileHandleForReading, write: output.fileHandleForWriting)
-        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33, transport: transport, tools: tools)
+        let session = try NativePiRuntimeSession(arguments: arguments, controller: control, executor: executor, ownerBinding: ownerBinding, requestTimeout: 33, transport: transport, tools: tools, persistent: persistent)
         self.session = session
         runner = Task.detached { await session.run() }
     }
@@ -47,6 +52,8 @@ actor NativePiAppOwner {
             ready = frame
             startWaiter?.resume(returning: frame)
             startWaiter = nil
+        } else if frame.pi("op").piString == "document_handoff" {
+            Task { await documentHandoff(frame) }
         } else if let id = frame.pi("id").piString, let waiter = pending.removeValue(forKey: id) {
             commandTimers.removeValue(forKey: id)?.cancel()
             if frame.pi("op").piString == "refused" { waiter.resume(throwing: PiBrokerError.unauthorized) }
@@ -54,8 +61,37 @@ actor NativePiAppOwner {
         } else if frame.pi("op").piString == "disconnected" { disconnected() }
         else { disconnected() }
     }
+    private func documentHandoff(_ frame: PiValue) async {
+        let requestID = frame.pi("id")
+        do {
+            let taskID = try await authorizeDocumentHandoff(frame)
+            try channel.send(.object(["op": .string("document_handoff_reply"), "id": requestID, "ok": .bool(true), "result": .object(["task_id": .string(taskID)])]))
+        } catch {
+            try? channel.send(.object(["op": .string("document_handoff_reply"), "id": requestID, "ok": .bool(false), "error": .string("unavailable")]))
+        }
+    }
+    func authorizeDocumentHandoff(_ frame: PiValue) async throws -> String {
+        let subject = try piUUID(frame.pi("subject"))
+        let taskID = try piUUID(frame.pi("task_id"))
+        guard let binding = bindings[subject], let assistant else { throw PiBrokerError.unauthorized }
+        try piCheck(activeForeground.contains(subject) && binding.pi("role") == .string("foreground")
+            && binding.pi("mode") == .string("assistant") && binding.pi("assistant").piString == assistant
+            && binding.pi("conversation") == frame.pi("conversation"), .unauthorized)
+        let inspect = URLRequest(url: try endpoint().appendingPathComponent("tasks/" + taskID))
+        let (data, status) = try await authenticated(inspect)
+        let task = try PiValue.piRead(data, maximumBytes: 1048576), payload = task.pi("payload")
+        try piCheck(status == 200 && task.pi("id").piString == taskID && task.pi("worker_type") == .string("document")
+            && payload.pi("assistant_id").piString == assistant && payload.pi("conversation_id") == binding.pi("conversation")
+            && payload.pi("originating_message_id").piString == subject && activeForeground.contains(subject), .unauthorized)
+        if task.pi("cancel_requested") == .bool(false), ["queued", "running"].contains(task.pi("state").piString ?? "") {
+            try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                "conversation": binding.pi("conversation"), "role": .string("document"), "mode": .string("assistant")]))
+        }
+        return taskID
+    }
     private func disconnected() {
         closed = true
+        cancelEventStreams()
         channel.closeWrite()
         startWaiter?.resume(throwing: PiBrokerError.unavailable)
         startWaiter = nil
@@ -120,15 +156,36 @@ actor NativePiAppOwner {
         if method == "POST", path == "/assistant/messages" {
             guard let data = request.httpBody else { throw PiBrokerError.invalid }
             let body = try PiValue.piRead(data)
-            try body.piKeys(["assistant_id", "conversation_id", "message_id", "text", "mode"])
+            try body.piKeys(["assistant_id", "conversation_id", "message_id", "text", "mode", "document"], required: ["assistant_id", "conversation_id", "message_id", "text", "mode"])
             try piCheck(try identifier(body.pi("assistant_id")) == assistant, .unauthorized)
             let binding: PiValue = .object(["subject": .string(try identifier(body.pi("message_id"))), "assistant": .string(assistant), "conversation": .string(try identifier(body.pi("conversation_id"))), "role": .string("foreground"), "mode": body.pi("mode")])
             guard let query = body.pi("text").piString else { throw PiBrokerError.invalid }
-            try await memoryBridge?.authorize(binding, query: query)
+            if body.pi("document") == .null { try await memoryBridge?.authorize(binding, query: query) }
             try await grant(binding)
+            let subject = try identifier(body.pi("message_id"))
+            try piCheck(activeForeground.insert(subject).inserted, .duplicate)
+            defer { activeForeground.remove(subject) }
             let response = try await authenticated(request)
             if response.1 == 200, let reply = try PiValue.piRead(response.0).pi("reply_id").piString {
-                try await memoryBridge?.recordDelivery(subject: identifier(body.pi("message_id")), messageID: reply)
+                if body.pi("document") == .null {
+                    try await memoryBridge?.recordDelivery(subject: identifier(body.pi("message_id")), messageID: reply)
+                } else {
+                    try piCheck(body.pi("mode") == .string("assistant"), .unauthorized)
+                    let answer = try PiValue.piRead(response.0)
+                    guard let ids = answer.pi("task_ids").piArray, ids.count == 1 else { throw PiBrokerError.invalid }
+                    let taskID = try piUUID(ids[0])
+                    let inspect = URLRequest(url: try endpoint().appendingPathComponent("tasks/" + taskID))
+                    let (data, status) = try await authenticated(inspect)
+                    let task = try PiValue.piRead(data, maximumBytes: 1048576), payload = task.pi("payload")
+                    try piCheck(status == 200 && task.pi("id").piString == taskID && task.pi("worker_type") == .string("document")
+                        && payload.pi("assistant_id").piString == assistant
+                        && payload.pi("conversation_id").piString == (try identifier(body.pi("conversation_id")))
+                        && payload.pi("originating_message_id").piString == (try identifier(body.pi("message_id"))), .unauthorized)
+                    if task.pi("cancel_requested") == .bool(false), ["queued", "running"].contains(task.pi("state").piString ?? "") {
+                        try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                            "conversation": payload.pi("conversation_id"), "role": .string("document"), "mode": .string("assistant")]))
+                    }
+                }
             }
             return response
         } else if method == "POST", taskOperation {
@@ -136,8 +193,8 @@ actor NativePiAppOwner {
             let inspect = URLRequest(url: URL(string: "http://127.0.0.1:\(Int(port))/tasks/\(taskID)")!)
             let (bytes, status) = try await authenticated(inspect)
             try piCheck(status == 200, .unavailable)
-            let task = try PiValue.piRead(bytes), payload = task.pi("payload")
-            try piCheck(task.pi("id").piString == taskID && task.pi("worker_type").piString == "pi_worker" && payload.pi("assistant_id").piString == assistant, .unauthorized)
+            let task = try PiValue.piRead(bytes, maximumBytes: 1048576), payload = task.pi("payload")
+            try piCheck(task.pi("id").piString == taskID && ["pi_worker", "document"].contains(task.pi("worker_type").piString ?? "") && payload.pi("assistant_id").piString == assistant, .unauthorized)
             if components[2] == "cancel" {
                 await session.broker.revoke(subject: taskID)
                 await memoryBridge?.revoke(taskID)
@@ -148,6 +205,12 @@ actor NativePiAppOwner {
                 try body.piKeys(["decision_id", "idempotency_key", "reply"])
                 if body.pi("reply") == .object(["approved": .bool(true)]), bindings[taskID] == nil || task.pi("state").piString == "needs_decision" {
                     try piCheck(task.pi("state").piString == "needs_decision" && task.pi("decision").pi("id") == body.pi("decision_id"), .unauthorized)
+                    if task.pi("worker_type") == .string("document") {
+                        try await session.broker.retryDocument(taskID)
+                        try await grant(.object(["subject": .string(taskID), "assistant": .string(assistant),
+                            "conversation": payload.pi("conversation_id"), "role": .string("document"), "mode": .string("assistant")]))
+                        return try await authenticated(request)
+                    }
                     await memoryBridge?.pause(taskID)
                     let response = try await authenticated(request)
                     if response.1 == 200 {
@@ -172,7 +235,45 @@ actor NativePiAppOwner {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await httpTransport(request)
     }
+    func events(after: Int64) throws -> AsyncThrowingStream<AssistantTaskEvent, Error> {
+        guard !closed, let assistant, let capability = ready?.pi("ui_capability").piString else { throw PiBrokerError.unavailable }
+        try piCheck(eventStreams.count < 2, .unavailable)
+        let request = try PiOwnedTaskEventTransport.request(endpoint: endpoint(), capability: capability, after: after)
+        let connection = eventTransport.open(request)
+        let id = UUID()
+        let (events, continuation) = AsyncThrowingStream<AssistantTaskEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(PiOwnedTaskEventTransport.maximumBufferedEvents))
+        let operation = Task {
+            defer { connection.cancel(); eventStreams.removeValue(forKey: id) }
+            do {
+                for try await event in connection.events {
+                    try Task.checkCancellation()
+                    try piCheck(!closed && self.assistant == assistant, .unavailable)
+                    switch continuation.yield(event) {
+                    case .enqueued: break
+                    case .dropped: throw PiBrokerError.unavailable
+                    case .terminated: return
+                    @unknown default: throw PiBrokerError.unavailable
+                    }
+                }
+                continuation.finish()
+            } catch { continuation.finish(throwing: error) }
+        }
+        eventStreams[id] = (operation, connection, continuation)
+        continuation.onTermination = { _ in operation.cancel(); connection.cancel() }
+        return events
+    }
+    private func cancelEventStreams() {
+        let active = eventStreams.values
+        eventStreams.removeAll()
+        for (operation, connection, continuation) in active {
+            operation.cancel()
+            connection.cancel()
+            continuation.finish(throwing: CancellationError())
+        }
+    }
     func stop() async {
+        closed = true
+        cancelEventStreams()
         await memoryBridge?.close()
         channel.closeWrite()
         await runner.value

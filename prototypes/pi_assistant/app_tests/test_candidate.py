@@ -60,7 +60,7 @@ def test_missing_scope_ack_is_bounded(tmp_path: Path) -> None:
     repo = tmp_path / 'checkout'
     source = repo / 'prototypes/pi_assistant'
     source.mkdir(parents=True)
-    for name in ('app_model.py', 'runtime.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
+    for name in ('app_model.py', 'runtime.py', 'documents.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
         shutil.copyfile(REPO / 'prototypes/pi_assistant' / name, source / name)
     (source / 'app_bridge.py').write_text('import json,os,sys\nif os.getpgrp()!=os.getpid(): os.setsid()\nboot=json.loads(sys.stdin.readline())\nprint(json.dumps({"op":"ready","channel":boot["channel"],"port":54321}),flush=True)\nfor line in sys.stdin: pass\n')
     result = run('--pi-candidate-selftest', ['--scope-timeout', *arguments(tmp_path / 'candidate', repo)], timeout=12)
@@ -258,7 +258,7 @@ def test_native_fixture_startup_failure_closes_descendants(tmp_path: Path) -> No
     repo = tmp_path / 'checkout'
     source = repo / 'prototypes/pi_assistant'
     source.mkdir(parents=True)
-    for name in ('app_model.py', 'runtime.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
+    for name in ('app_model.py', 'runtime.py', 'documents.py', 'bridge.py', 'process.py', 'agent.mjs', 'package-lock.json', 'native.py'):
         shutil.copyfile(REPO / 'prototypes/pi_assistant' / name, source / name)
     marker = tmp_path / 'children.json'
     (source / 'app_bridge.py').write_text(

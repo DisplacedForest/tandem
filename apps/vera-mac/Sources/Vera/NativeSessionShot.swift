@@ -49,7 +49,6 @@ struct NativeSessionShotSurface: View {
             }
             Spacer(minLength: 20)
             VStack(alignment: .leading, spacing: 12) {
-                NativeSessionModeControl(mode: mode, onSelect: { _ in })
                 Text("Message Vera…").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
             }
             .padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))

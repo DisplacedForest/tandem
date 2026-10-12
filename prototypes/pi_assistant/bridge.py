@@ -23,6 +23,7 @@ from routers.task_store import TaskConflict
 from pi_assistant.process import PiFailure
 from pi_assistant.app_model import ModelTransport
 from pi_assistant.runtime import MESSAGE_BYTES, ContextOverflow, Runtime
+from pi_assistant.documents import NativeDocumentPayload, DocumentRequest
 
 
 class Message(BaseModel):
@@ -32,6 +33,7 @@ class Message(BaseModel):
     message_id: UUID
     text: str = Field(min_length=1, max_length=8000)
     mode: Literal['assistant', 'focused']
+    document: DocumentRequest | None = None
 
 
 class WorkerPayload(BaseModel):
@@ -48,7 +50,7 @@ def validate_payload(payload: dict) -> None:
     WorkerPayload.model_validate(payload)
 
 
-def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None, model_transport: ModelTransport | None = None, ui_capability: str | None = None) -> FastAPI:
+def create_app(root: Path, node: str, native_mock_helper: Path | None = None, instance_id: str | None = None, model_transport: ModelTransport | None = None, ui_capability: str | None = None, persistent: bool = False) -> FastAPI:
     if (model_transport is None) != (ui_capability is None) or (ui_capability is not None and len(ui_capability) != 72):
         raise ValueError("App model transport requires its private UI capability")
     capability_deadline = time.monotonic() + 600
@@ -66,7 +68,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     app.state.runtime = runtime
     @app.middleware('http')
     async def local_boundary(request: Request, call_next):
-        if ui_capability is not None and (time.monotonic() >= capability_deadline or not hmac.compare_digest(request.headers.get('authorization', '').encode(), ('Bearer ' + ui_capability).encode())):
+        if ui_capability is not None and ((not persistent and time.monotonic() >= capability_deadline) or not hmac.compare_digest(request.headers.get('authorization', '').encode(), ('Bearer ' + ui_capability).encode())):
             from fastapi.responses import JSONResponse
             return JSONResponse({'detail': 'Session authentication required'}, status_code=403)
         if request.headers.get('origin') or request.headers.get('host', '').split(':')[0] not in {'127.0.0.1', 'localhost', 'testserver'}:
@@ -77,6 +79,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
             return JSONResponse({'detail': 'JSON required'}, status_code=415)
         return await call_next(request)
     tasks._validators['pi_worker'] = validate_payload
+    tasks._validators['document'] = lambda payload: NativeDocumentPayload.model_validate(payload)
     app.include_router(tasks.router)
     @app.get('/assistant/capabilities')
     async def capabilities():
@@ -84,7 +87,7 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     @app.post('/assistant/messages')
     async def message(body: Message):
         try:
-            return await runtime.message(body.model_dump(mode='json'))
+            return await runtime.message(body.model_dump(mode='json', exclude_none=True))
         except ContextOverflow as exc:
             raise HTTPException(413, str(exc)) from None
         except TaskConflict as exc:
