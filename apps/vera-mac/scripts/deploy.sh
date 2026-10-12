@@ -1,38 +1,46 @@
 #!/usr/bin/env bash
-# Package Vera.app, install it to /Applications, and (if reachable) push it to a second Mac.
-# Remote target: set VERA_STUDIO_HOST (an ssh alias or user@host). Skipped if unset/unreachable.
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_ROOT"
 
-echo "==> Copy gate"
 "$APP_ROOT/../../scripts/check-copy.sh"
-
 "$APP_ROOT/scripts/package.sh"
 
 APP="$APP_ROOT/build/Vera.app"
+VERSION="$(cat "$APP_ROOT/../../VERSION" | tr -d '[:space:]')"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/vera-deploy.XXXXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" "$APP_ROOT/Sources/Vera/SafeAppReplacement.swift" \
+  "$APP_ROOT/scripts/app-replacement/main.swift" -o "$WORK/app-replacement"
 
-echo "==> Install to /Applications"
-rm -rf "/Applications/Vera.app"
-cp -R "$APP" "/Applications/Vera.app"
-# This macOS `xattr` has no -r flag; clear xattrs per-file via find instead.
-find "/Applications/Vera.app" -exec xattr -c {} + 2>/dev/null || true
-touch "/Applications/Vera.app"   # bump mtime so LaunchServices/Dock re-read the .icns
-echo "    installed /Applications/Vera.app"
+printf '%s\n' '==> Install to /Applications; retaining rollback bundle'
+"$WORK/app-replacement" "$APP" /Applications/Vera.app "$VERSION" --first-install
 
 HOST="${VERA_STUDIO_HOST:-}"
 if [ -z "$HOST" ]; then
-  echo "==> Remote: VERA_STUDIO_HOST not set — skipping remote deploy."
+  printf '%s\n' '==> Remote: VERA_STUDIO_HOST not set. Skipping remote deploy.'
   exit 0
 fi
-if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" true 2>/dev/null; then
-  echo "==> Remote ($HOST) unreachable — skipping remote deploy."
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes -- "$HOST" true 2>/dev/null; then
+  printf '==> Remote (%s) unreachable. Skipping remote deploy.\n' "$HOST"
   exit 0
 fi
 
-echo "==> Deploy to remote ($HOST)"
-ssh "$HOST" 'rm -rf /tmp/Vera.app'
-scp -rq "$APP" "$HOST:/tmp/Vera.app"
-ssh "$HOST" 'rm -rf /Applications/Vera.app && cp -R /tmp/Vera.app /Applications/Vera.app && rm -rf /tmp/Vera.app && find /Applications/Vera.app -exec xattr -c {} + 2>/dev/null; touch /Applications/Vera.app'
-echo "    deployed to $HOST:/Applications/Vera.app"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORK/Vera.app.zip"
+REMOTE="$(ssh -- "$HOST" '/usr/bin/mktemp -d /tmp/vera-deploy.XXXXXXXX')"
+if [[ ! "$REMOTE" =~ ^/tmp/vera-deploy\.[a-zA-Z0-9]+$ ]]; then
+  printf '%s\n' 'Remote staging directory is invalid' >&2
+  exit 1
+fi
+scp -q -- "$WORK/Vera.app.zip" "$WORK/app-replacement" "$HOST:$REMOTE/"
+ssh -- "$HOST" /bin/sh -s -- "$REMOTE" "$VERSION" <<'REMOTE_SCRIPT'
+set -eu
+work="$1"
+version="$2"
+trap 'rm -rf "$work"' EXIT
+/usr/bin/ditto -x -k "$work/Vera.app.zip" "$work"
+/bin/chmod 700 "$work/app-replacement"
+"$work/app-replacement" "$work/Vera.app" /Applications/Vera.app "$version" --first-install
+REMOTE_SCRIPT
+printf '    deployed to %s:/Applications/Vera.app\n' "$HOST"

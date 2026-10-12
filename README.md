@@ -8,7 +8,7 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](apps/vera-mac)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](services/vera-api)
 [![FastAPI](https://img.shields.io/badge/FastAPI-one_container-009688?logo=fastapi&logoColor=white)](services/vera-api)
-[![macOS app](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](apps/vera-mac)
+[![macOS app](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](apps/vera-mac)
 
 [Setup](docs/SETUP.md) · [Contributing](CONTRIBUTING.md)
 
@@ -201,7 +201,7 @@ The full walkthrough, including native chat and every integration: **[docs/SETUP
 ## Constraints
 
 - The reference satellite services (voice, image, vision, coder) are MLX-based and require Apple Silicon. Each implements a documented HTTP contract (OpenAI Images, OpenAI chat, Wyoming) that any compatible service can satisfy: the contracts are the interface; the references are one implementation.
-- The native app is macOS-only (14+). The backend runs anywhere Docker runs.
+- The native app requires macOS 26 or later. The packaged Pi runtime targets Apple silicon. The backend runs anywhere Docker runs.
 - Vera is built for a single household, not multi-tenancy.
 
 ## Contributing

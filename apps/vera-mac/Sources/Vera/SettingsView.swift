@@ -509,9 +509,10 @@ private struct EngineSection: View {
 
     private var modeBinding: Binding<EngineMode> {
         Binding(get: { mode }, set: { new in
-            config["engine_mode"] = new.rawValue
-            try? config.save()
-            Task { await engine.apply(mode: new) }
+            Task {
+                await engine.apply(mode: new)
+                config["engine_mode"] = engine.currentMode.rawValue
+            }
         })
     }
 
@@ -528,6 +529,12 @@ private struct EngineSection: View {
             case .remote: remoteBody
             case .local: localBody
             case .off: offBody
+            }
+            if mode != .local, let message = phaseMessage {
+                HStack {
+                    if engine.busy { ProgressView().controlSize(.small) }
+                    Text(message).font(.system(size: 12)).foregroundStyle(phaseColor)
+                }
             }
         }
     }
@@ -621,7 +628,7 @@ private struct MaintenanceControls: View {
             Button("Delete data", role: .destructive) { engine.deleteData() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently removes ~/.vera/data (Pulse history, memory, veins). This cannot be undone.")
+            Text("This permanently removes \(engine.dataPathDisplay) (Pulse history, memory, veins). This cannot be undone.")
         }
     }
 }

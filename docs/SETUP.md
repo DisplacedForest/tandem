@@ -31,6 +31,14 @@ docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api i
 
 Compose pulls the released image by default. To run from source instead, uncomment `build: services/vera-api` in `docker-compose.yml` and use `docker compose up -d --build`.
 
+### Local engine lifecycle
+
+Remote URL and Off unregister the local engine and remove its login job. They preserve engine data. Stop also removes the job; when Local is still selected, reopening Vera starts it again. Remove engine files removes only the job and downloaded binaries. Stop the engine before using the separate Delete data action.
+
+An engine update verifies its download and stages the executable before stopping the current version. It retains the previous executable and launch settings until the new version answers its health check. Failed starts restore that previous version. An interrupted activation leaves a recovery record so reopening Vera in Local mode restores the previous settings before trying another update. If recovery fails, Vera keeps the recovery files and reports the failure. Binary rollback does not reverse changes an engine has already made to its data.
+
+An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its job file, using a separate launchd identity. Its job file stays under that root and is started explicitly by the app. This isolates engine storage, not Keychain credentials or every other app service.
+
 ### Run the engine without Docker (macOS arm64)
 
 Every release ships a packaged engine binary alongside the image. Download `vera-api-macos-arm64.zip` and its `.sha256` from the GitHub Release, verify with `shasum -a 256 -c vera-api-macos-arm64.zip.sha256`, unzip, and run `./vera-api/vera-api`. It serves on `127.0.0.1:8089` and keeps its data in `~/.vera/data`; `VERA_DATA_DIR`, `VERA_BIND`, and `VERA_PORT` override those defaults. Configuration is the same `.env` surface either way (export the variables or launch through a wrapper that sets them).
@@ -184,7 +192,7 @@ Two host scripts cover the standing ops work, and each documents its own environ
 
 ## 3. The Mac app
 
-**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases and can update itself in place.
+**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
 **From source** (Swift toolchain):
 
@@ -196,7 +204,7 @@ scripts/deploy.sh    # packages Vera.app and installs it to /Applications
 
 ### Stable signing for local builds
 
-`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement; existing items may still need a one-time approval when changing from ad-hoc signing.
+`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement, but macOS can still use each build's code hash for the separate Keychain partition check. A local certificate does not guarantee that approval survives future builds. Recognized Apple-issued signing identities have different partition behavior and require a separate distribution and migration decision.
 
 Create a dedicated certificate with Apple's [Certificate Assistant](https://support.apple.com/guide/keychain-access/create-self-signed-certificates-kyca8916/mac) in Keychain Access. Choose a self-signed identity and the Code Signing certificate type, use an RSA key of at least 2048 bits, and store it in the login Keychain. Keep its private key there. Leave trust and access controls at their defaults and complete any macOS security prompt yourself. This local setup does not require setting Always Trust or exporting a private key. It does not provide Developer ID notarization or Gatekeeper distribution approval. Apple's [code-signing guide](https://developer.apple.com/library/archive/technotes/tn2206/_index.html) explains how designated requirements identify successive versions.
 
@@ -210,6 +218,8 @@ Find the certificate's exact SHA-1 fingerprint with `security find-identity -p c
 ```
 
 `keychain` is optional; when supplied it must be an existing absolute file path. The file is parsed as data, never executed. `VERA_SIGNING_CONFIG` selects another configuration file, and `VERA_SIGNING_IDENTITY` and `VERA_SIGNING_KEYCHAIN` override its values. An explicit identity must be its exact fingerprint. Invalid configuration, missing keys and signing failures stop packaging instead of silently falling back. `VERA_SIGNING_IDENTITY=-` explicitly selects ad-hoc signing. No build command creates certificates, changes trust, unlocks Keychains, or alters key access controls.
+
+For a reviewed installed build whose selected credential needs renewed access, the diagnostic `--credential-reauthorization` entry accepts `--certificate`, `--code-hash`, and `--profile-digest`. It requires the exact installed Vera identity and selected profile, then performs one ordinary credential read with macOS handling authentication. It does not initialize all endpoint credentials, edit ACL payloads, replace the credential, or send a model request. Its result confirms only that read; it does not claim persistent access. Any persistence depends on the user's macOS choice, and future local builds can require another authorization. Keep passwords in the macOS prompt, never in command arguments or scripts. This diagnostic must be deliberately coordinated for the final build; it is never a startup action or automatic retry.
 
 To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
 

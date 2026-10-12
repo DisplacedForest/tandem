@@ -38,14 +38,62 @@ run = "python -m pytest -q tests/test_native_task_handoff.py"
 [tasks.signing-test]
 run = "python3 -m unittest discover -s scripts/tests -p 'test_local_signing.py' -v"
 
+[tasks.runtime-package-test]
+run = "python3 -m unittest discover -s scripts/tests -p 'test_runtime_package.py' -v"
+
 [tasks.test]
-depends = ["api-test", "provider-test", "native-provider-test", "native-admission-test", "native-task-test", "signing-test"]
+depends = ["api-test", "provider-test", "native-provider-test", "native-admission-test", "native-task-test", "signing-test", "runtime-package-test", "pi-prototype-test"]
+
+[tasks.assistant-ui-test]
+dir = "prototypes/assistant-ui"
+run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "test", "mac-build"]
+depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test"]
+
+[tasks.selected-credential-authorization-test]
+run = "bash apps/vera-mac/scripts/test-selected-credential-authorization.sh"
 
 [tasks.ci]
 depends = ["check"]
 
 [tasks.security]
 run = "semgrep scan --config auto --error services scripts"
+
+[tasks.pi-prototype-deps]
+run = "npm ci --ignore-scripts --no-audit --no-fund --prefix prototypes/pi_assistant"
+
+[tasks.pi-prototype-test]
+depends = ["pi-prototype-deps", "assistant-ui-test"]
+env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
+run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/tests"
+
+[tasks.pi-integration-test]
+depends = ["pi-prototype-deps", "assistant-ui-test"]
+env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "python prototypes/pi_assistant/tests/integration_recovery.py"
+
+[tasks.pi-native-transport-test]
+dir = "prototypes/native-transport"
+env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "swift build && .build/debug/VeraNativeTransport --selftest && python3 tests/process_contract.py .build/debug/VeraNativeTransport && python3 tests/watchdog_contract.py .build/debug/VeraNativeTransport"
+
+[tasks.pi-native-integration-test]
+depends = ["pi-native-transport-test", "pi-prototype-deps"]
+env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
+run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/native_tests"
+
+[tasks.pi-app-broker-test]
+depends = ["mac-build", "pi-prototype-deps"]
+env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "apps/vera-mac/.build/debug/Vera --pi-broker-selftest && python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests"
+
+[tasks.engine-lifecycle-test]
+run = "sh apps/vera-mac/scripts/test-engine-lifecycle.sh"
+
+[tasks.app-replacement-test]
+run = "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s apps/vera-mac/tests/app-replacement -p 'test_*.py' -v"
+
+[tasks.pi-native-ui-test]
+depends = ["mac-build"]
+run = "apps/vera-mac/.build/debug/Vera --pi-native-selftest"

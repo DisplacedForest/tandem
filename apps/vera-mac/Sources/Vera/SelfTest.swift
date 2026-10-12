@@ -4666,12 +4666,13 @@ enum SelfTest {
             let binPath = "\(fakeHome)/.vera/engine/0.3.0/vera-api/vera-api"
             let renderedPlist = EngineManager.renderPlist(engineTpl, home: fakeHome,
                                                           binaryPath: binPath, port: 8123)
-            guard renderedPlist.contains("<string>\(binPath)</string>"),
-                  renderedPlist.contains("<key>VERA_PORT</key><string>8123</string>"),
-                  renderedPlist.contains("<string>\(fakeHome)/.vera/data</string>"),
-                  renderedPlist.contains("<string>\(fakeHome)/.vera/engine/engine.log</string>"),
-                  renderedPlist.contains("<string>com.vera.engine</string>"),
-                  !renderedPlist.contains("@") else {
+            let plist = try PropertyListSerialization.propertyList(from: Data(renderedPlist.utf8), format: nil) as? [String: Any]
+            let environment = plist?["EnvironmentVariables"] as? [String: String]
+            guard plist?["ProgramArguments"] as? [String] == [binPath],
+                  environment?["VERA_PORT"] == "8123",
+                  environment?["VERA_DATA_DIR"] == "\(fakeHome)/.vera/data",
+                  plist?["StandardOutPath"] as? String == "\(fakeHome)/.vera/engine/engine.log",
+                  plist?["Label"] as? String == "com.vera.engine" else {
                 print("SELFTEST ERROR: engine plist render"); exit(1)
             }
             print("  local engine OK (\(engineBaseCases.count) base cases, version-compare, prune, sha256, plist render)")
