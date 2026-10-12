@@ -61,6 +61,15 @@ if arguments.dropFirst().first == "--pi-native-selftest" {
     await NativeProviderSmoke.run(arguments: arguments)
 } else if arguments.contains("--provider-smoke-selftest") {
     NativeProviderSmoke.selfTest()
+} else if arguments.contains("--domain-state-selftest") {
+    do { try NativeDomainStateSelftest.run(); try await NativeDomainRepositorySelftest.run() }
+    catch { print("domain-state: FAIL \(error.localizedDescription)"); exit(1) }
+} else if arguments.contains("--shared-runtime-memory-selftest") {
+    do { try await NativeRuntimeMemorySelftest.run() }
+    catch { print("shared-runtime-memory: FAIL \(error.localizedDescription)"); exit(1) }
+} else if arguments.contains("--memory-evidence-selftest") {
+    do { try await NativeMemoryEvidenceSelftest.run() }
+    catch { print("native-memory-evidence: FAIL \(error.localizedDescription)"); exit(1) }
 } else if arguments.contains("--selftest") {
     await SelfTest.run()
 } else if arguments.contains("--dump-context") {

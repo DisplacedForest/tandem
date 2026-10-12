@@ -14,6 +14,8 @@ final class ChatStore: ObservableObject {
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memoryRecords: [NativeMemoryRecord] = []
     @Published var memoryProposals: [NativeMemoryProposal] = []
+    @Published var inspectedMemoryRevision: Int?
+    @Published var inspectedMemory: NativeMemoryRecord?
     @Published var memoryServiceState: NativeMemoryServiceState = .off
     @Published var memoryGroomOutcome: NativeMemoryGroomOutcome?
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
@@ -51,6 +53,7 @@ final class ChatStore: ObservableObject {
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?
     private let visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)?
+    private var turnMemorySelections: [UUID: [NativeMemoryRanked]] = [:]
     private var nativeMemorySettings: NativeMemorySettings
     private var nativeMemoryService: (any NativeMemoryServing)?
     private var nativeToolRegistry: NativeToolRegistry
@@ -73,6 +76,9 @@ final class ChatStore: ObservableObject {
     @Published var nativeTaskReferences: [NativeTaskReference] = []
     let attachmentStore: NativeAttachmentStore
     private let artifactPersistenceEnabled: Bool
+    var nativeKnowledgeQuery: @Sendable (URL, String, [String]) async -> KnowledgeClient.QueryResult = { base, query, collections in
+        await KnowledgeClient(base: base).query(query, collections: collections)
+    }
     private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
     var canSubmitChat: Bool { repository != nil }
@@ -552,6 +558,29 @@ final class ChatStore: ObservableObject {
 
     // MARK: - Memory actions
 
+    func inspectMemoryCitation(_ url: String) {
+        guard let id = NativeMemoryCitation.recordID(url), let local = repository as? LocalChatRepository else { return }
+        do {
+            guard let record = try local.allMemories().first(where: { $0.id == id && $0.status != .deleted }) else {
+                throw NativeMemoryEvidenceError.removed
+            }
+            let revision = NativeMemoryCitation.revision(url)
+            if let revision, !(try local.memoryEvidence(id)).contains(where: { $0.revision == revision }) {
+                throw NativeMemoryEvidenceError.unavailable
+            }
+            inspectedMemoryRevision = revision
+            inspectedMemory = record
+        } catch {
+            memoryServiceState = .failed(error.localizedDescription)
+            section = .memory
+        }
+    }
+
+    func memoryEvidence(_ id: String) throws -> [NativeMemoryEvidence] {
+        guard let local = repository as? LocalChatRepository else { throw NativeMemoryEvidenceError.unavailable }
+        return try local.memoryEvidence(id)
+    }
+
     func reloadNativeMemory() {
         guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
         do {
@@ -559,8 +588,6 @@ final class ChatStore: ObservableObject {
             memoryProposals = try memoryRepository.pendingProposals()
             if !nativeMemorySettings.enabled {
                 memoryServiceState = .off
-            } else if nativeMemorySettings.embeddingsModel.isEmpty {
-                memoryServiceState = .setupRequired
             } else if !memoryProposals.isEmpty {
                 memoryServiceState = .pendingReview(memoryProposals.count)
             } else {
@@ -597,7 +624,7 @@ final class ChatStore: ObservableObject {
         Task {
             do {
                 let proposals = try await service.proposal(
-                    request: trimmed, existing: try memoryRepository.approvedMemories(), now: Date())
+                    request: trimmed, existing: { try memoryRepository.extractionMemories() }, now: Date())
                 try await saveMemoryProposals(
                     proposals, service: service, repository: memoryRepository)
                 reloadNativeMemory()
@@ -639,8 +666,8 @@ final class ChatStore: ObservableObject {
                         let proposals = try await service.proposals(
                             user: messages[index].text, assistant: messages[index + 1].text,
                             sourceConversationID: conversation.id,
-                            sourceMessageID: messages[index + 1].id.uuidString,
-                            existing: try memoryRepository.approvedMemories(), now: Date())
+                            sourceMessageID: messages[index].id.uuidString,
+                            existing: { try memoryRepository.extractionMemories() }, now: Date())
                         try await saveMemoryProposals(
                             proposals, service: service, repository: memoryRepository)
                         reviewedTurns += 1
@@ -663,9 +690,23 @@ final class ChatStore: ObservableObject {
         select(conversationID)
     }
 
-    func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) {
-        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+    func proposeDomainRecord(_ entry: NativeDomainEntry, label: String) throws {
+        guard nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else { throw NativeDomainError.changed }
+        _ = try local.stageDomainProposal(entry, label: label)
+        reloadNativeMemory()
+    }
+
+    @discardableResult
+    func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) -> Bool {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return false }
         do {
+            if proposal.domain != nil {
+                guard editedDetails == nil, let local = repository as? LocalChatRepository else { throw NativeDomainError.invalid }
+                try local.approveDomainProposal(proposal)
+                reloadNativeMemory()
+                indexApprovedMemoryIfNeeded()
+                return true
+            }
             switch proposal.kind {
             case .create:
                 let memory = NativeMemoryRecord(
@@ -679,7 +720,8 @@ final class ChatStore: ObservableObject {
                     memory, decision: editedDetails == nil ? .accepted : .edited,
                     note: "Approved memory proposal")
             case .update, .merge, .consolidate:
-                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return false }
+                let expected = target
                 target.title = proposal.title
                 target.summary = proposal.summary
                 target.details = editedDetails ?? proposal.details
@@ -689,27 +731,34 @@ final class ChatStore: ObservableObject {
                 target.durability = proposal.durability
                 target.expiry = proposal.expiry
                 target.embedding = nil
+                if let source = proposal.sourceConversationID, let message = proposal.sourceMessageID {
+                    target.sourceConversationID = source
+                    target.sourceMessageID = message
+                }
                 target.updatedAt = Date()
                 try memoryRepository.saveMemory(
                     target, decision: proposal.kind == .update ? .edited : .merged,
-                    note: "Approved memory proposal")
+                    note: "Approved memory proposal", expected: expected)
                 if proposal.kind == .merge || proposal.kind == .consolidate {
                     for id in proposal.targetIDs where id != target.id { try memoryRepository.deleteMemory(id) }
                 }
             case .suppress:
-                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return false }
+                let expected = target
                 target.status = .suppressed
                 target.embedding = nil
                 target.updatedAt = Date()
-                try memoryRepository.saveMemory(target, decision: .suppressed, note: "Approved suppression")
+                try memoryRepository.saveMemory(target, decision: .suppressed, note: "Approved suppression", expected: expected)
             case .expire, .delete, .cleanup:
                 for id in proposal.targetIDs { try memoryRepository.deleteMemory(id) }
             }
             try memoryRepository.decideProposal(proposal.id, status: .accepted)
             reloadNativeMemory()
             indexApprovedMemoryIfNeeded()
+            return true
         } catch {
             memoryServiceState = .failed("The proposal could not be applied: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -733,10 +782,11 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func editNativeMemory(
         _ memory: NativeMemoryRecord, title: String, summary: String, details: [String]
-    ) {
-        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+    ) -> Bool {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return false }
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanDetails = details.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -745,7 +795,7 @@ final class ChatStore: ObservableObject {
               !cleanDetails.isEmpty, cleanDetails.count <= 8,
               cleanDetails.allSatisfy({ $0.count <= 600 }) else {
             memoryServiceState = .failed("Keep the name, summary, and details concise before saving.")
-            return
+            return false
         }
         do {
             var updated = memory
@@ -754,11 +804,13 @@ final class ChatStore: ObservableObject {
             updated.details = cleanDetails
             updated.embedding = nil
             updated.updatedAt = Date()
-            try memoryRepository.saveMemory(updated, decision: .edited, note: "Edited by the user")
+            try memoryRepository.saveMemory(updated, decision: .edited, note: "Edited by the user", expected: memory)
             reloadNativeMemory()
             indexApprovedMemoryIfNeeded()
+            return true
         } catch {
             memoryServiceState = .failed("The memory could not be saved: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -768,6 +820,7 @@ final class ChatStore: ObservableObject {
             for memory in try memoryRepository.approvedMemories() {
                 try memoryRepository.deleteMemory(memory.id)
             }
+            if let local = repository as? LocalChatRepository { try local.revokeUnprojectedDomainStreams() }
             reloadNativeMemory()
         } catch {
             memoryServiceState = .failed("The memory library could not be cleared: \(error.localizedDescription)")
@@ -866,8 +919,8 @@ final class ChatStore: ObservableObject {
     }
 
     private func indexApprovedMemoryIfNeeded() {
-        guard nativeMemorySettings.enabled, let service = nativeMemoryService,
-              let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        guard nativeMemorySettings.enabled, !nativeMemorySettings.embeddingsModel.isEmpty, let service = nativeMemoryService,
+              let memoryRepository = repository as? LocalChatRepository else { return }
         let missing = memoryRecords.filter {
             $0.status == .approved && $0.embedding == nil && $0.eligible(at: Date())
                 && NativeMemorySafety.recordIsSafe($0)
@@ -875,11 +928,12 @@ final class ChatStore: ObservableObject {
         guard !missing.isEmpty else { return }
         memoryServiceState = .indexing
         Task {
-            for var memory in missing {
+            for memory in missing {
                 do {
-                    memory.embedding = try await service.embed(memory.details.joined(separator: "\n"))
-                    memory.updatedAt = Date()
-                    try memoryRepository.saveMemory(memory, decision: .edited, note: "Indexed approved memory")
+                    guard !(try memoryRepository.eligibleMemory([NativeMemoryRanked(record: memory, score: 1)], bankScope: "all")).isEmpty else { continue }
+                    let embedding = try await service.embed(memory.details.joined(separator: "\n"))
+                    guard nativeMemorySettings.enabled else { return }
+                    try memoryRepository.saveMemoryEmbedding(embedding, expected: memory)
                 } catch {
                     memoryServiceState = .retrievalUnavailable(error.localizedDescription)
                     return
@@ -1425,6 +1479,50 @@ final class ChatStore: ObservableObject {
         return nativeToolRegistry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
+    func selectApprovedMemory(_ text: String, settings: NativeMemorySettings? = nil,
+                              service: (any NativeMemoryServing)? = nil) async -> [NativeMemoryRanked] {
+        let settings = settings ?? nativeMemorySettings
+        guard settings.enabled, nativeMemorySettings.enabled else { return [] }
+        var selected: [NativeMemoryRanked] = []
+        do {
+            if let local = repository as? LocalChatRepository { try local.refreshDomainProjections() }
+            if settings.embeddingsModel.isEmpty, let local = repository as? LocalChatRepository {
+                selected = try local.recallMemory(text, bankScope: settings.bankScope)
+            } else if !NativeMemorySafety.containsSensitiveData(text),
+                      let memoryRepository = repository as? any NativeMemoryRepository,
+                      let service = service ?? nativeMemoryService {
+                let query = try await service.embed(text)
+                selected = NativeMemoryRecall.rank(records: try memoryRepository.approvedMemories(),
+                    query: query, bankScope: settings.bankScope)
+            }
+            guard nativeMemorySettings.enabled else { return [] }
+            if let local = repository as? LocalChatRepository {
+                selected = try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope)
+            }
+            memoryServiceState = memoryProposals.isEmpty ? .ready : .pendingReview(memoryProposals.count)
+            return selected
+        } catch {
+            memoryServiceState = .retrievalUnavailable("Saved memory could not be searched on this Mac.")
+            return []
+        }
+    }
+
+    func memorySelectionIsCurrent(_ selected: [NativeMemoryRanked]) -> Bool {
+        guard !selected.isEmpty else { return true }
+        guard nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else { return false }
+        do {
+            try local.refreshDomainProjections()
+            return try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope).count == selected.count
+        }
+        catch { return false }
+    }
+
+    private func turnMemoryIsCurrent(_ turn: NativeConversationTurn) async -> Bool {
+        guard await turnCurrency(turn) == .current else { return false }
+        guard let selected = turnMemorySelections[turn.attempt ?? turn.id], !selected.isEmpty else { return true }
+        return memorySelectionIsCurrent(selected)
+    }
+
     func performTurn(_ turn: NativeConversationTurn) {
         guard let repository, let nativeTransport, let nativeConfig,
               let location = turnLocation(turn), turnOwned(turn) else { return }
@@ -1453,7 +1551,7 @@ final class ChatStore: ObservableObject {
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
                 guard let self else { return false }
-                return await self.turnCurrency(turn) == .current
+                return await self.turnMemoryIsCurrent(turn)
             },
             willExecute: { [weak self] activity in
                 guard let self else { return false }
@@ -1493,7 +1591,7 @@ final class ChatStore: ObservableObject {
             self?.stopAnswer(turn.assistantMessageID, reason: "This answer reached its time limit. You can ask a follow-up.")
         }
         turnExecutions[turn.id]?.task = Task {
-            defer { finishTurnExecution(turn) }
+            defer { turnMemorySelections[turn.attempt ?? turn.id] = nil; finishTurnExecution(turn) }
             var lastCheckpoint = Date.distantPast
             var partialAnswer = false
             do {
@@ -1542,33 +1640,13 @@ final class ChatStore: ObservableObject {
                     turnMessages[current].routeNote = conversations[location.conversation].messages[location.user].routeNote
                 }
                 var selectedMemories: [NativeMemoryRanked] = []
-                if memorySettings.enabled {
-                    if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
-                        memoryServiceState = .setupRequired
-                    } else if NativeMemorySafety.containsSensitiveData(text) {
-                        memoryServiceState = memoryProposals.isEmpty
-                            ? .ready : .pendingReview(memoryProposals.count)
-                    } else if let memoryRepository = repository as? any NativeMemoryRepository,
-                              let memoryService {
-                        do {
-                            let query = try await memoryService.embed(text)
-                            selectedMemories = NativeMemoryRecall.rank(
-                                records: try memoryRepository.approvedMemories(), query: query,
-                                bankScope: memorySettings.bankScope)
-                            memoryServiceState = memoryProposals.isEmpty
-                                ? .ready : .pendingReview(memoryProposals.count)
-                        } catch {
-                            memoryServiceState = .retrievalUnavailable(error.localizedDescription)
-                        }
-                    }
-                }
+                selectedMemories = await selectApprovedMemory(text, settings: memorySettings, service: memoryService)
                 var groundingAssembly: KnowledgeGrounding.Assembly?
                 if !groundingCollections.isEmpty {
                     if let groundingBase {
                         setTurnStatus("Searching knowledge…", turn: turn)
                         groundingStatus[id] = .retrieving
-                        let result = await KnowledgeClient(base: groundingBase)
-                            .query(text, collections: groundingCollections)
+                        let result = await nativeKnowledgeQuery(groundingBase, text, groundingCollections)
                         let researchActive = activeTools.contains {
                             NativeWebTools.researchCapableIDs.contains($0.id)
                         }
@@ -1591,14 +1669,24 @@ final class ChatStore: ObservableObject {
                         groundingStatus[id] = .unconfigured
                     }
                 }
+                if !nativeMemorySettings.enabled {
+                    selectedMemories = []
+                } else if let local = repository as? LocalChatRepository {
+                    do { selectedMemories = try local.eligibleMemory(selectedMemories, bankScope: nativeMemorySettings.bankScope) }
+                    catch {
+                        selectedMemories = []
+                        memoryServiceState = .retrievalUnavailable("Saved memory could not be checked before sending.")
+                    }
+                }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
                     contracts.insert(.citations)
                 }
-                if groundingAssembly != nil { contracts.insert(.citations) }
+                if groundingAssembly != nil || !selectedMemories.isEmpty { contracts.insert(.citations) }
                 try await ensureTurnCurrent(turn)
-                if let groundingAssembly, let location = turnLocation(turn) {
-                    conversations[location.conversation].messages[location.reply].sources = groundingAssembly.sources
+                if let location = turnLocation(turn) {
+                    conversations[location.conversation].messages[location.reply].sources =
+                        (groundingAssembly?.sources ?? []) + NativeMemoryCitation.sources(selectedMemories)
                 }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, userScope: scopes.userScope,
@@ -1613,6 +1701,7 @@ final class ChatStore: ObservableObject {
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
+                turnMemorySelections[turn.attempt ?? turn.id] = selectedMemories
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
@@ -1630,7 +1719,7 @@ final class ChatStore: ObservableObject {
                     let lifted = NativeResearchSources.lift(snapshot.activities)
                     if !lifted.isEmpty {
                         conversations[i].messages[replyIndex].sources =
-                            lifted + (groundingAssembly?.sources ?? [])
+                            NativeMemoryCitation.merging(lifted, grounding: groundingAssembly?.sources ?? [], memories: selectedMemories)
                     }
                     if let latest = arts.last,
                        latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
@@ -1669,8 +1758,8 @@ final class ChatStore: ObservableObject {
                                 let proposals = try await memoryService.proposals(
                                     user: text, assistant: completedAssistant.text,
                                     sourceConversationID: id,
-                                    sourceMessageID: completedAssistant.id.uuidString,
-                                    existing: try memoryRepository.approvedMemories(), now: Date())
+                                    sourceMessageID: turn.userMessageID.uuidString,
+                                    existing: { try memoryRepository.extractionMemories() }, now: Date())
                                 try await self.saveMemoryProposals(
                                     proposals, service: memoryService, repository: memoryRepository)
                                 reloadNativeMemory()

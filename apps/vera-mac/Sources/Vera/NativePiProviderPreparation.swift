@@ -86,8 +86,15 @@ struct PiPreparedExecutor: PiMockModelExecutor {
     let permit: PiCumulativeBudget
     var journal: PiCheckpointLedger? = nil
     func validateOwner() async throws { try permit.validate(operation.binding); try await operation.validateOwner() }
+    func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { try await operation.prepareRequest(request) }
+    func validateRequest(_ request: PiModelRequest) async throws { try await operation.validateRequest(request) }
+    func sharingMemory(_ bridge: NativeRuntimeMemoryBridge) -> PiPreparedExecutor {
+        var operation = operation
+        operation.memoryBridge = bridge
+        return PiPreparedExecutor(operation: operation, permit: permit, journal: journal)
+    }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
-        try await validateOwner()
+        do { try await validateOwner() } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
         let reply = try await operation.complete(request)
         try await validateOwner()
         if let journal {
@@ -123,10 +130,12 @@ final class PiPreparedProvider {
         try journal.stage("usage_returned", additions: ["observed_provider_usage_nanos": .number(Double(usage))])
         let accounting = try PiSharedAccounting(root: accountingRoot, baselineNanos: baseline, budgetNanos: baseline + PiCheckpointPricing.reservation, ownerBinding: permit.digest, transport: transport)
         let baseOperation = try owner.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { outgoing, request in
-            try permit.validate(binding)
-            let expected = try pricing.body(request)
-            try piCheck(outgoing.httpBody == expected, .unauthorized)
-            try journal.reserve(baseline: baseline, body: expected)
+            do {
+                try permit.validate(binding)
+                let expected = try pricing.body(request)
+                try piCheck(outgoing.httpBody == expected, .unauthorized)
+                try journal.reserve(baseline: baseline, body: expected)
+            } catch { throw PiNoSpendRejection(error: error) }
             let result = try await http.send(outgoing)
             try permit.validate(binding)
             return result
@@ -150,7 +159,7 @@ final class PiPreparedProvider {
         let baseline = try permit.baseline(observedProviderUsage: usage)
         let accounting = try PiSharedAccounting(root: accountingRoot, baselineNanos: baseline, budgetNanos: baseline + permit.runAllowance, ownerBinding: permit.digest, transport: transport)
         let baseOperation = try owner.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { request, _ in
-            try permit.validate(binding)
+            do { try permit.validate(binding) } catch { throw PiNoSpendRejection(error: error) }
             let response = try await http.send(request)
             try permit.validate(binding)
             return response

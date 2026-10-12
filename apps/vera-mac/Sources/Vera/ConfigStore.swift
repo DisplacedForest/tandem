@@ -204,7 +204,7 @@ final class ConfigStore: ObservableObject {
             guard let self else { throw PiBrokerError.unavailable }
             try await self.piValidate(binding)
         }) { [weak self] request, body in
-            guard let self else { throw PiBrokerError.unavailable }
+            guard let self else { throw PiNoSpendRejection(error: PiBrokerError.unavailable) }
             return try await self.piSend(binding: binding, request: request, body: body, transport: transport)
         }
     }
@@ -215,15 +215,21 @@ final class ConfigStore: ObservableObject {
 
     private func piSend(binding: PiSelectedProfileBinding, request: PiModelRequest, body: Data,
                         transport: @escaping PiProviderSend) async throws -> (Data, Int) {
-        try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
-        guard let key = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
-        try piCheck(!piContainsCredential(body, key: key), .unauthorized)
+        let key: String
+        do {
+            try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
+            guard let committed = piCommittedCredentials[binding.profileID] else { throw PiBrokerError.unauthorized }
+            key = committed
+            try piCheck(!piContainsCredential(body, key: key), .unauthorized)
+        } catch { throw PiNoSpendRejection(error: error) }
         var outgoing = URLRequest(url: binding.endpoint.appendingPathComponent("chat/completions"))
         outgoing.httpMethod = "POST"
         outgoing.httpBody = body
         outgoing.timeoutInterval = 30
         outgoing.setValue("application/json", forHTTPHeaderField: "Content-Type")
         outgoing.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        do { try await request.memoryAuthority?.validate(request) } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
+        try Task.checkCancellation()
         let response = try await transport(outgoing, request)
         try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)
         try piCheck(!piContainsCredential(response.0, key: key), .unauthorized)

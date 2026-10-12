@@ -86,6 +86,30 @@ protocol NativeChatTransport: Sendable {
     func stream(
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error>
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema],
+        validateRequest: @escaping @Sendable () async throws -> Void
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error>
+}
+
+extension NativeChatTransport {
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema],
+        validateRequest: @escaping @Sendable () async throws -> Void
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await validateRequest()
+                    for try await snapshot in stream(messages: messages, model: model, tools: tools) {
+                        continuation.yield(snapshot)
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 struct NativeChatDeltaAccumulator: Sendable {
@@ -262,12 +286,21 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     func stream(
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        stream(messages: messages, model: model, tools: tools, validateRequest: {})
+    }
+
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema],
+        validateRequest: @escaping @Sendable () async throws -> Void
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         guard config.streaming else {
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     do {
                         try await admitted { budget in
                             try budget?.check()
+                            try await validateRequest()
+                            try Task.checkCancellation()
                             let request = try request(messages: messages, model: model, tools: tools)
                             let (data, response) = try await session.data(for: request)
                             try budget?.check()
@@ -295,6 +328,8 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                 do {
                     try await admitted { budget in
                         try budget?.check()
+                        try await validateRequest()
+                        try Task.checkCancellation()
                         let request = try request(messages: messages, model: model, tools: tools)
                         let (bytes, response) = try await session.bytes(for: request)
                         let status = try statusCode(response)

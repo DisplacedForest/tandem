@@ -89,12 +89,13 @@ final class PiModelLedger: @unchecked Sendable {
             let charged: Int64?, reply: Data?
             switch chargedValue.storage { case .null: charged = nil; case .int64(let value): charged = value; default: throw PiBrokerError.storage }
             switch replyValue.storage { case .null: reply = nil; case .blob(let value): reply = value; default: throw PiBrokerError.storage }
-            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain"].contains(status) && reserved == 1_000_000, .storage)
+            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain", "rejected"].contains(status) && reserved == 1_000_000, .storage)
             if status == "completed" {
                 try piCheck(charged != nil && reply != nil, .storage)
                 let saved = try PiValue.piRead(reply!)
                 try PiModelReply.validate(saved)
                 try piCheck(charged == PiModelReply.costNanos(saved), .storage)
+            } else if status == "rejected" { try piCheck(charged == 0 && reply == nil, .storage)
             } else { try piCheck(charged == nil && reply == nil, .storage) }
             counts[subject, default: 0] += 1
             try piCheck(counts[subject]! <= 4, .storage)
@@ -113,10 +114,17 @@ final class PiModelLedger: @unchecked Sendable {
             try Self.validateRows(db, budget: budget - baseline)
             if let row = try Row.fetchOne(db, sql: "SELECT digest,status,reply FROM requests WHERE id=?", arguments: [request.id]) {
                 try piCheck(row["digest"] as String == request.digest, .duplicate)
+                if row["status"] as String == "rejected" {
+                    try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved','rejected')") == 0, .uncertain)
+                    let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
+                    try piCheck(exposure <= budget - baseline - 1_000_000, .budget)
+                    try db.execute(sql: "UPDATE requests SET status='reserved',charged=NULL WHERE id=? AND status='rejected'", arguments: [request.id])
+                    return nil
+                }
                 guard row["status"] as String == "completed", let data: Data = row["reply"] else { throw PiBrokerError.uncertain }
                 return try PiValue.piRead(data)
             }
-            try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved')") == 0, .uncertain)
+            try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved','rejected')") == 0, .uncertain)
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests") ?? 12
             let own = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE subject=?", arguments: [request.scope.subject]) ?? 4
             let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
@@ -134,6 +142,9 @@ final class PiModelLedger: @unchecked Sendable {
             try piCheck(db.changesCount == 1, .storage)
         }
     }
+    func reject(_ id: String) {
+        try? database.write { db in try db.execute(sql: "UPDATE requests SET status='rejected',charged=0 WHERE id=? AND status='reserved'", arguments: [id]) }
+    }
     func uncertain(_ id: String) {
         try? database.write { db in try db.execute(sql: "UPDATE requests SET status='uncertain' WHERE id=? AND status='reserved'", arguments: [id]) }
     }
@@ -144,6 +155,10 @@ final class PiModelLedger: @unchecked Sendable {
             return .array(rows.map { row in .object(["id": .string(row["id"]), "status": .string(row["status"]), "reserved": .number(Double(row["reserved"] as Int64)), "charged": (row["charged"] as Int64?).map { .number(Double($0)) } ?? .null]) })
         }
     }
+}
+
+struct PiNoSpendRejection: Error {
+    let error: Error
 }
 
 enum PiModelReply {
@@ -221,12 +236,18 @@ actor NativePiModelBroker {
         try piCheck(!closed && Date() < expires, .unauthorized)
         try piCheck(!quarantined, .uncertain)
         guard let scope = scopes[value.pi("scope").piString ?? ""] else { throw PiBrokerError.unauthorized }
-        let request = try PiModelRequest(value, scope: scope, channel: channel)
+        let request = try await executor.prepareRequest(PiModelRequest(value, scope: scope, channel: channel))
+        try await executor.validateRequest(request)
+        try Task.checkCancellation()
+        try piCheck(!closed && !quarantined && Date() < expires && scopes[scope.id]?.binding == scope.binding, .unauthorized)
         try piCheck(!canceled.contains(request.id), .canceled)
         try piCheck(!active.values.contains { $0.0 == scope.role }, .unavailable)
         if let saved = try ledger.reserve(request) {
             try await executor.validateOwner()
             try piCheck(!closed && !quarantined && !canceled.contains(request.id), .unauthorized)
+            try await executor.validateRequest(request)
+            try Task.checkCancellation()
+            try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(saved, request: request)
             return saved
         }
@@ -239,22 +260,31 @@ actor NativePiModelBroker {
             if !Task.isCancelled { operation.cancel(); race.resolve(.failure(PiBrokerError.unavailable)) }
         }
         defer { timer.cancel(); receiver.cancel(); active.removeValue(forKey: request.id) }
+        let reply: PiValue
+        var rejection: Error?
         do {
-            let reply = try await withTaskCancellationHandler {
+            reply = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { race.install($0) }
             } onCancel: {
                 operation.cancel(); race.resolve(.failure(CancellationError()))
             }
             try Task.checkCancellation()
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
+            do { try await executor.validateRequest(request) } catch is CancellationError { throw CancellationError() } catch { rejection = error }
+            try Task.checkCancellation()
+            try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
-            return reply
+        } catch let noSpend as PiNoSpendRejection {
+            ledger.reject(request.id)
+            throw noSpend.error
         } catch {
             quarantined = true
             ledger.uncertain(request.id)
             throw error
         }
+        if let rejection { throw rejection }
+        return reply
     }
     func cancel(_ id: String) {
         guard canceled.count < 24 else { close(); return }

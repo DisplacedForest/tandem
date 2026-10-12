@@ -223,7 +223,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
@@ -235,7 +235,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
     }
 
     func proposal(
-        request: String, existing: [NativeMemoryRecord], now: Date
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
@@ -427,6 +427,13 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         await runNativeCapabilityTools()
+        do {
+            try NativeDomainStateSelftest.run()
+            try await NativeDomainRepositorySelftest.run()
+            try await NativeMemoryEvidenceSelftest.run()
+            try await NativeRuntimeMemorySelftest.run()
+        }
+        catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryGroom()
         await runPromptLibrary()
@@ -1507,6 +1514,7 @@ enum SelfTest {
         do {
             let repository = try LocalChatRepository(inMemory: true)
             let now = Date(timeIntervalSince1970: 2_000_000_000)
+            try repository.saveConversation(Conversation(id: "source", title: "Source", messages: [], updatedAt: now))
             let approved = NativeMemoryRecord(
                 id: "approved", title: "Favorite drink", summary: "Prefers natural wine",
                 details: ["The user prefers natural wine"], group: .you, category: .preference,

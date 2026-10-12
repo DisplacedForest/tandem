@@ -104,13 +104,16 @@ enum NativePiProviderSelftest {
             try await reject { _ = try await broker.complete(secret) }
             try piCheck(PiProviderFixtureProtocol.state.calls().count == 3)
             let rows = try await prepared.accounting.snapshot().piArray!
-            try piCheck(rows.count == 2 && rows.last?.pi("status").piString != "reserved")
-            try await reject { _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture")) }
-            try piCheck(PiProviderFixtureProtocol.state.calls().count == 3 && fixtureCredentials.reads == 2 && credentials.reads == 0)
+            try piCheck(rows.count == 2 && rows.last?.pi("status").piString == "rejected")
+            try piCheck(try broker.ledger.snapshot().piArray!.map { $0.pi("status").piString! } == ["completed", "rejected"])
+            _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture"))
+            try piCheck(PiProviderFixtureProtocol.state.calls().count == 4 && credentials.reads == 0)
             try await expiredReplay(config: config, binding: binding, http: http, root: root)
             try await failurePaths(config: config, binding: binding, http: http, admission: admission, root: root)
             if !arguments.isEmpty {
                 try await workflow(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
+                try await memoryReplay(arguments, config: config, binding: binding, http: http, admission: admission, root: root)
+                try await NativeRuntimeMemoryRetryContract.run(arguments, config: config, binding: binding, admission: admission, root: root)
             }
             try NativePiCandidate.verifyNoCredentialFiles(root)
             print("PASS: provider HTTP fixtures, preflight, cumulative allowance, admission, secret boundary, replay and quarantine; no real provider or credential calls")
@@ -181,11 +184,61 @@ enum NativePiProviderSelftest {
             try piCheck(rows.count == 1 && rows[0].pi("status").piString == "uncertain")
         }
     }
+    static func memoryReplay(_ arguments: [String], config: ConfigStore, binding: PiSelectedProfileBinding,
+                             http: PiProviderHTTP, admission: NativeInferenceAdmission, root: URL) async throws {
+        PiProviderFixtureProtocol.state.configure("normal")
+        let provider = try await PiPreparedProvider.prepare(owner: config, admission: admission, permit: permit(binding),
+            accountingRoot: root.appendingPathComponent("memory-replay-accounting"), http: http, transport: .providerFixture)
+        let repository = try LocalChatRepository(url: root.appendingPathComponent("memory-replay.sqlite"))
+        let record = try NativeRuntimeMemorySelftest.fixture(repository)
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true; settings.bankScope = "farm"
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        var runtime = arguments
+        if let index = runtime.firstIndex(of: "--root") { runtime[index + 1] += "-memory-replay" }
+        let initial = try await memoryReplayPhase(runtime, root: root, provider: provider, store: store, body: nil)
+        try await repository.database.write { db in
+            try db.execute(sql: "DELETE FROM runtime_memory_sources WHERE message NOT LIKE 'subject:%'")
+        }
+        let reopened = try LocalChatRepository(url: root.appendingPathComponent("memory-replay.sqlite"))
+        let restored = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: reopened, nativeMemorySettings: settings)
+        let repeated = try await memoryReplayPhase(runtime, root: root, provider: provider, store: restored, body: initial.0)
+        try piCheck(initial.1 == repeated.1 && PiProviderFixtureProtocol.state.calls().filter { $0 == "completions" }.count == 1)
+        let sources = try reopened.runtimeMemorySources(assistant: initial.0.pi("assistant_id").piString!,
+            conversation: initial.0.pi("conversation_id").piString!, message: repeated.1.pi("reply_id").piString!)
+        try piCheck(sources.count == 1 && NativeMemoryCitation.recordID(sources[0].url) == record.id)
+        print("PASS: actual SDK completed HTTP replay after owner restart, crash-gap source recovery, one provider fixture request")
+    }
+    static func memoryReplayPhase(_ arguments: [String], root: URL, provider: PiPreparedProvider,
+                                  store: ChatStore, body: PiValue?) async throws -> (PiValue, PiValue) {
+        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: root.appendingPathComponent("memory-replay-ui"), provider: provider, store: store)
+        do {
+            let body = body ?? .object(["assistant_id": .string(session.workspace.assistantID.uuidString.lowercased()),
+                "conversation_id": .string(session.workspace.session.id.uuidString.lowercased()),
+                "message_id": .string(UUID().uuidString.lowercased()), "text": .string("Current livestock?"), "mode": .string("assistant")])
+            var request = URLRequest(url: try await session.owner.endpoint().appendingPathComponent("assistant/messages"))
+            request.httpMethod = "POST"; request.httpBody = try body.piData()
+            let (data, status) = try await session.owner.http(request)
+            try piCheck(status == 200)
+            let reply = try PiValue.piRead(data)
+            await session.owner.stop()
+            return (body, reply)
+        } catch { await session.owner.stop(); throw error }
+    }
+
     static func workflow(_ arguments: [String], config: ConfigStore, binding: PiSelectedProfileBinding, http: PiProviderHTTP, admission: NativeInferenceAdmission, root: URL) async throws {
         PiProviderFixtureProtocol.state.configure("normal")
         let provider = try await PiPreparedProvider.prepare(owner: config, admission: admission, permit: permit(binding), accountingRoot: root.appendingPathComponent("workflow-accounting"), http: http, transport: .providerFixture)
+        let memoryRepository = try LocalChatRepository(url: root.appendingPathComponent("shared-native.sqlite"))
+        let memory = try NativeRuntimeMemorySelftest.fixture(memoryRepository)
+        var relevant = memory
+        relevant.title = "Isolated example"
+        try memoryRepository.saveMemory(relevant, decision: .edited, note: "Synthetic task context", expected: memory)
+        var memorySettings = NativeMemorySettings.fresh
+        memorySettings.enabled = true; memorySettings.bankScope = "farm"
+        let memoryStore = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: memoryRepository, nativeMemorySettings: memorySettings)
         let presentation = NativePiPresentation(factory: {
-            try await NativePiConnection.prepared(arguments: arguments, uiRoot: root.appendingPathComponent("ui"), provider: provider)
+            try await NativePiConnection.prepared(arguments: arguments, uiRoot: root.appendingPathComponent("ui"), provider: provider, store: memoryStore)
         })
         do {
             await presentation.connect()
@@ -200,6 +253,10 @@ enum NativePiProviderSelftest {
             await presentation.stop()
             try piCheck(presentation.connection == nil && !presentation.canSend)
             try piCheck(report.pi("result_deliveries") == .number(1) && report.pi("foreground_while_worker_active") == .bool(true))
+            let shared = PiProviderFixtureProtocol.state.sharedMemoryEvidence()
+            try piCheck(shared.contains { $0.0 && $0.1 } && shared.contains { !$0.0 && $0.1 })
+            let taskSources = projected.messages.first { $0.id == resultID }?.sources ?? []
+            try piCheck(taskSources.count == 1 && NativeMemoryCitation.recordID(taskSources[0].url) == memory.id)
             let calls = PiProviderFixtureProtocol.state.calls()
             try piCheck(calls.count == 12 && calls.filter { $0 == "completions" }.count == 10)
             let rows = try await provider.accounting.snapshot().piArray!

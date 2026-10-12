@@ -78,6 +78,8 @@ struct PiModelRequest: Sendable {
     let messages: [PiValue]
     let toolCount: Int
     let toolIDs: Set<String>
+    var memoryContext: NativeRuntimeMemoryContext? = nil
+    var memoryAuthority: NativeRuntimeMemoryBridge? = nil
     init(_ value: PiValue, scope: PiModelScope, channel: String) throws {
         try value.piKeys(["op", "id", "channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation", "messages"])
         id = try piUUID(value.pi("id"))
@@ -122,6 +124,20 @@ struct PiModelRequest: Sendable {
         toolIDs = seen
         digest = piHash(try PiValue.object(["binding": .string(scope.binding), "messages": .array(messages)]).piData())
     }
+    private init(original: PiModelRequest, context: NativeRuntimeMemoryContext, authority: NativeRuntimeMemoryBridge) throws {
+        id = original.id; scope = original.scope; toolCount = original.toolCount; toolIDs = original.toolIDs
+        memoryContext = context
+        memoryAuthority = authority
+        var messages = original.messages
+        let prior = messages.first?.pi("role").piString == "system" ? messages.removeFirst().pi("content").piString ?? "" : ""
+        messages.insert(.object(["role": .string("system"), "content": .string(context.prompt + "\n\n" + prior)]), at: 0)
+        try piCheck((try PiValue.array(messages).piData()).count <= 14336)
+        self.messages = messages
+        digest = piHash(Data((original.digest + ":" + context.digest).utf8))
+    }
+    func withMemoryContext(_ context: NativeRuntimeMemoryContext, authority: NativeRuntimeMemoryBridge) throws -> PiModelRequest {
+        try PiModelRequest(original: self, context: context, authority: authority)
+    }
     static func text(_ block: PiValue) throws {
         try block.piKeys(["type", "text"])
         try piCheck(block.pi("type").piString == "text" && block.pi("text").piString != nil)
@@ -143,11 +159,15 @@ struct PiModelRequest: Sendable {
 
 protocol PiMockModelExecutor: Sendable {
     func validateOwner() async throws
+    func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest
+    func validateRequest(_ request: PiModelRequest) async throws
     func complete(_ request: PiModelRequest) async throws -> PiValue
 }
 
 extension PiMockModelExecutor {
     func validateOwner() async throws {}
+    func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { request }
+    func validateRequest(_ request: PiModelRequest) async throws { try Task.checkCancellation() }
 }
 
 struct PiFixtureModel: PiMockModelExecutor {

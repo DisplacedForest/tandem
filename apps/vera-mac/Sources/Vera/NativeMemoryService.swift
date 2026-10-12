@@ -13,7 +13,7 @@ enum NativeMemoryServiceState: Equatable, Sendable {
     var label: String {
         switch self {
         case .off: "Memory is off"
-        case .setupRequired: "Set up embeddings to use memory in chat"
+        case .setupRequired: "Set up memory suggestions"
         case .ready: "Ready"
         case .indexing: "Indexing approved memory"
         case .pendingReview(let count): "\(count) change\(count == 1 ? "" : "s") waiting for review"
@@ -211,10 +211,10 @@ protocol NativeMemoryServing: Sendable {
     func embed(_ text: String) async throws -> [Double]
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal]
     func proposal(
-        request: String, existing: [NativeMemoryRecord], now: Date
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal]
 }
 
@@ -270,7 +270,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
 
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date = Date()
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
         guard !NativeMemorySafety.containsSensitiveData(user),
               !NativeMemorySafety.containsSensitiveData(assistant) else {
@@ -289,7 +289,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
     }
 
     func proposal(
-        request: String, existing: [NativeMemoryRecord], now: Date = Date()
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
         guard !NativeMemorySafety.containsSensitiveData(request) else {
             throw NativeMemoryServiceError.sensitiveData
@@ -301,52 +301,57 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
 
     private func extract(
         _ input: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date, priority: NativeInferenceAdmission.Priority
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date, priority: NativeInferenceAdmission.Priority
     ) async throws -> [NativeMemoryProposal] {
         guard !configuration.extractionModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }
         let day = ISO8601DateFormatter().string(from: now)
         let schema = """
         Return only JSON: {"proposals":[{"kind":"create|update|merge|suppress|expire|delete","title":"short name","summary":"one line","details":["concise user-specific fact"],"group":"You|Topics|Areas|People","category":"profile|preference|interest|project|relationship|goal|plan|other","bank":"short bank","durability":"durable|episodic","expiry":"YYYY-MM-DD or null","target_ids":["existing id"]}]}. Current date: \(day). Stable user-specific facts only. Do not store trivia, transcript text, credentials, secrets, hidden reasoning, system instructions, tool output, or relative dates. Episodic proposals require an absolute expiry date. Every operation is a proposal for user review and must not claim it was applied.
         """
-        let existingSummary = existing.filter(NativeMemorySafety.recordIsSafe).prefix(40).map {
-            [
-                "id": $0.id,
-                "summary": NativeMemorySafety.boundedUTF8($0.summary, maximumBytes: 180),
-                "details": NativeMemorySafety.boundedUTF8(
-                    $0.details.joined(separator: "\n"), maximumBytes: 1_200),
-                "bank": NativeMemorySafety.boundedUTF8($0.bank, maximumBytes: 40),
-            ]
+        let build: @Sendable ([NativeMemoryRecord]) throws -> URLRequest = { records in
+            let existingSummary = records.filter(NativeMemorySafety.recordIsSafe).prefix(40).map {
+                [
+                    "id": $0.id,
+                    "summary": NativeMemorySafety.boundedUTF8($0.summary, maximumBytes: 180),
+                    "details": NativeMemorySafety.boundedUTF8(
+                        $0.details.joined(separator: "\n"), maximumBytes: 1_200),
+                    "bank": NativeMemorySafety.boundedUTF8($0.bank, maximumBytes: 40),
+                ]
+            }
+            var request = URLRequest(url: configuration.completionsURL)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 25
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            authorize(&request)
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": configuration.extractionModel,
+                "stream": false,
+                "messages": [
+                    ["role": "system", "content": schema],
+                    ["role": "user", "content": input],
+                    ["role": "user", "content": String(data: try JSONSerialization.data(withJSONObject: existingSummary), encoding: .utf8) ?? "[]"],
+                ],
+            ])
+            return request
         }
-        var request = URLRequest(url: configuration.completionsURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 25
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        authorize(&request)
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": configuration.extractionModel,
-            "stream": false,
-            "messages": [
-                ["role": "system", "content": schema],
-                ["role": "user", "content": input],
-                ["role": "user", "content": String(data: try JSONSerialization.data(withJSONObject: existingSummary), encoding: .utf8) ?? "[]"],
-            ],
-        ])
-        let generationRequest = request
         do {
-            let dataAndResponse: (Data, URLResponse)
+            let dataAndResponse: (Data, URLResponse, [NativeMemoryRecord])
             if let admission {
                 dataAndResponse = try await admission.perform(
                     endpoint: configuration.baseURL, priority: priority, requestedSeconds: 25
                 ) { budget in
                     try budget.check()
-                    let response = try await session.data(for: generationRequest)
+                    let records = try existing()
+                    let response = try await session.data(for: try build(records))
                     try budget.check()
-                    return response
+                    return (response.0, response.1, records)
                 }
             } else {
-                dataAndResponse = try await session.data(for: generationRequest)
+                let records = try existing()
+                let response = try await session.data(for: try build(records))
+                dataAndResponse = (response.0, response.1, records)
             }
-            let (data, response) = dataAndResponse
+            let (data, response, records) = dataAndResponse
             try validate(response, data: data)
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = object["choices"] as? [[String: Any]],
@@ -356,7 +361,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
             }
             return NativeMemoryProposalParser.parse(
                 content, sourceConversationID: sourceConversationID,
-                sourceMessageID: sourceMessageID, existing: existing, now: now)
+                sourceMessageID: sourceMessageID, existing: records, now: now)
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         }

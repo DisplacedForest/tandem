@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct MemorySourceActionKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var inspectMemorySource: (@MainActor (String) -> Void)? {
+        get { self[MemorySourceActionKey.self] }
+        set { self[MemorySourceActionKey.self] = newValue }
+    }
+}
+
 /// The one citation language for the whole app: numbered `[n]` / `[n,m]` refs are pulled out
 /// of prose and rendered as tappable favicon+host capsule chips beneath the paragraph that
 /// cited them. Pulse detail and chat replies both consume these — never a second implementation.
@@ -29,6 +40,7 @@ func sourceIsLinked(_ url: String) -> Bool {
 
 /// A tappable per-paragraph source pill (favicon + host) that opens the cited page.
 struct CitationChip: View {
+    @Environment(\.inspectMemorySource) private var inspectMemory
     let source: PulseSource
     var body: some View {
         if sourceIsLinked(source.url) {
@@ -36,6 +48,10 @@ struct CitationChip: View {
                 .contentShape(Capsule())
                 .onTapGesture { openExternal(source.url) }
                 .pointerCursor()
+        } else if NativeMemoryCitation.recordID(source.url) != nil, let inspectMemory {
+            Button { inspectMemory(source.url) } label: {
+                label(source.title, favicon: false)
+            }.buttonStyle(.plain)
         } else {
             label(source.title.isEmpty ? source.url : source.title, favicon: false)
         }
@@ -95,7 +111,7 @@ struct SourcesRow: View {
                             Spacer()
                         }
                         .contentShape(Rectangle())
-                        .modifier(SourceRowTap(url: linked ? s.url : nil))
+                        .modifier(SourceRowTap(url: linked || NativeMemoryCitation.recordID(s.url) != nil ? s.url : nil))
                     }
                 }
                 .padding(.bottom, 12)
@@ -105,10 +121,13 @@ struct SourcesRow: View {
 }
 
 struct SourceRowTap: ViewModifier {
+    @Environment(\.inspectMemorySource) private var inspectMemory
     let url: String?
 
     func body(content: Content) -> some View {
-        if let url {
+        if let url, NativeMemoryCitation.recordID(url) != nil, let inspectMemory {
+            Button { inspectMemory(url) } label: { content }.buttonStyle(.plain)
+        } else if let url {
             content.onTapGesture { openExternal(url) }.pointerCursor()
         } else {
             content
