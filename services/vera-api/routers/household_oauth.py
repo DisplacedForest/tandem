@@ -116,9 +116,10 @@ class OAuth:
         return hashed if row else "anonymous"
 
     def cleanup(self, db: sqlite3.Connection) -> None:
-        db.execute("UPDATE oauth_grants SET revoked=1 WHERE revoked=0 AND client IN (SELECT id FROM oauth_clients WHERE expires<=?)", (time.time(),))
-        db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
-        db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (time.time(),))
+        now = time.time()
+        db.execute("UPDATE oauth_grants SET revoked=1 WHERE revoked=0 AND client IN (SELECT id FROM oauth_clients WHERE expires<=?)", (now,))
+        db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (now,))
+        db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (now,))
         db.execute("""DELETE FROM oauth_tokens WHERE rowid IN (SELECT rowid FROM (
             SELECT rowid, kind, used, row_number() OVER (PARTITION BY grant_id, kind, used ORDER BY rowid DESC) AS position FROM oauth_tokens)
             WHERE kind='access' AND used=0 AND position>4)""")
@@ -130,10 +131,10 @@ class OAuth:
             "DELETE FROM oauth_grants WHERE revoked=1 OR expires<=?",
             "DELETE FROM oauth_clients WHERE expires<=?",
         ):
-            db.execute(statement, (time.time(),))
+            db.execute(statement, (now,))
         db.execute("""UPDATE oauth_clients SET provisional=1, expires=min(expires, ?) WHERE provisional=0
             AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client=oauth_clients.id)
-            AND NOT EXISTS (SELECT 1 FROM oauth_codes c WHERE json_extract(c.payload,'$.client_id')=oauth_clients.id)""", (time.time() + 600,))
+            AND NOT EXISTS (SELECT 1 FROM oauth_codes c WHERE json_extract(c.payload,'$.client_id')=oauth_clients.id)""", (now + 600,))
 
     def room(self, db: sqlite3.Connection, table: str, limit: int) -> None:
         self.cleanup(db)
@@ -267,9 +268,12 @@ class OAuth:
                 value = json.loads(row["payload"])
                 if not isinstance(data.get("client_id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["client_id"]):
                     raise OAuthError("invalid_client")
-                existing = db.execute("SELECT expires FROM oauth_clients WHERE id=?", (value["client_id"],)).fetchone()
-                if existing is not None and existing[0] <= time.time():
-                    raise OAuthError("invalid_client")
+                existing = db.execute("SELECT provisional, expires FROM oauth_clients WHERE id=?", (value["client_id"],)).fetchone()
+                if existing is not None and existing["expires"] <= time.time():
+                    if not existing["provisional"]:
+                        raise OAuthError("invalid_client")
+                    db.execute("DELETE FROM oauth_clients WHERE id=?", (value["client_id"],))
+                    existing = None
                 if existing is None:
                     db.execute("INSERT INTO oauth_clients VALUES (?,?,?,1)", (value["client_id"], json.dumps([value["redirect_uri"]]), time.time() + 600))
                 verifier = data.get("code_verifier", "")

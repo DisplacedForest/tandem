@@ -603,3 +603,34 @@ def test_deliberately_expired_clients_are_not_revived_by_redemption(setup):
         oauth.principal("Bearer " + result["access_token"])
     with pytest.raises(OAuthError):
         oauth.token(refresh(oauth, result, connected))
+
+
+def test_codes_issued_before_provisional_expiry_still_redeem(setup, monkeypatch):
+    oauth, _, _ = setup
+    data = authorization(oauth)
+    module = __import__("routers.household_oauth", fromlist=["time"])
+    real = time.time
+    offset = 0
+    monkeypatch.setattr(module.time, "time", lambda: real() + offset)
+    offset = 590
+    session = oauth.authorize(data)
+    target = oauth.consent(session, session, oauth.enroll("alpha"))
+    grant_code = parse_qs(urlsplit(target).query)["code"][0]
+    offset = 605
+    renewed = oauth.token({"grant_type": "authorization_code", "client_id": data["client_id"], "redirect_uri": REDIRECT, "resource": oauth.resource, "code": grant_code, "code_verifier": VERIFIER})
+    assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
+
+
+def test_cleanup_never_purges_a_client_ahead_of_its_grants(setup, monkeypatch):
+    oauth, _, _ = setup
+    result, connected = tokens(oauth)
+    module = __import__("routers.household_oauth", fromlist=["time"])
+    real = time.time
+    with oauth.store.tx() as db:
+        db.execute("UPDATE oauth_clients SET expires=? WHERE id=?", (real() + 0.5, connected))
+    ticks = iter([0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    monkeypatch.setattr(module.time, "time", lambda: real() + next(ticks, 1))
+    with oauth.store.tx() as db:
+        oauth.cleanup(db)
+        orphaned = db.execute("SELECT count(*) FROM oauth_grants g WHERE g.revoked=0 AND NOT EXISTS (SELECT 1 FROM oauth_clients c WHERE c.id=g.client)").fetchone()[0]
+    assert orphaned == 0
