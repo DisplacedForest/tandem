@@ -8,7 +8,7 @@ enum NativeApplicationEntry {
             await operation()
             exit(0)
         }
-        dispatchMain()
+        while true { RunLoop.main.run(until: .distantFuture) }
     }
 
     static func prepare(timeout: TimeInterval = 30, cleanupTimeout: TimeInterval = 5, onTimeout: @MainActor () -> Void = {}, _ operation: @escaping @MainActor () async throws -> Void) throws {
