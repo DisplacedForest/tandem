@@ -26,13 +26,15 @@ actor PiHeldValidationFixture: PiMockModelExecutor {
     var waiting = false
     var calls = 0
     private var held = false
+    private let checksCancellation: Bool
     private var continuation: CheckedContinuation<Void, Never>?
+    init(checksCancellation: Bool = true) { self.checksCancellation = checksCancellation }
     func validateRequest(_ request: PiModelRequest) async throws {
         if calls == 1 && !held {
             held = true; waiting = true
             await withCheckedContinuation { continuation = $0 }
         }
-        try Task.checkCancellation()
+        if checksCancellation { try Task.checkCancellation() }
     }
     func release() { continuation?.resume(); continuation = nil }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
@@ -208,20 +210,22 @@ enum NativePiModelBrokerFixture {
         try piCheck(try budgetLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
     }
     static func cancellationDuringValidation(_ root: URL) async throws {
-        let ledger = try PiModelLedger(root: root, manifest: "fixture")
-        let held = PiHeldValidationFixture()
-        let broker = NativePiModelBroker(ledger: ledger, channel: "held", executor: held, timeout: .seconds(10))
-        let scope = try await broker.authorize(binding())
-        let value = request(scope, channel: "held")
-        let running = Task { try await broker.complete(value) }
-        for _ in 0..<400 where !(await held.waiting) { try await Task.sleep(for: .milliseconds(5)) }
-        let calls = await held.calls
-        try piCheck(await held.waiting && calls == 1)
-        running.cancel()
-        await held.release()
-        do { _ = try await running.value; throw PiBrokerError.invalid } catch is CancellationError {}
-        try piCheck(try ledger.snapshot().piArray!.map { $0.pi("status").piString! } == ["uncertain"])
-        try await rejected(.uncertain) { _ = try await broker.complete(request(scope, channel: "held")) }
+        for (name, checksCancellation) in [("throwing", true), ("silent", false)] {
+            let ledger = try PiModelLedger(root: root.appendingPathComponent(name), manifest: "fixture")
+            let held = PiHeldValidationFixture(checksCancellation: checksCancellation)
+            let broker = NativePiModelBroker(ledger: ledger, channel: "held", executor: held, timeout: .seconds(10))
+            let scope = try await broker.authorize(binding())
+            let value = request(scope, channel: "held")
+            let running = Task { try await broker.complete(value) }
+            for _ in 0..<400 where !(await held.waiting) { try await Task.sleep(for: .milliseconds(5)) }
+            let calls = await held.calls
+            try piCheck(await held.waiting && calls == 1)
+            running.cancel()
+            await held.release()
+            do { _ = try await running.value; throw PiBrokerError.invalid } catch is CancellationError {}
+            try piCheck(try ledger.snapshot().piArray!.map { $0.pi("status").piString! } == ["uncertain"])
+            try await rejected(.uncertain) { _ = try await broker.complete(request(scope, channel: "held")) }
+        }
     }
     static func run() async {
         umask(0o077)
