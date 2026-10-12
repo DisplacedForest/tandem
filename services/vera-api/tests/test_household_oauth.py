@@ -285,7 +285,7 @@ def test_concurrent_code_redemption_has_one_winner(setup):
     assert sum(value is not None for value in results) == 1
 
 
-@pytest.mark.parametrize("table", ["oauth_enrollment", "oauth_codes", "oauth_clients"])
+@pytest.mark.parametrize("table", ["oauth_enrollment", "oauth_codes"])
 def test_short_lived_artifacts_expire(setup, table):
     oauth, _, _ = setup
     data = authorization(oauth)
@@ -535,3 +535,50 @@ def test_cookie_binding_stays_small_and_client_outlives_its_session(setup, monke
     offset = 1470
     renewed = oauth.token({"grant_type": "authorization_code", "client_id": connected, "redirect_uri": REDIRECT, "resource": oauth.resource, "code": grant_code, "code_verifier": VERIFIER})
     assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
+
+
+def test_flows_survive_provisional_client_expiry_and_eviction(setup, monkeypatch):
+    oauth, client, _ = setup
+    data = authorization(oauth)
+    module = __import__("routers.household_oauth", fromlist=["time"])
+    real = time.time
+    offset = 0
+    monkeypatch.setattr(module.time, "time", lambda: real() + offset)
+    offset = 590
+    session = oauth.authorize(data)
+    with oauth.store.tx() as db:
+        assert db.execute("SELECT expires FROM oauth_clients WHERE id=?", (data["client_id"],)).fetchone()[0] < real() + 601
+    offset = 605
+    with oauth.store.tx() as db:
+        oauth.cleanup(db)
+        assert db.execute("SELECT count(*) FROM oauth_clients WHERE id=?", (data["client_id"],)).fetchone()[0] == 0
+    with pytest.raises(OAuthError):
+        oauth.authorize(data)
+    target = oauth.consent(session, session, oauth.enroll("alpha"))
+    grant_code = parse_qs(urlsplit(target).query)["code"][0]
+    offset = 700
+    renewed = oauth.token({"grant_type": "authorization_code", "client_id": data["client_id"], "redirect_uri": REDIRECT, "resource": oauth.resource, "code": grant_code, "code_verifier": VERIFIER})
+    assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
+    with oauth.store.tx() as db:
+        row = db.execute("SELECT provisional, expires FROM oauth_clients WHERE id=?", (data["client_id"],)).fetchone()
+    assert row["provisional"] == 0 and row["expires"] > real() + 80 * 86400
+    rotated = oauth.token(refresh(oauth, renewed, data["client_id"]))
+    assert oauth.principal("Bearer " + rotated["access_token"]) == "alpha"
+    with oauth.store.tx() as db:
+        db.execute("UPDATE oauth_clients SET expires=0 WHERE id=?", (data["client_id"],))
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, rotated, data["client_id"]))
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + rotated["access_token"])
+
+
+def test_pathological_state_is_refused_before_consent(setup):
+    oauth, client, _ = setup
+    data = authorization(oauth)
+    data["state"] = "\u0001" * 949 + "a"
+    with pytest.raises(OAuthError):
+        oauth.authorize(data)
+    assert client.get("/oauth/authorize", params=data).status_code == 400
+    data["state"] = "s" * 1024
+    session = oauth.authorize(data)
+    assert len(session) + 300 <= 8192

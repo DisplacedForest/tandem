@@ -194,9 +194,11 @@ class OAuth:
             raise OAuthError()
         with self.store.tx() as db:
             self.client(db, data.get("client_id", ""), data.get("redirect_uri", ""))
-            db.execute("UPDATE oauth_clients SET expires=max(expires, ?) WHERE id=?", (time.time() + 600, data["client_id"]))
         payload = base64.urlsafe_b64encode(json.dumps({**data, "exp": time.time() + 600, "nonce": random_value()}, separators=(",", ":"), ensure_ascii=False).encode()).decode().rstrip("=")
-        return payload + "." + hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()
+        session = payload + "." + hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()
+        if len(session) > 6144:
+            raise OAuthError()
+        return session
 
     def binding(self, session: str) -> str:
         return self.session(session)["nonce"]
@@ -229,12 +231,10 @@ class OAuth:
                 failure = True
             else:
                 row = self.endpoint(db, entry["endpoint"], entry["key_hash"])
-                self.client(db, data["client_id"], data["redirect_uri"])
                 data.update(endpoint=row["endpoint"], key_hash=row["key_hash"])
                 self.room(db, "oauth_codes", 128)
                 value = random_value()
                 db.execute("INSERT INTO oauth_codes VALUES (?,?,?)", (digest(value), json.dumps(data), min(time.time() + 300, row["expires"])))
-                db.execute("UPDATE oauth_clients SET expires=max(expires, ?) WHERE id=?", (time.time() + 300, data["client_id"]))
                 db.execute("DELETE FROM oauth_enrollment WHERE hash=?", (entry["hash"],))
         if failure:
             raise OAuthError("access_denied", 403)
@@ -255,7 +255,8 @@ class OAuth:
     def token(self, data: dict[str, str]) -> dict:
         replay = False
         with self.store.tx() as db:
-            self.client(db, data.get("client_id", ""))
+            if data.get("grant_type") != "authorization_code":
+                self.client(db, data.get("client_id", ""))
             if data.get("resource") != self.resource or data.get("scope", SCOPE) != SCOPE:
                 raise OAuthError("invalid_target")
             if data.get("grant_type") == "authorization_code":
@@ -263,6 +264,9 @@ class OAuth:
                 if not row:
                     raise OAuthError("invalid_grant")
                 value = json.loads(row["payload"])
+                if not isinstance(data.get("client_id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["client_id"]):
+                    raise OAuthError("invalid_client")
+                db.execute("INSERT INTO oauth_clients VALUES (?,?,?,1) ON CONFLICT(id) DO UPDATE SET expires=max(expires, excluded.expires)", (value["client_id"], json.dumps([value["redirect_uri"]]), time.time() + 600))
                 verifier = data.get("code_verifier", "")
                 if value["client_id"] != data["client_id"] or value["redirect_uri"] != data.get("redirect_uri") or value["resource"] != data["resource"] or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier) or not hmac.compare_digest(challenge(verifier), value["code_challenge"]):
                     raise OAuthError("invalid_grant")
