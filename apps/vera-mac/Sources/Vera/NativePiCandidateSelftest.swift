@@ -38,6 +38,21 @@ enum NativePiCandidateSelftest {
             let replay = try await broker.complete(wire)
             let calls = await counter.calls()
             try piCheck(first == replay && calls == 1 && credentials.reads == 2)
+            let worker = try await broker.authorize(NativePiModelBrokerFixture.binding(role: "worker"))
+            let callID = UUID().uuidString.lowercased()
+            let escaped = String(repeating: "\"", count: 3920)
+            let call: PiValue = .object(["type": .string("toolCall"), "id": .string(callID), "name": .string("write_file"), "arguments": .object(["path": .string("sum.py"), "content": .string(escaped)])])
+            let history: PiValue = .array([.object(["role": .string("user"), "content": .string("fixture")]), .object(["role": .string("assistant"), "content": .array([call])]), .object(["role": .string("toolResult"), "toolCallId": .string(callID), "toolName": .string("write_file"), "content": .array([.object(["type": .string("text"), "text": .string("ok")])])])])
+            let inflated = NativePiModelBrokerFixture.changed(NativePiModelBrokerFixture.request(worker, channel: "selftest"), "messages", history)
+            try piCheck((try inflated.pi("messages").piData()).count <= 8192)
+            try piCheck((try PiProviderCodec.body(PiModelRequest(inflated, scope: worker, channel: "selftest"), model: binding.model).piData()).count > 16384)
+            try await rejected(.invalid) { _ = try await broker.complete(inflated) }
+            _ = try await broker.complete(NativePiModelBrokerFixture.request(worker, channel: "selftest"))
+            let statuses = try brokerLedger.snapshot().piArray!.map { $0.pi("status").piString! }
+            try piCheck(statuses.contains("rejected") && !statuses.contains("uncertain"))
+            let sharedStatuses = try await accounting.snapshot().piArray!.map { $0.pi("status").piString! }
+            try piCheck(!sharedStatuses.contains("uncertain"))
+            let baseline = await counter.calls()
             owner.nativeSettings.profiles[0].selectedModel = "unsaved"
             try await rejected(.unauthorized) { _ = try await operation.complete(request) }
             try await rejected(.unauthorized) { _ = try await broker.complete(wire) }
@@ -52,7 +67,7 @@ enum NativePiCandidateSelftest {
             try await rejected(.unauthorized) { _ = try await operation.complete(request) }
             try await rejected(.unauthorized) { _ = try await broker.complete(wire) }
             let unchangedCalls = await counter.calls()
-            try piCheck(unchangedCalls == 1)
+            try piCheck(unchangedCalls == baseline)
             try await rejected(.unauthorized) { _ = try owner.piSelectedProfileBinding() }
             failWrite = false
             try owner.save()

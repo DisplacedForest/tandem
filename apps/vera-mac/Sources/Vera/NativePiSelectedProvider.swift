@@ -59,9 +59,23 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
         let request = try await prepareBeforeDispatch(request)
-        let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
-        try piCheck(body.count <= 16384)
-        return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
+        let body: Data
+        do {
+            body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
+            try piCheck(body.count <= 16384)
+        } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
+        let reserved = PiDispatchFlag()
+        do {
+            return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
+                try await dispatch(request, body: body, budget: budget, reserved: reserved)
+            }
+        } catch let noSpend as PiNoSpendRejection {
+            throw noSpend
+        } catch where !(error is CancellationError) && !reserved.value {
+            throw PiNoSpendRejection(error: error)
+        }
+    }
+    private func dispatch(_ request: PiModelRequest, body: Data, budget: NativeInferenceBudget, reserved: PiDispatchFlag) async throws -> PiValue {
             try budget.check()
             try await validate()
             try await validateBeforeDispatch(request)
@@ -71,6 +85,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
                 try PiModelReply.validate(saved, request: request)
                 return saved
             }
+            reserved.set()
             do {
                 try await validateBeforeDispatch(request)
                 let (data, status) = try await send(request, body)
@@ -86,8 +101,14 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
                 await accounting.uncertain(request)
                 throw PiBrokerError.unavailable
             }
-        }
     }
+}
+
+final class PiDispatchFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    func set() { lock.lock(); flag = true; lock.unlock() }
 }
 
 enum PiProviderCodec {
