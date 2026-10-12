@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
 from routers import native_generation, task_document, task_research
 
 # vera-api: ONE container, many capabilities.
@@ -52,7 +52,8 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     try:
         await tasks.start()
-        yield
+        async with household_runtime.lifespan(app):
+            yield
     finally:
         try:
             await tasks.stop()
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="vera-api", version=VERSION, lifespan=lifespan)
 
 CAPABILITIES = {
+    "household_gateway": household_gateway.router,
     "search": websearch.router,
     "images": images.router,
     "feedback": feedback.router,

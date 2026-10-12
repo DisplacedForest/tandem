@@ -218,4 +218,6 @@ Issues and PRs are welcome; merged work is credited in the next release's notes.
 
 [MIT](LICENSE).
 
+The optional [household assistant messaging gateway](docs/HOUSEHOLD.md) reuses API modules in a dedicated loopback runtime, with separate inboxes and explicit sharing consent. It defaults to disabled and requires endpoint keys before household use. An optional HTTPS connection lets household members add one MCP address to ChatGPT and connect their own inbox with a one-time code, without a household account signup.
+
 Remote read-only tool connections use the shared native MCP catalog. See [connected service tools](docs/MCP.md) for explicit setup and current boundaries.

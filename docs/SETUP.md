@@ -473,6 +473,12 @@ Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24
 
 When something doesn't work, check the config report and `docker compose logs vera-api` first.
 
+## Household assistant gateway
+
+The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter in a dedicated loopback runtime that reuses the API modules. The shared API can keep running unchanged. It is disabled until `HOUSEHOLD_CONFIG_PATH` points to a valid private configuration. Each consenting local assistant receives a distinct endpoint and revocable key; no account signup or OAuth server is required. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
+
+For a direct ChatGPT connection, the optional `HOUSEHOLD_PUBLIC_ORIGIN` setting enables an accountless OAuth adapter at one shared HTTPS MCP address. Members use a private one-time inbox code in ChatGPT's connection flow. The [gateway guide](HOUSEHOLD.md#direct-https-connection-with-oauth) covers approved HTTPS ingress, code issuance, revocation, setup-page generation, and actual event acceptance.
+
 ## Remote service tools
 
 Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior, the HTTPS boundary, temporary Bearer tokens and explicit OAuth sign-in.
