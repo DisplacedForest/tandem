@@ -86,8 +86,7 @@ struct Completion: Sendable {
         priorToolIDs = Set(parsed.0.flatMap { $0["tool_calls"].array ?? [] }.compactMap { $0["id"].string })
         toolsUsed = parsed.1
         tools = ToolSchema.tools(toolRole)
-        let size = try J.object(["messages": .array(messages), "tools": .array(tools)]).data().count
-        try require(size <= 8192)
+        try require(try value["messages"].data().count <= 8192)
     }
     func body(_ pricing: Pricing) -> J {
         .object(["model": .string(modelID), "messages": .array(messages), "tools": .array(tools), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(pricing.input * 1_000_000), "completion": .number(pricing.output * 1_000_000)])])])

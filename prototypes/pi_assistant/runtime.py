@@ -43,27 +43,35 @@ def context_size(system: str, history: list[dict[str, Any]], text: str) -> int:
 
 
 DELEGATE_OVERHEAD = 512
+ASSISTANT_OVERHEAD = 64
+TOOL_RESULT_OVERHEAD = 256
 MESSAGE_BYTES = (CONTEXT_LIMIT - CONTEXT_RESERVE - DELEGATE_OVERHEAD - context_size(SYSTEM_PROMPT, [], '')) // 2
 
 
 def request_size(context: Any) -> int:
-    messages = NativeMockTransport._messages(context)
-    for message in messages:
-        content = message.get('content')
-        if message.get('role') == 'user' and isinstance(content, list) and all(isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str) for block in content):
-            message['content'] = ''.join(block['text'] for block in content)
-    return len(encoded(messages))
+    return len(encoded(NativeMockTransport._messages(context)))
 
 
 def fit_request(context: Any, history_len: int) -> int:
-    dropped = 0
-    while request_size(context) > CONTEXT_LIMIT and dropped < min(history_len, len(context['messages']) - 1):
-        context['messages'].pop(0)
-        dropped += 1
     size = request_size(context)
+    messages = context['messages']
+    start = 1 if messages and isinstance(messages[0], dict) and messages[0].get('role') == 'system' else 0
+    dropped = 0
+    while size > CONTEXT_LIMIT and dropped < history_len and len(messages) - start > 1:
+        messages.pop(start)
+        dropped += 1
+        size = request_size(context)
     if size > CONTEXT_LIMIT:
         raise PiFailure('native_context_limit')
     return size
+
+
+def reply_growth(reply: Any) -> int:
+    content = reply.get('content') if isinstance(reply, dict) else None
+    if not isinstance(content, list):
+        return ASSISTANT_OVERHEAD
+    calls = sum(1 for block in content if isinstance(block, dict) and block.get('type') == 'toolCall')
+    return len(encoded(content)) + ASSISTANT_OVERHEAD + calls * TOOL_RESULT_OVERHEAD
 
 
 class Runtime:
@@ -180,18 +188,20 @@ class Runtime:
         if previous:
             return previous
         self.active.add(body['message_id'])
-        budget = {'history': 0, 'last': 0}
+        budget = {'history': 0, 'last': 0, 'growth': 0}
         try:
             async def host(event: dict[str, Any]) -> dict[str, Any]:
                 if event.get('type') == 'model' and self.native:
                     budget['last'] = fit_request(event.get('context'), budget['history'])
-                    return await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
+                    reply = await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
+                    budget['growth'] = reply_growth(reply)
+                    return reply
                 if event.get('type') != 'tool' or event.get('name') != 'delegate' or body['mode'] != 'assistant':
                     raise ValueError('Tool unavailable')
                 args = event.get('args')
                 if not isinstance(args, dict) or set(args) != {'objective'} or not isinstance(args['objective'], str) or not 1 <= len(args['objective']) <= 8000 or len(encoded(args['objective'])) - 2 > MESSAGE_BYTES:
                     raise ValueError('Invalid task objective')
-                if self.native and budget['last'] + len(encoded(args['objective'])) + DELEGATE_OVERHEAD > CONTEXT_LIMIT:
+                if self.native and budget['last'] + budget['growth'] > CONTEXT_LIMIT:
                     raise ValueError('Task objective too long for the remaining context')
                 payload = {key: body[key] for key in ('assistant_id', 'conversation_id')}
                 payload.update(originating_message_id=body['message_id'], objective=args['objective'], workspace_ref='task-private', transport=self.transport)

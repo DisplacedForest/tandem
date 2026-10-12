@@ -6,6 +6,7 @@ struct PrototypeView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var background: Color { colorScheme == .dark ? Color(white: 0.105) : Color(white: 0.99) }
     private var panelBackground: Color { colorScheme == .dark ? Color(white: 0.14) : Color(white: 0.96) }
+    private var trimmedDraft: String { store.conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     @FocusState private var composerFocused: Bool
     @State private var outputError: String?
 
@@ -89,8 +90,8 @@ struct PrototypeView: View {
                 if store.pending != nil && !store.busyConversations.contains(store.conversation.id) {
                     unconfirmedReply
                 }
-                if store.conversation.draft.unicodeScalars.count > 8000 {
-                    Text("Messages can contain up to 8,000 characters.").font(.caption).foregroundStyle(.red)
+                if !trimmedDraft.isEmpty && !store.accepts(trimmedDraft) {
+                    Text("This message is too long to send. Shorten it and try again.").font(.caption).foregroundStyle(.red)
                 }
                 HStack(alignment: .bottom, spacing: 12) {
                     TextField("Message Vera", text: Binding(get: { store.conversation.draft }, set: { store.setDraft($0) }), axis: .vertical)
@@ -102,7 +103,7 @@ struct PrototypeView: View {
                             .frame(width: 24, height: 26)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!store.canSend || store.conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.conversation.draft.unicodeScalars.count > 8000)
+                    .disabled(!store.canSend || !store.accepts(trimmedDraft))
                     .keyboardShortcut(.return, modifiers: .command)
                     .accessibilityLabel("Send message").help("Send message (Command-Return)")
                     .accessibilityIdentifier("send-message")

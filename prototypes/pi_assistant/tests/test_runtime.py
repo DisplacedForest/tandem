@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from pi_assistant.bridge import create_app
 from pi_assistant.process import PiFailure, PiProcess
 from pi_assistant.native import NativeMockTransport, encoded
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request, request_size
 from routers.task_store import TaskConflict
 
 NODE = shutil.which('node')
@@ -223,7 +223,7 @@ async def test_real_sigkill_after_effect_requires_decision_and_no_duplicate_writ
     runner.write_text('''import asyncio,json,shutil,sys
 from pathlib import Path
 from pi_assistant.native import NativeMockTransport, encoded
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request, request_size
 async def main():
  r=Runtime(Path(sys.argv[1]),shutil.which('node'),worker_delay_ms=450)
  await r.start()
@@ -463,16 +463,20 @@ def text_reply(text):
     return {'content': [{'type': 'text', 'text': text}]}
 
 
-def delegate_reply(objective):
-    return {'content': [{'type': 'toolCall', 'id': str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
+def delegate_reply(objective, text=None):
+    blocks = [{'type': 'text', 'text': text}] if text else []
+    return {'content': blocks + [{'type': 'toolCall', 'id': str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
 
 
 def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
     def context(history, turn):
-        return {'systemPrompt': SYSTEM_PROMPT, 'messages': [{'role': 'user', 'content': item, 'timestamp': 0} for item in history] + [{'role': 'user', 'content': turn, 'timestamp': 0}]}
+        system = {'role': 'system', 'content': SYSTEM_PROMPT, 'toolsAdded': [{'name': 'delegate'}], 'timestamp': 0}
+        return {'messages': [system] + [{'role': 'user', 'content': item, 'timestamp': 0} for item in history] + [{'role': 'user', 'content': [{'type': 'text', 'text': turn}], 'timestamp': 0}]}
     trimmed = context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question')
     assert fit_request(trimmed, 3) <= CONTEXT_LIMIT
-    assert [message['content'][:1] for message in trimmed['messages']] == ['b', 'c', 'c']
+    assert [message['role'] for message in trimmed['messages']] == ['system', 'user', 'user', 'user']
+    assert [str(message['content'])[:1] for message in trimmed['messages'][1:]] == ['b', 'c', '[']
+    assert request_size(trimmed) == len(encoded([{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': 'b' * 3000}, {'role': 'user', 'content': 'c' * 3000}, {'role': 'user', 'content': 'current question'}]))
     with pytest.raises(PiFailure):
         fit_request(context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question'), 0)
     with pytest.raises(PiFailure):
@@ -482,7 +486,7 @@ def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
 @pytest.mark.asyncio
 async def test_delegate_objective_must_fit_the_continuation(tmp_path):
     runtime = Runtime(tmp_path, NODE)
-    runtime.native = RecordingNative([delegate_reply('o' * (MESSAGE_BYTES + 1)), text_reply('shortened'), delegate_reply('o' * 1000), text_reply('delegated')])
+    runtime.native = RecordingNative([delegate_reply('o' * (MESSAGE_BYTES + 1)), text_reply('shortened'), delegate_reply('o' * 1000), text_reply('delegated'), delegate_reply('o' * MESSAGE_BYTES, text='t' * 1200)])
     runtime.transport = 'native-mock'
     await runtime.start()
     try:
@@ -492,6 +496,9 @@ async def test_delegate_objective_must_fit_the_continuation(tmp_path):
         assert error['role'] == 'toolResult' and error['isError'] is True
         second = await runtime.message(body('/task ' + 'x' * 3000))
         assert second['text'] == 'delegated' and len(second['task_ids']) == 1
+        with pytest.raises(PiFailure):
+            await runtime.message(body('/task ' + 'x' * (MESSAGE_BYTES - 6)))
+        assert len(runtime.store.list(10, None)) == 1
         assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
     finally:
         await runtime.stop()
