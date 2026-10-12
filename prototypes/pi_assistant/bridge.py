@@ -22,7 +22,7 @@ from routers import tasks
 from routers.task_store import TaskConflict
 from pi_assistant.process import PiFailure
 from pi_assistant.app_model import ModelTransport
-from pi_assistant.runtime import Runtime
+from pi_assistant.runtime import ContextOverflow, Runtime
 
 
 class Message(BaseModel):
@@ -85,6 +85,8 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     async def message(body: Message):
         try:
             return await runtime.message(body.model_dump(mode='json'))
+        except ContextOverflow as exc:
+            raise HTTPException(413, str(exc)) from None
         except TaskConflict as exc:
             raise HTTPException(409, str(exc)) from None
         except PiFailure:

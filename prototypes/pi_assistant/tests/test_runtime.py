@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from pi_assistant.bridge import create_app
 from pi_assistant.process import PiFailure, PiProcess
-from pi_assistant.runtime import Runtime
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
 from routers.task_store import TaskConflict
 
 NODE = shutil.which('node')
@@ -158,7 +158,10 @@ def test_http_contract_and_local_boundary(tmp_path):
         assert client.get('/assistant/capabilities', headers={'Origin': 'https://example.org'}).status_code == 403
         assert client.get('/assistant/capabilities', headers={'Host': 'evil.example'}).status_code == 403
         assert client.post('/assistant/messages', content='{}').status_code == 415
-        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 2
+        oversized = body('x' * 8000, mode='focused', conversation_id=request['conversation_id'], assistant_id=request['assistant_id'])
+        assert client.post('/assistant/messages', json=oversized).status_code == 413
+        assert client.post('/assistant/messages', json={**oversized, 'text': 'short again'}).status_code == 200
+        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 4
 
 
 @pytest.mark.asyncio
@@ -214,7 +217,7 @@ async def test_real_sigkill_after_effect_requires_decision_and_no_duplicate_writ
     runner = tmp_path / 'crash.py'
     runner.write_text('''import asyncio,json,shutil,sys
 from pathlib import Path
-from pi_assistant.runtime import Runtime
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
 async def main():
  r=Runtime(Path(sys.argv[1]),shutil.which('node'),worker_delay_ms=450)
  await r.start()
@@ -393,5 +396,39 @@ async def test_deliveries_keep_chronological_order_and_recent_context(tmp_path):
         await runtime.message(body('third', assistant_id=request['assistant_id'], conversation_id=request['conversation_id']))
         assert captured[-2]['content'] == 'later message'
         assert captured[-1]['content'][0]['text'] == reply['text']
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_context_budget_rejects_oversized_message_and_trims_history(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    await runtime.start()
+    request = body('first question', mode='focused')
+    try:
+        with pytest.raises(ContextOverflow):
+            await runtime.message(body('y' * 7800, mode='focused'))
+        with runtime.connect() as db:
+            assert db.execute('SELECT COUNT(*) FROM turns').fetchone()[0] == 0
+        await runtime.message(request)
+        for index in range(6):
+            with runtime.connect() as db:
+                db.execute('INSERT INTO deliveries VALUES(?,?,?,?)', ('older:' + str(index), request['conversation_id'], json.dumps({'id': 'older:' + str(index), 'role': 'assistant', 'text': str(index) * 2500, 'task_ids': []}), time.time() + index))
+        captured = []
+        original = runtime.process.run
+        async def capture(config, host, canceled=lambda: False):
+            captured.append(config)
+            return await original(config, host, canceled)
+        runtime.process.run = capture
+        later = body('z' * 3000, mode='focused', assistant_id=request['assistant_id'], conversation_id=request['conversation_id'])
+        await runtime.message(later)
+        config = captured[-1]
+        assert config['system_prompt'] == SYSTEM_PROMPT
+        history = config['history']
+        texts = [entry['content'] if entry['role'] == 'user' else entry['content'][0]['text'] for entry in history]
+        assert texts == ['5' * 2500]
+        assert context_size(SYSTEM_PROMPT, history, later['text']) <= CONTEXT_LIMIT - CONTEXT_RESERVE
+        assert context_size(SYSTEM_PROMPT, [{'role': 'assistant', 'content': '4' * 2500}] + history, later['text']) > CONTEXT_LIMIT - CONTEXT_RESERVE
+        assert any(item['id'] == later['message_id'] for item in runtime.messages(request['conversation_id'])['messages'])
     finally:
         await runtime.stop()
