@@ -10,11 +10,11 @@ final class NativePiPreparedSession {
     private init(provider: PiPreparedProvider, owner: NativePiAppOwner, workspace: AssistantWorkspace, memoryBridge: NativeRuntimeMemoryBridge?) {
         self.provider = provider; self.owner = owner; self.workspace = workspace; self.memoryBridge = memoryBridge
     }
-    static func create(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore? = nil) async throws -> NativePiPreparedSession {
+    static func create(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore? = nil, tools: (any NativeRuntimeToolServing)? = nil) async throws -> NativePiPreparedSession {
         try await provider.executor.validateOwner()
         let memoryBridge = store.map { NativeRuntimeMemoryBridge(store: $0) }
         let executor = memoryBridge.map { provider.executor.sharingMemory($0) } ?? provider.executor
-        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge)
+        let owner = try NativePiAppOwner(arguments: arguments, executor: executor, ownerBinding: provider.binding.digest, transport: provider.transport, memoryBridge: memoryBridge, tools: tools ?? store?.nativeMCP?.authority)
         do {
             let ready = try await owner.start()
             guard case .number(let port) = ready.pi("port"), let identity = ready.pi("profile").piString else { throw PiBrokerError.invalid }

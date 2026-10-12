@@ -75,6 +75,7 @@ public final class AssistantSession: ObservableObject {
     public func select() { store.destination = .assistant }
     public func setDraft(_ text: String) { guard selected else { return }; store.setDraft(text) }
     public func refresh() async { guard selected else { return }; await store.refresh() }
+    public func poll() async { guard selected else { return }; await store.refresh(background: true) }
     public func send() async { guard canSend else { return }; await store.send() }
     public func retry(messageID: UUID) async { guard canRetry, pendingID == messageID else { return }; await store.retry() }
     public func review(messageID: UUID) async { guard selected, pendingID == messageID else { return }; await store.reviewUnconfirmedReply() }

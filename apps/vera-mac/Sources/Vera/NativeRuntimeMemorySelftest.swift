@@ -125,8 +125,8 @@ enum NativeRuntimeMemorySelftest {
         try await brokerValidationLifecycle(root)
         try await workerRetry(root)
         try await settledContextChange(root)
-        try await heldContextRejection(root, stage: "prepare", holdAt: 2)
-        try await heldContextRejection(root, stage: "grant", holdAt: 3)
+        try await heldContextRejection(root, stage: "prepare", holdAt: 3)
+        try await heldContextRejection(root, stage: "grant", holdAt: 4)
         try await sendGuardNoSpend(root)
         bridge.close()
         try await rejected { _ = try await bridge.prepare(request(offBinding)) }
@@ -412,6 +412,7 @@ enum NativeRuntimeMemorySelftest {
         await gate.release()
         try await rejected { _ = try await task.value }
         try piCheck(await provider.requests.isEmpty)
+        try piCheck(PiAdmissionFixtureProtocol.state.evidence().pi("active") == .number(0))
     }
 }
 

@@ -85,7 +85,10 @@ enum NativePiCandidateSelftest {
             let wrong = NativePiModelBrokerFixture.changed(result, "usage", .object(["input": .number(71), "output": .number(300), "cost_usd": .number(0.0000412)]))
             try await rejected(.invalid) { try PiModelReply.validate(wrong) }
             if arguments.first == "--scope-timeout" { try await scopeTimeout(Array(arguments.dropFirst())) }
-            else if !arguments.isEmpty { try await refusedDecision(arguments) }
+            else if !arguments.isEmpty {
+                try await refusedDecision(arguments)
+                try await NativePiRuntimeToolFixture.contract(arguments)
+            }
             print("PASS: selected profile, partial save, credential isolation, shared allowance, receipts and durable approval boundary")
         } catch {
             FileHandle.standardError.write(Data("Candidate selftest failed: \(type(of: error))\n".utf8))
@@ -108,10 +111,10 @@ enum NativePiCandidateSelftest {
         } catch { await candidate.stop(); throw error }
     }
     static func refusedDecision(_ arguments: [String]) async throws {
-        let candidate = try await NativePiCandidate.create(arguments) { request in
+        let candidate = try await NativePiCandidate.create(arguments, httpTransport: { request in
             if request.url?.path.hasSuffix("/decision") == true { return (Data("{\"detail\":\"fixture refusal\"}".utf8), 409) }
             return try await PiOwnedHTTP.send(request)
-        }
+        })
         do {
             let ready = try await candidate.owner.session.ledger.snapshot()
             try piCheck(ready.piArray?.isEmpty == true)

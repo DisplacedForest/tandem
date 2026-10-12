@@ -24,6 +24,8 @@ final class PrototypeStore: ObservableObject {
     @Published private(set) var reviewedReplyID: UUID?
     private let stateURL: URL
     private var refreshVersion = 0
+    private var refreshInFlight = false
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(configuration: PrototypeConfiguration, client: PrototypeClient? = nil) throws {
         self.configuration = configuration
@@ -109,26 +111,46 @@ final class PrototypeStore: ObservableObject {
         catch { conversationErrors[conversation.id] = error.localizedDescription }
     }
 
-    func refresh() async {
+    func refresh(background: Bool = false) async {
         guard let client, !refreshing, !reviewingReply else { return }
-        refreshing = true
-        defer { refreshing = false }
+        if background && refreshInFlight { return }
+        if !background { refreshing = true }
+        defer { if !background { refreshing = false } }
+        if !background { await waitForRefresh() }
+        guard !Task.isCancelled, !reviewingReply else { return }
+        refreshInFlight = true
+        defer {
+            refreshInFlight = false
+            let waiters = refreshWaiters
+            refreshWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
         let id = conversation.id
         let version = refreshVersion
         do {
             let caps = try await client.capabilities()
             guard caps.supported else { throw PrototypeError.invalidResponse }
-            capabilities = caps
+            if capabilities != caps { capabilities = caps }
             async let newTasks = client.tasks()
             async let newMessages = client.messages(id)
             let (receivedTasks, receivedMessages) = try await (newTasks, newMessages)
             if version == refreshVersion {
-                tasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
-                if !busyConversations.contains(id) { transcripts[id] = receivedMessages }
+                let scopedTasks = receivedTasks.filter { $0.workerType == "pi_worker" && $0.payload.assistantID == saved.assistantID }
+                if tasks != scopedTasks { tasks = scopedTasks }
+                if !busyConversations.contains(id), transcripts[id] != receivedMessages { transcripts[id] = receivedMessages }
             }
-            connectionError = nil
+            if connectionError != nil { connectionError = nil }
         } catch is CancellationError { }
-        catch { connectionError = error.localizedDescription; reviewedReplyID = nil }
+        catch {
+            if connectionError != error.localizedDescription { connectionError = error.localizedDescription }
+            if reviewedReplyID != nil { reviewedReplyID = nil }
+        }
+    }
+
+    private func waitForRefresh() async {
+        while refreshInFlight {
+            await withCheckedContinuation { refreshWaiters.append($0) }
+        }
     }
 
     func send() async {
@@ -151,13 +173,16 @@ final class PrototypeStore: ObservableObject {
     }
 
     func reviewUnconfirmedReply() async {
-        guard let request = pending, let client, !reviewingReply, !refreshing,
+        guard let request = pending, let client, !reviewingReply,
               !busyConversations.contains(request.conversationID) else { return }
         reviewingReply = true
         reviewedReplyID = nil
         panel = .activity
-        let version = refreshVersion
         defer { reviewingReply = false }
+        await waitForRefresh()
+        guard !Task.isCancelled, pending?.messageID == request.messageID,
+              !busyConversations.contains(request.conversationID) else { return }
+        let version = refreshVersion
         do {
             let caps = try await client.capabilities()
             guard caps.supported else { throw PrototypeError.invalidResponse }

@@ -219,6 +219,8 @@ Find the certificate's exact SHA-1 fingerprint with `security find-identity -p c
 
 `keychain` is optional; when supplied it must be an existing absolute file path. The file is parsed as data, never executed. `VERA_SIGNING_CONFIG` selects another configuration file, and `VERA_SIGNING_IDENTITY` and `VERA_SIGNING_KEYCHAIN` override its values. An explicit identity must be its exact fingerprint. Invalid configuration, missing keys and signing failures stop packaging instead of silently falling back. `VERA_SIGNING_IDENTITY=-` explicitly selects ad-hoc signing. No build command creates certificates, changes trust, unlocks Keychains, or alters key access controls.
 
+Startup reads saved credentials without requesting macOS interaction. If access is unavailable, Vera opens with a credential error and preserves the saved items. Explicit credential operations keep their existing authorization behavior.
+
 For a reviewed installed build whose selected credential needs renewed access, the diagnostic `--credential-reauthorization` entry accepts `--certificate`, `--code-hash`, and `--profile-digest`. It requires the exact installed Vera identity and selected profile, then performs one ordinary credential read with macOS handling authentication. It does not initialize all endpoint credentials, edit ACL payloads, replace the credential, or send a model request. Its result confirms only that read; it does not claim persistent access. Any persistence depends on the user's macOS choice, and future local builds can require another authorization. Keep passwords in the macOS prompt, never in command arguments or scripts. This diagnostic must be deliberately coordinated for the final build; it is never a startup action or automatic retry.
 
 To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
@@ -258,7 +260,7 @@ Each call renders as a pending, succeeded, or failed activity chip. Expand it to
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice and MCP remain unavailable in the native chat path.
+Voice remains unavailable in the native chat path. Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
@@ -427,3 +429,7 @@ Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24
 5. Create a vein (the in-app builder or `POST /pulse/veins`), enable it, and confirm its chip appears; its job in Agentic shows the next run time.
 
 When something doesn't work, check the config report and `docker compose logs vera-api` first.
+
+## Remote service tools
+
+Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior, the HTTPS boundary, temporary Bearer tokens and explicit OAuth sign-in.

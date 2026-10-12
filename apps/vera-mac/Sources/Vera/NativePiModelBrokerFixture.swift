@@ -44,6 +44,23 @@ actor PiHeldValidationFixture: PiMockModelExecutor {
 }
 
 enum NativePiModelBrokerFixture {
+    static func check(_ condition: Bool, file: StaticString = #fileID, line: UInt = #line) throws {
+        guard condition else {
+            print("FAIL: broker fixture assertion \(file):\(line)")
+            throw PiBrokerError.invalid
+        }
+    }
+    static func stage(_ name: String, _ operation: () async throws -> Void) async throws {
+        let start = ContinuousClock.now
+        do {
+            try await operation()
+            print("PASS: broker fixture \(name) (\(start.duration(to: .now)))")
+        } catch {
+            let category = (error as? PiBrokerError)?.rawValue ?? String(describing: type(of: error))
+            print("FAIL: broker fixture \(name): \(category) (\(start.duration(to: .now)))")
+            throw error
+        }
+    }
     static func binding(role: String = "foreground", mode: String = "assistant") -> PiValue {
         .object(["subject": .string(UUID().uuidString.lowercased()), "assistant": .string(UUID().uuidString.lowercased()), "conversation": .string(UUID().uuidString.lowercased()), "role": .string(role), "mode": .string(mode)])
     }
@@ -59,7 +76,7 @@ enum NativePiModelBrokerFixture {
             let unwrapped = (error as? PiNoSpendRejection)?.error ?? error
             guard let category = unwrapped as? PiBrokerError else { throw PiBrokerError.invalid }
             if let expected, category != expected { print("Rejected category mismatch: expected \(expected.rawValue), received \(category.rawValue)") }
-            try piCheck(expected == nil || category == expected); return
+            try check(expected == nil || category == expected); return
         }
         throw PiBrokerError.invalid
     }
@@ -78,11 +95,11 @@ enum NativePiModelBrokerFixture {
         let first = try await broker.complete(value)
         let repeated = try await broker.complete(value)
         let firstCount = await counter.calls
-        try piCheck(first == repeated && firstCount == 1)
+        try check(first == repeated && firstCount == 1)
         try await rejected(.duplicate) { _ = try await broker.complete(changed(value, "messages", .array([.object(["role": .string("user"), "content": .string("changed")])]))) }
         let focused = try await broker.authorize(self.binding(mode: "focused"))
         let reply = try await broker.complete(request(focused, channel: "fixture-channel", text: "/task not delegated"))
-        try piCheck(reply.pi("content").piArray?.first?.pi("type").piString == "text")
+        try check(reply.pi("content").piArray?.first?.pi("type").piString == "text")
         try await rejected(.unauthorized) { try PiModelRequest.arguments(.object(["objective": .string("work")]), name: "delegate", scope: focused) }
         let worker = try await broker.authorize(self.binding(role: "worker"))
         try await rejected(.unauthorized) { try PiModelRequest.arguments(.object(["path": .string("../outside")]), name: "read_file", scope: worker) }
@@ -92,11 +109,11 @@ enum NativePiModelBrokerFixture {
         try await rejected(.unavailable) { _ = try await broker.complete(request(worker, channel: "fixture-channel")) }
         let start = ContinuousClock.now
         _ = try await broker.complete(request(scope, channel: "fixture-channel"))
-        try piCheck(start.duration(to: .now) < .milliseconds(450))
+        try check(start.duration(to: .now) < .milliseconds(450))
         await broker.cancel(workerRequest.pi("id").piString!)
         do { _ = try await running.value; throw PiBrokerError.invalid } catch is CancellationError {}
         let rows = try ledger.snapshot().piArray!
-        try piCheck(rows.count == 4 && rows.filter { $0.pi("status").piString == "uncertain" }.count == 1)
+        try check(rows.count == 4 && rows.filter { $0.pi("status").piString == "uncertain" }.count == 1)
         try await rejected(.uncertain) { _ = try await broker.complete(request(scope, channel: "fixture-channel")) }
         await broker.close()
         try await rejected(.unauthorized) { _ = try await broker.complete(value) }
@@ -106,7 +123,7 @@ enum NativePiModelBrokerFixture {
         let badBroker = NativePiModelBroker(ledger: badLedger, channel: "bad", executor: PiCountingFixture(invalid: true))
         let badScope = try await badBroker.authorize(self.binding())
         try await rejected(.invalid) { _ = try await badBroker.complete(request(badScope, channel: "bad")) }
-        try piCheck(try badLedger.snapshot().piArray!.first!.pi("status").piString == "uncertain")
+        try check(try badLedger.snapshot().piArray!.first!.pi("status").piString == "uncertain")
         let smallLedger = try PiModelLedger(root: root.appendingPathComponent("budget"), manifest: "fixture", budget: 1_000_000)
         let small = NativePiModelBroker(ledger: smallLedger, channel: "small")
         let smallScope = try await small.authorize(self.binding())
@@ -120,23 +137,32 @@ enum NativePiModelBrokerFixture {
         let id = UUID().uuidString.lowercased()
         var result: PiValue = .null
         var profile = ""
+        weak var previousOwner: PiExperimentRoot?
         do {
             let ledger = try PiModelLedger(root: root, manifest: "fixture")
+            previousOwner = ledger.owner
             profile = ledger.profile
             let broker = NativePiModelBroker(ledger: ledger, channel: "before")
             let scope = try await broker.authorize(bound)
             result = try await broker.complete(request(scope, channel: "before", id: id))
             await broker.close()
+            try withExtendedLifetime(ledger) {
+                var refused = false
+                do { _ = try PiModelLedger(root: root, manifest: "fixture") }
+                catch PiBrokerError.storage { refused = true }
+                try check(refused)
+            }
         }
+        try check(previousOwner == nil)
         let ledger = try PiModelLedger(root: root, manifest: "fixture")
-        try piCheck(ledger.profile == profile)
+        try check(ledger.profile == profile)
         let counter = PiCountingFixture()
         let broker = NativePiModelBroker(ledger: ledger, channel: "after", executor: counter)
         let scope = try await broker.authorize(bound)
         let replay = try await broker.complete(request(scope, channel: "after", id: id))
         let replayCount = await counter.calls
-        try piCheck(replay == result && replayCount == 0)
-        try piCheck(try ledger.snapshot().piArray!.count == 1)
+        try check(replay == result && replayCount == 0)
+        try check(try ledger.snapshot().piArray!.count == 1)
         let changedBroker = NativePiModelBroker(ledger: ledger, channel: "changed")
         try await rejected(.unauthorized) { _ = try await changedBroker.authorize(changed(bound, "conversation", .string(UUID().uuidString.lowercased()))) }
     }
@@ -148,7 +174,7 @@ enum NativePiModelBrokerFixture {
         let value = request(scope, channel: "test")
         await broker.cancel(value.pi("id").piString!)
         try await rejected(.canceled) { _ = try await broker.complete(value) }
-        try piCheck(try ledger.snapshot().piArray!.isEmpty)
+        try check(try ledger.snapshot().piArray!.isEmpty)
         let clean = request(scope, channel: "test")
         _ = try await broker.complete(clean)
         try await ledger.database.write { db in try db.execute(sql: "UPDATE requests SET charged=-1") }
@@ -156,13 +182,13 @@ enum NativePiModelBrokerFixture {
         try await ledger.database.write { db in try db.execute(sql: "UPDATE requests SET charged=28000,reply=?", arguments: [Data("{}".utf8)]) }
         try await rejected(.invalid) { _ = try await broker.complete(clean) }
         let calls = await counter.calls
-        try piCheck(calls == 1)
+        try check(calls == 1)
         let slowLedger = try PiModelLedger(root: root.appendingPathComponent("slow"), manifest: "fixture")
         let slow = NativePiModelBroker(ledger: slowLedger, channel: "slow", executor: PiUncooperativeFixture(), timeout: .milliseconds(50))
         let slowScope = try await slow.authorize(binding())
         let start = ContinuousClock.now
         try await rejected(.unavailable) { _ = try await slow.complete(request(slowScope, channel: "slow")) }
-        try piCheck(start.duration(to: .now) < .milliseconds(300))
+        try check(start.duration(to: .now) < .milliseconds(300))
         try await rejected(.uncertain) { _ = try await slow.complete(request(slowScope, channel: "slow")) }
         let lockedLedger = try PiModelLedger(root: root.appendingPathComponent("locked"), manifest: "fixture")
         let locked = NativePiModelBroker(ledger: lockedLedger, channel: "locked")
@@ -178,7 +204,7 @@ enum NativePiModelBrokerFixture {
         do { _ = try await running.value; throw PiBrokerError.invalid } catch is CancellationError {}
         try await rejected(.uncertain) { _ = try await locked.complete(request(worker, channel: "locked")) }
         try await blocker.writeWithoutTransaction { db in try db.execute(sql: "ROLLBACK") }
-        try piCheck(try lockedLedger.snapshot().piArray!.first!.pi("status").piString == "reserved")
+        try check(try lockedLedger.snapshot().piArray!.first!.pi("status").piString == "reserved")
         let callID = UUID().uuidString.lowercased()
         let block: PiValue = .object(["type": .string("toolCall"), "id": .string(callID), "name": .string("read_file"), "arguments": .object(["path": .string("sum.py")])])
         let history: PiValue = .array([.object(["role": .string("user"), "content": .string("fixture")]), .object(["role": .string("assistant"), "content": .array([block])]), .object(["role": .string("toolResult"), "toolCallId": .string(callID), "toolName": .string("read_file"), "content": .array([.object(["type": .string("text"), "text": .string("fixture")])])])])
@@ -234,11 +260,15 @@ enum NativePiModelBrokerFixture {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("pi-app-selftest-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
-            try await exercise(root)
-            try await boundaries(root.appendingPathComponent("boundaries"))
-            try await restart(root.appendingPathComponent("restart"))
-            try await rearming(root.appendingPathComponent("rearming"))
-            try await cancellationDuringValidation(root.appendingPathComponent("cancellation"))
+            try await stage("pipe lifecycle") { try await NativePiPipeFixture.exercise() }
+            try await stage("runtime tools") { try await NativePiRuntimeToolFixture.exercise(root.appendingPathComponent("runtime-tools")) }
+            try await stage("runtime tool restart") { try await NativePiRuntimeToolFixture.restart(root.appendingPathComponent("runtime-tools-restart")) }
+            try await stage("tool revisions") { try await NativePiToolRevisionFixture.exercise(root.appendingPathComponent("tool-revisions")) }
+            try await stage("model execution") { try await exercise(root) }
+            try await stage("model boundaries") { try await boundaries(root.appendingPathComponent("boundaries")) }
+            try await stage("model restart") { try await restart(root.appendingPathComponent("restart")) }
+            try await stage("re-arm guard") { try await rearming(root.appendingPathComponent("rearming")) }
+            try await stage("late cancellation") { try await cancellationDuringValidation(root.appendingPathComponent("cancellation")) }
             print("PASS: app-owned mock scope, accounting, duplicate, cancellation, responsiveness, restart, re-arm guard and late cancellation tests")
         } catch { print("FAIL: app-owned mock broker selftest \(type(of: error))"); exit(1) }
     }

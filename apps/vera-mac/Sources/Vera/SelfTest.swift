@@ -930,6 +930,7 @@ enum SelfTest {
     private static func runNativeTools() async {
         do {
             try await NativeBoundedToolFixture.run()
+            try await NativeToolResultBudgetSelftest.run()
             let service = SelfTestRemindersService()
             let registry = NativeToolRegistry(definitions: NativeRemindersTools.definitions(service: service))
             guard registry.active(enabledIDs: []).isEmpty,

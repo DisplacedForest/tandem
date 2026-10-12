@@ -34,7 +34,7 @@ struct VeraApp: App {
     init() {
         let fixture = NativePiNativeContext.candidate
         let configInstance = fixture?.config ?? ConfigStore()
-        let native = fixture == nil ? configInstance.nativeResolved : nil
+        let native = NativeMCPUIFixture.current != nil ? NativeChatConfig(baseURL: URL(string: "https://fixture.invalid/v1")!, apiKey: nil, model: "fixture", chatTemplateKwargs: nil) : fixture == nil ? configInstance.nativeResolved : nil
         let socket = fixture == nil ? VoiceSocketConfig.load().map { VeraSocket(config: $0) } : nil
         let repository: LocalChatRepository?
         let repositoryError: String?
@@ -59,9 +59,10 @@ struct VeraApp: App {
         let storeInstance = ChatStore(
             veraAPI: fixture == nil ? VeraAPIClient.resolved(model: native?.model ?? "") : nil,
             nativeConfig: native,
-            nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
+            nativeTransport: NativeMCPUIFixture.current?.chat ?? native.map { NativeChatClient.foreground(config: $0) },
             repository: repository,
             repositoryError: repositoryError,
+            nativeTransportFactory: { configuration in NativeMCPUIFixture.current?.chat ?? NativeChatClient.foreground(config: configuration) },
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
             nativePersonaID: configInstance.nativeSettings.activePersonaID,
             nativeOwnerName: configInstance.ownerName,
@@ -70,11 +71,12 @@ struct VeraApp: App {
             visionBridgeConfig: configInstance.visionBridgeResolved,
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
+            nativeMCP: configInstance.nativeMCP,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
             sweepOrphanedAttachments: fixture == nil,
-            nativeTaskConfiguration: NativeTaskConfiguration(
+            nativeTaskConfiguration: NativeMCPUIFixture.current == nil ? NativeTaskConfiguration(
                 settings: { configInstance.nativeSettings },
-                savedTemplate: { configInstance["chat_template_kwargs"] }),
+                savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)

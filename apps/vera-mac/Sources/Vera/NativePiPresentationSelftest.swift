@@ -106,6 +106,7 @@ enum NativePiPresentationSelftest {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-pi-presentation-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            try NativePiRuntimePathsSelftest.run()
             try await imagePolicy()
             let idle = NativePiPresentation()
             try piCheck(!idle.canConnect && !idle.canSend && idle.conversation == nil)

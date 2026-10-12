@@ -48,6 +48,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     func validateRequest(_ request: PiModelRequest) async throws {
         try Task.checkCancellation()
         if let memoryBridge { try await memoryBridge.validate(request) }
+        try await request.validateHostTools()
     }
     func validateOwner() async throws { try await validate() }
     func prepareBeforeDispatch(_ request: PiModelRequest) async throws -> PiModelRequest {
@@ -137,7 +138,7 @@ enum PiProviderCodec {
             if !calls.isEmpty { converted["tool_calls"] = .array(calls) }
             return .object(converted)
         }
-        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope)), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
+        return .object(["model": .string(model), "messages": .array(messages), "tools": .array(tools(request.scope) + (try request.hostTools.map { try PiValue.piDecode($0.requestObject) })), "stream": .bool(false), "max_tokens": .number(256), "reasoning": .object(["enabled": .bool(false)]), "provider": .object(["allow_fallbacks": .bool(false), "require_parameters": .bool(true), "max_price": .object(["prompt": .number(0.05), "completion": .number(0.1)])])])
     }
     static func reply(_ value: PiValue, request: PiModelRequest, model: String) throws -> PiValue {
         try piCheck(value.pi("model").piString == model, .invalid)
@@ -154,6 +155,7 @@ enum PiProviderCodec {
             for call in calls {
                 try piCheck(call.pi("type").piString == "function")
                 guard let raw = call.pi("function").pi("arguments").piString else { throw PiBrokerError.invalid }
+                if call.pi("function").pi("name").piString?.hasPrefix("mcp_") == true { try NativeMCPWireJSON.validate(Data(raw.utf8), maximumBytes: 16384) }
                 content.append(.object(["type": .string("toolCall"), "id": call.pi("id"), "name": call.pi("function").pi("name"), "arguments": try PiValue.piRead(Data(raw.utf8))]))
             }
         }

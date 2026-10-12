@@ -51,7 +51,7 @@ struct PrototypeConfiguration: Sendable {
     }
 }
 
-struct Capabilities: Decodable, Sendable {
+struct Capabilities: Decodable, Equatable, Sendable {
     let protocolVersion: Int
     let foreground: Bool
     let worker: Bool
@@ -139,7 +139,7 @@ struct MessageResponse: Decodable, Sendable {
 
 struct TranscriptResponse: Decodable, Sendable { let messages: [Message] }
 
-struct TaskPayload: Decodable, Sendable {
+struct TaskPayload: Decodable, Equatable, Sendable {
     let assistantID: UUID?
     let conversationID: UUID?
     let originatingMessageID: UUID?
@@ -149,12 +149,12 @@ struct TaskPayload: Decodable, Sendable {
     }
 }
 
-struct TaskDecision: Decodable, Sendable {
+struct TaskDecision: Decodable, Equatable, Sendable {
     let id: String
     let prompt: String
 }
 
-struct TaskArtifact: Decodable, Sendable {
+struct TaskArtifact: Decodable, Equatable, Sendable {
     let kind: String
     let path: String
     let title: String
@@ -172,12 +172,12 @@ struct TaskArtifact: Decodable, Sendable {
     }
 }
 
-struct TaskResult: Decodable, Sendable {
+struct TaskResult: Decodable, Equatable, Sendable {
     let summary: String?
     let artifacts: [TaskArtifact]?
 }
 
-struct TaskSnapshot: Decodable, Identifiable, Sendable {
+struct TaskSnapshot: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let workerType: String
     let payload: TaskPayload

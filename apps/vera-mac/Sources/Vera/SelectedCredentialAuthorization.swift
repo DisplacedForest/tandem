@@ -8,6 +8,7 @@ enum SelectedCredentialAuthorization {
     }
 
     static func dispatch(_ arguments: [String]) -> Dispatch {
+        if arguments == ["--openrouter-smoke", "--credential-status"] { return .unrelated }
         guard arguments.contains(where: { $0.hasPrefix("--credential-") }) else { return .unrelated }
         guard arguments.first == "--credential-reauthorization" else { return .reject }
         return .authorize(Array(arguments.dropFirst()))

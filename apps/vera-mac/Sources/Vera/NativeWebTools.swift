@@ -63,6 +63,7 @@ enum NativeWebTools {
                     ], required: ["query"]),
                 confirmation: .none,
                 timeout: researchTimeout,
+                resultByteBudget: NativeToolResultBudget.researchBytes,
                 isAvailable: available,
                 execute: { arguments in
                     guard let query = arguments.searchString("query") else {

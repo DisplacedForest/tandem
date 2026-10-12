@@ -34,7 +34,10 @@ final class ConfigStore: ObservableObject {
     /// Raw file contents. String values are editable in Settings; unknown keys are preserved.
     @Published private(set) var raw: [String: Any]
     @Published var showOnboarding: Bool
-    @Published var nativeSettings: NativeChatSettings
+    @Published var nativeSettings: NativeChatSettings {
+        didSet { nativeMCP.setEnabled(nativeSettings.enabledToolIDs) }
+    }
+    let nativeMCP: NativeMCPManager
     @Published private var nativeAPIKeys: [String: String]
     @Published var visionBridgeAPIKey: String {
         didSet {
@@ -66,16 +69,18 @@ final class ConfigStore: ObservableObject {
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
          readConfiguration: () -> [String: Any] = { ConfigFile.read() },
+         nativeMCP injectedMCP: NativeMCPManager? = nil,
          writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
         let loaded = readConfiguration()
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
         var unavailable: Set<String> = []
         for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]) {
-            do { if let value = try credentialStore.read(for: id) { keys[id] = value } }
+            do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
         raw = loaded
+        nativeMCP = injectedMCP ?? NativeMCPManager(raw: loaded, enabled: settings.enabledToolIDs)
         nativeSettings = settings
         nativeAPIKeys = keys
         savedCredentials = keys
@@ -215,6 +220,7 @@ final class ConfigStore: ObservableObject {
 
     private func piSend(binding: PiSelectedProfileBinding, request: PiModelRequest, body: Data,
                         transport: @escaping PiProviderSend) async throws -> (Data, Int) {
+        try await request.validateHostTools()
         let key: String
         do {
             try piCheck(try piSelectedProfileBinding() == binding, .unauthorized)

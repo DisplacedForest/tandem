@@ -23,6 +23,15 @@ struct SelectedCredentialAuthorizationTests {
             try require(Flow.dispatch(raw) == .reject)
             passed += 1
         }
+        for raw in [["--credential-status"],
+                    ["--openrouter-smoke", "--credential-status", "--live"],
+                    ["--pi-candidate-mock", "--openrouter-smoke", "--credential-status"],
+                    ["--openrouter-smoke", "--credential-status", "--credential-reauthorization"]] {
+            try require(Flow.dispatch(raw) == .reject)
+            passed += 1
+        }
+        try require(Flow.dispatch(["--openrouter-smoke", "--credential-status"]) == .unrelated)
+        passed += 1
         try require(Flow.dispatch([]) == .unrelated)
         try require(Flow.dispatch(["--credential-reauthorization"] + arguments) == .authorize(arguments))
         passed += 2

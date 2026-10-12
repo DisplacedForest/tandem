@@ -21,8 +21,8 @@ final class NativePiConnection {
         stopping = task
         await task.value
     }
-    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore) async throws -> NativePiConnection {
-        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider, store: store)
+    static func prepared(arguments: [String], uiRoot: URL, provider: PiPreparedProvider, store: ChatStore, tools: (any NativeRuntimeToolServing)? = nil) async throws -> NativePiConnection {
+        let session = try await NativePiPreparedSession.create(arguments: arguments, uiRoot: uiRoot, provider: provider, store: store, tools: tools)
         return NativePiConnection(workspace: session.workspace, memoryBridge: session.memoryBridge, stop: { await session.owner.stop() })
     }
 }
@@ -111,6 +111,7 @@ final class NativePiPresentation: ObservableObject {
 
 @MainActor
 enum NativePiNativeContext {
+    private static var bootstrapSession: NativePiRuntimeSession?
     static var candidate: NativePiCandidate?
     static var presentation = NativePiPresentation()
     static func validateIsolation(_ arguments: [String], environment: [String: String], foundationHome: URL, accountHome: URL) throws {
@@ -129,16 +130,21 @@ enum NativePiNativeContext {
             try piCheck(try piCanonical(URL(fileURLWithPath: config)).path.hasPrefix(home.path + "/"))
         }
     }
+    static func cancelBootstrap() { bootstrapSession?.killOwnedGroup() }
     static func prepareFixture(_ arguments: [String]) async throws {
         guard let account = getpwuid(getuid()), let directory = account.pointee.pw_dir else { throw PiBrokerError.invalid }
         try validateIsolation(arguments, environment: ProcessInfo.processInfo.environment,
             foundationHome: FileManager.default.homeDirectoryForCurrentUser,
             accountHome: URL(fileURLWithPath: String(cString: directory)))
-        let candidate = try await NativePiCandidate.create(arguments)
+        defer { bootstrapSession = nil }
+        let fixture = try NativeMCPUIFixture.prepareIfRequested()
+        let candidate = try await NativePiCandidate.create(arguments, onOwner: { bootstrapSession = $0.session }, nativeMCP: fixture?.manager, modelExecutor: fixture?.model)
+        do { try Task.checkCancellation() } catch { await candidate.stop(); throw error }
         self.candidate = candidate
         presentation = NativePiPresentation(factory: {
             NativePiConnection(workspace: candidate.workspace, stop: { await candidate.stop() })
         })
         await presentation.connect()
+        do { try Task.checkCancellation() } catch { await candidate.stop(); throw error }
     }
 }

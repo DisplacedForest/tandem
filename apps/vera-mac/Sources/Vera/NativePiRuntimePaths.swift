@@ -56,19 +56,26 @@ enum NativePiRuntimePaths {
                 try piCheck(piHash(try Data(contentsOf: url, options: .mappedIfSafe)) == entry.sha256, .unavailable)
             }
         }
-        var actual = Set<String>()
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { throw PiBrokerError.unavailable }
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if values.isDirectory != true || values.isSymbolicLink == true {
-                actual.insert(String(url.path.dropFirst(root.path.count + 1)))
-            }
-        }
-        try piCheck(actual == expected.union(["manifest.json"]), .unavailable)
+        try piCheck(try inventory(root) == expected.union(["manifest.json"]), .unavailable)
         return arguments + (options["--port"] == nil ? ["--port", "0"] : []) + [
             "--repo", root.appendingPathComponent(manifest.repo).path,
             "--python", root.appendingPathComponent(manifest.python).path,
             "--node", root.appendingPathComponent(manifest.node).path,
         ]
+    }
+    static func inventory(_ root: URL) throws -> Set<String> {
+        let root = root.standardizedFileURL
+        let prefix = root.path + "/"
+        var actual = Set<String>()
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { throw PiBrokerError.unavailable }
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values.isDirectory != true || values.isSymbolicLink == true {
+                let path = url.standardizedFileURL.path
+                try piCheck(path.hasPrefix(prefix), .unavailable)
+                actual.insert(String(path.dropFirst(prefix.count)))
+            }
+        }
+        return actual
     }
 }

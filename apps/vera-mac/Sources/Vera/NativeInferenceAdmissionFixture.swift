@@ -64,6 +64,14 @@ struct NativeInferenceAdmissionFixture {
                     try await Task.sleep(for: .milliseconds(2))
                 }
                 outcome = "canceled"
+            } else if input.scenario == "operation-error" {
+                do {
+                    let _: String = try await admission.perform(endpoint: endpoint, priority: .foreground, requestedSeconds: 2) { _ in
+                        throw NativeInferenceAdmission.AdmissionError.malformed
+                    }
+                } catch { outcome = "failed" }
+                let (data, _) = try await URLSession.shared.data(from: base.appendingPathComponent("fixture/error-returned"))
+                measurements.record("release_finished_before_error", data == Data("true".utf8) ? 1 : 0)
             } else if input.scenario == "resources" {
                 for raw in input.resource_urls ?? [] {
                     if let url = URL(string: raw) { fingerprints[raw] = try NativeInferenceAdmission.resource(for: url) }

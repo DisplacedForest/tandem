@@ -78,9 +78,16 @@ struct PiModelRequest: Sendable {
     let messages: [PiValue]
     let toolCount: Int
     let toolIDs: Set<String>
+    let hostTools: [NativeToolSchema]
+    let hostToolRevision: String?
+    let hostToolAuthority: (any NativeRuntimeToolServing)?
     var memoryContext: NativeRuntimeMemoryContext? = nil
     var memoryAuthority: NativeRuntimeMemoryBridge? = nil
-    init(_ value: PiValue, scope: PiModelScope, channel: String) throws {
+    init(_ value: PiValue, scope: PiModelScope, channel: String, hostTools: [NativeToolSchema] = [], hostToolRevision: String? = nil, hostToolAuthority: (any NativeRuntimeToolServing)? = nil) throws {
+        try PiRuntimeTools.validate(hostTools)
+        self.hostTools = hostTools
+        self.hostToolRevision = hostToolRevision
+        self.hostToolAuthority = hostToolAuthority
         try value.piKeys(["op", "id", "channel", "profile", "scope", "subject", "role", "mode", "assistant", "conversation", "messages"])
         id = try piUUID(value.pi("id"))
         try piCheck(value.pi("op").piString == "complete" && value.pi("channel").piString == channel && value.pi("scope").piString == scope.id && value.pi("profile").piString == scope.profile && value.pi("subject").piString == scope.subject && value.pi("role").piString == scope.role && value.pi("mode").piString == scope.mode && value.pi("assistant").piString == scope.assistant && value.pi("conversation").piString == scope.conversation, .unauthorized)
@@ -104,7 +111,7 @@ struct PiModelRequest: Sendable {
                         try piCheck(block.pi("type").piString == "toolCall")
                         let callID = try piToolID(block.pi("id"))
                         guard let name = block.pi("name").piString else { throw PiBrokerError.invalid }
-                        try Self.arguments(block.pi("arguments"), name: name, scope: scope)
+                        try Self.arguments(block.pi("arguments"), name: name, scope: scope, hostTools: hostTools)
                         try piCheck(seen.insert(callID).inserted)
                         pending[callID] = name; count += 1
                     }
@@ -122,10 +129,13 @@ struct PiModelRequest: Sendable {
         try piCheck(pending.isEmpty && count <= 8)
         toolCount = count
         toolIDs = seen
-        digest = piHash(try PiValue.object(["binding": .string(scope.binding), "messages": .array(messages)]).piData())
+        digest = piHash(try PiValue.object(["binding": .string(scope.binding), "messages": .array(messages), "host_tools": PiRuntimeTools.wire(hostTools), "host_tool_revision": hostToolRevision.map(PiValue.string) ?? .null]).piData())
     }
     private init(original: PiModelRequest, context: NativeRuntimeMemoryContext, authority: NativeRuntimeMemoryBridge) throws {
         id = original.id; scope = original.scope; toolCount = original.toolCount; toolIDs = original.toolIDs
+        hostTools = original.hostTools
+        hostToolRevision = original.hostToolRevision
+        hostToolAuthority = original.hostToolAuthority
         memoryContext = context
         memoryAuthority = authority
         var messages = original.messages
@@ -138,11 +148,21 @@ struct PiModelRequest: Sendable {
     func withMemoryContext(_ context: NativeRuntimeMemoryContext, authority: NativeRuntimeMemoryBridge) throws -> PiModelRequest {
         try PiModelRequest(original: self, context: context, authority: authority)
     }
+    func validateHostTools() async throws {
+        try Task.checkCancellation()
+        guard hostToolAuthority != nil || hostToolRevision != nil else { return }
+        let current = try await PiRuntimeToolSnapshot.capture(scope: scope, authority: hostToolAuthority)
+        try piCheck(current == PiRuntimeToolSnapshot(revision: hostToolRevision, schemas: hostTools), .unauthorized)
+    }
     static func text(_ block: PiValue) throws {
         try block.piKeys(["type", "text"])
         try piCheck(block.pi("type").piString == "text" && block.pi("text").piString != nil)
     }
-    static func arguments(_ args: PiValue, name: String, scope: PiModelScope) throws {
+    static func arguments(_ args: PiValue, name: String, scope: PiModelScope, hostTools: [NativeToolSchema] = []) throws {
+        if let schema = hostTools.first(where: { $0.name == name }) {
+            try NativeMCPJSONSchema(schema.parameters).validate(args)
+            return
+        }
         if scope.role == "foreground" {
             try piCheck(scope.mode == "assistant" && name == "delegate", .unauthorized)
             try args.piKeys(["objective"])
@@ -167,7 +187,7 @@ protocol PiMockModelExecutor: Sendable {
 extension PiMockModelExecutor {
     func validateOwner() async throws {}
     func prepareRequest(_ request: PiModelRequest) async throws -> PiModelRequest { request }
-    func validateRequest(_ request: PiModelRequest) async throws { try Task.checkCancellation() }
+    func validateRequest(_ request: PiModelRequest) async throws { try await request.validateHostTools() }
 }
 
 struct PiFixtureModel: PiMockModelExecutor {
