@@ -4,6 +4,8 @@
 
 **A self-hosted AI assistant for your home.**
 
+[![CI](https://github.com/DisplacedForest/vera/actions/workflows/ci.yml/badge.svg)](https://github.com/DisplacedForest/vera/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/DisplacedForest/vera)](https://github.com/DisplacedForest/vera/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](apps/vera-mac)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](services/vera-api)
