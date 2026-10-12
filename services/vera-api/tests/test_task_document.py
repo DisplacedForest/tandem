@@ -494,14 +494,33 @@ def test_prompt_budget_rejects_oversized_inputs_and_matches_production():
 
 
 @pytest.mark.asyncio
-async def test_oversized_outline_pauses_with_a_visible_explanation(store, model):
+async def test_oversized_outline_retries_with_a_shortening_constraint_then_stops(store, model):
     calls, responses = model
-    responses[0] = {"sections": [{"heading": "h" * 200, "instructions": "i" * 500} for _ in range(6)]}
+    big = {"sections": [{"heading": "h" * 200, "instructions": "i" * 500} for _ in range(6)]}
+    responses[:] = [big, big, big, OUTLINE]
     task = create(store, {**PAYLOAD, "brief": "b" * 5000, "inputs": ["x" * 2000], "max_sections": 6})
     await advance(store)
     await advance(store)
     current = await until(store, task["id"], "needs_decision")
-    assert "too long" in current["decision"]["prompt"] and current["checkpoint"]["phase"] == "outline"
+    assert "too long" in current["decision"]["prompt"] and current["checkpoint"]["outline_attempts"] == 1
+    assert "under" not in calls[0][0][0]["content"]
+    for attempt in (2, 3):
+        store.respond(task["id"], current["decision"]["id"], "retry" + str(attempt), {"action": "retry"})
+        await advance(store)
+        await advance(store)
+        current = await until(store, task["id"], "needs_decision")
+    assert "under " + str(current["checkpoint"]["outline_limit"]) in calls[-1][0][0]["content"]
+    assert current["checkpoint"]["outline_attempts"] == 3 and "Start a new document" in current["decision"]["prompt"]
+    before = len(calls)
+    store.respond(task["id"], current["decision"]["id"], "retry4", {"action": "retry"})
+    await advance(store)
+    current = await until(store, task["id"], "needs_decision")
+    assert len(calls) == before and "Start a new document" in current["decision"]["prompt"]
+
+
+def test_payload_is_stored_normalized(store):
+    task = create(store, {**PAYLOAD, "brief": " " * 1000 + "b"})
+    assert task["payload"]["brief"] == "b"
 
 
 @pytest.mark.asyncio

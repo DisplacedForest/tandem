@@ -77,6 +77,8 @@ async def call(method: Any, *args: Any) -> Any:
 
 def compact_snapshot(task: dict[str, Any]) -> dict[str, Any]:
     compact = dict(task)
+    if isinstance(compact.get('payload'), dict):
+        compact['payload'] = {key: value for key, value in compact['payload'].items() if key in ('assistant_id', 'conversation_id', 'originating_message_id', 'objective', 'title')}
     if isinstance(compact.get('checkpoint'), dict):
         compact['checkpoint'] = {key: value for key, value in compact['checkpoint'].items() if key not in ('outline', 'drafts', 'revisions')}
     if isinstance(compact.get('result'), dict):
@@ -85,9 +87,9 @@ def compact_snapshot(task: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get('')
-async def list_tasks(limit: int = Query(100, ge=1, le=200), before: str | None = None, compact: bool = False) -> dict[str, Any]:
+async def list_tasks(limit: int = Query(100, ge=1, le=200), before: str | None = None, compact: bool = False, states: str | None = Query(None, max_length=200)) -> dict[str, Any]:
     engine = runtime()
-    tasks = await call(engine.store.list, limit, before)
+    tasks = await call(engine.store.list, limit, before, states.split(',') if states else None)
     if compact:
         tasks = [compact_snapshot(task) for task in tasks]
     return {'tasks': tasks, 'available_workers': sorted(engine.workers)}

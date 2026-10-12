@@ -54,10 +54,11 @@ class DocumentPayload(StrictModel):
     max_sections: int = Field(default=4, ge=1, le=6)
 
 
-def validate_payload(payload: dict[str, Any]) -> None:
+def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     document = DocumentPayload.model_validate(payload)
     if prompt_bytes(_messages(document, Checkpoint())) + PROMPT_HEADROOM > PROMPT_BYTES:
         raise ValueError("The brief and inputs are too long for the writing model. Shorten them and try again.")
+    return document.model_dump()
 
 
 class Section(StrictModel):
@@ -81,6 +82,8 @@ class Checkpoint(StrictModel):
     expected_generation: int | None = Field(default=None, ge=1)
     retry: bool = False
     bullet_count: int | None = Field(default=None, ge=1, le=20)
+    outline_limit: int | None = Field(default=None, ge=1)
+    outline_attempts: int = Field(default=0, ge=0, le=3)
 
     @model_validator(mode="after")
     def sequence(self):
@@ -160,6 +163,8 @@ def _messages(payload: DocumentPayload, checkpoint: Checkpoint) -> list[dict[str
     if checkpoint.phase == "outline":
         instruction += (' Plan at most ' + str(payload.max_sections) + ' sections as {"sections":'
                         '[{"heading":"short heading","instructions":"section scope"}]}.')
+        if checkpoint.outline_limit is not None:
+            instruction += " Keep every heading and instruction brief: the whole plan must stay under " + str(checkpoint.outline_limit) + " characters combined."
     else:
         index = len(checkpoint.drafts) if checkpoint.phase == "draft" else len(checkpoint.revisions)
         context["outline"] = [section.model_dump() for section in checkpoint.outline]
@@ -213,6 +218,8 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
         if len(checkpoint.revisions) == len(checkpoint.outline):
             checkpoint.phase = "assemble"
         return _progress(payload, checkpoint)
+    if checkpoint.phase == "outline" and checkpoint.outline_attempts >= 3:
+        return _pause(payload, checkpoint, "The writing model could not plan this document within its limits. Start a new document with a shorter brief or fewer inputs.")
     if checkpoint.expected_generation is None:
         checkpoint.expected_generation = task["generation"] + 1
         return _progress(payload, checkpoint)
@@ -233,7 +240,14 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
     checkpoint.expected_generation = None
     if checkpoint.phase == "outline":
         planned = Checkpoint(phase="draft", outline=[Section.model_validate(section) for section in result["sections"]])
-        if prompt_bytes(_messages(payload, planned)) > PROMPT_BYTES:
+        planned_size = prompt_bytes(_messages(payload, planned))
+        if planned_size > PROMPT_BYTES:
+            outline_bytes = len(json.dumps([section.model_dump() for section in planned.outline], ensure_ascii=False).encode("utf-8"))
+            allowance = PROMPT_BYTES - (planned_size - outline_bytes) - 256
+            checkpoint.outline_limit = max(100, min(allowance // 2, checkpoint.outline_limit or allowance))
+            checkpoint.outline_attempts += 1
+            if checkpoint.outline_attempts >= 3:
+                return _pause(payload, checkpoint, "The writing model could not plan this document within its limits. Start a new document with a shorter brief or fewer inputs.")
             return _pause(payload, checkpoint, "The planned outline is too long for the writing model. Retrying asks for a shorter plan and may repeat model usage.")
         checkpoint.outline = planned.outline
         checkpoint.phase = "draft"
