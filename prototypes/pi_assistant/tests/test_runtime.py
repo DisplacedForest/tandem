@@ -512,6 +512,7 @@ async def test_delegation_admission_matches_the_real_continuation(tmp_path):
         delegate_reply('o' * 1000, text='t' * 2949, call_id=long_id), text_reply('refused'),
         text_reply('seed'),
         delegate_reply('o' * 1500), text_reply('accepted'),
+        delegate_reply('o' * 1000, text='t' * 2910, call_id=long_id), text_reply('boundary'),
     ])
     runtime.transport = 'native-mock'
     await runtime.start()
@@ -523,6 +524,8 @@ async def test_delegation_admission_matches_the_real_continuation(tmp_path):
         later = body('/task ' + 'y' * 2994, assistant_id=conversation['assistant_id'], conversation_id=conversation['conversation_id'])
         second = await runtime.message(later)
         assert second['text'] == 'accepted' and len(second['task_ids']) == 1
+        third = await runtime.message(body('/task ' + 'x' * 3469))
+        assert third['text'] == 'boundary' and len(third['task_ids']) == 1
         assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
     finally:
         await runtime.stop()

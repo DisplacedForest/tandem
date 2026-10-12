@@ -77,7 +77,7 @@ def continuation(context: Any, reply: Any) -> dict[str, Any]:
         if not isinstance(block, dict) or block.get('type') != 'toolCall':
             continue
         if block.get('name') == 'delegate':
-            text = json.dumps({'task_id': '0' * 36, 'state': 'needs_decision'})
+            text = json.dumps({'task_id': '0' * 36, 'state': 'needs_decision'}, separators=(',', ':'))
         else:
             text = 'x' * 256
         projected['messages'].append({'role': 'toolResult', 'toolCallId': block.get('id', ''), 'toolName': block.get('name', ''), 'content': [{'type': 'text', 'text': text}], 'isError': False})
