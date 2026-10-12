@@ -22,6 +22,27 @@ struct PiUncooperativeFixture: PiMockModelExecutor {
     }
 }
 
+actor PiHeldValidationFixture: PiMockModelExecutor {
+    var waiting = false
+    var calls = 0
+    private var held = false
+    private let checksCancellation: Bool
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(checksCancellation: Bool = true) { self.checksCancellation = checksCancellation }
+    func validateRequest(_ request: PiModelRequest) async throws {
+        if calls == 1 && !held {
+            held = true; waiting = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+        if checksCancellation { try Task.checkCancellation() }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func complete(_ request: PiModelRequest) async throws -> PiValue {
+        calls += 1
+        return try await PiFixtureModel().complete(request)
+    }
+}
+
 enum NativePiModelBrokerFixture {
     static func check(_ condition: Bool, file: StaticString = #fileID, line: UInt = #line) throws {
         guard condition else {
@@ -51,9 +72,11 @@ enum NativePiModelBrokerFixture {
     }
     static func rejected(_ expected: PiBrokerError? = nil, _ operation: () async throws -> Void) async throws {
         do { try await operation() }
-        catch let error as PiBrokerError {
-            if let expected, error != expected { print("Rejected category mismatch: expected \(expected.rawValue), received \(error.rawValue)") }
-            try check(expected == nil || error == expected); return
+        catch {
+            let unwrapped = (error as? PiNoSpendRejection)?.error ?? error
+            guard let category = unwrapped as? PiBrokerError else { throw PiBrokerError.invalid }
+            if let expected, category != expected { print("Rejected category mismatch: expected \(expected.rawValue), received \(category.rawValue)") }
+            try check(expected == nil || category == expected); return
         }
         throw PiBrokerError.invalid
     }
@@ -189,6 +212,49 @@ enum NativePiModelBrokerFixture {
         let repeated: PiValue = .object(["content": .array([block]), "usage": .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0.000028)])])
         try await rejected(.invalid) { try PiModelReply.validate(repeated, request: parsed) }
     }
+    static func rearming(_ root: URL) async throws {
+        let scope = try PiModelScope(binding(), profile: UUID().uuidString.lowercased())
+        func parsed(_ ledgerRoot: URL, id: String) throws -> PiModelRequest {
+            try PiModelRequest(request(scope, channel: "rearm", id: id), scope: scope, channel: "rearm")
+        }
+        let uncertainLedger = try PiModelLedger(root: root.appendingPathComponent("uncertain"), manifest: "fixture")
+        let first = try parsed(root, id: UUID().uuidString.lowercased())
+        let second = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try uncertainLedger.reserve(first) == nil)
+        uncertainLedger.reject(first.id)
+        try piCheck(try uncertainLedger.reserve(second) == nil)
+        uncertainLedger.uncertain(second.id)
+        try await rejected(.uncertain) { _ = try uncertainLedger.reserve(first) }
+        try piCheck(try uncertainLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "uncertain"])
+        let budgetLedger = try PiModelLedger(root: root.appendingPathComponent("budget"), manifest: "fixture", budget: 1_000_000)
+        let third = try parsed(root, id: UUID().uuidString.lowercased())
+        let fourth = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try budgetLedger.reserve(third) == nil)
+        budgetLedger.reject(third.id)
+        try piCheck(try budgetLedger.reserve(fourth) == nil)
+        let spent: PiValue = .object(["content": .array([.object(["type": .string("text"), "text": .string("fixture")])]), "usage": .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0.001)])])
+        try budgetLedger.settle(fourth.id, reply: spent)
+        try await rejected(.budget) { _ = try budgetLedger.reserve(third) }
+        try piCheck(try budgetLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
+    }
+    static func cancellationDuringValidation(_ root: URL) async throws {
+        for (name, checksCancellation) in [("throwing", true), ("silent", false)] {
+            let ledger = try PiModelLedger(root: root.appendingPathComponent(name), manifest: "fixture")
+            let held = PiHeldValidationFixture(checksCancellation: checksCancellation)
+            let broker = NativePiModelBroker(ledger: ledger, channel: "held", executor: held, timeout: .seconds(10))
+            let scope = try await broker.authorize(binding())
+            let value = request(scope, channel: "held")
+            let running = Task { try await broker.complete(value) }
+            for _ in 0..<400 where !(await held.waiting) { try await Task.sleep(for: .milliseconds(5)) }
+            let calls = await held.calls
+            try piCheck(await held.waiting && calls == 1)
+            running.cancel()
+            await held.release()
+            do { _ = try await running.value; throw PiBrokerError.invalid } catch is CancellationError {}
+            try piCheck(try ledger.snapshot().piArray!.map { $0.pi("status").piString! } == ["uncertain"])
+            try await rejected(.uncertain) { _ = try await broker.complete(request(scope, channel: "held")) }
+        }
+    }
     static func run() async {
         umask(0o077)
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("pi-app-selftest-" + UUID().uuidString)
@@ -201,7 +267,9 @@ enum NativePiModelBrokerFixture {
             try await stage("model execution") { try await exercise(root) }
             try await stage("model boundaries") { try await boundaries(root.appendingPathComponent("boundaries")) }
             try await stage("model restart") { try await restart(root.appendingPathComponent("restart")) }
-            print("PASS: app-owned mock scope, accounting, duplicate, cancellation, responsiveness and restart tests")
+            try await stage("re-arm guard") { try await rearming(root.appendingPathComponent("rearming")) }
+            try await stage("late cancellation") { try await cancellationDuringValidation(root.appendingPathComponent("cancellation")) }
+            print("PASS: app-owned mock scope, accounting, duplicate, cancellation, responsiveness, restart, re-arm guard and late cancellation tests")
         } catch { print("FAIL: app-owned mock broker selftest \(type(of: error))"); exit(1) }
     }
 }

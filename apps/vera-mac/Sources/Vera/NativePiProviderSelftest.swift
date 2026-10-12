@@ -104,9 +104,10 @@ enum NativePiProviderSelftest {
             try await reject { _ = try await broker.complete(secret) }
             try piCheck(PiProviderFixtureProtocol.state.calls().count == 3)
             let rows = try await prepared.accounting.snapshot().piArray!
-            try piCheck(rows.count == 2 && rows.last?.pi("status").piString != "reserved")
-            try await reject { _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture")) }
-            try piCheck(PiProviderFixtureProtocol.state.calls().count == 3 && fixtureCredentials.reads == 2 && credentials.reads == 0)
+            try piCheck(rows.count == 2 && rows.last?.pi("status").piString == "rejected")
+            try piCheck(try broker.ledger.snapshot().piArray!.map { $0.pi("status").piString! } == ["completed", "rejected"])
+            _ = try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture"))
+            try piCheck(PiProviderFixtureProtocol.state.calls().count == 4 && credentials.reads == 0)
             try await expiredReplay(config: config, binding: binding, http: http, root: root)
             try await failurePaths(config: config, binding: binding, http: http, admission: admission, root: root)
             if !arguments.isEmpty {

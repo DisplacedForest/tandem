@@ -60,6 +60,23 @@ struct Capabilities: Decodable, Equatable, Sendable {
     let transportDetail: String?
     let provider: String?
     let model: String?
+    let messageBytes: Int?
+
+    func accepts(_ text: String) -> Bool {
+        guard !text.isEmpty, text.unicodeScalars.count <= 8000 else { return false }
+        guard let messageBytes else { return true }
+        return Self.encodedByteCount(text) <= messageBytes
+    }
+
+    static func encodedByteCount(_ text: String) -> Int {
+        text.unicodeScalars.reduce(0) { total, scalar in
+            switch scalar {
+            case "\"", "\\", "\n", "\r", "\t", "\u{8}", "\u{c}": return total + 2
+            case _ where scalar.value < 0x20: return total + 6
+            default: return total + scalar.utf8.count
+            }
+        }
+    }
 
     var supported: Bool {
         guard protocolVersion == 1 else { return false }
@@ -80,6 +97,7 @@ struct Capabilities: Decodable, Equatable, Sendable {
         case protocolVersion = "protocol_version"
         case foreground, worker, computers, transport, provider, model
         case transportDetail = "transport_detail"
+        case messageBytes = "message_bytes"
     }
 }
 

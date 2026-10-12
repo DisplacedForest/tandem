@@ -75,6 +75,7 @@ final class PrototypeStore: ObservableObject {
         let linkedIDs = Set(messages.filter { UUID(uuidString: $0.id) == pending.messageID }.flatMap(\.taskIDs))
         return visibleTasks.filter { $0.payload.originatingMessageID == pending.messageID || linkedIDs.contains($0.id) }
     }
+    func accepts(_ text: String) -> Bool { capabilities?.accepts(text) ?? false }
     var canSend: Bool { capabilities?.supported == true && capabilities?.foreground == true && connectionError == nil && !busyConversations.contains(conversation.id) && pending == nil }
     var connectionLabel: String {
         guard let capabilities, connectionError == nil else { return "Not connected" }
@@ -155,7 +156,7 @@ final class PrototypeStore: ObservableObject {
     func send() async {
         guard canSend else { return }
         let text = conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.unicodeScalars.count <= 8000 else { return }
+        guard accepts(text) else { return }
         let request = MessageRequest(assistantID: saved.assistantID, conversationID: conversation.id,
                                      messageID: UUID(), text: text, mode: destination == .assistant ? "assistant" : "focused")
         var candidate = saved
