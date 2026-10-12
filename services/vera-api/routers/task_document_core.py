@@ -27,7 +27,7 @@ def _limit(name: str, default: float, maximum: float) -> float:
 
 STEP_TIMEOUT_SECONDS = _limit("DOCUMENT_STEP_TIMEOUT_SECONDS", 30, 90)
 MAX_TOKENS = max(1, int(_limit("DOCUMENT_MAX_TOKENS", 2000, 4000)))
-PROMPT_BYTES = 32256
+PROMPT_BYTES = 11776
 PROMPT_HEADROOM = 4096
 
 
@@ -207,9 +207,7 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
                           event="completed", data=_data(payload, checkpoint))
     if prompt_bytes(_messages(payload, checkpoint)) > PROMPT_BYTES:
         if checkpoint.phase != "revise":
-            return StepResult(state="failed", checkpoint=checkpoint.model_dump(), event="validation_failed",
-                              data={**_data(payload, checkpoint), "reason": "prompt_too_long",
-                                    "message": "The brief, inputs and outline are too long for the writing model. Start a new document with a shorter brief or fewer inputs."})
+            return _pause(payload, checkpoint, "The brief, inputs and outline are too long for the writing model. Retrying will not help; start a new document with a shorter brief or fewer inputs.")
         checkpoint.expected_generation = None
         checkpoint.revisions.append(checkpoint.drafts[len(checkpoint.revisions)])
         if len(checkpoint.revisions) == len(checkpoint.outline):
@@ -234,7 +232,10 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
         return _pause(payload, checkpoint, "The document did not match the requested bullet count. Your saved work is preserved.")
     checkpoint.expected_generation = None
     if checkpoint.phase == "outline":
-        checkpoint.outline = [Section.model_validate(section) for section in result["sections"]]
+        planned = Checkpoint(phase="draft", outline=[Section.model_validate(section) for section in result["sections"]])
+        if prompt_bytes(_messages(payload, planned)) > PROMPT_BYTES:
+            return _pause(payload, checkpoint, "The planned outline is too long for the writing model. Retrying asks for a shorter plan and may repeat model usage.")
+        checkpoint.outline = planned.outline
         checkpoint.phase = "draft"
     elif checkpoint.phase == "draft":
         checkpoint.drafts.append(result["text"])

@@ -482,14 +482,26 @@ def test_queued_model_configuration_is_revalidated_before_outbound(store, monkey
     asyncio.run(run())
 
 
-def test_prompt_budget_rejects_oversized_inputs_and_fits_the_largest_valid_revision():
-    oversized = {**PAYLOAD, "brief": "中" * 5000, "inputs": ["中" * 4000] * 8}
+def test_prompt_budget_rejects_oversized_inputs_and_matches_production():
+    oversized = {**PAYLOAD, "brief": "\u4e2d" * 5000, "inputs": ["\u4e2d" * 4000] * 8}
     with pytest.raises(ValueError):
         document.validate_payload(oversized)
-    payload = document.core.DocumentPayload.model_validate({**PAYLOAD, "brief": "中" * 2000, "max_sections": 4})
-    outline = [document.core.Section(heading="中" * 200, instructions="中" * 500) for _ in range(4)]
-    checkpoint = document.core.Checkpoint(phase="revise", outline=outline, drafts=["中" * 3000] * 4, revisions=[])
+    assert document.core.PROMPT_BYTES + document.core.PROMPT_HEADROOM <= 16384
+    payload = document.core.DocumentPayload.model_validate({**PAYLOAD, "brief": "b" * 2000, "max_sections": 4})
+    outline = [document.core.Section(heading="h" * 50, instructions="i" * 200) for _ in range(4)]
+    checkpoint = document.core.Checkpoint(phase="revise", outline=outline, drafts=["d" * 3000] * 4, revisions=[])
     assert document.core.prompt_bytes(document.core._messages(payload, checkpoint)) <= document.core.PROMPT_BYTES
+
+
+@pytest.mark.asyncio
+async def test_oversized_outline_pauses_with_a_visible_explanation(store, model):
+    calls, responses = model
+    responses[0] = {"sections": [{"heading": "h" * 200, "instructions": "i" * 500} for _ in range(6)]}
+    task = create(store, {**PAYLOAD, "brief": "b" * 5000, "inputs": ["x" * 2000], "max_sections": 6})
+    await advance(store)
+    await advance(store)
+    current = await until(store, task["id"], "needs_decision")
+    assert "too long" in current["decision"]["prompt"] and current["checkpoint"]["phase"] == "outline"
 
 
 @pytest.mark.asyncio

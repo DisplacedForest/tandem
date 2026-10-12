@@ -75,10 +75,22 @@ async def call(method: Any, *args: Any) -> Any:
         raise HTTPException(422, str(exc)) from None
 
 
+def compact_snapshot(task: dict[str, Any]) -> dict[str, Any]:
+    compact = dict(task)
+    if isinstance(compact.get('checkpoint'), dict):
+        compact['checkpoint'] = {key: value for key, value in compact['checkpoint'].items() if key not in ('outline', 'drafts', 'revisions')}
+    if isinstance(compact.get('result'), dict):
+        compact['result'] = {key: value for key, value in compact['result'].items() if key not in ('markdown', 'report', 'display_blocks', 'spoken_text')}
+    return compact
+
+
 @router.get('')
-async def list_tasks(limit: int = Query(100, ge=1, le=200), before: str | None = None) -> dict[str, Any]:
+async def list_tasks(limit: int = Query(100, ge=1, le=200), before: str | None = None, compact: bool = False) -> dict[str, Any]:
     engine = runtime()
-    return {'tasks': await call(engine.store.list, limit, before), 'available_workers': sorted(engine.workers)}
+    tasks = await call(engine.store.list, limit, before)
+    if compact:
+        tasks = [compact_snapshot(task) for task in tasks]
+    return {'tasks': tasks, 'available_workers': sorted(engine.workers)}
 
 
 @router.post('', status_code=201)

@@ -643,3 +643,13 @@ def test_lifespan_cleans_existing_services_when_task_shutdown_fails(tmp_path: Pa
         assert calls == ['home-start', 'scheduler-start', 'task-start', 'task-stop', 'scheduler-stop', 'home-stop']
 
     asyncio.run(run())
+
+
+def test_compact_task_listing_drops_document_bodies():
+    from routers.tasks import compact_snapshot
+    task = {"id": "t", "state": "completed", "checkpoint": {"phase": "assemble", "outline": [1], "drafts": ["d"], "revisions": ["r"], "retry": False},
+            "result": {"kind": "document_report", "title": "T", "summary": "s", "markdown": "m" * 10, "spoken_text": "x", "display_blocks": [1], "artifacts": [{"kind": "file"}]}}
+    compact = compact_snapshot(task)
+    assert compact["checkpoint"] == {"phase": "assemble", "retry": False}
+    assert compact["result"] == {"kind": "document_report", "title": "T", "summary": "s", "artifacts": [{"kind": "file"}]}
+    assert "markdown" in task["result"]
