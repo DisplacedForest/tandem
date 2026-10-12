@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 
 from pi_assistant.bridge import create_app
 from pi_assistant.process import PiFailure, PiProcess
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
+from pi_assistant.native import NativeMockTransport, encoded
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request
 from routers.task_store import TaskConflict
 
 NODE = shutil.which('node')
@@ -160,8 +161,8 @@ def test_http_contract_and_local_boundary(tmp_path):
         assert client.post('/assistant/messages', content='{}').status_code == 415
         oversized = body('x' * 8000, mode='focused', conversation_id=request['conversation_id'], assistant_id=request['assistant_id'])
         assert client.post('/assistant/messages', json=oversized).status_code == 413
-        edge = 'é' * (MESSAGE_BYTES // 2 - 1) + '"'
-        assert len(edge.encode()) + 1 == MESSAGE_BYTES
+        edge = 'é' * ((MESSAGE_BYTES - 2) // 2) + '"' + ('x' if MESSAGE_BYTES % 2 else '')
+        assert len(encoded(edge)) - 2 == MESSAGE_BYTES
         assert client.post('/assistant/messages', json={**oversized, 'text': edge}).status_code == 200
         assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': edge + 'x'}).status_code == 413
         assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': 'short again'}).status_code == 200
@@ -221,7 +222,8 @@ async def test_real_sigkill_after_effect_requires_decision_and_no_duplicate_writ
     runner = tmp_path / 'crash.py'
     runner.write_text('''import asyncio,json,shutil,sys
 from pathlib import Path
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
+from pi_assistant.native import NativeMockTransport, encoded
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request
 async def main():
  r=Runtime(Path(sys.argv[1]),shutil.which('node'),worker_delay_ms=450)
  await r.start()
@@ -411,7 +413,7 @@ async def test_context_budget_rejects_oversized_message_and_trims_history(tmp_pa
     request = body('first question', mode='focused')
     try:
         with pytest.raises(ContextOverflow):
-            await runtime.message(body('y' * 7800, mode='focused'))
+            await runtime.message(body('y' * (MESSAGE_BYTES + 1), mode='focused'))
         with runtime.connect() as db:
             assert db.execute('SELECT COUNT(*) FROM turns').fetchone()[0] == 0
         await runtime.message(request)
@@ -425,6 +427,7 @@ async def test_context_budget_rejects_oversized_message_and_trims_history(tmp_pa
             return await original(config, host, canceled)
         runtime.process.run = capture
         later = body('z' * 3000, mode='focused', assistant_id=request['assistant_id'], conversation_id=request['conversation_id'])
+        assert 3000 <= MESSAGE_BYTES
         await runtime.message(later)
         config = captured[-1]
         assert config['system_prompt'] == SYSTEM_PROMPT
@@ -434,5 +437,61 @@ async def test_context_budget_rejects_oversized_message_and_trims_history(tmp_pa
         assert context_size(SYSTEM_PROMPT, history, later['text']) <= CONTEXT_LIMIT - CONTEXT_RESERVE
         assert context_size(SYSTEM_PROMPT, [{'role': 'assistant', 'content': '4' * 2500}] + history, later['text']) > CONTEXT_LIMIT - CONTEXT_RESERVE
         assert any(item['id'] == later['message_id'] for item in runtime.messages(request['conversation_id'])['messages'])
+    finally:
+        await runtime.stop()
+
+
+class RecordingNative:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.sizes = []
+        self.events = []
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def complete(self, event, task_id, role, mode):
+        self.sizes.append(len(encoded(NativeMockTransport._messages(event['context']))))
+        self.events.append(event)
+        return self.replies.pop(0)
+
+
+def text_reply(text):
+    return {'content': [{'type': 'text', 'text': text}]}
+
+
+def delegate_reply(objective):
+    return {'content': [{'type': 'toolCall', 'id': str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
+
+
+def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
+    def context(history, turn):
+        return {'systemPrompt': SYSTEM_PROMPT, 'messages': [{'role': 'user', 'content': item, 'timestamp': 0} for item in history] + [{'role': 'user', 'content': turn, 'timestamp': 0}]}
+    trimmed = context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question')
+    assert fit_request(trimmed, 3) <= CONTEXT_LIMIT
+    assert [message['content'][:1] for message in trimmed['messages']] == ['b', 'c', 'c']
+    with pytest.raises(PiFailure):
+        fit_request(context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question'), 0)
+    with pytest.raises(PiFailure):
+        fit_request(context([], 'z' * 9000), 5)
+
+
+@pytest.mark.asyncio
+async def test_delegate_objective_must_fit_the_continuation(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    runtime.native = RecordingNative([delegate_reply('o' * (MESSAGE_BYTES + 1)), text_reply('shortened'), delegate_reply('o' * 1000), text_reply('delegated')])
+    runtime.transport = 'native-mock'
+    await runtime.start()
+    try:
+        first = await runtime.message(body('/task ' + 'x' * 3000))
+        assert first['text'] == 'shortened' and first['task_ids'] == []
+        error = runtime.native.events[1]['context']['messages'][-1]
+        assert error['role'] == 'toolResult' and error['isError'] is True
+        second = await runtime.message(body('/task ' + 'x' * 3000))
+        assert second['text'] == 'delegated' and len(second['task_ids']) == 1
+        assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
     finally:
         await runtime.stop()

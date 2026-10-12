@@ -42,7 +42,28 @@ def context_size(system: str, history: list[dict[str, Any]], text: str) -> int:
     return len(encoded(messages))
 
 
-MESSAGE_BYTES = CONTEXT_LIMIT - CONTEXT_RESERVE - context_size(SYSTEM_PROMPT, [], '')
+DELEGATE_OVERHEAD = 512
+MESSAGE_BYTES = (CONTEXT_LIMIT - CONTEXT_RESERVE - DELEGATE_OVERHEAD - context_size(SYSTEM_PROMPT, [], '')) // 2
+
+
+def request_size(context: Any) -> int:
+    messages = NativeMockTransport._messages(context)
+    for message in messages:
+        content = message.get('content')
+        if message.get('role') == 'user' and isinstance(content, list) and all(isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str) for block in content):
+            message['content'] = ''.join(block['text'] for block in content)
+    return len(encoded(messages))
+
+
+def fit_request(context: Any, history_len: int) -> int:
+    dropped = 0
+    while request_size(context) > CONTEXT_LIMIT and dropped < min(history_len, len(context['messages']) - 1):
+        context['messages'].pop(0)
+        dropped += 1
+    size = request_size(context)
+    if size > CONTEXT_LIMIT:
+        raise PiFailure('native_context_limit')
+    return size
 
 
 class Runtime:
@@ -153,26 +174,31 @@ class Runtime:
     async def _message(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.model_transport is not None:
             self.native.validate_scope(body['message_id'], 'foreground', body['mode'], body['assistant_id'], body['conversation_id'])
-        if context_size(SYSTEM_PROMPT, [], body['text']) > CONTEXT_LIMIT - CONTEXT_RESERVE:
+        if len(encoded(body['text'])) - 2 > MESSAGE_BYTES:
             raise ContextOverflow('Message is too long for the assistant context')
         previous = self.accept(body)
         if previous:
             return previous
         self.active.add(body['message_id'])
+        budget = {'history': 0, 'last': 0}
         try:
             async def host(event: dict[str, Any]) -> dict[str, Any]:
                 if event.get('type') == 'model' and self.native:
+                    budget['last'] = fit_request(event.get('context'), budget['history'])
                     return await self.native.complete(event, body['message_id'], 'foreground', body['mode'])
                 if event.get('type') != 'tool' or event.get('name') != 'delegate' or body['mode'] != 'assistant':
                     raise ValueError('Tool unavailable')
                 args = event.get('args')
-                if not isinstance(args, dict) or set(args) != {'objective'} or not isinstance(args['objective'], str) or not 1 <= len(args['objective']) <= 8000 or context_size(SYSTEM_PROMPT, [], args['objective']) > CONTEXT_LIMIT - CONTEXT_RESERVE:
+                if not isinstance(args, dict) or set(args) != {'objective'} or not isinstance(args['objective'], str) or not 1 <= len(args['objective']) <= 8000 or len(encoded(args['objective'])) - 2 > MESSAGE_BYTES:
                     raise ValueError('Invalid task objective')
+                if self.native and budget['last'] + len(encoded(args['objective'])) + DELEGATE_OVERHEAD > CONTEXT_LIMIT:
+                    raise ValueError('Task objective too long for the remaining context')
                 payload = {key: body[key] for key in ('assistant_id', 'conversation_id')}
                 payload.update(originating_message_id=body['message_id'], objective=args['objective'], workspace_ref='task-private', transport=self.transport)
                 task = self.store.create('pi_worker', payload, 'pi:' + body['message_id'])
                 return {'task_id': task['id'], 'state': task['state']}
             history = self.history(body)
+            budget['history'] = len(history)
             result = await self.process.run({'role': 'foreground', 'mode': body['mode'], 'text': body['text'], 'session_id': body['assistant_id'], 'transport': self.transport, 'system_prompt': SYSTEM_PROMPT, 'history': history}, host)
             answer = {'message_id': body['message_id'], 'reply_id': str(uuid.uuid5(uuid.NAMESPACE_URL, body['message_id'])), 'text': result['text'], 'task_ids': self.task_ids(body['message_id'])}
             with self.connect() as db:
@@ -261,6 +287,7 @@ class Runtime:
             if self.canceled(task):
                 raise PiFailure('canceled')
             if event.get('type') == 'model' and self.native:
+                fit_request(event.get('context'), 0)
                 return await self.native.complete(event, task['id'], 'worker', 'assistant')
             if event.get('type') != 'tool':
                 raise ValueError('Model transport unavailable')
