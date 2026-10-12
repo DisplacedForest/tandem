@@ -223,7 +223,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
@@ -235,7 +235,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
     }
 
     func proposal(
-        request: String, existing: [NativeMemoryRecord], now: Date
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(

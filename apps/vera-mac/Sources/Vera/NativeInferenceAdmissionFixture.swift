@@ -91,9 +91,9 @@ struct NativeInferenceAdmissionFixture {
                 let memory = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
                     baseURL: endpoint, apiKey: "synthetic-fixture-key", embeddingsModel: "fixture-embedding", extractionModel: "fixture-model"), admission: admission)
                 if input.scenario == "memory-background" {
-                    _ = try await memory.proposals(user: "I like morning walks", assistant: "Understood", sourceConversationID: nil, sourceMessageID: nil, existing: [])
+                    _ = try await memory.proposals(user: "I like morning walks", assistant: "Understood", sourceConversationID: nil, sourceMessageID: nil, existing: { [] })
                 } else if input.scenario == "memory-foreground" {
-                    _ = try await memory.proposal(request: "Remember morning walks", existing: [])
+                    _ = try await memory.proposal(request: "Remember morning walks", existing: { [] })
                 } else {
                     _ = try await memory.embed("morning walks")
                 }

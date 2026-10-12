@@ -30,15 +30,11 @@ extension ChatStore {
         return currentTurnProfile + ":bridge:" + binding + (bridge.apiKey?.isEmpty == false ? Self.turnProcessIdentity : "")
     }
 
-    var pendingProfileAvailable: Bool {
-        guard let configuration = nativeTaskConfiguration else { return true }
-        guard let config = currentNativeConfig,
-              let binding = try? configuration.enroll(config: config) else { return false }
-        return configuration.isAvailable(binding)
-    }
+    var pendingProfileAvailable: Bool { currentNativeConfig != nil }
 
-    func prepareTurnDispatch(_ activity: NativeToolActivity, turn: NativeConversationTurn) -> Bool {
-        guard turnAllowsDispatch(turn, activity: activity), let attempt = turn.attempt else { return false }
+    func prepareTurnDispatch(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
+        guard await turnCurrency(turn) == .current, turnAllowsDispatch(turn, activity: activity),
+              let attempt = turn.attempt else { return false }
         do {
             try turnRepository?.markTurnDispatch(turn.id, attempt: attempt, activity: activity)
             return true
@@ -67,14 +63,26 @@ extension ChatStore {
         return (ci, ui, ri)
     }
 
-    func turnCurrent(_ turn: NativeConversationTurn) -> Bool {
-        guard let attempt = turn.attempt, turnExecutions[turn.id]?.record.attempt == attempt,
-              !Task.isCancelled else { return false }
-        return (try? turnRepository?.turnIsCurrent(turn.id, attempt: attempt)) == true
+    func turnOwned(_ turn: NativeConversationTurn) -> Bool {
+        guard let attempt = turn.attempt else { return false }
+        return turnExecutions[turn.id]?.record.attempt == attempt && !Task.isCancelled
+    }
+
+    func turnCurrency(_ turn: NativeConversationTurn) async -> NativeTurnCurrency {
+        guard turnOwned(turn), let attempt = turn.attempt, let turnRepository else { return .superseded }
+        let id = turn.id
+        let currency = await Task.detached(priority: .userInitiated) {
+            turnRepository.turnCurrency(id, attempt: attempt)
+        }.value
+        return turnOwned(turn) ? currency : .superseded
+    }
+
+    func ensureTurnCurrent(_ turn: NativeConversationTurn) async throws {
+        guard await turnCurrency(turn) != .superseded else { throw CancellationError() }
     }
 
     func setTurnStatus(_ status: String?, turn: NativeConversationTurn) {
-        guard turnCurrent(turn) else { return }
+        guard turnOwned(turn) else { return }
         turnStatuses[turn.assistantMessageID] = status
     }
 
@@ -234,9 +242,15 @@ extension ChatStore {
         for (id, execution) in turnExecutions {
             guard let finalization = execution.finalization, let attempt = execution.record.attempt else { continue }
             do {
-                if try turnRepository.turnIsCurrent(id, attempt: attempt) {
+                switch turnRepository.turnCurrency(id, attempt: attempt) {
+                case .current:
                     try turnRepository.finishTurn(id, attempt: attempt, state: finalization.state,
                         message: finalization.message, ordinal: finalization.ordinal)
+                case .superseded:
+                    break
+                case .unconfirmed:
+                    turnStatuses[execution.record.assistantMessageID] = "Waiting to save this answer."
+                    continue
                 }
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
@@ -313,10 +327,10 @@ extension ChatStore {
     }
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
-        guard turnCurrent(turn), let execution = turnExecutions[turn.id] else { return false }
+        guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                guard turnCurrent(turn), execution.continuation == nil else {
+                guard turnOwned(turn), execution.continuation == nil else {
                     continuation.resume(returning: false)
                     return
                 }
@@ -344,6 +358,6 @@ extension ChatStore {
         turnConfirmationTokens[messageID] = nil
         let request = turnConfirmations.removeValue(forKey: messageID)
         if pendingToolConfirmation?.id == request?.id { pendingToolConfirmation = nil }
-        continuation.resume(returning: approved && turnCurrent(execution.record))
+        continuation.resume(returning: approved && turnOwned(execution.record))
     }
 }

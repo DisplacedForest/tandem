@@ -6,6 +6,8 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var failReads = false
     var failReadsAfterAcceptance = true
     var failTurnWrites = false
+    var failCurrencyReads = false
+    var currencyReadFailures = 0
     var historyReads = 0
     var transcriptReads = 0
     var polledRecords = 0
@@ -40,7 +42,14 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     }
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws { try base.enrollLegacyTurn(turn) }
     func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? { try base.claimTurn(id, attempt: attempt) }
-    func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool { try base.turnIsCurrent(id, attempt: attempt) }
+    func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
+        let failing = lock.withLock {
+            if failCurrencyReads { currencyReadFailures += 1 }
+            return failCurrencyReads
+        }
+        if failing { throw NativeToolError.failed("synthetic currency read failure") }
+        return try base.turnIsCurrent(id, attempt: attempt)
+    }
     func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws { try base.markTurnDispatch(id, attempt: attempt, activity: activity) }
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic checkpoint failure") }
@@ -111,7 +120,46 @@ enum NativeSessionSafetyFixture {
         try await idleHistory()
         try terminalRefreshRetry()
         try fastExternalCompletion()
+        try await foregroundOverrideCredential()
+        try await NativeTurnCurrencyFixture.run()
         print("NATIVE SESSION SAFETY FIXTURE OK")
+    }
+
+    static func foregroundOverrideCredential() async throws {
+        let require = NativeTaskFixture.require
+        var settings = NativeChatSettings.fresh
+        settings.profiles = [NativeEndpointProfile(id: "saved-profile", name: "Saved", baseURL: "https://saved.test/v1",
+            discoveredModels: ["saved-model"], selectedModel: "saved-model", selectionBasis: .user, lastDiscoveryAt: nil)]
+        settings.activeProfileID = "saved-profile"
+        let raw = settings.merging(into: [:])
+        let configStore = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { raw },
+                                      writeConfiguration: { _ in })
+        let overrides = ["VERA_MODEL_BASE": NativeSessionFixture.config.baseURL.absoluteString,
+                         "VERA_MODEL": "local-model", "VERA_MODEL_API_KEY": "synthetic-override-key"]
+        let previous = overrides.keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
+        for (name, value) in overrides { setenv(name, value, 1) }
+        let resolved = configStore.nativeResolved
+        for (name, value) in previous {
+            if let value { setenv(name, value, 1) } else { unsetenv(name) }
+        }
+        guard let resolved else { throw NativeTaskFixture.Failure.assertion("Environment overrides must resolve a foreground configuration") }
+        try require(resolved.apiKey == "synthetic-override-key" && resolved.model == "local-model",
+                    "Foreground configuration carries the environment override credential")
+        let adapter = NativeTaskConfiguration(settings: { configStore.nativeSettings },
+            savedTemplate: { configStore["chat_template_kwargs"] }, credential: { _ in nil })
+        try require((try? adapter.enroll(config: resolved)).map(adapter.isAvailable) != true,
+                    "The override configuration is not enrolled for background research")
+        let transport = NativeSessionFixtureTransport()
+        let store = ChatStore(nativeConfig: resolved, nativeTransport: transport,
+            repository: try LocalChatRepository(inMemory: true), nativeTaskConfiguration: adapter,
+            artifactPersistenceEnabled: false)
+        try require(store.pendingProfileAvailable, "A pending turn is available under the foreground override credential")
+        store.newConversation()
+        store.sendText("answer with the override key")
+        try await NativeSessionFixture.eventually("A foreground override credential must answer instead of interrupting") {
+            store.selected?.messages.last?.state == .complete && store.turnExecutions.isEmpty
+        }
+        try require(transport.histories.count == 1, "The provider is contacted for the pending turn")
     }
 
     static func finalizationRecovery() async throws {

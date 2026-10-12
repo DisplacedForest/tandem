@@ -124,6 +124,7 @@ enum NativeRuntimeMemorySelftest {
         try await brokerLifecycle(root)
         try await brokerValidationLifecycle(root)
         try await workerRetry(root)
+        try await settledContextChange(root)
         bridge.close()
         try await rejected { _ = try await bridge.prepare(request(offBinding)) }
         print("shared-runtime-memory: PASS (one store, focused/persistent/worker identity, model-independent context, sources/reopen, scope isolation, memory off, cancellation, replay and queued dispatch; synthetic only)")
@@ -219,6 +220,52 @@ enum NativeRuntimeMemorySelftest {
         try piCheck(duplicate.memoryContext?.digest == second.memoryContext?.digest)
     }
 
+    private static func settledContextChange(_ root: URL) async throws {
+        let repository = try LocalChatRepository(url: root.appendingPathComponent("settled.sqlite"))
+        let memory = try fixture(repository)
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true; settings.bankScope = "farm"
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let bridge = NativeRuntimeMemoryBridge(store: store)
+        let assistant = UUID().uuidString.lowercased()
+        try bridge.bindAssistant(assistant)
+        let provider = NativeRuntimeMemoryProvider()
+        let gate = NativeRuntimeMemoryReplyGate()
+        let ledger = try PiModelLedger(root: root.appendingPathComponent("settled-broker"), manifest: "shared-memory")
+        let accounting = try PiSharedAccounting(root: root.appendingPathComponent("settled-provider"), baselineNanos: 0)
+        let admission = PiAdmissionFixtureProtocol.admission()
+        defer { admission.session.invalidateAndCancel() }
+        let profile = try PiSelectedProfileBinding(profileID: "fixture", revision: UUID().uuidString.lowercased(),
+            endpoint: "https://openrouter.ai/api/v1", model: "qwen/qwen3.8-flash")
+        var operation = PiSelectedProfileOperation(binding: profile, admission: admission, accounting: accounting,
+            validate: {}, send: { request, body in await gate.hold(); return try await provider.send(request, body) })
+        operation.memoryBridge = bridge
+        let broker = NativePiModelBroker(ledger: ledger, channel: "fixture", executor: operation, timeout: .seconds(10))
+        let first = binding(assistant)
+        try bridge.authorize(first, query: "Current livestock?")
+        let firstScope = try await broker.authorize(first)
+        let running = Task { try await broker.complete(NativePiModelBrokerFixture.request(firstScope, channel: "fixture", text: "Current livestock?")) }
+        for _ in 0..<400 where !(await gate.waiting) { try await Task.sleep(for: .milliseconds(5)) }
+        try piCheck(await gate.waiting)
+        var corrected = memory
+        corrected.summary = "Current livestock: nine hens"; corrected.details = [corrected.summary]
+        try repository.saveMemory(corrected, decision: .edited, note: "Synthetic in-flight correction", expected: memory)
+        await gate.release()
+        try await rejected { _ = try await running.value }
+        try piCheck(try await accounting.snapshot().piArray?.allSatisfy { $0.pi("status").piString == "completed" } == true)
+        try piCheck(try ledger.snapshot().piArray?.allSatisfy { $0.pi("status").piString == "completed" } == true)
+        let second = binding(assistant)
+        try bridge.authorize(second, query: "Current livestock?")
+        let secondScope = try await broker.authorize(second)
+        let reply = try await broker.complete(NativePiModelBrokerFixture.request(secondScope, channel: "fixture", text: "Current livestock?"))
+        try piCheck(reply.pi("content").piArray?.isEmpty == false)
+        let sent = await provider.requests
+        try piCheck(sent.count == 2 && sent[1].messages.first!.pi("content").piString!.contains("nine hens"))
+        await broker.close()
+        bridge.close()
+        print("  shared memory: settled reply after context change rejected alone, accounting certain, next request served PASS")
+    }
+
     private static func brokerLifecycle(_ root: URL) async throws {
         for reason in ["close", "expiry"] {
             let ledger = try PiModelLedger(root: root.appendingPathComponent("lifecycle-" + reason), manifest: "shared-memory")
@@ -273,6 +320,17 @@ private actor NativeRuntimeMemoryDispatchGate {
     func wait() async {
         calls += 1
         if calls == 2 { waiting = true; await withCheckedContinuation { continuation = $0 } }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+private actor NativeRuntimeMemoryReplyGate {
+    var waiting = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func hold() async {
+        guard !waiting else { return }
+        waiting = true
+        await withCheckedContinuation { continuation = $0 }
     }
     func release() { continuation?.resume(); continuation = nil }
 }
