@@ -628,7 +628,6 @@ def test_lifespan_cleans_existing_services_when_task_shutdown_fails(tmp_path: Pa
 
     monkeypatch.setattr(main.inference_admission, '_managed', False)
     monkeypatch.setattr(main.config_report, 'report', lambda *args, **kwargs: None)
-    monkeypatch.setattr(main.identity_migrate, 'run', lambda: None)
     monkeypatch.setattr(main.vein_engine, 'load_block_modules', lambda: None)
     monkeypatch.setattr(main.home_events, 'start', home_start)
     monkeypatch.setattr(main.scheduler, 'start', scheduler_start)
