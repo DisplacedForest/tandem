@@ -95,13 +95,13 @@ final class PiModelLedger: @unchecked Sendable {
             let charged: Int64?, reply: Data?
             switch chargedValue.storage { case .null: charged = nil; case .int64(let value): charged = value; default: throw PiBrokerError.storage }
             switch replyValue.storage { case .null: reply = nil; case .blob(let value): reply = value; default: throw PiBrokerError.storage }
-            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain", "abandoned", "not_sent"].contains(status) && reserved == (requestLimit > 12 ? 10_000_000 : 1_000_000), .storage)
+            try piCheck(digest.count == 64 && digest.allSatisfy { "0123456789abcdef".contains($0) } && ["reserved", "completed", "uncertain", "abandoned", "not_sent", "rejected"].contains(status) && reserved == (requestLimit > 12 ? 10_000_000 : 1_000_000), .storage)
             if status == "completed" {
                 try piCheck(charged != nil && reply != nil, .storage)
                 let saved = try PiValue.piRead(reply!)
                 try PiModelReply.validate(saved)
                 try piCheck(charged == PiModelReply.costNanos(saved) && charged! <= reserved, .storage)
-            } else if status == "not_sent" { try piCheck(charged == 0 && reply == nil, .storage) }
+            } else if status == "not_sent" || status == "rejected" { try piCheck(charged == 0 && reply == nil, .storage) }
             else { try piCheck(charged == nil && reply == nil, .storage) }
             let document = try isDocument(db, subject: subject)
             try piCheck(status != "abandoned" || document, .storage)
@@ -150,6 +150,10 @@ final class PiModelLedger: @unchecked Sendable {
             try Self.validateRows(db, budget: budget - baseline, requestLimit: requestLimit)
             if let row = try Row.fetchOne(db, sql: "SELECT digest,status,reply FROM requests WHERE id=?", arguments: [request.id]) {
                 try piCheck(row["digest"] as String == request.digest, .duplicate)
+                if row["status"] as String == "rejected" {
+                    try db.execute(sql: "UPDATE requests SET status='reserved',charged=NULL WHERE id=? AND status='rejected'", arguments: [request.id])
+                    return nil
+                }
                 guard row["status"] as String == "completed", let data: Data = row["reply"] else { throw PiBrokerError.uncertain }
                 return try PiValue.piRead(data)
             }
@@ -178,6 +182,9 @@ final class PiModelLedger: @unchecked Sendable {
             try piCheck(db.changesCount == 1, .storage)
         }
     }
+    func reject(_ id: String) {
+        try? database.write { db in try db.execute(sql: "UPDATE requests SET status='rejected',charged=0 WHERE id=? AND status='reserved'", arguments: [id]) }
+    }
     func uncertain(_ id: String) {
         try? database.write { db in try db.execute(sql: "UPDATE requests SET status='uncertain' WHERE id=? AND status='reserved'", arguments: [id]) }
     }
@@ -188,6 +195,10 @@ final class PiModelLedger: @unchecked Sendable {
             return .array(rows.map { row in .object(["id": .string(row["id"]), "status": .string(row["status"]), "reserved": .number(Double(row["reserved"] as Int64)), "charged": (row["charged"] as Int64?).map { .number(Double($0)) } ?? .null]) })
         }
     }
+}
+
+struct PiNoSpendRejection: Error {
+    let error: Error
 }
 
 enum PiModelReply {
@@ -317,6 +328,9 @@ actor NativePiModelBroker {
             try piCheck(try await toolSnapshot(scope) == snapshot, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
+        } catch let noSpend as PiNoSpendRejection {
+            ledger.reject(request.id)
+            throw noSpend.error
         } catch {
             if error is PiInferenceNotDispatched {
                 try ledger.notSent(request.id)
