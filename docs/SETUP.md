@@ -14,6 +14,8 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
+For optional cloud model evaluation, see the [OpenRouter setup and synthetic smoke test](OPENROUTER.md).
+
 ## 1. Prerequisites
 
 - **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.
@@ -39,6 +41,104 @@ Then read the **config report** — vera-api prints exactly what is wired at sta
 curl localhost:8089/health
 docker compose logs vera-api | head -60
 ```
+
+### Durable task API
+
+The task engine runs inside the existing vera-api process. `TASK_DB_PATH` defaults to `tasks.db` under the resolved `VERA_DATA_DIR`, so Docker and the packaged Mac engine use the same storage behavior. Existing stores are unchanged. Run one API process per task database: a process lock rejects a second dispatcher. Keep the database and its WAL together, and use SQLite's backup API for live snapshots.
+
+The `research` worker is registered when the API starts. `GET /tasks` returns persisted tasks and available worker types; `POST /tasks` returns HTTP 503 for an unconfigured worker without creating a record. Native chat still connects directly to its model endpoint. The queue coordinates native inference but does not provide household access controls. Keep the API within the same trusted deployment boundary as its other capabilities.
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /tasks` | JSON `worker_type`, `payload`, and required `idempotency_key`. An identical retry returns the original task; conflicting reuse returns 409. |
+| `GET /tasks` | Newest first, `limit` from 1 to 200. Pass the previous page's last task ID as `before` for stable pagination, including equal timestamps. |
+| `GET /tasks/{id}` | Current lifecycle, checkpoint, result, and pending decision. |
+| `POST /tasks/{id}/cancel` | Stops queued or waiting work immediately; running work stops at the next step boundary. Repeated cancellation is harmless. |
+| `POST /tasks/{id}/decision` | JSON `decision_id`, `idempotency_key`, and `reply` object. Only the current decision accepts a new reply. Identical retries do not requeue work twice. |
+| `GET /tasks/events` | SSE events with global numeric IDs. Reconnect using `Last-Event-ID`; optional `task_id` filters events without changing cursor meaning. `after` supplies an initial cursor when the header is absent. |
+
+The stream replays committed events in ascending order before following new events. IDs can have gaps and clients should deduplicate by ID. An invalid cursor returns 422, a cursor beyond the current store returns 409, and a cursor from another task is valid within the same database. Events are append-only, have no retention limit yet, and emit a keepalive during idle periods. Do not reuse a cursor after switching or replacing the database.
+
+Each worker step atomically saves its checkpoint, lifecycle and event. Recovery returns interrupted running tasks to the queue at their last committed checkpoint; a pending cancel becomes canceled. Queued, blocked, decision-waiting, and terminal tasks retain their state. Eligible steps run FIFO and requeue behind waiting work after yielding. Unknown worker types stay queued until their implementation is configured. A blocked task needs a guarded `TaskStore.resume`; an enrolled native app can resume its own native-unavailable checkpoint. Other user-facing retries use a decision.
+
+Worker implementations register an async `step(task)` with `tasks.register_worker` before startup and declare a finite timeout in seconds. An optional payload validator rejects invalid new requests with HTTP 422 before persistence. Validators must be synchronous, fast local schema checks without I/O because they run inside the creation transaction. Existing request replay and conflicting key reuse are resolved before validation, and validators cannot rewrite the saved payload. Optional immutable tool names describe the trusted worker implementation; they do not grant model-selected access or create a sandbox. A step receives a snapshot with `id`, `payload`, `checkpoint`, and `decision_reply`, and returns `task_store.StepResult` with a lifecycle, checkpoint, optional result, and event data. A decision reply is the supplied object and is cleared by the next committed step. New decisions receive unique server-owned IDs. Payload, checkpoint, result, decision and reply objects each have a 256 KiB encoded JSON limit; event data has a 16 KiB limit. Values must be valid JSON without nonfinite numbers.
+
+Timeouts and worker errors record failure with the last checkpoint. Cancellation has a bounded grace period. A worker that keeps running makes the task engine unavailable and retains database ownership until it exits or the process dies; its late result is discarded. Shutdown wakes the dispatcher and fences claims only after execution ends. Steps must be asynchronous and must not block the event loop. Storage commits retry bounded transient errors without rerunning the step; persistent errors make task endpoints unavailable until the engine restarts after the underlying problem is fixed. This API does not provide exactly-once external effects. Workers must not perform side-effecting tools until a separate durable action protocol handles their crash windows and approval boundaries.
+
+Submit background research with `POST /tasks`:
+
+```json
+{
+  "worker_type": "research",
+  "payload": {"query": "What evidence answers this question?", "use_rag": false},
+  "idempotency_key": "research-request-1"
+}
+```
+
+Research uses the existing configured model and web search integrations. `use_rag` defaults to `true` and includes the existing local document store; set it to `false` for web-only work. `query` accepts 1 to 5,000 characters, `subquestions` accepts 1 to 5 (default 4), and `pages_per_q` accepts 0 to 4 (default 2). Each step has a 180-second deadline. Checkpoints retain up to 14 sources with 1,500 characters of evidence each. Source metadata, errors, and the report are bounded to fit the task store.
+
+Read the saved report and source list from `result` on `GET /tasks/{task_id}`. Progress events include numbered source titles without full source text. Report checks require numeric citations to refer to gathered sources; they do not verify every claim. If there are no usable sources or the model returns an unusable report, the task waits for a decision and preserves its evidence. After resolving the cause, submit `POST /tasks/{task_id}/decision` with the current `decision_id`, a new `idempotency_key`, and `"reply": {"action": "retry"}`. Cancel remains available through the normal task endpoint. A restart can repeat an interrupted read-only search or model call, but committed steps and their source events are not repeated. `POST /research` retains its existing blocking response contract for existing API callers. Native foreground chat no longer advertises it.
+
+### Saved API keys
+
+Opening Vera and saving unrelated settings leave existing Keychain items unchanged. Explicit key edits update the existing item in place; clearing an edited field removes only that credential. A denied read does not mean a key is missing and never authorizes deletion. Failed edits remain available to retry, with a visible error in endpoint and vision-bridge settings. Legacy configuration keys migrate only on Save after a confirmed missing Keychain item; migration conflicts preserve the original configuration.
+
+This preserves Keychain item continuity. Ad-hoc app builds still have changing code identities, so this change alone does not remove prompts caused by replacing the signed app.
+
+### Native session recovery
+
+The composer offers Chat and Continuous per conversation. Chat serializes that conversation's answers, and a queued follow-up captures its completed predecessor context when it starts. Continuous accepts independent turns with completed context and bounded, quoted prior unfinished requests. These are read-only context, not another user command. A later message can ask what was requested without starting that work again. Switching modes affects future sends; existing queued work keeps its order and mode.
+
+The app persists the user message, reply placeholder, and pending turn in one local SQLite transaction. Two foreground turns may run across app instances, with at most eight pending messages. A running turn has a five-minute outer deadline in addition to individual tool limits. Claims are atomic and bind the original endpoint, model, saved profile, options, tool selection, and attachment route. Changed or unavailable settings pause the saved message instead of sending it elsewhere. Text turns do not depend on an unused vision bridge. A keyed bridge without a stable saved binding requires a new message after restart when an image actually uses it.
+
+Recovery distinguishes never-sent messages from requests that might already have reached a provider or tool. It detects a dead owning process and interrupts that answer, including when another app instance remains open. Tool dispatch writes its uncertainty marker before execution. Retry refuses to replay uncertain actions, even when the tool did not require a confirmation dialog. Explicit retries of older interrupted history keep their original message IDs and use only replay-safe research tools. If the final state cannot save, the app retains that answer's local ownership and retries only the state write. It does not repeat provider or tool work, and the queue continues once storage recovers. Provider credentials are not stored in turn records.
+
+### Native background research
+
+Enable Deep research in the native tool settings and configure the Vera engine URL to expose `create_background_task` during typed chat. Its required fields are `worker_type` (currently `research`), `objective`, and `deliverables`. Foreground chat uses this durable handoff for explicitly requested research. Chat retains short web lookups; Continuous does not advertise blocking search or research. Background handoff needs durable local chat storage. It is not advertised when the engine is unset. The original chat shows a persistent task card with progress, Stop, and an explicit Retry only when the engine offers it. Completion adds one read-only cited report. The app restores cards after restart, uses one event connection per engine, and refreshes canonical task snapshots before saving progress. Known task IDs are never recreated after a missing-task response. Saved reports remain readable when the engine is unset; task actions are then disabled. A fresh conversation without an engine has no task surface. Voice handoff remains separate.
+
+The app saves a unique creation key, exact request, original conversation/message references, engine URL, and model profile binding in its existing SQLite database before sending the request. Repeated handoff calls within the same user turn reuse that exact record, including when the model paraphrases the objective. Only a direct research request in the current message enables this handoff; quoted requests and earlier turns do not. Explicit “Do not use any tools” instructions remove every tool for that turn, and the same restriction is checked before dispatch. Direct English phrases such as “Please research lunar ice” or “Start background research about lunar ice” are supported. Send a new message for a separate research task. Restart and lost-response recovery replay the original body and key. Changing engine URLs never sends an old request to the new engine. Deleting a conversation marks unfinished handoffs for cancellation, including requests whose creation acknowledgment was lost. Once the orphaned request resolves to a terminal outcome, its content is removed; only a minimal reservation tombstone remains.
+
+Native-enrolled research uses web sources only. The API asks the enrolled app for bounded text generation through `/tasks/{id}/native/ready` and `/tasks/{id}/native/result`. Readiness is required before acquiring background inference capacity. The generation request exists only while that capacity is held, and expires with it. These relay messages contain research prompts and bounded output, but never provider credentials. The API uses a credential-free provider URL solely to identify shared inference capacity. The app chooses the execution endpoint and model from its saved binding, rejects extra relay fields, refuses redirects, and supplies no tools or images to background generation.
+
+Native generation separates a 10-second connect-and-send deadline from a 45-second read-inactivity deadline and the admitted overall cutoff. Connect-and-send covers DNS, connection, TLS and sending the nonempty request body; it ends on the body-upload callback or an earlier response, not on delayed response headers. A silent provider can therefore reach the read-inactivity limit before the overall deadline. Up to two seconds (10% for short test budgets) is reserved before the admission cutoff for completion delivery; this is best effort, not guaranteed receipt. Cancellation and all deadline failures keep their original reservation spent, and late output cannot replace the saved outcome.
+
+Typed `native_generation_timing` records in the macOS unified log contain only the research phase, fixed outcome, HTTP status when available, and monotonic setup, headers, completion and optional DNS, connection and TLS durations. Missing transport metrics are omitted. These records contain no endpoint URLs, prompts, response bodies, headers, credentials or remote error text. A generic transport timeout stays unclassified when its phase cannot be established.
+
+The original saved profile must still exist with the same endpoint and model. Active-profile changes do not retarget existing work. Credential lookup is noninteractive; a locked or missing required credential leaves work waiting. Each task pins a finite generation request allowance (four by default), a 64 KiB serialized text-input limit, and a 1,024-token output limit. Completed generation responses are cached locally. An uncertain request after a crash remains charged to its allowance; it is never resent automatically under the same generation identity. A user retry stages a new attempt within the same allowance. Exhaustion stops the task without a misleading retry option. These are request and token limits, not a dollar-cost estimate; provider account limits remain authoritative.
+
+Cards and report blocks are saved separately from foreground reply text, so a later stream update cannot erase a completed report. Spoken text never incorporates a report, task card, or display link. The report view accepts only web link actions without embedded credentials and does not fetch embedded Markdown images. Existing voice playback reuses URL cleanup, but this does not enable native voice handoff.
+
+Offline tests use temporary databases and a synthetic loopback provider. `mise run native-task-test` builds the app and exercises typed handoff, foreground conversation, lost acknowledgments, cancellation, concurrent app processes, and a process killed after sending a generation request. It also checks transcript restoration, replayed completion, persisted retry keys, stream reconnects, cursor reset, and cancellation responsiveness with eight enrolled tasks. It does not read live credentials or call a paid provider.
+
+## Inference admission
+
+The engine and native app share a generation admission policy. The actual model request still goes directly from the Mac to its configured endpoint with its existing Keychain-owned credential. `POST /inference/admission` reserves a bounded logical window, and `POST /inference/admission/{request_id}/release` retires it after local transport cleanup. The control messages carry a fresh request UUID, a SHA-256 endpoint fingerprint, priority, and requested duration. They contain no provider key, messages, prompt, model output, or credential-bearing URL. Admission metadata lives beside tasks in `tasks.db` and follows `TASK_DB_PATH`.
+
+Native chat constructors used by the app, including settings reloads and vision bridging, explicitly join foreground admission whenever a Vera engine is configured. Automatic native memory extraction joins the background class; explicit memory-change requests join foreground. Embeddings and reranking bypass this generation policy. Standalone native chat without an engine retains its direct path. A configured engine that is unreachable or lacks the admission API produces a connection error rather than silently bypassing scheduling; use a matching engine version. This is the existing trusted engine boundary, with no new authentication system.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `INFERENCE_BACKGROUND_SLOTS` | `1` | Maximum admitted background generations per resource, from 1 to 32. |
+| `INFERENCE_BACKGROUND_SECONDS` | `20` | Total deadline for a generic background generation. |
+| `INFERENCE_RESEARCH_PLAN_SECONDS` | `30` | Internal native research planning deadline, positive and at most 90 seconds. |
+| `INFERENCE_RESEARCH_SYNTHESIS_SECONDS` | `60` | Internal native research synthesis deadline, positive and at most 90 seconds. |
+| `INFERENCE_FOREGROUND_SECONDS` | `600` | Upper bound for foreground generation. Native chat requests 120 seconds; existing API calls retain their shorter declared limits. |
+| `INFERENCE_CLEANUP_SECONDS` | `2` | Additional logical lease lifetime for transport cancellation cleanup. |
+| `INFERENCE_PENDING_SECONDS` | `10` | Pending request lifetime, refreshed only while it is still waiting. |
+| `INFERENCE_RESOURCE_GROUPS` | `{}` | Optional JSON mapping of endpoint fingerprints to a shared group name. |
+
+Explicit research phase variables take precedence. If a phase variable is absent but `INFERENCE_BACKGROUND_SECONDS` is explicitly set, that legacy limit also caps the phase (up to 90 seconds). With neither setting present, planning defaults to 30 seconds and synthesis to 60 seconds.
+
+Endpoint identity lowercases scheme and host, removes default ports and trailing slashes, and hashes the origin plus base path. User information, query strings, and fragments are excluded. Models served by the same base URL share capacity. Distinct URLs sharing a generation resource need an explicit common group; the engine cannot infer hardware placement. Use the same canonical base endpoint in the native app and backend, or map both fingerprints to one group.
+
+A foreground intent is persisted before the native provider request begins. Queued background work cannot pass a pending or active foreground reservation. An already admitted background request is not preempted. Native research has separate internal planning and synthesis budgets; public admission calls and other background generation retain the generic limit. At the default research settings a foreground request can wait up to 60 seconds plus cleanup for admitted research, so this does not promise constant foreground latency. The queue allowance includes the longest configured background budget. With multiple background slots, foreground waits for the current admitted wave, bounded by the largest remaining generation window plus cleanup allowance, not by the depth of the background queue. `model_client.complete` routes through admission automatically; durable worker context selects background, and interactive API call sites can explicitly pass `priority="foreground"`. Untagged legacy API generation retains foreground treatment and its declared duration; preexisting scheduler, Pulse and authoring surfaces outside the durable worker runtime are not automatically reclassified as background. Individual generation timeouts apply inside the worker's separate step deadline, including repair calls.
+
+Successful idle foreground admission has no scheduler sleep or queue delay. Native coordination adds a control round trip before generation and a release round trip afterward; it does not promise unchanged total network latency. The native integration tests report measured elapsed and admission-handler time against a local synthetic endpoint.
+
+Repeated acquisition uses the same UUID and cannot renew an admitted generation. Lost responses can be retried safely; cancellation before acquisition creates a tombstone that rejects a delayed grant. Pending intents and unexpired admitted windows survive an API restart before new background work can proceed. Clients measure elapsed time with a monotonic clock and conservatively subtract the whole admission round trip from the server's remaining budget, so Mac and engine clocks need not be synchronized. Within one engine process, expiry is monotonic. After a restart, persisted wall-clock remaining time is clamped to the original configured duration plus cleanup allowance; a host clock correction across a restart can shorten or extend that recovery window within this bound.
+
+Clients stop accepting output at the generation cutoff and request local cancellation. A late response or frame is discarded. A lease expires at its fixed deadline plus cleanup allowance even if release is lost or the client exits. Expiry releases scheduling capacity only: it does not claim the remote provider has stopped computing. The policy makes no GPU-preemption or remote-termination guarantee. A worker that refuses cancellation can still make its task dispatcher unavailable, while the independent foreground admission route remains usable after the bounded lease expires.
 
 ### The `.env` walkthrough
 
@@ -91,8 +191,27 @@ Two host scripts cover the standing ops work, and each documents its own environ
 ```sh
 cd apps/vera-mac
 swift build -c release
-scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
+scripts/deploy.sh    # packages Vera.app and installs it to /Applications
 ```
+
+### Stable signing for local builds
+
+`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement; existing items may still need a one-time approval when changing from ad-hoc signing.
+
+Create a dedicated certificate with Apple's [Certificate Assistant](https://support.apple.com/guide/keychain-access/create-self-signed-certificates-kyca8916/mac) in Keychain Access. Choose a self-signed identity and the Code Signing certificate type, use an RSA key of at least 2048 bits, and store it in the login Keychain. Keep its private key there. Leave trust and access controls at their defaults and complete any macOS security prompt yourself. This local setup does not require setting Always Trust or exporting a private key. It does not provide Developer ID notarization or Gatekeeper distribution approval. Apple's [code-signing guide](https://developer.apple.com/library/archive/technotes/tn2206/_index.html) explains how designated requirements identify successive versions.
+
+Find the certificate's exact SHA-1 fingerprint with `security find-identity -p codesigning`. Save the nonsecret build settings as JSON at `~/.config/vera/signing.json` (or `$XDG_CONFIG_HOME/vera/signing.json`):
+
+```json
+{
+  "identity": "REPLACE_WITH_40_CHARACTER_CERTIFICATE_FINGERPRINT",
+  "keychain": "/absolute/path/to/login.keychain-db"
+}
+```
+
+`keychain` is optional; when supplied it must be an existing absolute file path. The file is parsed as data, never executed. `VERA_SIGNING_CONFIG` selects another configuration file, and `VERA_SIGNING_IDENTITY` and `VERA_SIGNING_KEYCHAIN` override its values. An explicit identity must be its exact fingerprint. Invalid configuration, missing keys and signing failures stop packaging instead of silently falling back. `VERA_SIGNING_IDENTITY=-` explicitly selects ad-hoc signing. No build command creates certificates, changes trust, unlocks Keychains, or alters key access controls.
+
+To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
 
 First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, decide whether to enable local memory, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off.
 
@@ -125,7 +244,7 @@ migrated; the native store starts fresh by design.
 
 Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, voice, and other autonomous paths cannot invoke them.
 
-Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
+Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. Tool execution is bounded to four rounds, eight total calls, and two actual web searches. A reached limit triggers one bounded synthesis without tools. If synthesis cannot answer, the transcript retains useful evidence as an unfinished answer with follow-up or retry controls. A tool failure, malformed stream, or endpoint outage also preserves received text and activity.
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 

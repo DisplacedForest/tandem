@@ -229,12 +229,17 @@ private struct ChatPane: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
                             ForEach(convo.messages) { msg in
+                                let confirmation = store.turnConfirmations[msg.id]
+                                let confirmationToken = store.turnConfirmationTokens[msg.id]
                                 MessageRow(message: msg,
                                            onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
                                            onOpenArtifact: { store.openArtifact($0) },
                                            attachmentStore: store.attachmentStore,
-                                           pendingConfirmation: store.pendingToolConfirmation,
-                                           onToolDecision: { store.resolveToolConfirmation($0) })
+                                           pendingConfirmation: confirmation,
+                                           onToolDecision: { approved in
+                                               store.resolveTurnConfirmation(msg.id, approved: approved,
+                                                   requestID: confirmation?.id, token: confirmationToken)
+                                           })
                             }
                             // One mark per chat at the leading edge — below the last response; animates
                             // while Vera works, sits still when idle. (Like Claude's single mark.)
@@ -381,6 +386,7 @@ private struct FlowChips: View {
 }
 
 struct MessageRow: View {
+    @EnvironmentObject private var store: ChatStore
     let message: Message
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
@@ -391,7 +397,7 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(message.toolActivities) { activity in
+                    ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
                         NativeToolActivityChip(activity: activity)
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
@@ -400,9 +406,20 @@ struct MessageRow: View {
                         }
                     }
                     AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    if !message.displayBlocks.isEmpty {
+                        NativeDisplayBlocksView(blocks: message.displayBlocks,
+                            connectedTaskIDs: store.connectedNativeTaskIDs,
+                            onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask)
+                    }
+                    if let status = store.answerStatus(message.id) {
+                        NativeAnswerControls(status: status, canStop: store.canStopAnswer(message.id),
+                                             onStop: { store.stopAnswer(message.id) })
+                    }
                     if message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        Button("Retry answer") { store.retryAnswer(message.id) }
+                            .buttonStyle(.borderless).font(.system(size: 11))
                     }
                 }
             } else {
@@ -616,6 +633,7 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            NativeSessionModeControl(mode: store.selectedSessionMode, onSelect: store.setSessionMode)
             if let error = store.attachmentError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle")

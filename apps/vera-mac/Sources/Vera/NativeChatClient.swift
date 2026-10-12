@@ -202,6 +202,20 @@ struct NativeChatClient: NativeChatTransport, Sendable {
 
     let config: NativeChatConfig
     var session: URLSession = .shared
+    var admission: NativeInferenceAdmission? = nil
+
+    static func foreground(config: NativeChatConfig) -> NativeChatClient {
+        NativeChatClient(config: config, admission: .configured())
+    }
+
+    private func admitted<T: Sendable>(
+        _ operation: @escaping @Sendable (NativeInferenceBudget?) async throws -> T
+    ) async throws -> T {
+        guard let admission else { return try await operation(nil) }
+        return try await admission.perform(endpoint: config.baseURL, priority: .foreground, requestedSeconds: 120) {
+            try await operation($0)
+        }
+    }
 
     func discoverModels() async throws -> [String] {
         var request = URLRequest(url: config.modelsURL)
@@ -252,13 +266,20 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     do {
-                        let request = try request(messages: messages, model: model, tools: tools)
-                        let (data, response) = try await session.data(for: request)
-                        let status = try statusCode(response)
-                        guard (200..<300).contains(status) else {
-                            throw ClientError.http(status, Self.errorDetail(data))
+                        try await admitted { budget in
+                            try budget?.check()
+                            let request = try request(messages: messages, model: model, tools: tools)
+                            let (data, response) = try await session.data(for: request)
+                            try budget?.check()
+                            let status = try statusCode(response)
+                            guard (200..<300).contains(status) else {
+                                throw ClientError.http(status, Self.errorDetail(data))
+                            }
+                            let snapshot = try Self.completeSnapshot(from: data)
+                            try budget?.check()
+                            try Task.checkCancellation()
+                            continuation.yield(snapshot)
                         }
-                        continuation.yield(try Self.completeSnapshot(from: data))
                         continuation.finish()
                     } catch is CancellationError {
                         continuation.finish()
@@ -272,43 +293,50 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try request(messages: messages, model: model, tools: tools)
-                    let (bytes, response) = try await session.bytes(for: request)
-                    let status = try statusCode(response)
-                    guard (200..<300).contains(status) else {
-                        var body = Data()
-                        for try await byte in bytes { body.append(byte) }
-                        throw ClientError.http(status, Self.errorDetail(body))
-                    }
-                    var decoder = ChatSSEDecoder()
-                    var chunk = Data()
-                    var accumulator = NativeChatDeltaAccumulator()
-                    var lastSnapshot = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
-                    var completed = false
-                    for try await byte in bytes {
-                        try Task.checkCancellation()
-                        chunk.append(byte)
-                        if chunk.count >= 1024 || byte == 10 {
-                            for payload in try decoder.feed(chunk) {
+                    try await admitted { budget in
+                        try budget?.check()
+                        let request = try request(messages: messages, model: model, tools: tools)
+                        let (bytes, response) = try await session.bytes(for: request)
+                        let status = try statusCode(response)
+                        guard (200..<300).contains(status) else {
+                            var body = Data()
+                            for try await byte in bytes { body.append(byte) }
+                            throw ClientError.http(status, Self.errorDetail(body))
+                        }
+                        var decoder = ChatSSEDecoder()
+                        var chunk = Data()
+                        var accumulator = NativeChatDeltaAccumulator()
+                        var lastSnapshot = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
+                        var completed = false
+                        for try await byte in bytes {
+                            try Task.checkCancellation()
+                            try budget?.check()
+                            chunk.append(byte)
+                            if chunk.count >= 1024 || byte == 10 {
+                                for payload in try decoder.feed(chunk) {
+                                    chunk.removeAll(keepingCapacity: true)
+                                    if payload == "[DONE]" { completed = true; break }
+                                    lastSnapshot = try accumulator.consume(payload)
+                                    try budget?.check()
+                                    continuation.yield(lastSnapshot)
+                                }
                                 chunk.removeAll(keepingCapacity: true)
+                            }
+                            if completed { break }
+                        }
+                        if !chunk.isEmpty {
+                            for payload in try decoder.feed(chunk, finishing: true) {
                                 if payload == "[DONE]" { completed = true; break }
                                 lastSnapshot = try accumulator.consume(payload)
+                                try budget?.check()
                                 continuation.yield(lastSnapshot)
                             }
-                            chunk.removeAll(keepingCapacity: true)
                         }
-                        if completed { break }
-                    }
-                    if !chunk.isEmpty {
-                        for payload in try decoder.feed(chunk, finishing: true) {
-                            if payload == "[DONE]" { completed = true; break }
-                            lastSnapshot = try accumulator.consume(payload)
-                            continuation.yield(lastSnapshot)
+                        guard completed else { throw ClientError.interrupted }
+                        if !lastSnapshot.toolCalls.isEmpty, lastSnapshot.finishReason != "tool_calls" {
+                            throw ClientError.malformedEvent
                         }
-                    }
-                    guard completed else { throw ClientError.interrupted }
-                    if !lastSnapshot.toolCalls.isEmpty, lastSnapshot.finishReason != "tool_calls" {
-                        throw ClientError.malformedEvent
+                        try budget?.check()
                     }
                     continuation.finish()
                 } catch is CancellationError {

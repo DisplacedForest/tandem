@@ -20,6 +20,7 @@ STORE_PATHS = {
     "ANALYST_LOG_PATH": "analyst_log.jsonl",
     "RHYTHM_DB_PATH": "rhythm.db",
     "SCHEDULER_DB_PATH": "scheduler.db",
+    "TASK_DB_PATH": "tasks.db",
     "SERIES_DB_PATH": "series.db",
     "USER_PROFILE_DB_PATH": "user_profiles/store.db",
     "VERA_INTERESTS_DB_PATH": "vera_interests/store.db",

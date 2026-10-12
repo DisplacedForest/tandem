@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build, bundle, and ad-hoc-sign Vera.app from the SwiftPM executable.
 # Output: apps/vera-mac/build/Vera.app
 set -euo pipefail
 
@@ -64,10 +63,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 4. Ad-hoc sign (no Developer ID on personal Macs) + verify
-echo "==> Ad-hoc codesign"
-codesign --force --deep --sign - "$APP"
-codesign --verify --verbose "$APP"
+python3 "$APP_ROOT/scripts/sign.py" "$APP"
 
 rm -rf "$ICONSET"
 echo "==> Done: $APP_ROOT/$APP  (v$VERSION, build $BUILD_NUM)"

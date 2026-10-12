@@ -6,6 +6,14 @@ import AppKit
 @MainActor
 enum Shot {
     static func render(view: String, to path: String, appearance: String = "dark") {
+        if view.hasPrefix("session-") {
+            NativeSessionShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
+        if view.hasPrefix("task-card") {
+            NativeTaskCardShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         // Both color systems must agree headlessly: NSApp.appearance resolves the dynamic
         // NSColor brand tokens, the SwiftUI environment resolves the semantic colors.
         let scheme: ColorScheme = appearance == "light" ? .light : .dark

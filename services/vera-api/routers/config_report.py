@@ -49,6 +49,10 @@ GROUPS: list[tuple[str, list[str]]] = [
                        "PULSE_MAX_CARDS", "PULSE_TRIAGE_ROUNDS", "PULSE_MAX_PER_INTEREST",
                        "AUDIT_WAKE_URL", "AUDIT_RELEASE_URL"]),
     ("scheduler",     ["SCHEDULER_ENABLED"]),
+    ("inference", ["INFERENCE_BACKGROUND_SLOTS", "INFERENCE_BACKGROUND_SECONDS",
+                   "INFERENCE_FOREGROUND_SECONDS", "INFERENCE_CLEANUP_SECONDS",
+                   "INFERENCE_PENDING_SECONDS", "INFERENCE_RESOURCE_GROUPS"]),
+    ("task storage",  ["TASK_DB_PATH"]),
 ]
 
 

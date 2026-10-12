@@ -17,6 +17,10 @@ if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     try? RemindersBridge.shared.start()
     print("vera-reminders bridge serving on :\(RemindersBridge.shared.port), ctrl-c to stop")
     while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+} else if arguments.contains("--openrouter-smoke") {
+    await NativeProviderSmoke.run(arguments: arguments)
+} else if arguments.contains("--provider-smoke-selftest") {
+    NativeProviderSmoke.selfTest()
 } else if arguments.contains("--selftest") {
     await SelfTest.run()
 } else if arguments.contains("--dump-context") {
