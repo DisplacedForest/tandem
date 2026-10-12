@@ -115,6 +115,9 @@ final class PiModelLedger: @unchecked Sendable {
             if let row = try Row.fetchOne(db, sql: "SELECT digest,status,reply FROM requests WHERE id=?", arguments: [request.id]) {
                 try piCheck(row["digest"] as String == request.digest, .duplicate)
                 if row["status"] as String == "rejected" {
+                    try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved','rejected')") == 0, .uncertain)
+                    let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
+                    try piCheck(exposure <= budget - baseline - 1_000_000, .budget)
                     try db.execute(sql: "UPDATE requests SET status='reserved',charged=NULL WHERE id=? AND status='rejected'", arguments: [request.id])
                     return nil
                 }
@@ -265,7 +268,7 @@ actor NativePiModelBroker {
             }
             try Task.checkCancellation()
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
-            do { try await executor.validateRequest(request) } catch { rejection = error }
+            do { try await executor.validateRequest(request) } catch is CancellationError { throw CancellationError() } catch { rejection = error }
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
