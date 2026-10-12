@@ -293,7 +293,7 @@ enum NativeRuntimeMemorySelftest {
                 let held = binding(assistant)
                 try bridge.authorize(held, query: "Current livestock?")
                 let scope = try await broker.authorize(held)
-                await gate.hold(at: 3)
+                await gate.hold(at: 4)
                 let running = Task { try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture", text: "Current livestock?")) }
                 for _ in 0..<400 where !(await gate.waiting) { try await Task.sleep(for: .milliseconds(5)) }
                 try piCheck(await gate.waiting)
