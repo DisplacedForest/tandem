@@ -287,8 +287,11 @@ extension LocalChatRepository: NativeConversationTurnRepository {
 
     func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
         try database.read { db in
-            let turn = try Self.readTurn(id, db: db)
-            return turn?.state == .running && turn?.attempt == attempt
+            guard let row = try Row.fetchOne(db, sql: "SELECT state, attempt FROM native_conversation_turns WHERE id=?",
+                                             arguments: [id.uuidString]) else { return false }
+            let state: String = row["state"]
+            let saved: String? = row["attempt"]
+            return state == NativeConversationTurn.State.running.rawValue && saved.flatMap(UUID.init(uuidString:)) == attempt
         }
     }
 
