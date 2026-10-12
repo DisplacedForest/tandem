@@ -22,9 +22,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: services/vera-api/requirements.txt
+          cache-dependency-path: services/vera-api/requirements*.txt
       - name: Install dependencies
-        run: pip install -r services/vera-api/requirements.txt pytest
+        run: pip install -r services/vera-api/requirements.txt -r services/vera-api/requirements-dev.txt
       - name: Run tests
         working-directory: services/vera-api
         run: python -m pytest -q
