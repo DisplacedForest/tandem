@@ -255,7 +255,7 @@ actor NativePiModelBroker {
             return saved
         }
         let operation = Task { [executor] in
-            try await request.validateHostTools()
+            do { try await request.validateHostTools() } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
             return try await executor.complete(request)
         }
         let race = PiModelRace()

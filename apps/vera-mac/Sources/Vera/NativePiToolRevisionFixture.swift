@@ -12,6 +12,26 @@ actor PiToolDispatchGate {
     func send() { sends += 1 }
 }
 
+actor PiHostToolHeldExecutor: PiMockModelExecutor {
+    var waiting = false
+    var calls = 0
+    private var hold = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func holdNext() { hold = true }
+    func validateRequest(_ request: PiModelRequest) async throws {
+        try await request.validateHostTools()
+        guard hold else { return }
+        hold = false
+        waiting = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func complete(_ request: PiModelRequest) async throws -> PiValue {
+        calls += 1
+        return try await PiFixtureModel().complete(request)
+    }
+}
+
 enum NativePiToolRevisionFixture {
     static func exercise(_ root: URL) async throws {
         let service = PiToolFixtureService()
@@ -51,6 +71,38 @@ enum NativePiToolRevisionFixture {
         try await heldDispatch(root.appendingPathComponent("dispatch"))
         try await heldOwnerEntry(root.appendingPathComponent("owner-entry"))
         try await memoryDigest(root.appendingPathComponent("memory"))
+        try await heldHostToolDispatch(root.appendingPathComponent("held-tools"))
+    }
+    static func heldHostToolDispatch(_ root: URL) async throws {
+        for pass in 0..<2 {
+            let service = PiToolFixtureService()
+            let ledger = try PiModelLedger(root: root, manifest: "epoch-fixture")
+            let model = PiHostToolHeldExecutor()
+            let broker = NativePiModelBroker(ledger: ledger, channel: "tools-channel", executor: model, tools: service)
+            if pass == 0 {
+                let scope = try await broker.authorize(NativePiModelBrokerFixture.binding())
+                await model.holdNext()
+                let running = Task { try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "tools-channel")) }
+                let deadline = ContinuousClock.now + .seconds(3)
+                while await !model.waiting {
+                    guard ContinuousClock.now < deadline else { running.cancel(); throw PiBrokerError.invalid }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                await service.reconnect()
+                await model.release()
+                do {
+                    _ = try await running.value
+                    throw PiBrokerError.invalid
+                } catch PiBrokerError.unauthorized { }
+                try NativePiModelBrokerFixture.check(await model.calls == 0)
+            }
+            try NativePiModelBrokerFixture.check(try ledger.snapshot().piArray?.contains { $0.pi("status").piString == "uncertain" } == false)
+            let fresh = try await broker.authorize(NativePiModelBrokerFixture.binding())
+            _ = try await broker.complete(NativePiModelBrokerFixture.request(fresh, channel: "tools-channel"))
+            try NativePiModelBrokerFixture.check(await model.calls == 1)
+            try NativePiModelBrokerFixture.check(try ledger.snapshot().piArray?.contains { $0.pi("status").piString == "uncertain" } == false)
+            await broker.close()
+        }
     }
     static func heldDispatch(_ root: URL) async throws {
         let service = PiToolFixtureService()
