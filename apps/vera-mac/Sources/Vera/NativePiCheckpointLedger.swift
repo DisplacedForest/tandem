@@ -56,6 +56,15 @@ final class PiCheckpointLedger: @unchecked Sendable {
         } catch { close(descriptor); close(parent); fileLock = -1; directory = -1; throw error }
     }
     deinit { if fileLock >= 0 { close(fileLock) }; if directory >= 0 { close(directory) } }
+    private func commit(_ mutate: () -> Void) throws {
+        let priorFields = fields, priorValue = value
+        mutate()
+        do { try save() } catch {
+            fields = priorFields; value = priorValue
+            try? save()
+            throw error
+        }
+    }
     private func save() throws {
         var authorizations = value["checkpoint_authorizations"]!.piObject!
         authorizations[id] = .object(fields)
@@ -94,23 +103,24 @@ final class PiCheckpointLedger: @unchecked Sendable {
     }
     func stage(_ stage: String, additions: [String: PiValue] = [:]) throws {
         mutex.lock(); defer { mutex.unlock() }
-        fields["stage"] = .string(stage)
-        for (key, value) in additions { fields[key] = value }
-        try save()
+        try commit {
+            fields["stage"] = .string(stage)
+            for (key, value) in additions { fields[key] = value }
+        }
     }
     func metadata(_ kind: String) throws {
         mutex.lock(); defer { mutex.unlock() }
         let key = kind == "models" ? "models_requests" : "usage_requests"
         try piCheck(["models", "usage"].contains(kind) && fields[key] == .number(0) && fields["state"] == .string("consumed"), .unauthorized)
-        fields[key] = .number(1); fields["stage"] = .string(kind + "_pending")
-        try save()
+        try commit { fields[key] = .number(1); fields["stage"] = .string(kind + "_pending") }
     }
     func reserve(baseline: Int64, body: Data) throws {
         mutex.lock(); defer { mutex.unlock() }
         try piCheck(fields["state"] == .string("consumed") && fields["inference_requests"] == .number(0) && fields["models_requests"] == .number(1) && fields["usage_requests"] == .number(1) && baseline <= 200_000_000_000 - PiCheckpointPricing.reservation, .unauthorized)
-        fields["inference_requests"] = .number(1); fields["reserved_nanos"] = .number(Double(PiCheckpointPricing.reservation)); fields["baseline_nanos"] = .number(Double(baseline)); fields["body_digest"] = .string(piHash(body)); fields["stage"] = .string("inference_pending")
-        value["prior_plus_cli_and_uncertainty_holds_usd"] = .string(NSDecimalNumber(decimal: Decimal(baseline + PiCheckpointPricing.reservation) / 1_000_000_000).stringValue)
-        try save()
+        try commit {
+            fields["inference_requests"] = .number(1); fields["reserved_nanos"] = .number(Double(PiCheckpointPricing.reservation)); fields["baseline_nanos"] = .number(Double(baseline)); fields["body_digest"] = .string(piHash(body)); fields["stage"] = .string("inference_pending")
+            value["prior_plus_cli_and_uncertainty_holds_usd"] = .string(NSDecimalNumber(decimal: Decimal(baseline + PiCheckpointPricing.reservation) / 1_000_000_000).stringValue)
+        }
     }
     func settle(_ reply: PiValue) throws {
         mutex.lock(); defer { mutex.unlock() }
