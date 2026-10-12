@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from pi_assistant.bridge import create_app
 from pi_assistant.process import PiFailure, PiProcess
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
 from routers.task_store import TaskConflict
 
 NODE = shutil.which('node')
@@ -147,7 +147,7 @@ async def test_effect_reconciliation_and_external_edit_fence(tmp_path):
 def test_http_contract_and_local_boundary(tmp_path):
     with TestClient(create_app(tmp_path, NODE)) as client:
         cap = client.get('/assistant/capabilities').json()
-        assert cap['transport'] == 'mock' and cap['computers'] is False
+        assert cap['transport'] == 'mock' and cap['computers'] is False and cap['message_bytes'] == MESSAGE_BYTES
         request = body('hello', mode='focused')
         answer = client.post('/assistant/messages', json=request)
         assert answer.status_code == 200
@@ -160,8 +160,12 @@ def test_http_contract_and_local_boundary(tmp_path):
         assert client.post('/assistant/messages', content='{}').status_code == 415
         oversized = body('x' * 8000, mode='focused', conversation_id=request['conversation_id'], assistant_id=request['assistant_id'])
         assert client.post('/assistant/messages', json=oversized).status_code == 413
-        assert client.post('/assistant/messages', json={**oversized, 'text': 'short again'}).status_code == 200
-        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 4
+        edge = 'é' * (MESSAGE_BYTES // 2 - 1) + '"'
+        assert len(edge.encode()) + 1 == MESSAGE_BYTES
+        assert client.post('/assistant/messages', json={**oversized, 'text': edge}).status_code == 200
+        assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': edge + 'x'}).status_code == 413
+        assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': 'short again'}).status_code == 200
+        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 6
 
 
 @pytest.mark.asyncio
@@ -217,7 +221,7 @@ async def test_real_sigkill_after_effect_requires_decision_and_no_duplicate_writ
     runner = tmp_path / 'crash.py'
     runner.write_text('''import asyncio,json,shutil,sys
 from pathlib import Path
-from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size
 async def main():
  r=Runtime(Path(sys.argv[1]),shutil.which('node'),worker_delay_ms=450)
  await r.start()

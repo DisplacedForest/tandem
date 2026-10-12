@@ -42,6 +42,9 @@ def context_size(system: str, history: list[dict[str, Any]], text: str) -> int:
     return len(encoded(messages))
 
 
+MESSAGE_BYTES = CONTEXT_LIMIT - CONTEXT_RESERVE - context_size(SYSTEM_PROMPT, [], '')
+
+
 class Runtime:
     def __init__(self, root: Path, node: str, worker_delay_ms: int = 0, native_mock_helper: Path | None = None, model_transport: ModelTransport | None = None):
         if native_mock_helper and model_transport:
