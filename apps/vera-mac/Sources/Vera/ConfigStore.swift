@@ -204,7 +204,7 @@ final class ConfigStore: ObservableObject {
             guard let self else { throw PiBrokerError.unavailable }
             try await self.piValidate(binding)
         }) { [weak self] request, body in
-            guard let self else { throw PiBrokerError.unavailable }
+            guard let self else { throw PiNoSpendRejection(error: PiBrokerError.unavailable) }
             return try await self.piSend(binding: binding, request: request, body: body, transport: transport)
         }
     }

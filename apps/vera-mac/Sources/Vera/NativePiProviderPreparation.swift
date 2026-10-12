@@ -130,10 +130,12 @@ final class PiPreparedProvider {
         try journal.stage("usage_returned", additions: ["observed_provider_usage_nanos": .number(Double(usage))])
         let accounting = try PiSharedAccounting(root: accountingRoot, baselineNanos: baseline, budgetNanos: baseline + PiCheckpointPricing.reservation, ownerBinding: permit.digest, transport: transport)
         let baseOperation = try owner.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { outgoing, request in
-            try permit.validate(binding)
-            let expected = try pricing.body(request)
-            try piCheck(outgoing.httpBody == expected, .unauthorized)
-            try journal.reserve(baseline: baseline, body: expected)
+            do {
+                try permit.validate(binding)
+                let expected = try pricing.body(request)
+                try piCheck(outgoing.httpBody == expected, .unauthorized)
+                try journal.reserve(baseline: baseline, body: expected)
+            } catch { throw PiNoSpendRejection(error: error) }
             let result = try await http.send(outgoing)
             try permit.validate(binding)
             return result
