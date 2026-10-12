@@ -110,6 +110,12 @@ struct NativeConversationTurnHeader: Equatable, Sendable {
     let attempt: String?
 }
 
+enum NativeTurnCurrency: Sendable, Equatable {
+    case current
+    case superseded
+    case unconfirmed
+}
+
 protocol NativeConversationTurnRepository: Sendable {
     func conversationTurns() throws -> [NativeConversationTurn]
     func conversationTurnChangeToken() throws -> [Int64]
@@ -123,6 +129,13 @@ protocol NativeConversationTurnRepository: Sendable {
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws
     func finishTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int) throws
     func retryTurn(_ id: UUID, profile: String) throws
+}
+
+extension NativeConversationTurnRepository {
+    func turnCurrency(_ id: UUID, attempt: UUID) -> NativeTurnCurrency {
+        do { return try turnIsCurrent(id, attempt: attempt) ? .current : .superseded }
+        catch { return .unconfirmed }
+    }
 }
 
 extension LocalChatRepository: NativeConversationTurnRepository {
@@ -287,8 +300,11 @@ extension LocalChatRepository: NativeConversationTurnRepository {
 
     func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
         try database.read { db in
-            let turn = try Self.readTurn(id, db: db)
-            return turn?.state == .running && turn?.attempt == attempt
+            guard let row = try Row.fetchOne(db, sql: "SELECT state, attempt FROM native_conversation_turns WHERE id=?",
+                                             arguments: [id.uuidString]) else { return false }
+            let state: String = row["state"]
+            let saved: String? = row["attempt"]
+            return state == NativeConversationTurn.State.running.rawValue && saved.flatMap(UUID.init(uuidString:)) == attempt
         }
     }
 

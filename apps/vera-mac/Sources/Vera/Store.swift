@@ -1468,7 +1468,7 @@ final class ChatStore: ObservableObject {
     }
 
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
-        guard turnCurrent(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
+        guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
         let authority = NativeTurnToolAuthority(turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "")
         var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(nativeEnabledToolIDs)),
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
@@ -1517,15 +1517,15 @@ final class ChatStore: ObservableObject {
         catch { return false }
     }
 
-    private func turnMemoryIsCurrent(_ turn: NativeConversationTurn) -> Bool {
-        guard turnCurrent(turn) else { return false }
+    private func turnMemoryIsCurrent(_ turn: NativeConversationTurn) async -> Bool {
+        guard await turnCurrency(turn) == .current else { return false }
         guard let selected = turnMemorySelections[turn.attempt ?? turn.id], !selected.isEmpty else { return true }
         return memorySelectionIsCurrent(selected)
     }
 
     func performTurn(_ turn: NativeConversationTurn) {
         guard let repository, let nativeTransport, let nativeConfig,
-              let location = turnLocation(turn), turnCurrent(turn) else { return }
+              let location = turnLocation(turn), turnOwned(turn) else { return }
         let id = turn.conversationID
         let user = conversations[location.conversation].messages[location.user]
         let text = user.text
@@ -1536,7 +1536,7 @@ final class ChatStore: ObservableObject {
         generating = true
         var turnRegistry = nativeToolRegistry
         if let service = nativeTaskService, nativeTaskEngine.base != nil,
-           turnCurrent(turn) {
+           turnOwned(turn) {
             let origin = NativeTaskOrigin(conversationID: id,
                 userMessageID: turn.userMessageID, assistantMessageID: turn.assistantMessageID)
             let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
@@ -1595,7 +1595,7 @@ final class ChatStore: ObservableObject {
             var lastCheckpoint = Date.distantPast
             var partialAnswer = false
             do {
-                guard turnCurrent(turn) else { throw CancellationError() }
+                try await ensureTurnCurrent(turn)
                 let attachmentStore = self.attachmentStore
                 let imageLoader: (MessageAttachment) -> String? = {
                     attachmentStore.requestDataURL(for: $0)
@@ -1624,7 +1624,7 @@ final class ChatStore: ObservableObject {
                     }
                     let disclosure = VisionBridgeDisclosure.block(
                         descriptions: descriptions, bridgeModel: bridgeConfig.model)
-                    guard turnCurrent(turn) else { throw CancellationError() }
+                    try await ensureTurnCurrent(turn)
                     if let location = turnLocation(turn) {
                         let i = location.conversation
                         let userIndex = location.user
@@ -1683,7 +1683,7 @@ final class ChatStore: ObservableObject {
                     contracts.insert(.citations)
                 }
                 if groundingAssembly != nil || !selectedMemories.isEmpty { contracts.insert(.citations) }
-                guard turnCurrent(turn) else { throw CancellationError() }
+                try await ensureTurnCurrent(turn)
                 if let location = turnLocation(turn) {
                     conversations[location.conversation].messages[location.reply].sources =
                         (groundingAssembly?.sources ?? []) + NativeMemoryCitation.sources(selectedMemories)
@@ -1705,7 +1705,8 @@ final class ChatStore: ObservableObject {
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
-                    guard turnCurrent(turn), let location = turnLocation(turn) else { throw CancellationError() }
+                    try await ensureTurnCurrent(turn)
+                    guard let location = turnLocation(turn) else { throw CancellationError() }
                     let i = location.conversation
                     let replyIndex = location.reply
                     partialAnswer = snapshot.isPartial
@@ -1733,7 +1734,7 @@ final class ChatStore: ObservableObject {
                     }
                 }
                 try Task.checkCancellation()
-                guard turnCurrent(turn) else { throw CancellationError() }
+                try await ensureTurnCurrent(turn)
                 setTurnStatus(nil, turn: turn)
                 if let location = turnLocation(turn) {
                     let i = location.conversation
@@ -1769,7 +1770,7 @@ final class ChatStore: ObservableObject {
                     }
                 }
             } catch {
-                guard turnCurrent(turn) else { return }
+                guard await turnCurrency(turn) == .current else { return }
                 setTurnStatus(nil, turn: turn)
                 if let rejection = ModelParameterRejectionClassifier.classify(
                     error: error, options: nativeConfig.options) {
