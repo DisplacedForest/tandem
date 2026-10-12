@@ -568,11 +568,31 @@ async def test_revision_that_cannot_fit_keeps_the_draft_without_a_model_call(sto
     assert "d" * 1500 in final["result"]["markdown"] and "e" * 1500 in final["result"]["markdown"] and len(calls) == before
 
 
-def test_control_characters_are_rejected_in_document_text():
+def test_control_characters_are_rejected_in_model_output_but_saved_work_still_loads():
     with pytest.raises(ValidationError):
-        document.core.Section(heading="h", instructions="a\u0000b")
+        document.core.Outline(sections=[{"heading": "h", "instructions": "a\u0000b"}])
     with pytest.raises(ValidationError):
         document.core.SectionText(text="x\u0001y")
     with pytest.raises(ValidationError):
-        document.core.Section(heading="h\u001f", instructions="fine")
+        document.core.SectionText(text="first\rsecond")
+    with pytest.raises(ValidationError):
+        document.core.Outline(sections=[{"heading": "h\u001f", "instructions": "fine"}])
     assert document.core.SectionText(text="tabs\tand\nnewlines are fine").text
+    saved = document.core.Checkpoint(phase="revise", outline=[document.core.Section(heading="h", instructions="old\fstyle")], drafts=["First page.\fSecond page."], revisions=[])
+    assert saved.drafts[0].startswith("First")
+
+
+@pytest.mark.asyncio
+async def test_saved_drafts_with_old_characters_still_finish(store, model):
+    calls, responses = model
+    responses[:] = [{"text": "Clean revision"}]
+    task = create(store, PAYLOAD)
+    claimed = store.claim(("document",))
+    outline = [document.core.Section(heading="Only", instructions="Write it.")]
+    checkpoint = document.core.Checkpoint(phase="revise", outline=outline, drafts=["First page.\fSecond page."], revisions=[])
+    store.commit_step(claimed["id"], claimed["generation"], document.core._progress(document.core.DocumentPayload.model_validate(claimed["payload"]), checkpoint))
+    await advance(store)
+    await advance(store)
+    await advance(store)
+    final = await until(store, task["id"], "completed")
+    assert "Clean revision" in final["result"]["markdown"]

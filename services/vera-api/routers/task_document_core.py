@@ -13,9 +13,11 @@ from .task_store import StepResult
 
 
 TOOLS = ("model",)
-PRINTABLE = r"^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$"
-Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000, pattern=PRINTABLE)]
-Heading = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$")]
+PRINTABLE = r"^[^\x00-\x08\x0b-\x0d\x0e-\x1f\x7f]+$"
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000)]
+Heading = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\r\n]+$")]
+GeneratedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000, pattern=PRINTABLE)]
+GeneratedHeading = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\r\n\x00-\x08\x0b-\x0d\x0e-\x1f\x7f]+$")]
 
 
 def _limit(name: str, default: float, maximum: float) -> float:
@@ -64,15 +66,20 @@ def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 class Section(StrictModel):
     heading: Heading
+    instructions: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class GeneratedSection(StrictModel):
+    heading: GeneratedHeading
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500, pattern=PRINTABLE)]
 
 
 class Outline(StrictModel):
-    sections: list[Section] = Field(min_length=1, max_length=6)
+    sections: list[GeneratedSection] = Field(min_length=1, max_length=6)
 
 
 class SectionText(StrictModel):
-    text: Text
+    text: GeneratedText
 
 
 class Checkpoint(StrictModel):
