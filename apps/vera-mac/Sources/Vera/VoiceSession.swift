@@ -236,7 +236,7 @@ final class VoiceSession: ObservableObject {
     /// Convert markdown to plain spoken text — Kokoro otherwise pronounces "**" as "asterisk",
     /// "#" as "hashtag", etc. Display keeps the rich markdown; only TTS gets the stripped form.
     static func speechText(_ md: String) -> String {
-        var s = md.strippedMarkdown()
+        var s = NativeSpokenText.clean(md)
         // Remove any residual markers left by unpaired markdown across sentence-chunk boundaries.
         s = s.replacingOccurrences(of: "[*_`#>]", with: "", options: .regularExpression)
         return s.trimmingCharacters(in: .whitespacesAndNewlines)

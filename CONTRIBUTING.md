@@ -45,13 +45,17 @@ docs/                   SETUP.md + screenshots
 
 ```sh
 cd services/vera-api
-pip install -r requirements.txt pytest
+pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
 The API suite is hermetic (every store runs against a temp dir; no live endpoints), and
 `pytest.ini` sets the import path. `pytest` works from `services/vera-api` or as
 `pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
+
+Task-engine tests include deterministic fake workers, process-kill recovery, cancellation, replay, and duplicate-request checks. They do not call models or external tools. Native admission tests additionally launch the built app against a synthetic loopback engine and provider, exercising real streaming, cancellation, memory generation, and restart recovery without saved credentials. `mise run native-task-test` exercises synthetic native background handoff, crash recovery, persistent transcript cards, reconnects, explicit retries, and eight-task control responsiveness. Task-card screenshots use a pure offscreen host before any saved configuration is loaded: `.build/debug/Vera --shot /tmp/task-card.png --view task-card`. Variants include `task-card-complete`, `task-card-stopped`, `task-card-retry`, `task-card-offline`, `task-card-report`, and `task-card-report-unsafe`; append `-narrow` for the smaller layout. Synthetic screenshot sources are nonlinked, and embedded report images do not fetch. `mise run native-admission-test` builds and runs those tests.
+
+`mise run signing-test` validates local signing configuration, exact certificate selection, and failure behavior with mocked signing commands. It does not access Keychain identities or change trust settings.
 
 **Mac app** (no XCTest by design; the app validates through its own harness):
 
@@ -91,3 +95,7 @@ Run all of the above before opening a PR. CI must be green to merge.
 ## License
 
 By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
+
+Session checks use injected model transports and isolated local databases. Run `VERA_SESSION_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for queue, context, confirmation, and retry regressions. `mise run native-task-test` also exercises real native HTTP responsiveness and process-kill recovery against loopback fixtures. It makes no paid provider calls. Native task tests also use actual loopback HTTP to verify upload callbacks, delayed headers, read inactivity, total deadlines, cancellation, and sanitized transport diagnostics. Pure offscreen mode previews use `--shot /tmp/session.png --view session-continuous` or `session-chat`; append `-narrow` and use `--appearance light` to inspect the smaller light layout. These previews never construct saved settings or open a visible window.
+
+Credential lifecycle checks inject both Keychain operations and configuration I/O. Run `VERA_CREDENTIAL_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for the focused mock suite. It covers unchanged saves, denied reads, explicit edits/removal, retry after failure, and guarded legacy migration without accessing real credentials or configuration.

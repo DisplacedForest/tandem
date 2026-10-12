@@ -191,7 +191,7 @@ struct VisionBridge: Sendable {
 
     init(config: VisionBridgeConfig, transport: (any NativeChatTransport)? = nil) {
         self.model = config.model
-        self.transport = transport ?? NativeChatClient(config: NativeChatConfig(
+        self.transport = transport ?? NativeChatClient.foreground(config: NativeChatConfig(
             baseURL: config.baseURL, apiKey: config.apiKey, model: config.model,
             chatTemplateKwargs: nil))
     }

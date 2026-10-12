@@ -241,6 +241,7 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
 struct NativeMemoryService: NativeMemoryServing, Sendable {
     let configuration: NativeMemoryServiceConfiguration
     var session: URLSession = .shared
+    var admission: NativeInferenceAdmission? = nil
 
     func embed(_ text: String) async throws -> [Double] {
         guard !configuration.embeddingsModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }
@@ -284,7 +285,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         """
         return try await extract(
             input, sourceConversationID: sourceConversationID,
-            sourceMessageID: sourceMessageID, existing: existing, now: now)
+            sourceMessageID: sourceMessageID, existing: existing, now: now, priority: .background)
     }
 
     func proposal(
@@ -295,12 +296,12 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         }
         return try await extract(
             "MEMORY CHANGE REQUEST\n\(NativeMemorySafety.boundedUTF8(request, maximumBytes: 2_000))",
-            sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now)
+            sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now, priority: .foreground)
     }
 
     private func extract(
         _ input: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date
+        existing: [NativeMemoryRecord], now: Date, priority: NativeInferenceAdmission.Priority
     ) async throws -> [NativeMemoryProposal] {
         guard !configuration.extractionModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }
         let day = ISO8601DateFormatter().string(from: now)
@@ -330,8 +331,22 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
                 ["role": "user", "content": String(data: try JSONSerialization.data(withJSONObject: existingSummary), encoding: .utf8) ?? "[]"],
             ],
         ])
+        let generationRequest = request
         do {
-            let (data, response) = try await session.data(for: request)
+            let dataAndResponse: (Data, URLResponse)
+            if let admission {
+                dataAndResponse = try await admission.perform(
+                    endpoint: configuration.baseURL, priority: priority, requestedSeconds: 25
+                ) { budget in
+                    try budget.check()
+                    let response = try await session.data(for: generationRequest)
+                    try budget.check()
+                    return response
+                }
+            } else {
+                dataAndResponse = try await session.data(for: generationRequest)
+            }
+            let (data, response) = dataAndResponse
             try validate(response, data: data)
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = object["choices"] as? [[String: Any]],

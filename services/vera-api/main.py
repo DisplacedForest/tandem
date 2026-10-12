@@ -8,7 +8,8 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import native_generation, task_research
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -34,6 +35,8 @@ def _version() -> str:
 
 
 VERSION = _version()
+tasks.register_worker("research", task_research.step, timeout_seconds=180,
+                      tools=task_research.TOOLS, validate_payload=task_research.validate_payload)
 
 
 @asynccontextmanager
@@ -42,13 +45,23 @@ async def lifespan(app: FastAPI):
     vein_engine.load_block_modules()
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
+    await inference_admission.start()
     await home_events.start()
     await scheduler.start()
     try:
+        await tasks.start()
         yield
     finally:
-        await scheduler.stop()
-        await home_events.stop()
+        try:
+            await tasks.stop()
+        finally:
+            try:
+                await scheduler.stop()
+            finally:
+                try:
+                    await home_events.stop()
+                finally:
+                    inference_admission.stop()
 
 
 app = FastAPI(title="vera-api", version=VERSION, lifespan=lifespan)
@@ -85,6 +98,9 @@ CAPABILITIES = {
     "health": health.router,
     "updates": updates.router,
     "scheduler": scheduler.router,
+    "tasks": tasks.router,
+    "native_generation": native_generation.router,
+    "inference_admission": inference_admission.router,
 }
 
 for _name, _router in CAPABILITIES.items():

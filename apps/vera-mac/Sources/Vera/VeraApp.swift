@@ -47,7 +47,7 @@ struct VeraApp: App {
         let storeInstance = ChatStore(
             veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,
-            nativeTransport: native.map { NativeChatClient(config: $0) },
+            nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: repository,
             repositoryError: repositoryError,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
@@ -59,7 +59,10 @@ struct VeraApp: App {
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
-            sweepOrphanedAttachments: true)
+            sweepOrphanedAttachments: true,
+            nativeTaskConfiguration: NativeTaskConfiguration(
+                settings: { configInstance.nativeSettings },
+                savedTemplate: { configInstance["chat_template_kwargs"] }))
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
         _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: configInstance.voiceBase),

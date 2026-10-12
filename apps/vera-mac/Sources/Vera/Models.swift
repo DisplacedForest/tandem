@@ -10,7 +10,7 @@ struct Message: Identifiable, Hashable {
     enum Role: String { case user, assistant }
     var id: UUID = UUID()
     var role: Role
-    var text: String
+    var text: String { didSet { spokenText = nil } }
     var createdAt: Date = Date()
     var state: MessageState = .complete
     var failure: String? = nil
@@ -25,6 +25,12 @@ struct Message: Identifiable, Hashable {
     var toolActivities: [NativeToolActivity] = []
     var contentType: MessageContentType = .text
     var routeNote: MessageRouteNote? = nil
+    var spokenText: String? = nil
+    var displayBlocks: [NativeDisplayBlock] = []
+
+    var nativeEnvelope: NativeMessageEnvelope {
+        NativeMessageEnvelope(spokenText: spokenText ?? text, displayBlocks: displayBlocks)
+    }
 
     /// Build an assistant message from raw reply text, splitting out artifacts then any `vera:ask` block.
     static func assistant(from raw: String, sources: [PulseSource] = []) -> Message {
@@ -49,4 +55,5 @@ struct Conversation: Identifiable, Hashable {
     var originID: String? = nil
     var instructions: String? = nil
     var grounding: [String] = []
+    var mode: NativeSessionMode = .chat
 }
