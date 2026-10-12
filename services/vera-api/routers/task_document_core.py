@@ -5,7 +5,7 @@ import os
 import re
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 class DocumentUnavailable(Exception):
     pass
@@ -69,9 +69,20 @@ class Section(StrictModel):
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
+def _printable(value: Any) -> Any:
+    if isinstance(value, str) and not re.fullmatch(PRINTABLE, value, re.DOTALL):
+        raise ValueError("Generated text contains control characters")
+    return value
+
+
 class GeneratedSection(StrictModel):
     heading: GeneratedHeading
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500, pattern=PRINTABLE)]
+
+    @field_validator("heading", "instructions", mode="before")
+    @classmethod
+    def raw_text_is_printable(cls, value: Any) -> Any:
+        return _printable(value)
 
 
 class Outline(StrictModel):
@@ -80,6 +91,11 @@ class Outline(StrictModel):
 
 class SectionText(StrictModel):
     text: GeneratedText
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def raw_text_is_printable(cls, value: Any) -> Any:
+        return _printable(value)
 
 
 class Checkpoint(StrictModel):

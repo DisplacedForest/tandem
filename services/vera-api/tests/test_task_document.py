@@ -575,6 +575,14 @@ def test_control_characters_are_rejected_in_model_output_but_saved_work_still_lo
         document.core.SectionText(text="x\u0001y")
     with pytest.raises(ValidationError):
         document.core.SectionText(text="first\rsecond")
+    for boundary in ("Clean revision\r", "\x0cClean revision", "\x0bClean\x0b"):
+        with pytest.raises(ValidationError):
+            document.core.SectionText(text=boundary)
+        with pytest.raises(ValidationError):
+            document.core.Outline(sections=[{"heading": boundary, "instructions": "fine"}])
+        with pytest.raises(ValidationError):
+            document.core.Outline(sections=[{"heading": "h", "instructions": boundary}])
+    assert document.core.SectionText(text="  padded  ").text == "padded"
     with pytest.raises(ValidationError):
         document.core.Outline(sections=[{"heading": "h\u001f", "instructions": "fine"}])
     assert document.core.SectionText(text="tabs\tand\nnewlines are fine").text
