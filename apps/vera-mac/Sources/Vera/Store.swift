@@ -39,7 +39,7 @@ final class ChatStore: ObservableObject {
     @Published var chatConfigurationError: String?
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
-    @Published private(set) var pendingToolConfirmation: NativeToolConfirmationRequest?
+    @Published var pendingToolConfirmation: NativeToolConfirmationRequest?
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
@@ -57,7 +57,7 @@ final class ChatStore: ObservableObject {
     private let usesInjectedToolRegistry: Bool
     private var capabilityDeclarations: [NativeToolDeclaration]
     private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
-    private let repository: (any ChatRepository)?
+    let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     let nativeTaskRepository: (any NativeTaskRepository)?
     let nativeTaskService: NativeTaskHandoffService?
@@ -72,9 +72,22 @@ final class ChatStore: ObservableObject {
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
     let attachmentStore: NativeAttachmentStore
+    private let artifactPersistenceEnabled: Bool
     private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
-    var canSubmitChat: Bool { !generating && repository != nil }
+    var canSubmitChat: Bool { repository != nil }
+    @Published var conversationTurns: [NativeConversationTurn] = []
+    @Published var turnStatuses: [UUID: String] = [:]
+    @Published var turnConfirmations: [UUID: NativeToolConfirmationRequest] = [:]
+    var turnConfirmationTokens: [UUID: UUID] = [:]
+    var turnExecutions: [UUID: NativeTurnExecution] = [:]
+    static let turnProcessIdentity = UUID().uuidString
+    var suspendsTurnScheduling = false
+    var isSchedulingTurns = false
+    var conversationTurnLoop: Task<Void, Never>?
+    var conversationTurnToken: [Int64]?
+    var dirtyTurnConversations: Set<String> = []
+    var conversationTurnHeaders: [UUID: NativeConversationTurnHeader] = [:]
     var isPulseConfigured: Bool { client != nil }
     var mediaBase: String? { client?.base.absoluteString }
     var currentNativeConfig: NativeChatConfig? { nativeConfig }
@@ -99,7 +112,9 @@ final class ChatStore: ObservableObject {
          nativeTaskConfiguration: NativeTaskConfiguration? = nil,
          nativeTaskClient: NativeTaskClient = .live,
          nativeResearchOptions: NativeTaskResearchOptions = .standard,
-         nativeTaskEnrollment: NativeTaskProfileBinding? = nil) {
+         nativeTaskEnrollment: NativeTaskProfileBinding? = nil,
+         artifactPersistenceEnabled: Bool = true) {
+        self.artifactPersistenceEnabled = artifactPersistenceEnabled
         let taskEngine = NativeTaskEngineSelection(veraAPI?.base)
         self.nativeTaskEngine = taskEngine
         self.nativeTaskTrackingClient = nativeTaskClient
@@ -166,6 +181,7 @@ final class ChatStore: ObservableObject {
     }
 
     func loadArtifacts() {
+        guard artifactPersistenceEnabled else { return }
         if let d = try? Data(contentsOf: Self.artifactsURL),
            let arr = try? JSONDecoder().decode([Artifact].self, from: d) {
             artifactLibrary = arr
@@ -190,12 +206,14 @@ final class ChatStore: ObservableObject {
     }
 
     private func saveArtifact(_ a: Artifact) {
+        guard artifactPersistenceEnabled else { return }
         if let i = artifactLibrary.firstIndex(where: { $0.id == a.id }) { artifactLibrary[i] = a }
         else { artifactLibrary.insert(a, at: 0) }
         try? JSONEncoder().encode(artifactLibrary).write(to: Self.artifactsURL)
     }
 
     deinit {
+        conversationTurnLoop?.cancel()
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
         nativeTaskTrackingLoop?.cancel()
@@ -250,6 +268,11 @@ final class ChatStore: ObservableObject {
     }
 
     func resolveToolConfirmation(_ approved: Bool) {
+        if let pending = pendingToolConfirmation,
+           let messageID = turnConfirmations.first(where: { $0.value == pending })?.key {
+            resolveTurnConfirmation(messageID, approved: approved, requestID: pending.id)
+            return
+        }
         guard let continuation = toolConfirmationContinuation else { return }
         toolConfirmationContinuation = nil
         pendingToolConfirmation = nil
@@ -273,7 +296,7 @@ final class ChatStore: ObservableObject {
         nativeSystemPrompt = systemPrompt
         nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
-        if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
+        if let enabledToolIDs { updateNativeToolConsent(enabledToolIDs) }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
         visionBridgeConfig = visionBridge
         if let memorySettings { nativeMemorySettings = memorySettings }
@@ -299,6 +322,7 @@ final class ChatStore: ObservableObject {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
         }
         newConversation()
+        resumeConversationTurns()
         startNativeTaskRecovery()
         await refreshPulse()
         reloadNativeMemory()
@@ -1001,6 +1025,11 @@ final class ChatStore: ObservableObject {
     }
 
     func deleteConversation(_ id: String) {
+        suspendsTurnScheduling = true
+        defer { suspendsTurnScheduling = false; scheduleConversationTurns() }
+        for turn in conversationTurns where turn.conversationID == id {
+            stopAnswer(turn.assistantMessageID)
+        }
         let idx = conversations.firstIndex { $0.id == id }
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         conversations.removeAll { $0.id == id }
@@ -1233,7 +1262,6 @@ final class ChatStore: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
         guard !text.isEmpty || !atts.isEmpty else { return }
-        guard !generating else { return }
         guard repository != nil else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
             return
@@ -1248,15 +1276,16 @@ final class ChatStore: ObservableObject {
                     ? max(profile?.maxImagesPerRequest ?? 1, 1) : nil)
             return
         }
-        draft = ""
-        attachments = []
         let note: MessageRouteNote?
         switch route {
         case .direct: note = MessageRouteNote(route: .direct)
         case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: effectiveBridgeConfig?.model)
         default: note = nil
         }
-        sendText(text, attachments: atts, routeNote: note)
+        if sendText(text, attachments: atts, routeNote: note) {
+            draft = ""
+            attachments = []
+        }
     }
 
     func confirmSendWithoutAttachments() {
@@ -1268,9 +1297,10 @@ final class ChatStore: ObservableObject {
             attachmentError = "There is no message text to send without the attachment. Add text or remove the attachment."
             return
         }
-        draft = ""
-        attachments = []
-        sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld))
+        if sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld)) {
+            draft = ""
+            attachments = []
+        }
     }
 
     func cancelPendingSend() {
@@ -1279,7 +1309,6 @@ final class ChatStore: ObservableObject {
 
     /// Record the user's answer to a Vera structured question and send it as their next turn.
     func submitAsk(messageID: UUID, selections: [String], other: String) {
-        guard !generating else { return }
         guard repository != nil else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
             return
@@ -1292,57 +1321,81 @@ final class ChatStore: ObservableObject {
         if !o.isEmpty { parts.append(o) }
         let answer = parts.joined(separator: ", ")
         guard !answer.isEmpty else { return }
-        conversations[ci].messages[mi].answered = true
-        conversations[ci].messages[mi].answerText = answer
-        sendText(answer)
+        if sendText(answer) {
+            conversations[ci].messages[mi].answered = true
+            conversations[ci].messages[mi].answerText = answer
+        }
     }
 
+    @discardableResult
     func sendText(
         _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil
-    ) {
-        guard !generating else { return }
-        guard let repository else {
+    ) -> Bool {
+        guard let turnRepository, let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
-            return
+            return false
         }
-        guard let id = selectedID,
-              let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
-        let records = atts.compactMap(\.nativeRecord)
-        let user = Message(role: .user, text: text, attachments: records, routeNote: routeNote)
-        conversations[idx].messages.append(user)
-        if conversations[idx].title == "New chat" {
-            let title = text.isEmpty ? (records.first?.name ?? "New chat") : String(text.prefix(40))
-            conversations[idx].title = title
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !atts.isEmpty,
+              let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
+        let user = Message(role: .user, text: text, attachments: atts.compactMap(\.nativeRecord), routeNote: routeNote)
+        let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig?.model)
+        var conversation = conversations[index]
+        if conversation.title == "New chat" {
+            conversation.title = text.isEmpty ? (user.attachments.first?.name ?? "New chat") : String(text.prefix(40))
         }
-        conversations[idx].updatedAt = Date()
-        conversations[idx].isPersisted = true
-
+        conversation.updatedAt = Date()
+        conversation.isPersisted = true
+        let scopes = resolvePromptScopes(conversationID: id)
+        let turn = NativeConversationTurn(id: UUID(), conversationID: id,
+            userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: nativeEnabledToolIDs,
+            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
+            grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
+            history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: conversation.mode))
         do {
-            try repository.saveConversation(conversations[idx])
-            try repository.saveMessage(user, conversationID: id, ordinal: conversations[idx].messages.count - 1)
+            try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
+            let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
+            let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
+            conversation.messages = stored.map { live[$0.id] ?? $0 }
+            conversations[index] = conversation
+            chatConfigurationError = nil
         } catch {
-            conversations[idx].messages.removeLast()
-            for record in records { attachmentStore.remove(record) }
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
-            return
+            return false
         }
+        scheduleConversationTurns()
+        return true
+    }
 
-        guard nativeTransport != nil, let nativeConfig else {
-            let reply = Message(role: .assistant, text: "", state: .interrupted,
-                                failure: "Configure a model endpoint ending in /v1 and select a model")
-            conversations[idx].messages.append(reply)
-            try? repository.saveMessage(reply, conversationID: id, ordinal: conversations[idx].messages.count - 1)
-            return
+    func enrollLegacyAnswer(_ messageID: UUID) -> Bool {
+        guard let ci = conversations.firstIndex(where: { $0.messages.contains(where: { $0.id == messageID }) }),
+              let ri = conversations[ci].messages.firstIndex(where: { $0.id == messageID }), ri > 0,
+              conversations[ci].messages[ri - 1].role == .user,
+              conversations[ci].messages[ri].state == .interrupted else { return false }
+        let conversation = conversations[ci]
+        let user = conversation.messages[ri - 1]
+        let reply = conversation.messages[ri]
+        guard reply.toolActivities.allSatisfy({ NativeTurnSafety.canReplay($0) }) else {
+            chatConfigurationError = "Check whether the earlier action completed, then send a new message."
+            return false
         }
-
-        let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
-        conversations[idx].messages.append(reply)
-        let replyIndex = conversations[idx].messages.count - 1
-        let userIndex = conversations[idx].messages.count - 2
-        try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
-        performTurn(
-            conversationID: id, userText: text, records: records, routeNote: routeNote,
-            userIndex: userIndex, replyIndex: replyIndex)
+        let scopes = resolvePromptScopes(conversationID: conversation.id)
+        let turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id,
+            userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: nativeEnabledToolIDs.intersection(NativeTurnSafety.replayableIDs),
+            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
+            grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
+            history: NativeTurnHistoryMessage.snapshot(Array(conversation.messages.prefix(ri - 1)), current: user))
+        do {
+            try turnRepository?.enrollLegacyTurn(turn)
+            conversations[ci].messages[ri].state = .streaming
+            conversations[ci].messages[ri].failure = nil
+            scheduleConversationTurns()
+            return true
+        } catch {
+            chatConfigurationError = "The saved answer couldn't retry: \(error.localizedDescription)"
+            return false
+        }
     }
 
     func applyNativeOptions(_ cfg: NativeChatConfig) {
@@ -1351,42 +1404,42 @@ final class ChatStore: ObservableObject {
     }
 
     func retryLastTurn(conversationID: String? = nil) {
-        guard !generating, let repository else { return }
-        guard let id = conversationID ?? selectedID,
-              let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
-        let messages = conversations[idx].messages
-        guard let replyIndex = messages.indices.last, replyIndex >= 1,
-              messages[replyIndex].role == .assistant,
-              messages[replyIndex].state == .interrupted,
-              messages[replyIndex - 1].role == .user else { return }
-        let userIndex = replyIndex - 1
-        let user = messages[userIndex]
-        conversations[idx].messages[replyIndex].text = ""
-        conversations[idx].messages[replyIndex].failure = nil
-        conversations[idx].messages[replyIndex].state = .streaming
-        conversations[idx].messages[replyIndex].modelID = nativeConfig?.model
-        try? repository.saveMessage(
-            conversations[idx].messages[replyIndex], conversationID: id, ordinal: replyIndex)
-        performTurn(
-            conversationID: id, userText: user.text, records: user.attachments,
-            routeNote: user.routeNote, userIndex: userIndex, replyIndex: replyIndex)
+        guard let conversation = conversations.first(where: { $0.id == (conversationID ?? selectedID) }),
+              let reply = conversation.messages.last, reply.role == .assistant, reply.state == .interrupted else { return }
+        retryAnswer(reply.id)
     }
 
-    private func performTurn(
-        conversationID id: String, userText text: String, records: [MessageAttachment],
-        routeNote: MessageRouteNote?, userIndex: Int, replyIndex: Int
-    ) {
-        guard let repository, let nativeTransport, let nativeConfig else { return }
+    func updateNativeToolConsent(_ enabled: Set<String>) {
+        nativeEnabledToolIDs = enabled
+    }
+
+    func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
+        guard turnCurrent(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
+        var allowed = NativeTaskTools.enabledIDs(turn.enabledToolIDs.intersection(nativeEnabledToolIDs),
+            hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
+        allowed.remove(NativeWebTools.researchToolID)
+        if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
+        guard allowed.contains(activity.toolID) else { return false }
+        if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
+        return nativeToolRegistry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
+    }
+
+    func performTurn(_ turn: NativeConversationTurn) {
+        guard let repository, let nativeTransport, let nativeConfig,
+              let location = turnLocation(turn), turnCurrent(turn) else { return }
+        let id = turn.conversationID
+        let user = conversations[location.conversation].messages[location.user]
+        let text = user.text
+        let records = user.attachments
+        let routeNote = user.routeNote
         parameterRejection = nil
-        streamStatus = "Thinking…"
+        setTurnStatus("Thinking…", turn: turn)
         generating = true
         var turnRegistry = nativeToolRegistry
         if let service = nativeTaskService, nativeTaskEngine.base != nil,
-           let conversation = conversations.first(where: { $0.id == id }),
-           conversation.messages.indices.contains(userIndex), conversation.messages.indices.contains(replyIndex) {
+           turnCurrent(turn) {
             let origin = NativeTaskOrigin(conversationID: id,
-                userMessageID: conversation.messages[userIndex].id,
-                assistantMessageID: conversation.messages[replyIndex].id)
+                userMessageID: turn.userMessageID, assistantMessageID: turn.assistantMessageID)
             let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
             if nativeTaskConfiguration == nil || profile != nil {
                 turnRegistry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + [
@@ -1397,36 +1450,52 @@ final class ChatStore: ObservableObject {
         }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
+            authorize: { [weak self] in
+                guard let self else { return false }
+                return await self.turnCurrent(turn)
+            },
+            willExecute: { [weak self] activity in
+                guard let self else { return false }
+                return await self.prepareTurnDispatch(activity, turn: turn)
+            },
             confirm: { [weak self] activity in
                 guard let self else { return false }
-                return await self.awaitToolConfirmation(activity)
+                return await self.awaitTurnConfirmation(activity, turn: turn)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
-        let enabledToolIDs = capabilityProfile.supportsTools
-            ? NativeTaskTools.enabledIDs(nativeEnabledToolIDs, hasEngine: nativeTaskEngine.base != nil,
+        var enabledToolIDs = capabilityProfile.supportsTools
+            ? NativeTaskTools.enabledIDs(turn.enabledToolIDs.intersection(nativeEnabledToolIDs), hasEngine: nativeTaskEngine.base != nil,
                                          hasRepository: nativeTaskRepository != nil) : []
+        enabledToolIDs.remove(NativeWebTools.researchToolID)
+        if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
         let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
-        let memorySettings = nativeMemorySettings
+        var memorySettings = turn.memorySettings
+        if !nativeMemorySettings.enabled { memorySettings.enabled = false }
         let memoryService = nativeMemoryService
-        let scopes = resolvePromptScopes(conversationID: id)
+        let scopes = ResolvedPromptScopes(persona: turn.persona, userScope: turn.userScope, instructions: turn.instructions)
         let persona = scopes.persona
         let ownerName = nativeOwnerName
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
-        let groundingCollections = conversations.first(where: { $0.id == id })?.grounding ?? []
+        let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])
+        let groundingCollections = turn.grounding.filter { allowedGrounding.contains($0) }
         let groundingBase = client?.base
         groundingStatus[id] = nil
         lastRequestTrace = NativeRequestTrace.make(
             model: nativeConfig.model, streaming: nativeConfig.streaming,
             options: nativeConfig.options, timestamp: Date())
-        Task {
-            defer {
-                generating = false
-                resolveToolConfirmation(false)
-            }
+        turnExecutions[turn.id]?.deadline = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(300)) } catch { return }
+            guard self?.turnExecutions[turn.id]?.record.attempt == turn.attempt else { return }
+            self?.stopAnswer(turn.assistantMessageID, reason: "This answer reached its time limit. You can ask a follow-up.")
+        }
+        turnExecutions[turn.id]?.task = Task {
+            defer { finishTurnExecution(turn) }
             var lastCheckpoint = Date.distantPast
+            var partialAnswer = false
             do {
+                guard turnCurrent(turn) else { throw CancellationError() }
                 let attachmentStore = self.attachmentStore
                 let imageLoader: (MessageAttachment) -> String? = {
                     attachmentStore.requestDataURL(for: $0)
@@ -1436,7 +1505,7 @@ final class ChatStore: ObservableObject {
                         throw BridgeTurnFailure(
                             message: "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
                     }
-                    streamStatus = "Describing the attachment…"
+                    setTurnStatus("Describing the attachment…", turn: turn)
                     let bridge = VisionBridge(
                         config: bridgeConfig,
                         transport: bridgeTransportFactory.map { $0(bridgeConfig) })
@@ -1455,17 +1524,21 @@ final class ChatStore: ObservableObject {
                     }
                     let disclosure = VisionBridgeDisclosure.block(
                         descriptions: descriptions, bridgeModel: bridgeConfig.model)
-                    if let i = conversations.firstIndex(where: { $0.id == id }),
-                       userIndex >= 0, userIndex < conversations[i].messages.count {
+                    guard turnCurrent(turn) else { throw CancellationError() }
+                    if let location = turnLocation(turn) {
+                        let i = location.conversation
+                        let userIndex = location.user
                         conversations[i].messages[userIndex].routeNote = MessageRouteNote(
                             route: .bridged, bridgeModel: bridgeConfig.model, disclosure: disclosure)
                         try? repository.saveMessage(
                             conversations[i].messages[userIndex], conversationID: id, ordinal: userIndex)
                     }
-                    streamStatus = "Thinking…"
+                    setTurnStatus("Thinking…", turn: turn)
                 }
-                let turnMessages = conversations.first(where: { $0.id == id })?.messages
-                    ?? []
+                var turnMessages = turn.history.map(\.message)
+                if let location = turnLocation(turn), let current = turnMessages.firstIndex(where: { $0.id == turn.userMessageID }) {
+                    turnMessages[current].routeNote = conversations[location.conversation].messages[location.user].routeNote
+                }
                 var selectedMemories: [NativeMemoryRanked] = []
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
@@ -1490,7 +1563,7 @@ final class ChatStore: ObservableObject {
                 var groundingAssembly: KnowledgeGrounding.Assembly?
                 if !groundingCollections.isEmpty {
                     if let groundingBase {
-                        streamStatus = "Searching knowledge…"
+                        setTurnStatus("Searching knowledge…", turn: turn)
                         groundingStatus[id] = .retrieving
                         let result = await KnowledgeClient(base: groundingBase)
                             .query(text, collections: groundingCollections)
@@ -1511,7 +1584,7 @@ final class ChatStore: ObservableObject {
                         case .error(let detail):
                             groundingStatus[id] = .error(detail)
                         }
-                        streamStatus = "Thinking…"
+                        setTurnStatus("Thinking…", turn: turn)
                     } else {
                         groundingStatus[id] = .unconfigured
                     }
@@ -1521,10 +1594,9 @@ final class ChatStore: ObservableObject {
                     contracts.insert(.citations)
                 }
                 if groundingAssembly != nil { contracts.insert(.citations) }
-                if let groundingAssembly,
-                   let i = conversations.firstIndex(where: { $0.id == id }),
-                   replyIndex < conversations[i].messages.count {
-                    conversations[i].messages[replyIndex].sources = groundingAssembly.sources
+                guard turnCurrent(turn) else { throw CancellationError() }
+                if let groundingAssembly, let location = turnLocation(turn) {
+                    conversations[location.conversation].messages[location.reply].sources = groundingAssembly.sources
                 }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, userScope: scopes.userScope,
@@ -1535,14 +1607,17 @@ final class ChatStore: ObservableObject {
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts))
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt,
+                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" +
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Start background research only when the user explicitly asks for research or an investigation. Never wait for its report or claim it is complete. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
-                    guard let i = conversations.firstIndex(where: { $0.id == id }),
-                          replyIndex < conversations[i].messages.count else { continue }
+                    guard turnCurrent(turn), let location = turnLocation(turn) else { throw CancellationError() }
+                    let i = location.conversation
+                    let replyIndex = location.reply
+                    partialAnswer = snapshot.isPartial
                     let (afterArt, arts) = Artifact.parse(snapshot.content)
                     let (clean, ask) = VeraAsk.parse(afterArt)
                     conversations[i].messages[replyIndex].text = clean
@@ -1558,20 +1633,26 @@ final class ChatStore: ObservableObject {
                        latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
                         openArtifact(latest)
                     }
-                    streamStatus = snapshot.activities.last(where: { $0.state == .pending })
-                        .map { "Using \($0.title)…" }
+                    setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
+                        .map { "Using \($0.title)…" }, turn: turn)
                     if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
-                        try repository.saveMessage(
-                            conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                        try turnRepository?.checkpointTurn(turn,
+                            message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                         lastCheckpoint = Date()
                     }
                 }
-                streamStatus = nil
-                if let i = conversations.firstIndex(where: { $0.id == id }),
-                   replyIndex < conversations[i].messages.count {
-                    conversations[i].messages[replyIndex].state = .complete
+                try Task.checkCancellation()
+                guard turnCurrent(turn) else { throw CancellationError() }
+                setTurnStatus(nil, turn: turn)
+                if let location = turnLocation(turn) {
+                    let i = location.conversation
+                    let replyIndex = location.reply
+                    conversations[i].messages[replyIndex].state = partialAnswer ? .interrupted : .complete
+                    conversations[i].messages[replyIndex].failure = partialAnswer
+                        ? "This answer is unfinished. You can ask a follow-up or retry the answer." : nil
                     conversations[i].updatedAt = Date()
-                    try repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                    try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
+                        message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try repository.saveConversation(conversations[i])
                     if memorySettings.enabled, memorySettings.generateFromChats,
                        let memoryService,
@@ -1597,17 +1678,22 @@ final class ChatStore: ObservableObject {
                     }
                 }
             } catch {
-                streamStatus = nil
+                guard turnCurrent(turn) else { return }
+                setTurnStatus(nil, turn: turn)
                 if let rejection = ModelParameterRejectionClassifier.classify(
                     error: error, options: nativeConfig.options) {
                     parameterRejection = NativeParameterRejectionPrompt(
                         rejection: rejection, model: nativeConfig.model,
                         detail: error.localizedDescription, conversationID: id)
                 }
-                if let i = conversations.firstIndex(where: { $0.id == id }),
-                   replyIndex < conversations[i].messages.count {
+                if let location = turnLocation(turn) {
+                    let i = location.conversation
+                    let replyIndex = location.reply
+                    let userIndex = location.user
                     conversations[i].messages[replyIndex].state = .interrupted
-                    conversations[i].messages[replyIndex].failure = error.localizedDescription
+                    conversations[i].messages[replyIndex].failure = error is CancellationError
+                        ? "This answer stopped before another step could run. Check its settings before retrying."
+                        : error.localizedDescription
                     conversations[i].updatedAt = Date()
                     if userIndex >= 0, userIndex < conversations[i].messages.count,
                        conversations[i].messages[userIndex].routeNote?.route == .bridged,
@@ -1616,7 +1702,8 @@ final class ChatStore: ObservableObject {
                         try? repository.saveMessage(
                             conversations[i].messages[userIndex], conversationID: id, ordinal: userIndex)
                     }
-                    try? repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                    try? turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: .interrupted,
+                        message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try? repository.saveConversation(conversations[i])
                 }
             }

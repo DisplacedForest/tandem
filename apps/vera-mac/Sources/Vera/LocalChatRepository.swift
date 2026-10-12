@@ -229,15 +229,20 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeTaskDisplayV12") { db in
             try Self.migrateNativeTaskDisplay(db)
         }
+        migrator.registerMigration("nativeConversationTurnsV13") { db in
+            try Self.migrateConversationTurns(db)
+        }
         try migrator.migrate(database)
     }
 
     private func recoverInterruptedMessages() throws {
         try database.write { db in
+            try Self.recoverConversationTurns(db)
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, tool_activity_json
                 FROM messages
                 WHERE state = 'streaming' AND tool_activity_json IS NOT NULL
+                    AND id NOT IN (SELECT assistant_message_id FROM native_conversation_turns WHERE state IN ('pending', 'running'))
                 """)
             for row in rows {
                 guard let id: String = row["id"],
@@ -258,6 +263,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 SET state = 'interrupted',
                     failure = COALESCE(failure, 'The response was interrupted when Vera closed')
                 WHERE state = 'streaming'
+                    AND id NOT IN (SELECT assistant_message_id FROM native_conversation_turns WHERE state IN ('pending', 'running'))
                 """)
         }
     }
@@ -265,7 +271,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func listConversations() throws -> [Conversation] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode
                 FROM conversations
                 ORDER BY pinned DESC, updated_at DESC
                 """).map(Self.decodeConversation)
@@ -275,7 +281,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in
             try Row.fetchOne(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode
                 FROM conversations
                 WHERE origin_type = ? AND origin_id = ?
                 """, arguments: [originType, originID]).map(Self.decodeConversation)
@@ -363,18 +369,22 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     }
 
     func saveConversation(_ conversation: Conversation) throws {
-        try database.write { db in
+        try database.write { db in try Self.saveConversation(conversation, db: db) }
+    }
+
+    static func saveConversation(_ conversation: Conversation, db: Database) throws {
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     updated_at = excluded.updated_at,
                     pinned = excluded.pinned,
                     memory_excluded = excluded.memory_excluded,
                     instructions = excluded.instructions,
-                    grounding_json = excluded.grounding_json
+                    grounding_json = excluded.grounding_json,
+                    session_mode = excluded.session_mode
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -386,11 +396,17 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     conversation.originID,
                     conversation.instructions,
                     KnowledgeGrounding.encodeSelection(conversation.grounding),
+                    conversation.mode.rawValue,
                 ])
-        }
     }
 
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
+        try database.write { db in
+            try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)
+        }
+    }
+
+    static func saveMessage(_ message: Message, conversationID: String, ordinal: Int, db: Database) throws {
         let activityJSON: String?
         if message.toolActivities.isEmpty {
             activityJSON = nil
@@ -398,7 +414,6 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             activityJSON = String(decoding: try JSONEncoder().encode(message.toolActivities), as: UTF8.self)
         }
         let metadata = Self.metadataJSON(for: message)
-        try database.write { db in
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
@@ -436,7 +451,6 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     message.role == .assistant ? (message.spokenText ?? message.text) : nil,
                     try nativeTaskEncoded(message.displayBlocks),
                 ])
-        }
     }
 
     func deleteConversation(_ id: String) throws {
@@ -819,7 +833,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
-    private static func decodeMessages(_ rows: [Row]) -> [Message] {
+    static func decodeMessages(_ rows: [Row]) -> [Message] {
         rows.compactMap { row in
             guard let id = UUID(uuidString: row["id"]),
                   let role = Message.Role(rawValue: row["role"]),
@@ -889,7 +903,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             originType: row["origin_type"],
             originID: row["origin_id"],
             instructions: row["instructions"],
-            grounding: KnowledgeGrounding.decodeSelection(row["grounding_json"]))
+            grounding: KnowledgeGrounding.decodeSelection(row["grounding_json"]),
+            mode: NativeSessionMode(rawValue: row["session_mode"] ?? "chat") ?? .chat)
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

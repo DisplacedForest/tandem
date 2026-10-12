@@ -93,3 +93,5 @@ Run all of the above before opening a PR. CI must be green to merge.
 ## License
 
 By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
+
+Session checks use injected model transports and isolated local databases. Run `VERA_SESSION_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for queue, context, confirmation, and retry regressions. `mise run native-task-test` also exercises real native HTTP responsiveness and process-kill recovery against loopback fixtures. It makes no paid provider calls. Pure offscreen mode previews use `--shot /tmp/session.png --view session-continuous` or `session-chat`; append `-narrow` and use `--appearance light` to inspect the smaller light layout. These previews never construct saved settings or open a visible window.

@@ -272,3 +272,136 @@ def test_native_handoff_persistence_fixtures():
 @pytest.mark.skipif(os.environ.get('VERA_NATIVE_TASK_LIVE') != '1', reason='Requires explicit live background verification authorization')
 def test_native_typed_handoff_live(tmp_path, monkeypatch):
     asyncio.run(fixture(tmp_path, monkeypatch, 'live'))
+
+
+@pytest.mark.asyncio
+async def test_native_session_second_input_during_blocked_http_tool(tmp_path):
+    app = FastAPI()
+    release = asyncio.Event()
+    calls = []
+    held = asyncio.Event()
+
+    @app.get('/hold')
+    async def hold():
+        held.set()
+        await asyncio.wait_for(release.wait(), 8)
+        return {'ready': True}
+
+    @app.get('/release')
+    async def unblock():
+        release.set()
+        return {'ok': True}
+
+    @app.post('/v1/chat/completions')
+    async def completion(request: Request):
+        body = await request.json()
+        calls.append(body)
+        question = next(message['content'] for message in reversed(body['messages']) if message['role'] == 'user')
+        if question == 'slow question':
+            message = {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'held-call', 'type': 'function', 'function': {'name': 'hold', 'arguments': '{}'}}]}
+        else:
+            await asyncio.wait_for(held.wait(), 4)
+            message = {'role': 'assistant', 'content': 'The fridge answer is ready.'}
+        return {'choices': [{'message': message, 'finish_reason': 'tool_calls' if 'tool_calls' in message else 'stop'}]}
+
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    process = None
+    try:
+        while not server.started:
+            await asyncio.sleep(0.01)
+        env = dict(os.environ, VERA_SESSION_HTTP_FIXTURE=f'http://127.0.0.1:{port}',
+                   VERA_CONFIG_DIR=str(tmp_path / 'config'))
+        process = await asyncio.create_subprocess_exec(str(BINARY), '--selftest', env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 12)
+        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+        evidence = json.loads(next(line.split(' ', 1)[1] for line in stdout.decode().splitlines()
+                                   if line.startswith('SESSION_HTTP_FIXTURE ')))
+        assert evidence['messages'] == 4 and evidence['first_stopped'] and evidence['second_completed']
+        assert evidence['accepted_seconds'] < 1 and evidence['second_answer_seconds'] < 3
+        assert len(calls) == 2
+        (tmp_path / 'session-evidence.json').write_text(json.dumps(evidence, indent=2))
+    finally:
+        release.set()
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        server.should_exit = True
+        await serving
+        sock.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('second_already_open', [False, True])
+async def test_native_session_process_restart_does_not_repeat_effect(tmp_path, second_already_open):
+    app = FastAPI()
+    effect = asyncio.Event()
+    release = asyncio.Event()
+    effects, questions = [], []
+
+    @app.get('/effect')
+    async def mutate():
+        effects.append('saved')
+        effect.set()
+        await asyncio.wait_for(release.wait(), 12)
+        return {'saved': True}
+
+    @app.post('/v1/chat/completions')
+    async def completion(request: Request):
+        body = await request.json()
+        question = next(message['content'] for message in reversed(body['messages']) if message['role'] == 'user')
+        questions.append(question)
+        if question == 'slow question':
+            message = {'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': 'effect-call', 'type': 'function', 'function': {'name': 'hold', 'arguments': '{}'}}]}
+        else:
+            message = {'role': 'assistant', 'content': 'The pending answer is ready.'}
+        return {'choices': [{'message': message, 'finish_reason': 'tool_calls' if 'tool_calls' in message else 'stop'}]}
+
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    owner = survivor = None
+
+    async def launch(mode):
+        config = {'base': f'http://127.0.0.1:{port}', 'database': (tmp_path / 'sessions.sqlite').as_uri(), 'mode': mode}
+        env = dict(os.environ, VERA_SESSION_RESTART_FIXTURE=json.dumps(config), VERA_CONFIG_DIR=str(tmp_path / 'config'))
+        return await asyncio.create_subprocess_exec(str(BINARY), '--selftest', env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        while not server.started:
+            await asyncio.sleep(0.01)
+        owner = await launch('owner')
+        assert b'SESSION_OWNER_READY' in await asyncio.wait_for(owner.stdout.readline(), 5)
+        await asyncio.wait_for(effect.wait(), 5)
+        if second_already_open:
+            survivor = await launch('recover')
+            await asyncio.sleep(0.15)
+        owner.kill()
+        await owner.wait()
+        if survivor is None:
+            survivor = await launch('recover')
+        stdout, stderr = await asyncio.wait_for(survivor.communicate(), 8)
+        assert survivor.returncode == 0, (stdout.decode(), stderr.decode())
+        assert b'SESSION_RESTART_OK' in stdout
+        assert effects == ['saved'] and questions == ['slow question', 'pending question']
+        with sqlite3.connect(tmp_path / 'sessions.sqlite') as db:
+            assert db.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 4
+    finally:
+        release.set()
+        for process in (owner, survivor):
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+        server.should_exit = True
+        await serving
+        sock.close()

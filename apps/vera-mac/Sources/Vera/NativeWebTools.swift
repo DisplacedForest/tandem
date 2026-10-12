@@ -130,7 +130,7 @@ enum NativeWebTools {
 enum NativeResearchSources {
     static func lift(_ activities: [NativeToolActivity]) -> [PulseSource] {
         guard let activity = activities.last(where: {
-            $0.name == NativeWebTools.researchToolName && $0.state == .succeeded
+            $0.name == NativeWebTools.researchToolName && $0.state != .pending
         }), let raw = activity.result, let data = raw.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let entries = object["sources"] as? [[String: Any]] else { return [] }
