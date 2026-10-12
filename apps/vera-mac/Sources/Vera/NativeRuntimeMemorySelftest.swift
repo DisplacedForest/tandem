@@ -125,7 +125,8 @@ enum NativeRuntimeMemorySelftest {
         try await brokerValidationLifecycle(root)
         try await workerRetry(root)
         try await settledContextChange(root)
-        try await heldGrantContextRejection(root)
+        try await heldContextRejection(root, stage: "prepare", holdAt: 3)
+        try await heldContextRejection(root, stage: "grant", holdAt: 4)
         bridge.close()
         try await rejected { _ = try await bridge.prepare(request(offBinding)) }
         print("shared-runtime-memory: PASS (one store, focused/persistent/worker identity, model-independent context, sources/reopen, scope isolation, memory off, cancellation, replay and queued dispatch; synthetic only)")
@@ -267,8 +268,8 @@ enum NativeRuntimeMemorySelftest {
         print("  shared memory: settled reply after context change rejected alone, accounting certain, next request served PASS")
     }
 
-    private static func heldGrantContextRejection(_ root: URL) async throws {
-        let repository = try LocalChatRepository(url: root.appendingPathComponent("held-grant.sqlite"))
+    private static func heldContextRejection(_ root: URL, stage: String, holdAt: Int) async throws {
+        let repository = try LocalChatRepository(url: root.appendingPathComponent("held-\(stage).sqlite"))
         var memory = try fixture(repository)
         var settings = NativeMemorySettings.fresh
         settings.enabled = true; settings.bankScope = "farm"
@@ -281,8 +282,8 @@ enum NativeRuntimeMemorySelftest {
             try bridge.bindAssistant(assistant)
             let provider = NativeRuntimeMemoryProvider()
             let gate = NativeRuntimeMemoryGrantGate()
-            let ledger = try PiModelLedger(root: root.appendingPathComponent("held-grant-broker"), manifest: "shared-memory")
-            let accounting = try PiSharedAccounting(root: root.appendingPathComponent("held-grant-provider"), baselineNanos: 0)
+            let ledger = try PiModelLedger(root: root.appendingPathComponent("held-\(stage)-broker"), manifest: "shared-memory")
+            let accounting = try PiSharedAccounting(root: root.appendingPathComponent("held-\(stage)-provider"), baselineNanos: 0)
             let admission = PiAdmissionFixtureProtocol.admission()
             defer { admission.session.invalidateAndCancel() }
             var operation = PiSelectedProfileOperation(binding: profile, admission: admission, accounting: accounting,
@@ -293,7 +294,7 @@ enum NativeRuntimeMemorySelftest {
                 let held = binding(assistant)
                 try bridge.authorize(held, query: "Current livestock?")
                 let scope = try await broker.authorize(held)
-                await gate.hold(at: 4)
+                await gate.hold(at: holdAt)
                 let running = Task { try await broker.complete(NativePiModelBrokerFixture.request(scope, channel: "fixture", text: "Current livestock?")) }
                 for _ in 0..<400 where !(await gate.waiting) { try await Task.sleep(for: .milliseconds(5)) }
                 try piCheck(await gate.waiting)
@@ -324,7 +325,7 @@ enum NativeRuntimeMemorySelftest {
             await broker.close()
             bridge.close()
         }
-        print("  shared memory: context change during held admission rejected with no spend, broker and reopened ledger keep serving PASS")
+        print("  shared memory: context change during \(stage) rejected with no spend, broker and reopened ledger keep serving PASS")
     }
 
     private static func brokerLifecycle(_ root: URL) async throws {

@@ -51,12 +51,15 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
         try await request.validateHostTools()
     }
     func validateOwner() async throws { try await validate() }
+    func prepareBeforeDispatch(_ request: PiModelRequest) async throws -> PiModelRequest {
+        do { return try await prepareRequest(request) } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
+    }
     func validateBeforeDispatch(_ request: PiModelRequest) async throws {
         do { try await validateRequest(request) } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
     }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
         try await validate()
-        let request = try await prepareRequest(request)
+        let request = try await prepareBeforeDispatch(request)
         let body = try checkpointPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
         try piCheck(body.count <= 16384)
         return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
