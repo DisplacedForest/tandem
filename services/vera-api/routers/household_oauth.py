@@ -194,8 +194,12 @@ class OAuth:
             raise OAuthError()
         with self.store.tx() as db:
             self.client(db, data.get("client_id", ""), data.get("redirect_uri", ""))
-        payload = base64.urlsafe_b64encode(json.dumps({**data, "exp": time.time() + 600, "nonce": random_value()}, separators=(",", ":")).encode()).decode().rstrip("=")
+            db.execute("UPDATE oauth_clients SET expires=max(expires, ?) WHERE id=?", (time.time() + 600, data["client_id"]))
+        payload = base64.urlsafe_b64encode(json.dumps({**data, "exp": time.time() + 600, "nonce": random_value()}, separators=(",", ":"), ensure_ascii=False).encode()).decode().rstrip("=")
         return payload + "." + hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()
+
+    def binding(self, session: str) -> str:
+        return self.session(session)["nonce"]
 
     def session(self, value: str) -> dict:
         if not isinstance(value, str) or value.count(".") != 1 or len(value) > 8192:
@@ -211,10 +215,13 @@ class OAuth:
             raise OAuthError("access_denied", 403)
         return data
 
-    def consent(self, session: str, csrf: str, enrollment: str) -> str:
-        if not session or not hmac.compare_digest(session.encode(), csrf.encode()):
+    def consent(self, cookie: str, session: str, enrollment: str) -> str:
+        if not cookie or not session:
             raise OAuthError("access_denied", 403)
-        data = {key: value for key, value in self.session(session).items() if key not in ("exp", "nonce")}
+        parsed = self.session(session)
+        if not (hmac.compare_digest(cookie.encode(), session.encode()) or hmac.compare_digest(cookie.encode(), str(parsed["nonce"]).encode())):
+            raise OAuthError("access_denied", 403)
+        data = {key: value for key, value in parsed.items() if key not in ("exp", "nonce")}
         failure = False
         with self.store.tx() as db:
             entry = db.execute("SELECT * FROM oauth_enrollment WHERE hash=? AND expires>?", (digest(enrollment), time.time())).fetchone()
@@ -227,6 +234,7 @@ class OAuth:
                 self.room(db, "oauth_codes", 128)
                 value = random_value()
                 db.execute("INSERT INTO oauth_codes VALUES (?,?,?)", (digest(value), json.dumps(data), min(time.time() + 300, row["expires"])))
+                db.execute("UPDATE oauth_clients SET expires=max(expires, ?) WHERE id=?", (time.time() + 300, data["client_id"]))
                 db.execute("DELETE FROM oauth_enrollment WHERE hash=?", (entry["hash"],))
         if failure:
             raise OAuthError("access_denied", 403)
@@ -396,7 +404,7 @@ async def authorize(request: Request) -> Response:
         session = await run_in_threadpool(oauth.authorize, dict(request.query_params))
         page = Template('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect your inbox</title><main><h1>Connect your inbox</h1><p>Enter your one-time inbox code. Connecting lets ChatGPT read your inbox, receive notifications, and share messages only when you ask. Your other conversations stay separate.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="$csrf"><label>Inbox code <input name="enrollment" type="password" required maxlength="128" autocomplete="off"></label><button type="submit" name="action" value="connect">Connect</button></form><p>Close this window to cancel.</p></main></html>').substitute(csrf=html.escape(session, quote=True))
         response = HTMLResponse(page, headers=HEADERS)
-        response.set_cookie(COOKIE, session, max_age=600, secure=True, httponly=True, samesite="lax", path="/")
+        response.set_cookie(COOKIE, oauth.binding(session), max_age=600, secure=True, httponly=True, samesite="lax", path="/")
         return response
     except OAuthError as error:
         return error_response(error)

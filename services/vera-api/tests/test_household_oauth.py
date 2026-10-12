@@ -460,8 +460,9 @@ def test_consent_sessions_are_signed_and_expire(setup, monkeypatch):
     oauth, _, _ = setup
     session = oauth.authorize(authorization(oauth))
     payload, signature = session.split(".")
+    flipped = payload + "." + ("1" if signature[0] == "0" else "0") + signature[1:]
     with pytest.raises(OAuthError):
-        oauth.consent(payload + ".0" + signature[1:], payload + ".0" + signature[1:], oauth.enroll("alpha"))
+        oauth.consent(flipped, flipped, oauth.enroll("alpha"))
     with pytest.raises(OAuthError):
         oauth.consent(session + "x", session + "x", oauth.enroll("alpha"))
     real = time.time
@@ -504,3 +505,33 @@ def test_idle_durable_clients_are_demoted_not_deleted(setup):
     assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
     with oauth.store.tx() as db:
         assert db.execute("SELECT provisional FROM oauth_clients WHERE id=?", (connected,)).fetchone()[0] == 0
+
+
+def test_cookie_binding_stays_small_and_client_outlives_its_session(setup, monkeypatch):
+    oauth, client, _ = setup
+    data = authorization(oauth)
+    data["state"] = "\u00e9" * 550
+    response = client.get("/oauth/authorize", params=data)
+    assert response.status_code == 200
+    cookie = response.cookies.get(COOKIE)
+    assert cookie and len(cookie) < 200
+    csrf = re.search('name="csrf" value="([^"]+)"', response.text)[1]
+    response = client.post("/oauth/authorize", data={"csrf": csrf, "enrollment": oauth.enroll("beta"), "action": "connect"}, headers={"Origin": ORIGIN}, follow_redirects=False)
+    assert response.status_code == 303
+    assert parse_qs(urlsplit(response.headers["location"]).query)["state"] == [data["state"]]
+    result, connected = tokens(oauth)
+    oauth.revoke({"client_id": connected, "token": result["refresh_token"]})
+    with oauth.store.tx() as db:
+        oauth.cleanup(db)
+    module = __import__("routers.household_oauth", fromlist=["time"])
+    real = time.time
+    offset = 0
+    monkeypatch.setattr(module.time, "time", lambda: real() + offset)
+    offset = 590
+    session = oauth.authorize(authorization(oauth, connected))
+    offset = 1181
+    target = oauth.consent(session, session, oauth.enroll("alpha"))
+    grant_code = parse_qs(urlsplit(target).query)["code"][0]
+    offset = 1470
+    renewed = oauth.token({"grant_type": "authorization_code", "client_id": connected, "redirect_uri": REDIRECT, "resource": oauth.resource, "code": grant_code, "code_verifier": VERIFIER})
+    assert oauth.principal("Bearer " + renewed["access_token"]) == "alpha"
