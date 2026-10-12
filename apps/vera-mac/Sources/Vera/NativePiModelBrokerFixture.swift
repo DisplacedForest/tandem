@@ -247,6 +247,25 @@ enum NativePiModelBrokerFixture {
         try budgetLedger.settle(fourth.id, reply: spent)
         try await rejected(.budget) { _ = try budgetLedger.reserve(third) }
         try piCheck(try budgetLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
+        let documentLedger = try PiModelLedger(root: root.appendingPathComponent("document"), manifest: "fixture", budget: 10_000_000, requestLimit: 13)
+        let fifth = try parsed(root, id: UUID().uuidString.lowercased())
+        let sixth = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try documentLedger.reserve(fifth) == nil)
+        documentLedger.reject(fifth.id)
+        try piCheck(try documentLedger.reserve(sixth) == nil)
+        let partial: PiValue = .object(["content": .array([.object(["type": .string("text"), "text": .string("fixture")])]), "usage": .object(["input": .number(20), "output": .number(4), "cost_usd": .number(0.006)])])
+        try documentLedger.settle(sixth.id, reply: partial)
+        try await rejected(.budget) { _ = try documentLedger.reserve(fifth) }
+        try piCheck(try documentLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["rejected", "completed"])
+        let unsentLedger = try PiModelLedger(root: root.appendingPathComponent("unsent"), manifest: "fixture")
+        let seventh = try parsed(root, id: UUID().uuidString.lowercased())
+        let eighth = try parsed(root, id: UUID().uuidString.lowercased())
+        try piCheck(try unsentLedger.reserve(seventh) == nil)
+        unsentLedger.reject(seventh.id)
+        try piCheck(try unsentLedger.reserve(eighth) == nil)
+        try unsentLedger.notSent(eighth.id)
+        try piCheck(try unsentLedger.reserve(seventh) == nil)
+        try piCheck(try unsentLedger.snapshot().piArray!.map { $0.pi("status").piString! } == ["reserved", "not_sent"])
     }
     static func cancellationDuringValidation(_ root: URL) async throws {
         for (name, checksCancellation) in [("throwing", true), ("silent", false)] {

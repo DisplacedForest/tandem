@@ -151,9 +151,9 @@ final class PiModelLedger: @unchecked Sendable {
             if let row = try Row.fetchOne(db, sql: "SELECT digest,status,reply FROM requests WHERE id=?", arguments: [request.id]) {
                 try piCheck(row["digest"] as String == request.digest, .duplicate)
                 if row["status"] as String == "rejected" {
-                    try piCheck(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM requests WHERE status NOT IN ('completed','reserved','rejected')") == 0, .uncertain)
+                    try piCheck(try !Self.unresolved(db, subject: request.scope.subject), .uncertain)
                     let exposure = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(COALESCE(charged,reserved)),0) FROM requests") ?? budget
-                    try piCheck(exposure <= budget - baseline - 1_000_000, .budget)
+                    try piCheck(exposure <= budget - baseline - reservation, .budget)
                     try db.execute(sql: "UPDATE requests SET status='reserved',charged=NULL WHERE id=? AND status='rejected'", arguments: [request.id])
                     return nil
                 }
