@@ -116,6 +116,7 @@ class OAuth:
         return hashed if row else "anonymous"
 
     def cleanup(self, db: sqlite3.Connection) -> None:
+        db.execute("UPDATE oauth_grants SET revoked=1 WHERE revoked=0 AND client IN (SELECT id FROM oauth_clients WHERE expires<=?)", (time.time(),))
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
         db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (time.time(),))
         db.execute("""DELETE FROM oauth_tokens WHERE rowid IN (SELECT rowid FROM (
@@ -266,7 +267,11 @@ class OAuth:
                 value = json.loads(row["payload"])
                 if not isinstance(data.get("client_id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["client_id"]):
                     raise OAuthError("invalid_client")
-                db.execute("INSERT INTO oauth_clients VALUES (?,?,?,1) ON CONFLICT(id) DO UPDATE SET expires=max(expires, excluded.expires)", (value["client_id"], json.dumps([value["redirect_uri"]]), time.time() + 600))
+                existing = db.execute("SELECT expires FROM oauth_clients WHERE id=?", (value["client_id"],)).fetchone()
+                if existing is not None and existing[0] <= time.time():
+                    raise OAuthError("invalid_client")
+                if existing is None:
+                    db.execute("INSERT INTO oauth_clients VALUES (?,?,?,1)", (value["client_id"], json.dumps([value["redirect_uri"]]), time.time() + 600))
                 verifier = data.get("code_verifier", "")
                 if value["client_id"] != data["client_id"] or value["redirect_uri"] != data.get("redirect_uri") or value["resource"] != data["resource"] or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier) or not hmac.compare_digest(challenge(verifier), value["code_challenge"]):
                     raise OAuthError("invalid_grant")

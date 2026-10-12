@@ -582,3 +582,24 @@ def test_pathological_state_is_refused_before_consent(setup):
     data["state"] = "s" * 1024
     session = oauth.authorize(data)
     assert len(session) + 300 <= 8192
+
+
+def test_deliberately_expired_clients_are_not_revived_by_redemption(setup):
+    oauth, _, _ = setup
+    result, connected = tokens(oauth)
+    request = code(oauth, data=authorization(oauth, connected))
+    with oauth.store.tx() as db:
+        db.execute("UPDATE oauth_clients SET expires=0 WHERE id=?", (connected,))
+    with pytest.raises(OAuthError):
+        oauth.token(request)
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + result["access_token"])
+    with oauth.store.tx() as db:
+        oauth.cleanup(db)
+        assert db.execute("SELECT count(*) FROM oauth_clients WHERE id=?", (connected,)).fetchone()[0] == 0
+    fresh = oauth.token(request)
+    assert oauth.principal("Bearer " + fresh["access_token"]) == "alpha"
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + result["access_token"])
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, result, connected))
