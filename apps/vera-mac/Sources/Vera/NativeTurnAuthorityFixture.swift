@@ -25,7 +25,7 @@ enum NativeTurnAuthorityFixture {
         try require(NativeTurnToolAuthority(second).filter(["apple-reminders", NativeWebTools.researchToolID]).isEmpty,
                     "No-tools applies to every tool family")
         try await concurrent()
-        try dispatchDenial()
+        try await dispatchDenial()
         try durableEnrollment()
         print("CURRENT TURN AUTHORITY OK (concurrent context, denied stale request, one enrollment, identifier-free receipt)")
     }
@@ -89,7 +89,7 @@ enum NativeTurnAuthorityFixture {
         store.conversationTurnLoop?.cancel()
     }
 
-    static func dispatchDenial() throws {
+    static func dispatchDenial() async throws {
         let repository = try LocalChatRepository(inMemory: true)
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
@@ -99,7 +99,7 @@ enum NativeTurnAuthorityFixture {
         store.suspendsTurnScheduling = true
         store.sendText(second)
         let accepted = try repository.conversationTurns()[0]
-        try repository.database.write { db in
+        try await repository.database.write { db in
             try db.execute(sql: "UPDATE native_conversation_turns SET record_json=json_set(record_json, '$.enabledToolIDs', json(?)) WHERE id=?",
                            arguments: ["[\"deep-research\"]", accepted.id.uuidString])
         }
@@ -107,7 +107,9 @@ enum NativeTurnAuthorityFixture {
         store.turnExecutions[turn.id] = NativeTurnExecution(turn)
         let activity = NativeToolActivity(id: "stale-request", toolID: NativeTaskTools.toolID, name: NativeTaskTools.toolName,
             title: "Start background research", round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false)
-        try NativeTaskFixture.require(store.turnCurrent(turn) && !store.prepareTurnDispatch(activity, turn: turn),
+        let current = await store.turnCurrency(turn)
+        let dispatched = await store.prepareTurnDispatch(activity, turn: turn)
+        try NativeTaskFixture.require(current == .current && !dispatched,
                                       "Current request restrictions override legacy captured permissions before the dispatch marker")
         let saved = try repository.messages(conversationID: store.selectedID!)
         try NativeTaskFixture.require(saved.last?.toolActivities.isEmpty == true && repository.taskReferences(conversationID: nil).isEmpty,

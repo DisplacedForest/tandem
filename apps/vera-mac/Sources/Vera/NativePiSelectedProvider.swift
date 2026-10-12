@@ -99,9 +99,7 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
                     try budget.check()
                     try piCheck(status == 200 && data.count <= 65536, .unavailable)
                     let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
-                    try await validateRequest(request)
                     try await accounting.settle(request, reply: reply)
-                    try await validateRequest(request)
                     return reply
                 } catch {
                     await accounting.uncertain(request)

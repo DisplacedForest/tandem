@@ -302,20 +302,21 @@ actor NativePiModelBroker {
             if !Task.isCancelled { operation.cancel(); race.resolve(.failure(PiBrokerError.unavailable)) }
         }
         defer { timer.cancel(); receiver.cancel(); active.removeValue(forKey: request.id) }
+        let reply: PiValue
+        var rejection: Error?
         do {
-            let reply = try await withTaskCancellationHandler {
+            reply = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { race.install($0) }
             } onCancel: {
                 operation.cancel(); race.resolve(.failure(CancellationError()))
             }
             try Task.checkCancellation()
             try piCheck(!closed && Date() < expires && !operation.isCancelled, .canceled)
-            try await executor.validateRequest(request)
+            do { try await executor.validateRequest(request) } catch { rejection = error }
             try piCheck(!closed && !quarantined && Date() < expires && !canceled.contains(request.id) && scopes[scope.id]?.binding == scope.binding, .unauthorized)
             try piCheck(try await toolSnapshot(scope) == snapshot, .unauthorized)
             try PiModelReply.validate(reply, request: request)
             try ledger.settle(request.id, reply: reply)
-            return reply
         } catch {
             if error is PiInferenceNotDispatched {
                 try ledger.notSent(request.id)
@@ -325,6 +326,8 @@ actor NativePiModelBroker {
             }
             throw error
         }
+        if let rejection { throw rejection }
+        return reply
     }
     func toolCatalog(_ scope: PiModelScope) async throws -> [NativeToolSchema] {
         try await toolSnapshot(scope).schemas

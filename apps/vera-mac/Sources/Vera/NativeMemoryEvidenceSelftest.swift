@@ -106,6 +106,7 @@ enum NativeMemoryEvidenceSelftest {
         try migration(directory)
         try await adversarial(directory)
         try await admissionAndRounds(directory)
+        try await extractionRevocation(directory)
         print("native-memory-evidence: PASS (cross-chat correction, reopen, planned care, citation, edit route, scope, expiry, budget, off, removal, replay; zero model calls)")
     }
 
@@ -306,6 +307,61 @@ enum NativeMemoryEvidenceSelftest {
         print("  memory dispatch: PASS (real client queued admission, streaming/nonstreaming remove/exclude/off, later tool round; zero model HTTP requests in admission fixtures)")
     }
 
+    private static func extractionRevocation(_ directory: URL) async throws {
+        for queued in [false, true] {
+            NativeMemoryAdmissionProtocol.state.reset()
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [NativeMemoryAdmissionProtocol.self]
+            let session = URLSession(configuration: config)
+            defer { session.invalidateAndCancel() }
+            let repository = try LocalChatRepository(url: directory.appendingPathComponent("extraction-\(queued).sqlite"))
+            let (_, revoked) = try fixture(repository, name: "revoked")
+            let now = Date()
+            let kept = NativeMemoryRecord(id: "kept", title: "Drinks", summary: "Prefers green tea",
+                details: ["The user prefers green tea"], group: .you, category: .preference, bank: "personal",
+                durability: .durable, expiry: nil, status: .approved, embedding: nil, sourceConversationID: nil,
+                sourceMessageID: nil, createdAt: now, updatedAt: now)
+            try repository.saveMemory(kept, decision: .accepted, note: "Synthetic approved fixture")
+            func exclude() throws {
+                var conversation = try repository.listConversations().first { $0.id == "revoked" }!
+                conversation.memoryExcluded = true
+                try repository.saveConversation(conversation)
+            }
+            if !queued {
+                try exclude()
+                NativeMemoryAdmissionProtocol.state.allow()
+            }
+            let service = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
+                baseURL: URL(string: "https://fixture.example/v1")!, apiKey: nil, embeddingsModel: "",
+                extractionModel: "fixture-extraction"), session: session,
+                admission: NativeInferenceAdmission(baseURL: URL(string: "https://fixture.example")!, session: session))
+            var settings = NativeMemorySettings.fresh
+            settings.enabled = true
+            settings.generateFromChats = true
+            let store = ChatStore(nativeConfig: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil, model: "local-model", chatTemplateKwargs: nil), nativeTransport: SelfTestNativeTransport(),
+                repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
+            store.newConversation()
+            store.sendText("I like morning walks before work")
+            if queued {
+                for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.acquires == 0 {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                try require(NativeMemoryAdmissionProtocol.state.acquires > 0, "extraction never queued for admission")
+                try exclude()
+                NativeMemoryAdmissionProtocol.state.allow()
+            }
+            for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.bodies.isEmpty {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let body = NativeMemoryAdmissionProtocol.state.bodies.joined()
+            try require(body.contains(kept.summary), "extraction request lost eligible memory")
+            try require(!body.contains(revoked.summary) && !body.contains(revoked.details[0]) && !body.contains(revoked.id),
+                        "excluded source reached extraction " + (queued ? "after queued admission" : "request"))
+        }
+        print("  memory extraction: PASS (excluded source absent from extraction before and during queued admission)")
+    }
+
     private static func require(_ condition: Bool, _ reason: String) throws {
         if !condition { throw NSError(domain: "MemoryEvidenceTest", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) }
     }
@@ -327,12 +383,14 @@ private final class NativeMemoryAdmissionState: @unchecked Sendable {
     private var admitted = false
     private var acquireCount = 0
     private var completionCount = 0
+    private var completionBodies: [String] = []
     var acquires: Int { lock.withLock { acquireCount } }
     var completions: Int { lock.withLock { completionCount } }
-    func reset() { lock.withLock { admitted = false; acquireCount = 0; completionCount = 0 } }
+    var bodies: [String] { lock.withLock { completionBodies } }
+    func reset() { lock.withLock { admitted = false; acquireCount = 0; completionCount = 0; completionBodies = [] } }
     func allow() { lock.withLock { admitted = true } }
-    func acquire() -> String { lock.withLock { acquireCount += 1; return admitted ? "admitted" : "queued" } }
-    func complete() { lock.withLock { completionCount += 1 } }
+    func acquire() -> String { lock.withLock { acquireCount += 1; return admitted ? "admitted" : "pending" } }
+    func complete(_ body: Data) { lock.withLock { completionCount += 1; completionBodies.append(String(decoding: body, as: UTF8.self)) } }
 }
 
 private final class NativeMemoryAdmissionProtocol: URLProtocol, @unchecked Sendable {
@@ -346,7 +404,7 @@ private final class NativeMemoryAdmissionProtocol: URLProtocol, @unchecked Senda
             stream.open()
             defer { stream.close() }
             var bytes = [UInt8](repeating: 0, count: 1024)
-            while stream.hasBytesAvailable && data.count < 8192 {
+            while stream.hasBytesAvailable && data.count < 65536 {
                 let count = stream.read(&bytes, maxLength: bytes.count)
                 if count <= 0 { break }
                 data.append(contentsOf: bytes.prefix(count))
@@ -363,7 +421,7 @@ private final class NativeMemoryAdmissionProtocol: URLProtocol, @unchecked Senda
                 "generation_seconds_remaining": 30, "lease_seconds_remaining": 30, "poll_seconds": 0.01,
                 "queue_seconds": 30, "queue_wait_seconds": 0]
         } else {
-            Self.state.complete()
+            Self.state.complete(data)
             body = ["choices": [["message": ["content": "Unexpected model request"], "finish_reason": "stop"]]]
         }
         let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!

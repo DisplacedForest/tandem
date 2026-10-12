@@ -45,7 +45,7 @@ docs/                   SETUP.md + screenshots
 
 ```sh
 cd services/vera-api
-pip install -r requirements.txt pytest
+pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 

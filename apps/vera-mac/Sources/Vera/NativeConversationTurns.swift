@@ -110,6 +110,12 @@ struct NativeConversationTurnHeader: Equatable, Sendable {
     let attempt: String?
 }
 
+enum NativeTurnCurrency: Sendable, Equatable {
+    case current
+    case superseded
+    case unconfirmed
+}
+
 protocol NativeConversationTurnRepository: Sendable {
     func conversationTurns() throws -> [NativeConversationTurn]
     func conversationTurnChangeToken() throws -> [Int64]
@@ -123,6 +129,13 @@ protocol NativeConversationTurnRepository: Sendable {
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws
     func finishTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int) throws
     func retryTurn(_ id: UUID, profile: String) throws
+}
+
+extension NativeConversationTurnRepository {
+    func turnCurrency(_ id: UUID, attempt: UUID) -> NativeTurnCurrency {
+        do { return try turnIsCurrent(id, attempt: attempt) ? .current : .superseded }
+        catch { return .unconfirmed }
+    }
 }
 
 extension LocalChatRepository: NativeConversationTurnRepository {

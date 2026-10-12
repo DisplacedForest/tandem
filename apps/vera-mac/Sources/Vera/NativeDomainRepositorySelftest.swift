@@ -24,6 +24,27 @@ enum NativeDomainRepositorySelftest {
             evidence: .asserted, entityResolved: true, status: .supported, supersedes: supersedes, payload: payload)
     }
 
+    static func futureClear(_ directory: URL) throws {
+        let url = directory.appendingPathComponent("future-clear.sqlite")
+        var repository = try LocalChatRepository(url: url)
+        let entity = UUID()
+        let tomorrow = Date().addingTimeInterval(86_400)
+        let fact = try fixture(repository, entity: entity, text: "The flock moves to the south pasture tomorrow.",
+            at: tomorrow.timeIntervalSince1970, payload: .fact(predicate: "Pasture", value: "south", quantity: nil))
+        try repository.approveDomainProposal(repository.stageDomainProposal(fact, label: "Pasture")!)
+        try require(try repository.approvedMemories().isEmpty, "future fact projected before its date")
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        store.clearNativeMemory()
+        try require(try repository.domainEntries(entity, scope: "farm").allSatisfy { $0.payload == nil && $0.source == nil }, "cleared future fact retained private payload")
+        let later = tomorrow.addingTimeInterval(86_400)
+        try repository.refreshDomainProjections(now: later)
+        repository = try LocalChatRepository(url: url)
+        try repository.refreshDomainProjections(now: later)
+        try require(try repository.approvedMemories().isEmpty, "cleared future fact became approved memory without a new approval")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -131,6 +152,7 @@ enum NativeDomainRepositorySelftest {
         try await privacyAndValidation()
         try await migrationAndRestore(directory)
         try await correctionPrivacy()
+        try futureClear(directory)
         print("domain-repository: PASS (review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 

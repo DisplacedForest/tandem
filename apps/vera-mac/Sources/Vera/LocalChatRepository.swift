@@ -22,6 +22,7 @@ protocol ChatRepository: Sendable {
 protocol NativeMemoryRepository: Sendable {
     func allMemories() throws -> [NativeMemoryRecord]
     func approvedMemories() throws -> [NativeMemoryRecord]
+    func extractionMemories() throws -> [NativeMemoryRecord]
     func pendingProposals() throws -> [NativeMemoryProposal]
     func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String, expected: NativeMemoryRecord?) throws
     func saveProposal(_ proposal: NativeMemoryProposal) throws
