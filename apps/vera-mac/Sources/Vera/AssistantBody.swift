@@ -5,6 +5,7 @@ import MarkdownUI
 struct AssistantBody: View {
     @EnvironmentObject var store: ChatStore
     let message: Message
+    var nativeActions = true
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
 
@@ -36,7 +37,7 @@ struct AssistantBody: View {
                 }
             }
             if message.ask != nil {
-                VeraAskCard(message: message, canAnswer: store.canSubmitChat, onAnswer: onAnswer)
+                VeraAskCard(message: message, canAnswer: nativeActions && store.canSubmitChat, onAnswer: onAnswer)
             }
             ForEach(message.artifacts) { art in
                 Button { onOpenArtifact?(art) } label: { ArtifactChip(artifact: art) }.buttonStyle(.plain)
@@ -49,8 +50,10 @@ struct AssistantBody: View {
             if !parsed.clean.isEmpty {
                 HStack(spacing: 16) {
                     msgAction("doc.on.doc") { copyText(parsed.clean) }
+                    if nativeActions {
                     msgAction("hand.thumbsup", on: store.messageRatings[message.id] == "up") { rate("up") }
                     msgAction("hand.thumbsdown", on: store.messageRatings[message.id] == "down") { rate("down") }
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -59,7 +62,7 @@ struct AssistantBody: View {
     }
 
     private func rate(_ sentiment: String) {
-        if let convo = store.selected { store.rateMessage(message, in: convo, sentiment) }
+        if nativeActions, let convo = store.selected { store.rateMessage(message, in: convo, sentiment) }
     }
 
     private func copyText(_ text: String) {
@@ -81,10 +84,20 @@ struct AssistantBody: View {
 struct ProseMarkdown: View {
     let text: String
     var body: some View {
+        StableProseMarkdown(text: text).equatable()
+    }
+}
+
+private struct StableProseMarkdown: View, Equatable {
+    let text: String
+    private static let proseTheme = MarkdownUI.Theme.basic
+        .text { ForegroundColor(Theme.textPrimary); FontSize(14) }
+        .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
+        .link { ForegroundColor(Theme.accent) }
+
+    var body: some View {
         Markdown(SourceFormatter.apply(text))
-            .markdownTextStyle { ForegroundColor(Theme.textPrimary); FontSize(14) }
-            .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
-            .markdownTextStyle(\.link) { ForegroundColor(Theme.accent) }
+            .markdownTheme(Self.proseTheme)
             .textSelection(.enabled)
     }
 }

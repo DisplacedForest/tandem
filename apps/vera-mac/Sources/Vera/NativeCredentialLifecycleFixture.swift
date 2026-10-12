@@ -2,15 +2,32 @@ import Foundation
 import Security
 import LocalAuthentication
 
+final class NativeCredentialFixtureContext: LAContext {
+    var refusesInteractionFlag = false
+    private var disabled = false
+    override var interactionNotAllowed: Bool {
+        get { disabled }
+        set { if !refusesInteractionFlag { disabled = newValue } }
+    }
+}
+
 final class NativeCredentialFixtureStore: NativeCredentialStore {
     var values: [String: String] = [:]
     var denied: Set<String> = []
     var failWrites = false
     var writes: [String] = []
+    var reads: [String] = []
+    var startupReads: [String] = []
 
     func read(for profileID: String) throws -> String? {
+        reads.append(profileID)
         if denied.contains(profileID) { throw NativeCredentialError.read }
         return values[profileID]
+    }
+
+    @MainActor func readForStartup(for profileID: String) throws -> String? {
+        startupReads.append(profileID)
+        return try read(for: profileID)
     }
 
     func set(_ value: String?, for profileID: String) throws {
@@ -34,6 +51,7 @@ enum NativeCredentialLifecycleFixture {
         try deniedReads()
         try migration()
         try keychainOperations()
+        try startupInteraction()
         print("NATIVE CREDENTIAL LIFECYCLE FIXTURE OK")
     }
 
@@ -155,19 +173,90 @@ enum NativeCredentialLifecycleFixture {
             "Migration must not overwrite an item created after the initial read")
     }
 
+    static func startupInteraction() throws {
+        var reads = 0
+        var prohibitedInteraction = 0
+        var writes = 0
+        var interactionAllowed = true
+        var forceReadbackFailure = false
+        var refuseDisable = false
+        var readStatus = errSecInteractionNotAllowed
+        var refuseContext = false
+        let operations = NativeKeychainOperations(authenticationContext: {
+            let context = NativeCredentialFixtureContext()
+            context.refusesInteractionFlag = refuseContext
+            return context
+        }, interactionAllowed: {
+            (errSecSuccess, forceReadbackFailure ? true : interactionAllowed)
+        }, setInteraction: { allowed in
+            if !allowed && refuseDisable { return errSecAuthFailed }
+            interactionAllowed = allowed
+            return errSecSuccess
+        }, read: { query, result in
+            reads += 1
+            let context = (query as NSDictionary)[kSecUseAuthenticationContext] as? LAContext
+            if context?.interactionNotAllowed == true {
+                prohibitedInteraction += 1
+                guard !interactionAllowed,
+                      (query as NSDictionary)[kSecUseAuthenticationUI] as? String == kSecUseAuthenticationUIFail as String else {
+                    return errSecAuthFailed
+                }
+                result?.pointee = Data("synthetic-startup-read".utf8) as CFData
+                return readStatus
+            }
+            result?.pointee = Data("synthetic-explicit-read".utf8) as CFData
+            return errSecSuccess
+        }, update: { _, _ in writes += 1; return errSecSuccess },
+           add: { _, _ in writes += 1; return errSecSuccess }, delete: { _ in writes += 1; return errSecSuccess })
+        let credentials = KeychainNativeCredentialStore(operations: operations)
+        let raw = configuration()
+        let config = ConfigStore(credentialStore: credentials, readConfiguration: { raw }, writeConfiguration: { _ in })
+        try NativeTaskFixture.require(reads == 2 && prohibitedInteraction == 2 && writes == 0,
+            "Every startup credential read must prohibit interaction without changing saved items")
+        try NativeTaskFixture.require(config.credentialError != nil && config.activeNativeAPIKey.isEmpty,
+            "Denied startup access must return an unavailable state so the application can open")
+        config["appearance"] = "dark"
+        try config.save()
+        try NativeTaskFixture.require(writes == 0, "An unavailable startup credential must survive unrelated settings saves")
+        try NativeTaskFixture.require(try credentials.read(for: "fixture-profile") == "synthetic-explicit-read"
+            && prohibitedInteraction == 2 && credentials.allowsInteraction,
+            "Startup read policy must not mutate the existing explicit credential path")
+        try NativeTaskFixture.require(interactionAllowed, "Denied startup reads must restore the prior process policy")
+        readStatus = errSecSuccess
+        try NativeTaskFixture.require(try credentials.readForStartup(for: "fixture-profile") == "synthetic-startup-read" && interactionAllowed,
+            "Successful startup reads must restore interaction policy")
+        interactionAllowed = false
+        _ = try credentials.readForStartup(for: "fixture-profile")
+        try NativeTaskFixture.require(!interactionAllowed, "An initially noninteractive process must remain noninteractive")
+        interactionAllowed = true
+        refuseDisable = true
+        let before = reads
+        try expectFailure { _ = try credentials.readForStartup(for: "fixture-profile") }
+        try NativeTaskFixture.require(reads == before && interactionAllowed, "Failed suppression must refuse before any item read")
+        refuseDisable = false
+        forceReadbackFailure = true
+        try expectFailure { _ = try credentials.readForStartup(for: "fixture-profile") }
+        try NativeTaskFixture.require(reads == before && interactionAllowed, "Unverified suppression must refuse and restore without reading")
+        forceReadbackFailure = false
+        refuseContext = true
+        try expectFailure { _ = try credentials.readForStartup(for: "fixture-profile") }
+        try NativeTaskFixture.require(reads == before && interactionAllowed, "An unverified authentication context must refuse before item access and restore")
+    }
+
     static func keychainOperations() throws {
         var calls: [String] = []
         var updateStatus = errSecSuccess
         var addStatus = errSecSuccess
         var deleteStatus = errSecSuccess
         var readStatus = errSecSuccess
+        var readValue: CFTypeRef = Data("synthetic-read".utf8) as CFData
         var checkedContext = false
         var onlyValueUpdated = false
-        let operations = NativeKeychainOperations(read: { query, result in
+        let operations = NativeKeychainOperations(authenticationContext: { NativeCredentialFixtureContext() }, read: { query, result in
             calls.append("read")
             let dictionary = query as NSDictionary
             checkedContext = (dictionary[kSecUseAuthenticationContext] as? LAContext)?.interactionNotAllowed == true
-            result?.pointee = Data("synthetic-read".utf8) as CFData
+            result?.pointee = readValue
             return readStatus
         }, update: { _, attributes in
             calls.append("update")
@@ -178,6 +267,13 @@ enum NativeCredentialLifecycleFixture {
         let store = KeychainNativeCredentialStore(allowsInteraction: false, operations: operations)
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == "synthetic-read" && checkedContext,
             "Noninteractive reads must retain the existing no-prompt authentication context")
+        for malformed: CFTypeRef in [Data([0xff]) as CFData, "synthetic-invalid-type" as CFString] {
+            readValue = malformed
+            do {
+                _ = try store.read(for: "fixture-profile")
+                throw NativeTaskFixture.Failure.assertion("Malformed data must fail")
+            } catch NativeCredentialError.format {}
+        }
         readStatus = errSecItemNotFound
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == nil, "Only item-not-found is absence")
         readStatus = errSecAuthFailed

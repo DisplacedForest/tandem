@@ -123,8 +123,11 @@ struct NativeToolDefinition: Sendable {
     let parameters: NativeJSONValue
     let confirmation: NativeToolConfirmation
     var timeout: Duration? = nil
+    var resultByteBudget = NativeToolResultBudget.defaultBytes
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
+
+    var argumentValidator: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
@@ -135,6 +138,12 @@ struct NativeToolDefinition: Sendable {
               let any = try? JSONSerialization.jsonObject(with: data),
               let object = any as? [String: Any] else {
             throw NativeToolError.invalidArguments("Expected a JSON object")
+        }
+        if let argumentValidator {
+            try NativeMCPWireJSON.validate(data, maximumBytes: 16384)
+            guard data.count <= 16384, let values = try NativeJSONValue.piRead(data).piObject else { throw NativeToolError.invalidArguments("Expected a bounded JSON object") }
+            do { try argumentValidator(values) } catch { throw NativeToolError.invalidArguments("Arguments do not match the connected service schema") }
+            return values
         }
         let values = try object.mapValues { try NativeJSONValue(any: $0) }
         guard case .object(let schema) = parameters,
@@ -513,11 +522,6 @@ struct NativeToolLoop: Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let active = registry.active(enabledIDs: enabledToolIDs)
-                    let definitions = Dictionary(
-                        active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-                    var seen: Set<String> = []
-                    let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                     var history = messages
                     var content = ""
                     var activities: [NativeToolActivity] = []
@@ -527,9 +531,16 @@ struct NativeToolLoop: Sendable {
                     var searchResults: [String: NativeJSONValue] = [:]
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
+                        let active = registry.active(enabledIDs: enabledToolIDs)
+                        let definitions = Dictionary(active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                        var seen: Set<String> = []
+                        let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                         var last = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                         do {
-                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas) {
+                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas, validateRequest: {
+                                try await validateModelRequest()
+                                guard active.allSatisfy({ $0.isAvailable() }) else { throw NativeToolError.unavailable }
+                            }) {
                                 try Task.checkCancellation()
                                 last = snapshot
                                 for call in snapshot.toolCalls {
@@ -593,6 +604,7 @@ struct NativeToolLoop: Sendable {
                         var stopped = false
                         for call in last.toolCalls {
                             try Task.checkCancellation()
+                            let resultBudget = definitions[call.name]?.resultByteBudget ?? NativeToolResultBudget.defaultBytes
                             let result: String
                             let state: NativeToolActivityState
                             do {
@@ -644,13 +656,13 @@ struct NativeToolLoop: Sendable {
                                     }
                                 }
                                 try Task.checkCancellation()
-                                result = try Self.serializedResult(value)
+                                result = try NativeToolResultBudget.serialized(value, maximumBytes: resultBudget)
                                 state = Self.resultFailed(value, toolName: call.name) ? .failed : .succeeded
                                 if isSearch && webSearchCount >= maximumWebSearchCalls { stopped = true }
                             } catch is CancellationError {
                                 throw CancellationError()
                             } catch {
-                                result = Self.errorJSON(error.localizedDescription)
+                                result = try NativeToolResultBudget.serializedError(error.localizedDescription, maximumBytes: resultBudget)
                                 state = .failed
                             }
                             if let index = activities.firstIndex(where: { $0.id == call.id }) {
@@ -703,6 +715,14 @@ struct NativeToolLoop: Sendable {
         }
     }
 
+    private func validateModelRequest() async throws {
+        try Task.checkCancellation()
+        guard await authorize() else {
+            throw NativeChatClient.ClientError.server("This answer stopped because its context or permissions changed. Please send it again.")
+        }
+        try Task.checkCancellation()
+    }
+
     private func checkAuthorization() async throws {
         try Task.checkCancellation()
         guard await authorize() else { throw CancellationError() }
@@ -747,7 +767,7 @@ struct NativeToolLoop: Sendable {
             let answer = try await Self.bounded(timeout: synthesisTimeout) {
                 try await checkAuthorization()
                 var final = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
-                for try await snapshot in transport.stream(messages: finalHistory, model: model, tools: []) {
+                for try await snapshot in transport.stream(messages: finalHistory, model: model, tools: [], validateRequest: validateModelRequest) {
                     try Task.checkCancellation()
                     guard snapshot.toolCalls.isEmpty, snapshot.content.utf8.count <= 65536 else {
                         throw NativeToolError.failed("The final answer was not usable")
@@ -829,7 +849,7 @@ struct NativeToolLoop: Sendable {
     }
 
     static func serializedResult(_ value: NativeJSONValue) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys, .fragmentsAllowed])
         return String(decoding: data, as: UTF8.self)
     }
 

@@ -1,24 +1,5 @@
 import SwiftUI
 
-struct NativeSessionModeControl: View {
-    let mode: NativeSessionMode
-    let onSelect: (NativeSessionMode) -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Picker("Session", selection: Binding(get: { mode }, set: onSelect)) {
-                ForEach(NativeSessionMode.allCases, id: \.self) { value in
-                    Text(value.title).tag(value)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 182)
-        }
-        .padding(.bottom, 4)
-    }
-}
-
 struct NativeAnswerControls: View {
     let status: String
     let canStop: Bool

@@ -31,6 +31,14 @@ docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api i
 
 Compose pulls the released image by default. To run from source instead, uncomment `build: services/vera-api` in `docker-compose.yml` and use `docker compose up -d --build`.
 
+### Local engine lifecycle
+
+Remote URL and Off unregister the local engine and remove its login job. They preserve engine data. Stop also removes the job; when Local is still selected, reopening Vera starts it again. Remove engine files removes only the job and downloaded binaries. Stop the engine before using the separate Delete data action.
+
+An engine update verifies its download and stages the executable before stopping the current version. It retains the previous executable and launch settings until the new version answers its health check. Failed starts restore that previous version. An interrupted activation leaves a recovery record so reopening Vera in Local mode restores the previous settings before trying another update. If recovery fails, Vera keeps the recovery files and reports the failure. Binary rollback does not reverse changes an engine has already made to its data.
+
+An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its job file, using a separate launchd identity. Its job file stays under that root and is started explicitly by the app. This isolates engine storage, not Keychain credentials or every other app service.
+
 ### Run the engine without Docker (macOS arm64)
 
 Every release ships a packaged engine binary alongside the image. Download `vera-api-macos-arm64.zip` and its `.sha256` from the GitHub Release, verify with `shasum -a 256 -c vera-api-macos-arm64.zip.sha256`, unzip, and run `./vera-api/vera-api`. It serves on `127.0.0.1:8089` and keeps its data in `~/.vera/data`; `VERA_DATA_DIR`, `VERA_BIND`, and `VERA_PORT` override those defaults. Configuration is the same `.env` surface either way (export the variables or launch through a wrapper that sets them).
@@ -58,6 +66,8 @@ The `research` worker is registered when the API starts. `GET /tasks` returns pe
 | `GET /tasks/events` | SSE events with global numeric IDs. Reconnect using `Last-Event-ID`; optional `task_id` filters events without changing cursor meaning. `after` supplies an initial cursor when the header is absent. |
 
 The stream replays committed events in ascending order before following new events. IDs can have gaps and clients should deduplicate by ID. An invalid cursor returns 422, a cursor beyond the current store returns 409, and a cursor from another task is valid within the same database. Events are append-only, have no retention limit yet, and emit a keepalive during idle periods. Do not reuse a cursor after switching or replacing the database.
+
+The source and packaged engine share a disposable HTTP contract for task persistence and event replay. It checks reconnection across multiple event batches after killing and restarting the engine. This verifies the task API; it does not establish an external event subscription or exactly-once tool effects. See [contributor verification](../CONTRIBUTING.md) for the source and packaged commands.
 
 Each worker step atomically saves its checkpoint, lifecycle and event. Recovery returns interrupted running tasks to the queue at their last committed checkpoint; a pending cancel becomes canceled. Queued, blocked, decision-waiting, and terminal tasks retain their state. Eligible steps run FIFO and requeue behind waiting work after yielding. Unknown worker types stay queued until their implementation is configured. A blocked task needs a guarded `TaskStore.resume`; an enrolled native app can resume its own native-unavailable checkpoint. Other user-facing retries use a decision.
 
@@ -87,7 +97,7 @@ This preserves Keychain item continuity. Ad-hoc app builds still have changing c
 
 ### Native session recovery
 
-The composer offers Chat and Continuous per conversation. Chat serializes that conversation's answers, and a queued follow-up captures its completed predecessor context when it starts. Continuous accepts independent turns with completed context and bounded, quoted prior unfinished requests. These are read-only context, not another user command. A later message can ask what was requested without starting that work again. Switching modes affects future sends; existing queued work keeps its order and mode.
+Choose **Vera** in the sidebar to return to the ongoing assistant thread. Choose **New chat** for a separate ordinary conversation. There is no per-chat mode switch. Ordinary answers run in order within their conversation; a queued follow-up captures completed predecessor context when it starts. Reopened conversations saved by earlier versions use the same ordered behavior for new messages. Previously accepted work and explicit retries retain their saved execution state.
 
 The app persists the user message, reply placeholder, and pending turn in one local SQLite transaction. Two foreground turns may run across app instances, with at most eight pending messages. A running turn has a five-minute outer deadline in addition to individual tool limits. Claims are atomic and bind the original endpoint, model, saved profile, options, tool selection, and attachment route. Changed or unavailable settings pause the saved message instead of sending it elsewhere. Text turns do not depend on an unused vision bridge. A keyed bridge without a stable saved binding requires a new message after restart when an image actually uses it.
 
@@ -95,7 +105,7 @@ Recovery distinguishes never-sent messages from requests that might already have
 
 ### Native background research
 
-Enable Deep research in the native tool settings and configure the Vera engine URL to expose `create_background_task` during typed chat. Its required fields are `worker_type` (currently `research`), `objective`, and `deliverables`. Foreground chat uses this durable handoff for explicitly requested research. Chat retains short web lookups; Continuous does not advertise blocking search or research. Background handoff needs durable local chat storage. It is not advertised when the engine is unset. The original chat shows a persistent task card with progress, Stop, and an explicit Retry only when the engine offers it. Completion adds one read-only cited report. The app restores cards after restart, uses one event connection per engine, and refreshes canonical task snapshots before saving progress. Known task IDs are never recreated after a missing-task response. Saved reports remain readable when the engine is unset; task actions are then disabled. A fresh conversation without an engine has no task surface. Voice handoff remains separate.
+Enable Deep research in the native tool settings and configure the Vera engine URL to expose `create_background_task` during typed chat. Its required fields are `worker_type` (currently `research`), `objective`, and `deliverables`. Foreground chat uses this durable handoff for explicitly requested research. Ordinary chat retains short web lookups. Background handoff needs durable local chat storage. It is not advertised when the engine is unset. The original chat shows a persistent task card with progress, Stop, and an explicit Retry only when the engine offers it. Completion adds one read-only cited report. The app restores cards after restart, uses one event connection per engine, and refreshes canonical task snapshots before saving progress. Known task IDs are never recreated after a missing-task response. Saved reports remain readable when the engine is unset; task actions are then disabled. A fresh conversation without an engine has no task surface. Voice handoff remains separate.
 
 The app saves a unique creation key, exact request, original conversation/message references, engine URL, and model profile binding in its existing SQLite database before sending the request. Repeated handoff calls within the same user turn reuse that exact record, including when the model paraphrases the objective. Only a direct research request in the current message enables this handoff; quoted requests and earlier turns do not. Explicit “Do not use any tools” instructions remove every tool for that turn, and the same restriction is checked before dispatch. Direct English phrases such as “Please research lunar ice” or “Start background research about lunar ice” are supported. Send a new message for a separate research task. Restart and lost-response recovery replay the original body and key. Changing engine URLs never sends an old request to the new engine. Deleting a conversation marks unfinished handoffs for cancellation, including requests whose creation acknowledgment was lost. Once the orphaned request resolves to a terminal outcome, its content is removed; only a minimal reservation tombstone remains.
 
@@ -109,7 +119,48 @@ The original saved profile must still exist with the same endpoint and model. Ac
 
 Cards and report blocks are saved separately from foreground reply text, so a later stream update cannot erase a completed report. Spoken text never incorporates a report, task card, or display link. The report view accepts only web link actions without embedded credentials and does not fetch embedded Markdown images. Existing voice playback reuses URL cleanup, but this does not enable native voice handoff.
 
+The persistent Vera conversation subscribes to the same TaskStore event API through its app-owned runtime connection. The app keeps the private session capability inside the connection owner. Event IDs trigger scoped task and transcript refreshes; they do not grant approval or declare completion. A cursor is saved only after the authoritative refresh succeeds, and reconnects replay from that cursor. Restart rehydrates tasks and transcript before resubscribing. Cards attach to the original handoff reply, or to the originating request if its reply was interrupted. Completed file outputs are revalidated against the configured workspace when opened. Closing the connection cancels the subscription. This is task progress, not an external MCP event subscription.
+
 Offline tests use temporary databases and a synthetic loopback provider. `mise run native-task-test` builds the app and exercises typed handoff, foreground conversation, lost acknowledgments, cancellation, concurrent app processes, and a process killed after sending a generation request. It also checks transcript restoration, replayed completion, persisted retry keys, stream reconnects, cursor reset, and cancellation responsiveness with eight enrolled tasks. It does not read live credentials or call a paid provider.
+
+### Document tasks
+
+A simple explicit count such as “with three bullet points” or “exactly 3 bullets” creates one list body with one document title. Counts from one through twenty are supported. The worker validates the count after drafting, revision and before publication; a mismatch preserves the draft and waits for an explicit retry. Quoted, ambiguous, ranged or per-section counts retain the general section workflow. Existing saved section plans are not rewritten.
+
+
+On ordinary launch, select **Vera**, then **Connect assistant** using the saved OpenRouter profile and configured Vera API admission endpoint. The assistant requires a previously authorized spending policy at `~/Library/Application Support/Vera/Assistant/spending.json`, owned by the current user with mode 0600. It contains schema version 1, a stable UUID `id`, `ceilingNanos`, `historicalHoldsNanos`, `allowanceNanos`, and `observedUsageNanos` (USD multiplied by one billion). Never reset this file or its sibling ledgers to renew an allowance. The local allowance is at most $1 and the cumulative ceiling at most $200. Existing credentials stay in Keychain; the policy contains no secrets. Provider usage and prices are checked before generation, and each request reserves at most $0.01. There is no automatic model call when the app launches. Each explicit Connect assistant attempt refreshes only the selected saved credential without opening an authorization prompt or modifying it. Access refusal is reported separately from a missing credential or unsaved/unsupported model configuration. After access has been restored outside the app, Connect assistant retries without requiring a restart. Repeated connection attempts cannot change Keychain permissions. If an already loaded credential changes outside Vera, connection is blocked until the selected credential is explicitly saved in Settings; existing operations cannot silently adopt the replacement.
+
+In the native assistant, ask Vera to write a document through the ordinary composer. Include the brief and any source notes in the current message (up to 2,000 characters). Vera chooses a short title and drafts up to four sections using only that message. Earlier conversation content and memory are excluded from the document worker. Progress, Stop, a read-only Markdown preview and Show in Finder remain attached to the original request. No editor or connected service is needed. The selected shared model and background admission still apply.
+
+A saved request retries with the same identity after an unconfirmed response. On restart, completed documents reopen without a model request; unfinished writing waits for an explicit resume while keeping completed sections. An uncertain step may consume model usage again on explicit retry, and its earlier reservation remains accounted for. Each native document permits twelve attempts; the four-section document worker requires nine successful model calls. Conversational routing and acknowledgment use additional calls. The ordinary assistant retains its lifetime spending ledger and up to 1,000 recorded calls across restarts. If that limit or the selected model is unavailable, the card preserves progress and reports that writing needs attention.
+
+The existing task engine registers a `document` worker. Submit work through `POST /tasks` with a fresh idempotency key:
+
+```json
+{
+  "worker_type": "document",
+  "idempotency_key": "draft-project-plan-1",
+  "payload": {
+    "title": "Project plan",
+    "brief": "Write a practical plan from the supplied notes.",
+    "inputs": ["The first milestone is a working prototype."],
+    "max_sections": 4
+  }
+}
+```
+
+The title is limited to 200 characters, the brief to 5,000, and inputs to eight texts of up to 4,000 characters each. `max_sections` ranges from one to six and defaults to four. No tools, browsing, native model binding, or provider credentials are accepted in this payload. The existing shared model integration must be enabled and configured. Missing configuration pauses work for an explicit retry instead of reading a native app credential or silently choosing another provider. The enabled integration, endpoint, and model are checked again after admission immediately before sending. A queued request whose configuration changed pauses without sending its inputs to the previous endpoint.
+
+The worker saves an outline, drafts each section, revises each section, and assembles Markdown without a final model call. Each section is limited to 3,000 characters. Progress uses the existing task event stream with phase and section counts; it contains no draft text. Cancel preserves the last committed checkpoint. The runtime and task database remain the same as research.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DOCUMENT_STEP_TIMEOUT_SECONDS` | `30` | Total model-step deadline, including admission and structured-output repairs; capped at 90 seconds. |
+| `DOCUMENT_MAX_TOKENS` | `2000` | Maximum tokens per model call, capped at 4,000. |
+
+Invalid or nonpositive values use the default. `STRUCTURED_REPAIR_ATTEMPTS` applies with at most two repairs within that same step deadline. Each generation also follows the existing background admission limit. A persisted intent distinguishes a fresh step from an interrupted request. After an uncertain model request, the task waits in `needs_decision`; reply with the current decision ID, a fresh idempotency key and `{"action":"retry"}`. A retry may repeat provider usage. Finished sections are retained and not regenerated automatically.
+
+A completed task's `result` contains `kind: "document_report"`, `title`, `markdown`, a short `spoken_text`, and `display_blocks` using Vera's existing nested artifact envelope. Artifact identity is the task ID, content is in `artifact.report`, and `sources` is empty. The complete document remains in the task database; no filesystem path or remote image is opened automatically. Source-free Markdown preserves literal reference markers and Sources headings in the native artifact renderer. Native typed decoding and rendering are covered by an engine-result consumer test. A native assistant document request also runs this worker through the shared assistant runtime and presents progress and the scoped result in its existing task cards.
 
 ## Inference admission
 
@@ -184,7 +235,7 @@ Two host scripts cover the standing ops work, and each documents its own environ
 
 ## 3. The Mac app
 
-**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases and can update itself in place.
+**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
 **From source** (Swift toolchain):
 
@@ -196,7 +247,7 @@ scripts/deploy.sh    # packages Vera.app and installs it to /Applications
 
 ### Stable signing for local builds
 
-`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement; existing items may still need a one-time approval when changing from ad-hoc signing.
+`apps/vera-mac/scripts/package.sh` builds a bundle without installing or launching it. Packaging uses ad-hoc signing unless a local identity is configured. Repeated ad-hoc builds can require new Keychain access approval because their signing identity changes with the executable. A dedicated local certificate gives successive builds a stable designated requirement, but macOS can still use each build's code hash for the separate Keychain partition check. A local certificate does not guarantee that approval survives future builds. Recognized Apple-issued signing identities have different partition behavior and require a separate distribution and migration decision.
 
 Create a dedicated certificate with Apple's [Certificate Assistant](https://support.apple.com/guide/keychain-access/create-self-signed-certificates-kyca8916/mac) in Keychain Access. Choose a self-signed identity and the Code Signing certificate type, use an RSA key of at least 2048 bits, and store it in the login Keychain. Keep its private key there. Leave trust and access controls at their defaults and complete any macOS security prompt yourself. This local setup does not require setting Always Trust or exporting a private key. It does not provide Developer ID notarization or Gatekeeper distribution approval. Apple's [code-signing guide](https://developer.apple.com/library/archive/technotes/tn2206/_index.html) explains how designated requirements identify successive versions.
 
@@ -210,6 +261,10 @@ Find the certificate's exact SHA-1 fingerprint with `security find-identity -p c
 ```
 
 `keychain` is optional; when supplied it must be an existing absolute file path. The file is parsed as data, never executed. `VERA_SIGNING_CONFIG` selects another configuration file, and `VERA_SIGNING_IDENTITY` and `VERA_SIGNING_KEYCHAIN` override its values. An explicit identity must be its exact fingerprint. Invalid configuration, missing keys and signing failures stop packaging instead of silently falling back. `VERA_SIGNING_IDENTITY=-` explicitly selects ad-hoc signing. No build command creates certificates, changes trust, unlocks Keychains, or alters key access controls.
+
+Startup reads saved credentials without requesting macOS interaction. If access is unavailable, Vera opens with a credential error and preserves the saved items. Explicit credential operations keep their existing authorization behavior.
+
+For a reviewed installed build whose selected credential needs renewed access, the diagnostic `--credential-reauthorization` entry accepts `--certificate`, `--code-hash`, and `--profile-digest`. It requires the exact installed Vera identity and selected profile, then performs one ordinary credential read with macOS handling authentication. It does not initialize all endpoint credentials, edit ACL payloads, replace the credential, or send a model request. Its result confirms only that read; it does not claim persistent access. Any persistence depends on the user's macOS choice, and future local builds can require another authorization. Keep passwords in the macOS prompt, never in command arguments or scripts. This diagnostic must be deliberately coordinated for the final build; it is never a startup action or automatic retry.
 
 To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
 
@@ -248,7 +303,7 @@ Each call renders as a pending, succeeded, or failed activity chip. Expand it to
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice and MCP remain unavailable in the native chat path.
+Voice remains unavailable in the native chat path. Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
@@ -317,11 +372,11 @@ the vera-api base URL is configured.
 
 ### Native personal memory
 
-Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. A compatible embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable.
+Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. With embeddings unset, approved memory uses local lexical recall without model calls. A configured embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable. The native persistent-workspace adapter shares this store and its memory controls; changing the internal runtime does not create a separate memory library.
 
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 
-See [Native memory](NATIVE_MEMORY.md) for the recall budgets, the privacy boundary, and the behavior it guarantees.
+For explicit facts, stock changes, and care records, use **Record from evidence** in Memory, select a saved user message, and review the proposal before accepting it. This needs no extraction model and does not synchronize live inventory. See [Native memory](NATIVE_MEMORY.md) for recall budgets, source deletion, corrections, and the privacy boundary.
 
 ### Conversation ingestion (opt-in)
 
@@ -423,3 +478,7 @@ When something doesn't work, check the config report and `docker compose logs ve
 The optional [household messaging gateway](HOUSEHOLD.md) provides isolated inboxes, bilateral sharing consent, and an MCP Events adapter in a dedicated loopback runtime that reuses the API modules. The shared API can keep running unchanged. It is disabled until `HOUSEHOLD_CONFIG_PATH` points to a valid private configuration. Each consenting local assistant receives a distinct endpoint and revocable key; no account signup or OAuth server is required. Follow its setup and acceptance boundaries before enrolling anybody or enabling callbacks.
 
 For a direct ChatGPT connection, the optional `HOUSEHOLD_PUBLIC_ORIGIN` setting enables an accountless OAuth adapter at one shared HTTPS MCP address. Members use a private one-time inbox code in ChatGPT's connection flow. The [gateway guide](HOUSEHOLD.md#direct-https-connection-with-oauth) covers approved HTTPS ingress, code issuance, revocation, setup-page generation, and actual event acceptance.
+
+## Remote service tools
+
+Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. See [connected service tools](MCP.md) for approved read scopes, schema support, reconnect behavior, the HTTPS boundary, temporary Bearer tokens and explicit OAuth sign-in.

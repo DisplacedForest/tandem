@@ -947,7 +947,7 @@ struct NativeSettingsShotView: View {
                 }
                 .padding(10).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
                 Text("UNAVAILABLE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                unavailable("Connected service tools", "Native chat cannot invoke connected service tools in this version.")
+                unavailable("Connected services", "Configure a reviewed remote service and approved read tools in Settings.")
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {

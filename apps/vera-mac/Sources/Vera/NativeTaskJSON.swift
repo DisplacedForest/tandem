@@ -4,8 +4,8 @@ struct NativeTaskJSON {
     private let bytes: [UInt8]
     private var index = 0
 
-    static func validate(_ data: Data) throws {
-        guard data.count <= 1048576 else { throw NativeTaskHTTPError.invalidResponse }
+    static func validate(_ data: Data, maximumBytes: Int = 1048576) throws {
+        guard (1...8_000_000).contains(maximumBytes), data.count <= maximumBytes else { throw NativeTaskHTTPError.invalidResponse }
         var scanner = NativeTaskJSON(bytes: Array(data))
         try scanner.value(depth: 0)
         scanner.spaces()

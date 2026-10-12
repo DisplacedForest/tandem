@@ -30,6 +30,7 @@ async def fixture(tmp_path, monkeypatch, scenario, *, saturated=False, lose_gran
     begun, unblock, foreground_seen = asyncio.Event(), asyncio.Event(), asyncio.Event()
     order, requests, provider_headers, queue_measurements = [], [], [], []
     transport_released = asyncio.Event()
+    release_finished = asyncio.Event()
     lost = False
     restarted = False
 
@@ -56,9 +57,14 @@ async def fixture(tmp_path, monkeypatch, scenario, *, saturated=False, lose_gran
         response = await call_next(request)
         if request.url.path.endswith('/release'):
             transport_released.set()
-            if scenario == 'slow-release':
+            if scenario in {'slow-release', 'operation-error'}:
                 await asyncio.sleep(0.4)
+            release_finished.set()
         return response
+
+    @app.get('/fixture/error-returned')
+    async def error_returned():
+        return release_finished.is_set()
 
     @app.get('/fixture/released')
     async def wait_for_cleanup():
@@ -264,3 +270,11 @@ def test_native_admission_outage_never_calls_provider(tmp_path, monkeypatch):
     assert result['outcome'] == 'failed'
     assert len(requests) == 2 and requests[0][0]['request_id'] == requests[1][0]['request_id']
     assert not order
+
+
+def test_native_operation_error_waits_for_release_before_return(tmp_path, monkeypatch):
+    result, order, requests, _, _, _ = asyncio.run(fixture(tmp_path, monkeypatch, 'operation-error'))
+    assert result['outcome'] == 'failed'
+    assert result['measurements']['release_finished_before_error'] == 1
+    assert len(requests) == 1
+    assert order == []

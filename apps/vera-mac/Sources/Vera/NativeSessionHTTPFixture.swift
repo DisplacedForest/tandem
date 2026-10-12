@@ -19,15 +19,13 @@ enum NativeSessionHTTPFixture {
             repository: repository, nativeEnabledToolIDs: ["hold"],
             nativeToolRegistry: NativeToolRegistry(definitions: [hold]), artifactPersistenceEnabled: false)
         store.newConversation()
-        store.setSessionMode(.continuous)
-        store.sendText("slow question")
+        try NativeSessionFixture.acceptLegacyContinuous("slow question", store: store)
         let first = store.selected!.messages.last!.id
         try await NativeSessionFixture.eventually("Native HTTP tool must start") {
             store.selected?.messages.first(where: { $0.id == first })?.toolActivities.isEmpty == false
         }
         let start = ContinuousClock.now
-        store.draft = "fridge question"
-        store.send()
+        try NativeSessionFixture.acceptLegacyContinuous("fridge question", store: store)
         let accepted = start.duration(to: .now)
         let second = store.selected!.messages.last!.id
         try await NativeSessionFixture.eventually("Second native HTTP answer must complete while first tool waits") {

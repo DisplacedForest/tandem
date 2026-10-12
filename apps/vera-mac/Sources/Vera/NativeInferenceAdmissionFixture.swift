@@ -64,6 +64,14 @@ struct NativeInferenceAdmissionFixture {
                     try await Task.sleep(for: .milliseconds(2))
                 }
                 outcome = "canceled"
+            } else if input.scenario == "operation-error" {
+                do {
+                    let _: String = try await admission.perform(endpoint: endpoint, priority: .foreground, requestedSeconds: 2) { _ in
+                        throw NativeInferenceAdmission.AdmissionError.malformed
+                    }
+                } catch { outcome = "failed" }
+                let (data, _) = try await URLSession.shared.data(from: base.appendingPathComponent("fixture/error-returned"))
+                measurements.record("release_finished_before_error", data == Data("true".utf8) ? 1 : 0)
             } else if input.scenario == "resources" {
                 for raw in input.resource_urls ?? [] {
                     if let url = URL(string: raw) { fingerprints[raw] = try NativeInferenceAdmission.resource(for: url) }
@@ -83,9 +91,9 @@ struct NativeInferenceAdmissionFixture {
                 let memory = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
                     baseURL: endpoint, apiKey: "synthetic-fixture-key", embeddingsModel: "fixture-embedding", extractionModel: "fixture-model"), admission: admission)
                 if input.scenario == "memory-background" {
-                    _ = try await memory.proposals(user: "I like morning walks", assistant: "Understood", sourceConversationID: nil, sourceMessageID: nil, existing: [])
+                    _ = try await memory.proposals(user: "I like morning walks", assistant: "Understood", sourceConversationID: nil, sourceMessageID: nil, existing: { [] })
                 } else if input.scenario == "memory-foreground" {
-                    _ = try await memory.proposal(request: "Remember morning walks", existing: [])
+                    _ = try await memory.proposal(request: "Remember morning walks", existing: { [] })
                 } else {
                     _ = try await memory.embed("morning walks")
                 }

@@ -328,12 +328,6 @@ enum NativeChatToolCatalog {
     private static func builtIn(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
         [
             NativeChatToolDescriptor(
-                id: "external-tools",
-                name: "Connected service tools",
-                summary: "Lets the model act through connected services when a native tool runtime is available.",
-                available: false,
-                setup: "Native chat cannot invoke connected service tools in this version."),
-            NativeChatToolDescriptor(
                 id: "apple-reminders",
                 name: "Apple Reminders",
                 summary: "Reads and updates reminder lists after you grant access.",
@@ -360,11 +354,12 @@ enum NativeChatToolCatalog {
 }
 
 enum NativeCredentialError: Error, LocalizedError {
-    case read, write, removal, migrationConflict
+    case read, format, write, removal, migrationConflict
 
     var errorDescription: String? {
         switch self {
         case .read: return "A saved API key couldn't be read. It remains unchanged in Keychain."
+        case .format: return "The saved API key has an unsupported format. It remains unchanged in Keychain."
         case .write: return "The API key couldn't be saved. Your edit is still here; try Save again."
         case .removal: return "The API key couldn't be removed. Try Save again."
         case .migrationConflict: return "A saved API key already exists. Reopen settings before changing it."
@@ -373,6 +368,12 @@ enum NativeCredentialError: Error, LocalizedError {
 }
 
 struct NativeKeychainOperations {
+    var authenticationContext: () -> LAContext = { LAContext() }
+    var interactionAllowed: () -> (OSStatus, Bool) = {
+        var allowed = DarwinBoolean(false)
+        return (SecKeychainGetUserInteractionAllowed(&allowed), allowed.boolValue)
+    }
+    var setInteraction: (Bool) -> OSStatus = { SecKeychainSetUserInteractionAllowed($0) }
     var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemCopyMatching($0, $1) }
     var update: (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) }
     var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemAdd($0, $1) }
@@ -381,12 +382,14 @@ struct NativeKeychainOperations {
 
 protocol NativeCredentialStore {
     func read(for profileID: String) throws -> String?
+    @MainActor func readForStartup(for profileID: String) throws -> String?
     func value(for profileID: String) -> String?
     func set(_ value: String?, for profileID: String) throws
     func addIfAbsent(_ value: String, for profileID: String) throws
 }
 
 extension NativeCredentialStore {
+    @MainActor func readForStartup(for profileID: String) throws -> String? { try read(for: profileID) }
     func value(for profileID: String) -> String? { try? read(for: profileID) }
 }
 
@@ -401,20 +404,51 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
          kSecAttrAccount as String: profileID]
     }
 
+    @MainActor func readForStartup(for profileID: String) throws -> String? {
+        let (status, prior) = operations.interactionAllowed()
+        guard status == errSecSuccess else { throw NativeCredentialError.read }
+        let disabled = operations.setInteraction(false)
+        let (verified, allowed) = operations.interactionAllowed()
+        let result: Result<String?, Error>
+        if disabled != errSecSuccess || verified != errSecSuccess || allowed {
+            result = .failure(NativeCredentialError.read)
+        } else {
+            var startup = self
+            startup.allowsInteraction = false
+            let read = operations.read
+            startup.operations.read = { query, value in
+                var dictionary = query as! [String: Any]
+                guard let context = dictionary[kSecUseAuthenticationContext as String] as? LAContext,
+                      context.interactionNotAllowed else { return errSecInteractionNotAllowed }
+                dictionary[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+                return read(dictionary as CFDictionary, value)
+            }
+            do { result = .success(try startup.read(for: profileID)) }
+            catch { result = .failure(error) }
+        }
+        let restored = operations.setInteraction(prior)
+        let (restoreStatus, restoredValue) = operations.interactionAllowed()
+        guard restored == errSecSuccess, restoreStatus == errSecSuccess, restoredValue == prior else {
+            throw NativeCredentialError.read
+        }
+        return try result.get()
+    }
+
     func read(for profileID: String) throws -> String? {
         var query = query(for: profileID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         if !allowsInteraction {
-            let context = LAContext()
+            let context = operations.authenticationContext()
             context.interactionNotAllowed = true
             query[kSecUseAuthenticationContext as String] = context
         }
         var result: CFTypeRef?
         let status = operations.read(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.read }
+        guard status == errSecSuccess else { throw NativeCredentialError.read }
+        guard let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.format }
         return value
     }
 

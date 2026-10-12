@@ -12,6 +12,7 @@ struct MemoryView: View {
     @State private var selected: NativeMemoryRecord?
     @State private var changeRequest = ""
     @State private var showClear = false
+    @State private var showDomainRecord = false
 
     private var visible: [NativeMemoryRecord] {
         let filter = NativeMemoryLibraryFilter(
@@ -41,6 +42,7 @@ struct MemoryView: View {
         }
         .background(Theme.bg)
         .sheet(item: $selected) { MemoryDetailView(memory: $0) }
+        .sheet(isPresented: $showDomainRecord) { NativeDomainRecordView() }
         .confirmationDialog(
             "Clear all approved memory?", isPresented: $showClear,
             titleVisibility: .visible
@@ -61,6 +63,8 @@ struct MemoryView: View {
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
+            Button("Record from evidence") { showDomainRecord = true }
+                .disabled(!config.nativeSettings.memory.enabled)
             Text("\(visible.count) shown")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 5)
@@ -111,9 +115,9 @@ struct MemoryView: View {
     private var statusDetail: String {
         switch store.memoryServiceState {
         case .off: "Nothing is retrieved, generated, maintained, or added to chat while Memory is off."
-        case .setupRequired: "Choose compatible embeddings and extraction models. Ordinary chat still works."
+        case .setupRequired: "Choose an extraction model to suggest changes. Approved memory can be searched locally without one."
         case .ready: "Only approved, relevant, unexpired items can be added to native chat requests."
-        case .indexing: "Vera is preparing approved items for semantic recall."
+        case .indexing: "Vera is preparing approved memory."
         case .pendingReview: "Nothing in the queue changes approved memory until you accept it."
         case .maintenanceNeeded: "Review capacity, expiry, or consolidation suggestions. Only expired episodic items are removed automatically."
         case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Ordinary chat continues without memory context."
@@ -355,6 +359,7 @@ private struct MemoryProposalReviewView: View {
     @Environment(\.dismiss) var dismiss
     let proposal: NativeMemoryProposal
     @State private var details: String
+    @State private var reviewError: String?
 
     init(proposal: NativeMemoryProposal) {
         self.proposal = proposal
@@ -371,8 +376,14 @@ private struct MemoryProposalReviewView: View {
             }
             Text(proposal.summary).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             Text("Proposed details").font(.system(size: 12, weight: .semibold))
-            TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
-                .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            if proposal.domain != nil {
+                ScrollView { Text(details).font(.system(size: 13)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(minHeight: 180)
+            } else {
+                TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
+                    .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let reviewError { Text(reviewError).font(.system(size: 12)).foregroundStyle(.red) }
             HStack {
                 if let source = proposal.sourceConversationID {
                     Button("Open source conversation") {
@@ -385,28 +396,33 @@ private struct MemoryProposalReviewView: View {
                 }
                 Spacer()
                 Button("Dismiss") { store.dismissMemoryProposal(proposal); dismiss() }
-                Button("Accept edited proposal") {
-                    store.acceptMemoryProposal(
-                        proposal,
-                        editedDetails: details.split(whereSeparator: \.isNewline).map(String.init))
-                    dismiss()
+                Button(proposal.domain == nil ? "Accept edited proposal" : "Accept record") {
+                    if store.acceptMemoryProposal(proposal,
+                        editedDetails: proposal.domain == nil ? details.split(whereSeparator: \.isNewline).map(String.init) : nil) {
+                        dismiss()
+                    } else if case .failed(let reason) = store.memoryServiceState { reviewError = reason }
                 }.buttonStyle(.borderedProminent)
             }
         }.padding(24).frame(width: 620, height: 430)
     }
 }
 
-private struct MemoryDetailView: View {
+struct MemoryDetailView: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) var dismiss
     let memory: NativeMemoryRecord
+    let citedRevision: Int?
     @State private var title: String
     @State private var summary: String
     @State private var details: String
     @State private var confirmDelete = false
+    @State private var evidence: [NativeMemoryEvidence] = []
+    @State private var evidenceError: String?
+    @State private var saveError: String?
 
-    init(memory: NativeMemoryRecord) {
+    init(memory: NativeMemoryRecord, citedRevision: Int? = nil) {
         self.memory = memory
+        self.citedRevision = citedRevision
         _title = State(initialValue: memory.title)
         _summary = State(initialValue: memory.summary)
         _details = State(initialValue: memory.details.joined(separator: "\n"))
@@ -419,11 +435,52 @@ private struct MemoryDetailView: View {
                 Spacer()
                 Button("Done") { dismiss() }
             }
-            TextField("Name", text: $title).textFieldStyle(.roundedBorder)
-            TextField("Summary", text: $summary).textFieldStyle(.roundedBorder)
+            if let citedRevision, evidence.first?.revision != citedRevision, !evidence.isEmpty {
+                Text("This memory has changed since the answer. Saving edits the current memory.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            TextField("Name", text: $title).textFieldStyle(.roundedBorder).disabled(memory.domainEntityID != nil)
+            TextField("Summary", text: $summary).textFieldStyle(.roundedBorder).disabled(memory.domainEntityID != nil)
             Text("Durable details").font(.system(size: 12, weight: .semibold))
             TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
                 .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                .disabled(memory.domainEntityID != nil)
+            if memory.domainEntityID != nil {
+                Text("Calculated from approved evidence. Changes require a new reviewed record.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            if let saveError {
+                Text(saveError).font(.system(size: 12)).foregroundStyle(.red)
+            }
+            if let evidenceError {
+                Text(evidenceError).font(.system(size: 12)).foregroundStyle(.red)
+            }
+            if !evidence.isEmpty {
+                DisclosureGroup("Sources and saved changes") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(evidence) { item in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if item.revision == citedRevision {
+                                        Text("Used in this answer").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.accent)
+                                    }
+                                    Text(item.record.summary).font(.system(size: 12, weight: .medium))
+                                    ForEach(item.domainSources) { source in
+                                        Text(source.text).font(.system(size: 12)).textSelection(.enabled)
+                                        Button("Open source conversation") { store.openMemorySource(conversationID: source.source.conversationID); dismiss() }
+                                    }
+                                    if item.domainSources.isEmpty, let text = item.sourceText {
+                                        Text(text).font(.system(size: 12)).textSelection(.enabled)
+                                    } else {
+                                        Text(item.record.sourceConversationID == nil ? "Saved in Memory" : "Original source unavailable")
+                                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                    }
+                                }
+                            }
+                        }
+                    }.frame(maxHeight: 130)
+                }
+            }
             HStack {
                 if let source = memory.sourceConversationID {
                     Button("Open source conversation") {
@@ -437,14 +494,21 @@ private struct MemoryDetailView: View {
                 Spacer()
                 Button("Delete", role: .destructive) { confirmDelete = true }
                 Button("Save") {
-                    store.editNativeMemory(
+                    if store.editNativeMemory(
                         memory, title: title, summary: summary,
-                        details: details.split(whereSeparator: \.isNewline).map(String.init))
-                    dismiss()
-                }.buttonStyle(.borderedProminent)
+                        details: details.split(whereSeparator: \.isNewline).map(String.init)) {
+                        dismiss()
+                    } else if case .failed(let detail) = store.memoryServiceState {
+                        saveError = detail
+                    }
+                }.buttonStyle(.borderedProminent).disabled(memory.domainEntityID != nil)
             }
         }
-        .padding(24).frame(width: 620, height: 500)
+        .padding(24).frame(width: 620, height: 620)
+        .task {
+            do { evidence = try store.memoryEvidence(memory.id) }
+            catch { evidenceError = "Saved sources could not be opened. \(error.localizedDescription)" }
+        }
         .confirmationDialog("Delete this memory?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) { store.deleteNativeMemory(memory); dismiss() }
             Button("Cancel", role: .cancel) {}

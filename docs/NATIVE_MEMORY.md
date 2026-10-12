@@ -19,7 +19,9 @@ Each record also has an internal category and bank. Banks scope recall without r
 
 ## Chat behavior
 
-Semantic recall uses the embeddings model configured in Settings, Memory, at the active OpenAI-compatible endpoint. The fixed first-slice limits are:
+With embeddings unset, native chat searches approved memory locally using SQLite FTS5. It selects at most eight records within a 2,800-byte evidence budget, ranked by lexical relevance with stable ties. No embedding or extraction call is needed for this recall. Selected bank scope, approval, expiry, and source availability are checked again after model admission, before each native HTTP request. A changed memory context stops the turn visibly instead of sending a stale snapshot. Lexical retrieval can miss paraphrases that share no terms.
+
+An explicitly configured embeddings model retains semantic recall at the active OpenAI-compatible endpoint. Its limits are:
 
 * 8 selected records per turn
 * about 700 memory-context tokens per turn
@@ -32,7 +34,7 @@ Semantic recall uses the embeddings model configured in Settings, Memory, at the
 
 The saved system prompt stays first. A clearly delimited block of approved, unexpired, unsuppressed memory follows it, then completed local conversation history. The block says that memory is untrusted background context, not instructions. Pending, deleted, dismissed, suppressed, expired, irrelevant, malformed, and failed-retrieval records are excluded.
 
-If embeddings or extraction is unconfigured, unreachable, unauthorized, malformed, or slow, Vera sends the ordinary chat request without memory and shows an understandable local status. Native streaming, endpoint selection, conversation history, the saved system prompt, the tool loop, Apple Reminders, and tool preferences continue to work.
+If a configured embeddings service fails, or local retrieval fails, Vera sends the ordinary chat request without memory and shows an understandable local status. Leaving extraction unconfigured disables suggestions, but approved records remain available to local recall. Native streaming, endpoint selection, conversation history, the saved system prompt, the tool loop, Apple Reminders, and tool preferences continue to work.
 
 After an eligible completed turn, the optional extraction model receives only bounded user and assistant turn text plus a bounded summary of existing approved memory. It returns structured create, update, merge, suppress, expire, or delete proposals. Empty, private, excluded, failed, interrupted, or tool-only turns do not create proposals. A conversation can be excluded from memory suggestions from its sidebar menu.
 
@@ -64,10 +66,46 @@ The design deliberately holds these boundaries:
 
 ## Review and maintenance
 
-The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are embedded before recall. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
+The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are immediately available to lexical recall. Embeddings are prepared only when a model is explicitly configured. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
 
 Maintenance never performs network work when memory is off or the optional memory service is unavailable. Records expiring today and capacity pressure create proposals; they do not delete or prune records on their own.
 
 The expiry groom is separate from proposal-driven maintenance. It runs at app launch and every 24 hours while the app stays running, only while memory is enabled, entirely against the local store. Each pass deletes approved episodic records whose expiry date is strictly before the current date, writes an audit entry for every removal through the memory change trail, and dismisses pending proposals whose target record no longer exists, so the review queue never dangles even when an earlier pass was interrupted. A pass with nothing to do is silent. A pass that removes or dismisses anything shows an outcome line on the Memory status card that clears itself after a short while; a failure stays visible until the next pass. Passes are idempotent, and a dry run reports the exact candidates without deleting anything.
 
 At 1,000 approved records, the local repository rejects another approved create until the user accepts an actionable cleanup or consolidation proposal. The proposal names and links the exact records it would replace or remove.
+
+## Evidence and corrections
+
+Each approved save preserves a version of the readable memory and, when available, its source message text and content hash. Model-suggested corrections use the source message attached to the accepted proposal. Existing history is not rewritten. Older versions are available for inspection, but only current approved facts enter recall. Plans remain qualified as plans; storing text does not prove an action happened.
+
+Answers carry numbered memory sources. Opening one uses the existing editable Memory detail sheet, identifies the version used in that answer, and shows later corrections separately. Removing a memory clears its saved revision payloads and lexical entry and retains a tombstone so delayed writes cannot recreate that identity. Conversation history is retained unless separately deleted. Deleting or excluding a source conversation, or editing/deleting its source message, removes archived source text and prevents source-dependent recall. Already delivered answers and their text remain conversation history; removal cannot retract data already sent to a configured model. This is logical deletion, not a forensic disk-erasure guarantee.
+
+Recall spans eligible approved records in the selected bank on this Mac. It does not search every historical message or attachment automatically. The existing past-chat control continues to produce reviewable proposals. Source snapshots are added only for saved approved records; documents, attachment versions, automatic typed event extraction, and live inventory synchronization remain separate integration work. The existing Python TaskStore remains authoritative for task lifecycle and permissions.
+
+The native regression command `Vera --memory-evidence-selftest` uses synthetic fixtures and injected transports to check migration, cross-chat correction, planned care, reopen, citations, source exclusion and removal, and delayed work. It makes no model calls and does not measure local-model answer quality.
+
+## Shared runtime context
+
+The native persistent-workspace connection receives the same `ChatStore` used by focused chats. It uses that store's approved-memory retrieval, selected bank, enabled setting, optional embeddings service, source eligibility and revision checks. Provider and conversation type do not create another memory identity. Pi is an internal execution adapter, not another assistant.
+
+The host binds each foreground query to its assistant, conversation and message. Worker context is bound to the existing Python TaskStore task after the exact current decision is approved. An explicit retry decision starts a new context generation under the same task identity; duplicate approval delivery keeps its original context. Cancellation revokes that task's context. During an approval handoff, model preparation waits up to three seconds for the host to confirm the decision and install its generation; it cannot use the prior attempt's context during that gap. The adapter cannot choose another bank or load the memory database itself.
+
+Bounded context uses the native policy and memory assembler. Its fingerprint participates in broker and provider replay accounting. Closure, cancellation, expiry and memory eligibility are rechecked after asynchronous preparation, after admission, before provider dispatch and before a new result is accepted. Changed context requires a fresh explicit request or approved worker retry. Existing completed replies can be replayed without another provider call and keep their original source references.
+
+Only memory identifiers and revision references are saved for runtime citations, in the existing native SQLite store. They are recorded before dispatch so a restart between answer persistence and UI delivery can recover the original references. The native answer view opens the same Memory detail sheet used by focused chats. Removing memory does not reconstruct its deleted text from these references.
+
+`Vera --shared-runtime-memory-selftest` checks shared identity across focused, persistent and worker requests, bounded provider-independent context, scope rejection, memory off, revocation, accounting replay, retry generations and citation recovery. The provider wiring fixture additionally runs the actual SDK, HTTP bridge and TaskStore with synthetic provider responses. Optional semantic recall still uses the configured native embeddings service; those existing service calls are separate from the Pi completion ledger. Tests inject services and make no paid calls.
+
+This source integration does not activate an installed runtime. The adapter's limited tool catalog, file handling and conversation journal still need application-wide integration and capability parity. Its fixed provider fixture and synthetic model-switch checks do not establish that every provider supports every capability, or measure model answer quality.
+
+## Evidence-backed records
+
+In Memory, **Record from evidence** creates a proposal from a saved user message. Choose a subject, its memory library, the record type, and when the fact was true or the event happened. Counts, additions, removals, facts, and care plans or completions are separate record types. A correction can replace earlier evidence for the same subject and property. The review shows the proposed value, effective date, attribution, original message, and any evidence it replaces. Nothing changes the approved state until Accept record succeeds.
+
+These records use the same local database and approved-memory retrieval as ordinary memory. Stock counts are calculated from a confirmed baseline and applicable changes. Purchases and mentions alone do not establish current ownership. Conflicting counts, ambiguous ordering, missing evidence, and contradictory care statements remain uncertain. Planned, recommended, and possible care do not become completed actions. Event time and the time evidence was learned remain distinct, so later corrections can revise historical understanding without rewriting when they were learned.
+
+The calculated memory opens in the existing detail view with its contributing source spans. To change it, propose another evidence-backed record; its calculated text cannot be edited independently. Editing, deleting, or excluding a source removes affected saved source payloads and invalidates derived memory. Deleted correction identities retain opaque replacement links so older claims do not reappear. Deleting the calculated memory also removes its journal payloads and prevents replay of the removed subject identity.
+
+Capture is explicit and manual. The optional extraction model still produces ordinary memory proposals; automatic typed extraction, entity alias resolution, and synchronization with live Home inventory are not implemented by this feature. These records do not execute care, purchase, or other actions. Existing task approvals remain separate.
+
+`mise run domain-state-test` exercises synthetic quantities, corrections, event and learned time, conflicting care, reviewed SQLite commits, stale approvals, duplicate replay, source redaction, populated migration and restoration, and shared native/Pi context preparation. It makes no provider calls and does not validate model extraction or visible UI interaction.

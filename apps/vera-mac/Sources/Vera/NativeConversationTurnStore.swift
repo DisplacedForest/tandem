@@ -41,21 +41,6 @@ extension ChatStore {
         } catch { return false }
     }
 
-    var selectedSessionMode: NativeSessionMode { selected?.mode ?? .chat }
-
-    func setSessionMode(_ mode: NativeSessionMode) {
-        guard let index = conversations.firstIndex(where: { $0.id == selectedID }) else { return }
-        var conversation = conversations[index]
-        conversation.mode = mode
-        do {
-            try repository?.saveConversation(conversation)
-            conversation.isPersisted = true
-            conversations[index] = conversation
-        } catch {
-            chatConfigurationError = "The session mode couldn't save. Try again."
-        }
-    }
-
     func turnLocation(_ turn: NativeConversationTurn) -> (conversation: Int, user: Int, reply: Int)? {
         guard let ci = conversations.firstIndex(where: { $0.id == turn.conversationID }),
               let ui = conversations[ci].messages.firstIndex(where: { $0.id == turn.userMessageID }),

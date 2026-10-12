@@ -223,7 +223,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
-        existing: [NativeMemoryRecord], now: Date
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
@@ -235,7 +235,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
     }
 
     func proposal(
-        request: String, existing: [NativeMemoryRecord], now: Date
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
@@ -420,6 +420,8 @@ enum SelfTest {
         catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
         catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
+        do { try await WorkflowSelectionTests.run() }
+        catch { print("WORKFLOW SELECTION SELFTEST FAILED: \(error.localizedDescription)"); exit(1) }
         runPure()
         runNativeSettings()
         runModelParameters()
@@ -427,6 +429,13 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         await runNativeCapabilityTools()
+        do {
+            try NativeDomainStateSelftest.run()
+            try await NativeDomainRepositorySelftest.run()
+            try await NativeMemoryEvidenceSelftest.run()
+            try await NativeRuntimeMemorySelftest.run()
+        }
+        catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryGroom()
         await runPromptLibrary()
@@ -923,6 +932,7 @@ enum SelfTest {
     private static func runNativeTools() async {
         do {
             try await NativeBoundedToolFixture.run()
+            try await NativeToolResultBudgetSelftest.run()
             let service = SelfTestRemindersService()
             let registry = NativeToolRegistry(definitions: NativeRemindersTools.definitions(service: service))
             guard registry.active(enabledIDs: []).isEmpty,
@@ -1507,6 +1517,7 @@ enum SelfTest {
         do {
             let repository = try LocalChatRepository(inMemory: true)
             let now = Date(timeIntervalSince1970: 2_000_000_000)
+            try repository.saveConversation(Conversation(id: "source", title: "Source", messages: [], updatedAt: now))
             let approved = NativeMemoryRecord(
                 id: "approved", title: "Favorite drink", summary: "Prefers natural wine",
                 details: ["The user prefers natural wine"], group: .you, category: .preference,
@@ -3930,20 +3941,17 @@ enum SelfTest {
             }
             print("  scheduler OK (\(cronCases.count) cron summaries, jobs decode (incl. env-locked))")
 
-            // Canvas graph manifest decode: flows with stages/state, surfaces with stats.
             let graphJSON = """
             {"flows": [
               {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run",
                "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
                "tools": ["websearch"], "running": false,
-               "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],
                "stage_state": {"state": "ok", "rounds": 2, "proposed": 9,
                                "gates": {"dedup": 3}, "injected": 6,
                                "warnings": ["starved run: 6/8"], "finished_at": 1750000000}},
               {"id": "memory_groom", "label": "Memory groom", "icon": "archivebox",
                "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": [],
-               "running": true,
-               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent"}]}
+               "running": true}
             ],
             "surfaces": [{"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper",
                           "stat": "6 cards today"},
@@ -3952,15 +3960,14 @@ enum SelfTest {
             guard let graphObj = try? JSONSerialization.jsonObject(with: Data(graphJSON.utf8)),
                   let graph = AgenticGraph.parse(graphObj),
                   graph.flows.count == 2, graph.surfaces.count == 2,
-                  let gp = graph.flow("pulse"), gp.stages.count == 1,
+                  let gp = graph.flow("pulse"),
                   gp.pulseState?.gates["dedup"] == 3, gp.pulseState?.injected == 6,
                   gp.pulseState?.warnings.count == 1,
                   let groom = graph.flow("memory_groom"), groom.running,
-                  groom.stages.first?.id == "learn",
                   graph.surfaces[0].stat == "6 cards today", graph.surfaces[1].stat == nil else {
                 print("SELFTEST ERROR: agentic graph parse"); exit(1)
             }
-            print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
+            print("  agentic graph OK (flows + state, surfaces incl. nil stat)")
 
             guard let editorCatalog = WorkflowCatalog.fixture(),
                   editorCatalog.nodes.count == 10,
@@ -4666,12 +4673,13 @@ enum SelfTest {
             let binPath = "\(fakeHome)/.vera/engine/0.3.0/vera-api/vera-api"
             let renderedPlist = EngineManager.renderPlist(engineTpl, home: fakeHome,
                                                           binaryPath: binPath, port: 8123)
-            guard renderedPlist.contains("<string>\(binPath)</string>"),
-                  renderedPlist.contains("<key>VERA_PORT</key><string>8123</string>"),
-                  renderedPlist.contains("<string>\(fakeHome)/.vera/data</string>"),
-                  renderedPlist.contains("<string>\(fakeHome)/.vera/engine/engine.log</string>"),
-                  renderedPlist.contains("<string>com.vera.engine</string>"),
-                  !renderedPlist.contains("@") else {
+            let plist = try PropertyListSerialization.propertyList(from: Data(renderedPlist.utf8), format: nil) as? [String: Any]
+            let environment = plist?["EnvironmentVariables"] as? [String: String]
+            guard plist?["ProgramArguments"] as? [String] == [binPath],
+                  environment?["VERA_PORT"] == "8123",
+                  environment?["VERA_DATA_DIR"] == "\(fakeHome)/.vera/data",
+                  plist?["StandardOutPath"] as? String == "\(fakeHome)/.vera/engine/engine.log",
+                  plist?["Label"] as? String == "com.vera.engine" else {
                 print("SELFTEST ERROR: engine plist render"); exit(1)
             }
             print("  local engine OK (\(engineBaseCases.count) base cases, version-compare, prune, sha256, plist render)")

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 private final class ProviderSmokeRedirectGuard: NSObject, URLSessionTaskDelegate, Sendable {
     func urlSession(
@@ -174,6 +175,32 @@ enum NativeProviderSmoke {
         return result
     }
 
+    static func credentialStatus(read: () throws -> String?) -> String {
+        do {
+            guard let key = try read(), !key.isEmpty else { return "missing" }
+            return "available"
+        } catch { return "unavailable" }
+    }
+
+    static func credentialReport(profileID: String, operations: NativeKeychainOperations = NativeKeychainOperations()) -> [String: Any] {
+        var operations = operations
+        let read = operations.read
+        var itemStatus: OSStatus?
+        operations.read = { query, result in
+            let status = read(query, result)
+            itemStatus = status
+            return status
+        }
+        let status = credentialStatus {
+            try KeychainNativeCredentialStore(allowsInteraction: false, operations: operations).readForStartup(for: profileID)
+        }
+        var report: [String: Any] = ["mode": "credential-status", "credential_status": status,
+                                   "credential_available_without_prompt": status == "available",
+                                   "credential_read_attempted": itemStatus != nil]
+        if let itemStatus { report["credential_read_os_status"] = Int(itemStatus) }
+        return report
+    }
+
     static func run(arguments: [String]) async {
         func value(_ flag: String) -> String? {
             guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
@@ -182,9 +209,9 @@ enum NativeProviderSmoke {
         do {
             let profile = try savedProfile(from: ConfigFile.read())
             if arguments.contains("--credential-status") {
-                let available = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id)?.isEmpty == false
-                emit(["mode": "credential-status", "credential_available_without_prompt": available])
-                exit(available ? 0 : 1)
+                let report = credentialReport(profileID: profile.id)
+                emit(report)
+                exit(report["credential_available_without_prompt"] as? Bool == true ? 0 : 1)
             }
             let id = value("--model") ?? ""
             try require(!id.isEmpty || arguments.contains("--access-status"), "Explicit --model is required")
@@ -198,7 +225,7 @@ enum NativeProviderSmoke {
             defer { session.invalidateAndCancel() }
             let root = URL(string: profile.baseURL)!
             if arguments.contains("--access-status") {
-                guard let key = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id), !key.isEmpty else {
+                guard let key = try KeychainNativeCredentialStore(allowsInteraction: false).readForStartup(for: profile.id), !key.isEmpty else {
                     throw Failure(reason: "Saved credential unavailable without a Keychain prompt")
                 }
                 var request = URLRequest(url: root.appendingPathComponent("key"))
@@ -214,7 +241,7 @@ enum NativeProviderSmoke {
             emit(["mode": "preflight", "model": id, "forecast_usd": selected.forecast, "max_requests": 3])
             guard arguments.contains("--live") else { exit(0) }
             let budget = try approvedBudget(value("--approved-budget-usd"), forecast: selected.forecast)
-            guard let key = KeychainNativeCredentialStore(allowsInteraction: false).value(for: profile.id), !key.isEmpty else {
+            guard let key = try KeychainNativeCredentialStore(allowsInteraction: false).readForStartup(for: profile.id), !key.isEmpty else {
                 throw Failure(reason: "Saved credential unavailable without a Keychain prompt; no alternate key tried")
             }
             let client = NativeChatClient(config: NativeChatConfig(
@@ -289,6 +316,33 @@ enum NativeProviderSmoke {
                 var rejected = false
                 do { try operation() } catch { rejected = true }
                 try require(rejected, "Invalid input accepted")
+            }
+            try require(credentialStatus { "synthetic-never-printed" } == "available", "Credential status lost availability")
+            try require(credentialStatus { nil } == "missing", "Missing credential misclassified")
+            try require(credentialStatus { "" } == "missing", "Empty credential misclassified")
+            try require(credentialStatus { throw NativeCredentialError.read } == "unavailable", "Denied credential misclassified")
+            for scenario in ["available", "missing", "denied", "suppression-failed"] {
+                var interaction = true
+                var reads = 0
+                let readStatus = scenario == "missing" ? errSecItemNotFound : scenario == "denied" ? errSecInteractionNotAllowed : errSecSuccess
+                let operations = NativeKeychainOperations(interactionAllowed: { (errSecSuccess, interaction) }, setInteraction: { allowed in
+                    if scenario == "suppression-failed" && !allowed { return errSecAuthFailed }
+                    interaction = allowed
+                    return errSecSuccess
+                }, read: { query, result in
+                    precondition(!interaction && (query as! [String: Any])[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String)
+                    reads += 1
+                    if readStatus == errSecSuccess { result?.pointee = Data("synthetic-diagnostic-never-output".utf8) as CFData }
+                    return readStatus
+                })
+                let report = credentialReport(profileID: "synthetic-profile", operations: operations)
+                let attempted = scenario != "suppression-failed"
+                try require(interaction && reads == (attempted ? 1 : 0), "Diagnostic changed the credential boundary")
+                try require(report["credential_read_attempted"] as? Bool == attempted, "Diagnostic lost read-attempt metadata")
+                try require(report["credential_read_os_status"] as? Int == (attempted ? Int(readStatus) : nil), "Diagnostic lost safe read status")
+                try require(report["credential_status"] as? String == (scenario == "available" ? "available" : scenario == "missing" ? "missing" : "unavailable"), "Diagnostic misclassified availability")
+                let encoded = try JSONSerialization.data(withJSONObject: report)
+                try require(encoded.range(of: Data("synthetic-diagnostic-never-output".utf8)) == nil, "Diagnostic exposed credential data")
             }
             let entry: [String: Any] = [
                 "id": "test/vision", "architecture": ["input_modalities": ["text", "image"]],

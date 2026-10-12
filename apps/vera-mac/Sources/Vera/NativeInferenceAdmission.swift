@@ -115,10 +115,15 @@ struct NativeInferenceAdmission: Sendable {
                             observe?("generation_seconds", Self.seconds(generationStarted.duration(to: .now)))
                             Task { await cleanup.release() }
                         }
-                        try budget.check()
-                        let value = try await operation(budget)
-                        try budget.check()
-                        return value
+                        do {
+                            try budget.check()
+                            let value = try await operation(budget)
+                            try budget.check()
+                            return value
+                        } catch {
+                            await cleanup.release()
+                            throw error
+                        }
                     }
                     await cleanup.release()
                     return value

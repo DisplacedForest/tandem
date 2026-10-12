@@ -47,6 +47,8 @@ class TaskStore:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
+            if 'tasks' in {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")} and 'request' not in {row[1] for row in db.execute('PRAGMA table_info(tasks)')}:
+                db.execute('ALTER TABLE tasks ADD COLUMN request TEXT')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, worker_type TEXT NOT NULL,
@@ -56,7 +58,8 @@ class TaskStore:
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     generation INTEGER NOT NULL DEFAULT 0,
                     queue_order INTEGER NOT NULL DEFAULT 0,
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    request TEXT
                 );
                 CREATE TABLE IF NOT EXISTS task_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +107,7 @@ class TaskStore:
         task = dict(row)
         task.pop('creation_key')
         task.pop('queue_order')
+        task.pop('request', None)
         for key in ('payload', 'checkpoint', 'result', 'decision', 'decision_reply'):
             task[key] = json.loads(task[key]) if task[key] is not None else None
         task['cancel_requested'] = bool(task['cancel_requested'])
@@ -127,21 +131,31 @@ class TaskStore:
         return int(cursor.lastrowid)
 
     def create(self, worker_type: str, payload: dict[str, Any], idempotency_key: str,
-               validate_payload: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+               validate_payload: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, Any]:
         if not worker_type.strip() or len(worker_type) > 80 or not idempotency_key.strip() or len(idempotency_key) > 200:
             raise ValueError('Worker type and idempotency key are required and must fit their limits')
         body = encode(payload)
+        def normalized() -> str:
+            if validate_payload is None:
+                return body
+            value = validate_payload(json.loads(body))
+            return encode(value) if isinstance(value, dict) else body
         with self.transaction() as db:
             existing = db.execute('SELECT * FROM tasks WHERE creation_key = ?', (idempotency_key,)).fetchone()
             if existing is not None:
-                if existing['worker_type'] != worker_type or existing['payload'] != body:
+                if existing['worker_type'] == worker_type and body in (existing['request'], existing['payload']):
+                    return self._snapshot(existing)
+                try:
+                    matches = existing['worker_type'] == worker_type and existing['payload'] == normalized()
+                except ValueError:
+                    matches = False
+                if not matches:
                     raise TaskConflict('Idempotency key already used with different task data')
                 return self._snapshot(existing)
-            if validate_payload is not None:
-                validate_payload(json.loads(body))
+            request, body = body, normalized()
             task_id, now = str(uuid.uuid4()), time.time()
-            db.execute('INSERT INTO tasks(id, worker_type, payload, creation_key, state, created_at, updated_at) VALUES(?,?,?,?,?,?,?)',
-                       (task_id, worker_type, body, idempotency_key, 'queued', now, now))
+            db.execute('INSERT INTO tasks(id, worker_type, payload, creation_key, state, created_at, updated_at, request) VALUES(?,?,?,?,?,?,?,?)',
+                       (task_id, worker_type, body, idempotency_key, 'queued', now, now, request))
             order = self._event(db, task_id, 'created', 'queued', {})
             db.execute('UPDATE tasks SET queue_order = ? WHERE id = ?', (order, task_id))
             return self._snapshot(self._row(db, task_id))
@@ -150,12 +164,13 @@ class TaskStore:
         with self.connect() as db:
             return self._snapshot(self._row(db, task_id))
 
-    def list(self, limit: int = 100, before: str | None = None) -> list[dict[str, Any]]:
+    def list(self, limit: int = 100, before: str | None = None, states: list[str] | None = None) -> list[dict[str, Any]]:
         with self.connect() as db:
             cursor = self._row(db, before) if before is not None else None
             timestamp = cursor['created_at'] if cursor is not None else None
-            rows = db.execute('SELECT * FROM tasks WHERE (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?',
-                              (timestamp, timestamp, timestamp, before, max(1, min(limit, 200)))).fetchall()
+            chosen = [state for state in (states or []) if state in STATES] or sorted(STATES)
+            rows = db.execute('SELECT * FROM tasks WHERE (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?)) AND state IN (' + ','.join('?' * len(chosen)) + ') ORDER BY created_at DESC, id DESC LIMIT ?',
+                              (timestamp, timestamp, timestamp, before, *chosen, max(1, min(limit, 200)))).fetchall()
             return [self._snapshot(row) for row in rows]
 
     def events(self, after: int = 0, task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
