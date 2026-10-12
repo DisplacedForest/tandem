@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+import MarkdownUI
+import Network
+import SwiftUI
 import VeraAssistantUI
 
 @MainActor
@@ -15,12 +18,95 @@ private final class NativePiStartGate {
     }
 }
 
+final class NativePiReadyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func finish(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard !done else { return }
+        done = true
+        body()
+    }
+}
+
+final class NativePiLoopbackProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private let listener: NWListener
+    private(set) var port: UInt16 = 0
+    var hits: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+    init() async throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        let ready = listener
+        let gate = NativePiReadyGate()
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.record()
+            connection.cancel()
+        }
+        port = try await withCheckedThrowingContinuation { continuation in
+            ready.stateUpdateHandler = { state in
+                switch state {
+                case .ready: gate.finish { continuation.resume(returning: ready.port?.rawValue ?? 0) }
+                case .failed(let error): gate.finish { continuation.resume(throwing: error) }
+                default: break
+                }
+            }
+            ready.start(queue: DispatchQueue(label: "native-pi-loopback-probe"))
+        }
+        try piCheck(port != 0)
+    }
+    private func record() {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+    }
+    func stop() { listener.cancel() }
+}
+
 @MainActor
 enum NativePiPresentationSelftest {
+    static func imagePolicy() async throws {
+        let probe = try await NativePiLoopbackProbe()
+        defer { probe.stop() }
+        func target(_ stage: String) -> URL { URL(string: "http://127.0.0.1:\(probe.port)/\(stage)?data=private")! }
+        func markdown(_ stage: String) -> String {
+            "Reply ![leak](\(target(stage + "-block").absoluteString)) with ![inline](\(target(stage + "-inline").absoluteString)) text"
+        }
+        func settled() async throws -> Int {
+            var last = probe.hits
+            while true {
+                try await Task.sleep(for: .milliseconds(400))
+                let now = probe.hits
+                if now == last { return now }
+                last = now
+            }
+        }
+        func quiet(after count: Int) async throws {
+            try await Task.sleep(for: .milliseconds(600))
+            try piCheck(probe.hits == count)
+        }
+        _ = try? await DefaultInlineImageProvider.default.image(with: target("control-inline"), label: "control")
+        try piCheck(probe.hits >= 1)
+        var baseline = try await settled()
+        _ = try await NativeResearchInlineImageProvider().image(with: target("guarded-inline"), label: "pi")
+        try await quiet(after: baseline)
+        let control = ImageRenderer(content: ProseMarkdown(text: markdown("control")).modifier(NativePiTranscriptImagePolicy(untrusted: false)).frame(width: 400))
+        _ = control.nsImage
+        for _ in 0..<100 where probe.hits == baseline { try await Task.sleep(for: .milliseconds(20)) }
+        try piCheck(probe.hits > baseline)
+        baseline = try await settled()
+        let guarded = ImageRenderer(content: ProseMarkdown(text: markdown("guarded")).modifier(NativePiTranscriptImagePolicy(untrusted: true)).frame(width: 400))
+        _ = guarded.nsImage
+        try await quiet(after: baseline)
+    }
+
     static func run() async {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-pi-presentation-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            try await imagePolicy()
             let idle = NativePiPresentation()
             try piCheck(!idle.canConnect && !idle.canSend && idle.conversation == nil)
             await idle.connect()
@@ -100,7 +186,7 @@ enum NativePiPresentationSelftest {
             await ready.stop()
             await ready.stop()
             try piCheck(readyGate.stops == 1 && ready.connection == nil)
-            print("PASS: idle isolation, direct observation, late startup cancellation, concurrent shutdown and stable projection namespace")
+            print("PASS: transcript image fences, idle isolation, direct observation, late startup cancellation, concurrent shutdown and stable projection namespace")
         } catch {
             FileHandle.standardError.write(Data("Native presentation selftest failed: \(type(of: error))\n".utf8))
             exit(1)

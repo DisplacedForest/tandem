@@ -22,7 +22,7 @@ from routers import tasks
 from routers.task_store import TaskConflict
 from pi_assistant.process import PiFailure
 from pi_assistant.app_model import ModelTransport
-from pi_assistant.runtime import Runtime
+from pi_assistant.runtime import MESSAGE_BYTES, ContextOverflow, Runtime
 
 
 class Message(BaseModel):
@@ -80,11 +80,13 @@ def create_app(root: Path, node: str, native_mock_helper: Path | None = None, in
     app.include_router(tasks.router)
     @app.get('/assistant/capabilities')
     async def capabilities():
-        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'transport': 'cloud' if runtime.transport == 'app-owned-openrouter' else 'mock', 'transport_detail': runtime.transport, **({'provider': 'openrouter', 'model': 'qwen/qwen3.8-flash'} if runtime.transport == 'app-owned-openrouter' else {}), 'workspace_root': str(runtime.workspace), **({'instance_id': instance_id} if instance_id else {})}
+        return {'protocol_version': 1, 'foreground': True, 'worker': True, 'computers': False, 'message_bytes': MESSAGE_BYTES, 'transport': 'cloud' if runtime.transport == 'app-owned-openrouter' else 'mock', 'transport_detail': runtime.transport, **({'provider': 'openrouter', 'model': 'qwen/qwen3.8-flash'} if runtime.transport == 'app-owned-openrouter' else {}), 'workspace_root': str(runtime.workspace), **({'instance_id': instance_id} if instance_id else {})}
     @app.post('/assistant/messages')
     async def message(body: Message):
         try:
             return await runtime.message(body.model_dump(mode='json'))
+        except ContextOverflow as exc:
+            raise HTTPException(413, str(exc)) from None
         except TaskConflict as exc:
             raise HTTPException(409, str(exc)) from None
         except PiFailure:

@@ -262,6 +262,7 @@ private struct ChatPane: View {
                                                store.resolveTurnConfirmation(msg.id, approved: approved,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
+                                    .modifier(NativePiTranscriptImagePolicy(untrusted: assistant != nil))
                             }
                             // One mark per chat at the leading edge — below the last response; animates
                             // while Vera works, sits still when idle. (Like Claude's single mark.)
