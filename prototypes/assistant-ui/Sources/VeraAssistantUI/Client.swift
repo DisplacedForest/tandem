@@ -65,14 +65,14 @@ struct PrototypeClient: Sendable {
         var seen = Set<String>()
         var before: String?
         for _ in 0..<100 {
-            var query = [URLQueryItem(name: "limit", value: "200")]
+            var query = [URLQueryItem(name: "limit", value: "25")]
             if let before { query.append(.init(name: "before", value: before)) }
             let page: TaskPage = try await request("tasks", query: query)
             for task in page.tasks {
                 guard UUID(uuidString: task.id) != nil, seen.insert(task.id).inserted else { throw PrototypeError.invalidResponse }
                 tasks.append(task)
             }
-            if page.tasks.count < 200 { return tasks }
+            if page.tasks.count < 25 { return tasks }
             before = page.tasks.last?.id
         }
         throw PrototypeError.invalidResponse

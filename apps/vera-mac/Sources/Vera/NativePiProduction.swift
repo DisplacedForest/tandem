@@ -117,7 +117,7 @@ struct PiProductionPricing: Sendable {
             "prompt": .number(NSDecimalNumber(decimal: prompt).doubleValue),
             "completion": .number(NSDecimalNumber(decimal: completion).doubleValue), "request": .number(0), "image": .number(0)])])
         let data = try PiValue.object(body).piData()
-        try piCheck(data.count + 4096 <= 16384, .budget)
+        try piCheck(data.count + 4096 <= (request.scope.role == "document" ? 36864 : 16384), .budget)
         return data
     }
 }

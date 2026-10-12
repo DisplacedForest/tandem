@@ -56,6 +56,12 @@ enum NativePiCheckpointSelftest {
             let wire = NativePiModelBrokerFixture.changed(NativePiModelBrokerFixture.request(scope, channel: "fixture"), "messages", .array(PiCheckpointPricing.messages))
             let request = try PiModelRequest(wire, scope: scope, channel: "fixture")
             try piCheck(try pricing.body(request).count < 4096)
+            let production = try PiProductionPricing(catalog: catalog)
+            let documentScope = try PiModelScope(NativePiModelBrokerFixture.binding(role: "document", mode: "assistant"), profile: UUID().uuidString.lowercased())
+            let documentRequest = try PiModelRequest(NativePiModelBrokerFixture.request(documentScope, channel: "fixture", text: String(repeating: "x", count: 30000)), scope: documentScope, channel: "fixture")
+            try piCheck(try production.body(documentRequest).count > 16384)
+            let foregroundRequest = try PiModelRequest(NativePiModelBrokerFixture.request(scope, channel: "fixture", text: String(repeating: "x", count: 8000)), scope: scope, channel: "fixture")
+            try piCheck(try production.body(foregroundRequest).count < 16384)
             let changed = NativePiModelBrokerFixture.changed(wire, "messages", .array([.object(["role": .string("user"), "content": .string("different")])]))
             try await NativePiProviderSelftest.reject { _ = try pricing.body(PiModelRequest(changed, scope: scope, channel: "fixture")) }
             var expensive = PiProviderFixtureState.checkpointCatalog.pi("data").piArray![0].piObject!

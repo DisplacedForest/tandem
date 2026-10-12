@@ -480,3 +480,33 @@ def test_queued_model_configuration_is_revalidated_before_outbound(store, monkey
         for args in requests:
             assert request(args[0], args[1], "background", document.STEP_TIMEOUT_SECONDS)["state"] == "released"
     asyncio.run(run())
+
+
+def test_prompt_budget_rejects_oversized_inputs_and_fits_the_largest_valid_revision():
+    oversized = {**PAYLOAD, "brief": "中" * 5000, "inputs": ["中" * 4000] * 8}
+    with pytest.raises(ValueError):
+        document.validate_payload(oversized)
+    payload = document.core.DocumentPayload.model_validate({**PAYLOAD, "brief": "中" * 2000, "max_sections": 4})
+    outline = [document.core.Section(heading="中" * 200, instructions="中" * 500) for _ in range(4)]
+    checkpoint = document.core.Checkpoint(phase="revise", outline=outline, drafts=["中" * 3000] * 4, revisions=[])
+    assert document.core.prompt_bytes(document.core._messages(payload, checkpoint)) <= document.core.PROMPT_BYTES
+
+
+@pytest.mark.asyncio
+async def test_revision_that_cannot_fit_keeps_the_draft_without_a_model_call(store, model, monkeypatch):
+    calls, _ = model
+    task = create(store, {**PAYLOAD, "brief": "short brief"})
+    monkeypatch.setattr(document.core, "PROMPT_BYTES", 1200)
+    outline = [{"heading": "First", "instructions": "Introduce the idea."}, {"heading": "Second", "instructions": "Draw a conclusion."}]
+    drafts = ["d" * 1500, "e" * 1500]
+    checkpoint = {"phase": "revise", "outline": outline, "drafts": drafts, "revisions": [], "expected_generation": None, "retry": False, "bullet_count": None}
+    claimed = store.claim(("document",))
+    store.commit_step(claimed["id"], claimed["generation"], document.core._progress(document.core.DocumentPayload.model_validate(claimed["payload"]), document.core.Checkpoint.model_validate(checkpoint)))
+    before = len(calls)
+    await advance(store)
+    current = store.get(task["id"])
+    assert current["checkpoint"]["revisions"] == ["d" * 1500] and len(calls) == before
+    await advance(store)
+    await advance(store)
+    final = await until(store, task["id"], "completed")
+    assert "d" * 1500 in final["result"]["markdown"] and "e" * 1500 in final["result"]["markdown"] and len(calls) == before

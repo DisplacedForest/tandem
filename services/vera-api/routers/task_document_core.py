@@ -27,6 +27,12 @@ def _limit(name: str, default: float, maximum: float) -> float:
 
 STEP_TIMEOUT_SECONDS = _limit("DOCUMENT_STEP_TIMEOUT_SECONDS", 30, 90)
 MAX_TOKENS = max(1, int(_limit("DOCUMENT_MAX_TOKENS", 2000, 4000)))
+PROMPT_BYTES = 32256
+PROMPT_HEADROOM = 4096
+
+
+def prompt_bytes(messages: list[dict[str, str]]) -> int:
+    return len(json.dumps(messages, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"))
 
 
 class StrictModel(BaseModel):
@@ -49,7 +55,9 @@ class DocumentPayload(StrictModel):
 
 
 def validate_payload(payload: dict[str, Any]) -> None:
-    DocumentPayload.model_validate(payload)
+    document = DocumentPayload.model_validate(payload)
+    if prompt_bytes(_messages(document, Checkpoint())) + PROMPT_HEADROOM > PROMPT_BYTES:
+        raise ValueError("The brief and inputs are too long for the writing model. Shorten them and try again.")
 
 
 class Section(StrictModel):
@@ -197,6 +205,16 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
                       "id": task["id"], "title": payload.title, "report": markdown, "sources": []}}]}
         return StepResult(state="completed", checkpoint=checkpoint.model_dump(), result=result,
                           event="completed", data=_data(payload, checkpoint))
+    if prompt_bytes(_messages(payload, checkpoint)) > PROMPT_BYTES:
+        if checkpoint.phase != "revise":
+            return StepResult(state="failed", checkpoint=checkpoint.model_dump(), event="validation_failed",
+                              data={**_data(payload, checkpoint), "reason": "prompt_too_long",
+                                    "message": "The brief, inputs and outline are too long for the writing model. Start a new document with a shorter brief or fewer inputs."})
+        checkpoint.expected_generation = None
+        checkpoint.revisions.append(checkpoint.drafts[len(checkpoint.revisions)])
+        if len(checkpoint.revisions) == len(checkpoint.outline):
+            checkpoint.phase = "assemble"
+        return _progress(payload, checkpoint)
     if checkpoint.expected_generation is None:
         checkpoint.expected_generation = task["generation"] + 1
         return _progress(payload, checkpoint)
