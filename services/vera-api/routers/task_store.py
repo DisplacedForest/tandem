@@ -107,6 +107,7 @@ class TaskStore:
         task = dict(row)
         task.pop('creation_key')
         task.pop('queue_order')
+        task.pop('request', None)
         for key in ('payload', 'checkpoint', 'result', 'decision', 'decision_reply'):
             task[key] = json.loads(task[key]) if task[key] is not None else None
         task['cancel_requested'] = bool(task['cancel_requested'])

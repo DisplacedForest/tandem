@@ -566,3 +566,13 @@ async def test_revision_that_cannot_fit_keeps_the_draft_without_a_model_call(sto
     await advance(store)
     final = await until(store, task["id"], "completed")
     assert "d" * 1500 in final["result"]["markdown"] and "e" * 1500 in final["result"]["markdown"] and len(calls) == before
+
+
+def test_control_characters_are_rejected_in_document_text():
+    with pytest.raises(ValidationError):
+        document.core.Section(heading="h", instructions="a\u0000b")
+    with pytest.raises(ValidationError):
+        document.core.SectionText(text="x\u0001y")
+    with pytest.raises(ValidationError):
+        document.core.Section(heading="h\u001f", instructions="fine")
+    assert document.core.SectionText(text="tabs\tand\nnewlines are fine").text

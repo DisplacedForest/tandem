@@ -668,3 +668,14 @@ def test_listing_filters_by_state(tmp_path):
     queued = [task["id"] for task in store.list(10, None, ["queued"])]
     assert set(running + queued) == {first["id"], second["id"]} and len(running) == 1
     assert len(store.list(10, None, ["bogus"])) == 2
+
+
+def test_snapshots_never_expose_the_raw_request(tmp_path):
+    from routers.task_store import TaskStore
+    from routers.tasks import compact_snapshot
+    store = TaskStore(str(tmp_path / "t.db"))
+    task = store.create("document", {"title": "T", "brief": " " * 100000 + "b"}, "k1", lambda payload: {"title": payload["title"], "brief": payload["brief"].strip()})
+    assert "request" not in task and task["payload"]["brief"] == "b"
+    listed = store.list(10, None)[0]
+    assert "request" not in listed and "request" not in compact_snapshot(listed)
+    assert len(json.dumps(compact_snapshot(listed))) < 1000
