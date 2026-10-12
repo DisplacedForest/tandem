@@ -651,5 +651,5 @@ def test_compact_task_listing_drops_document_bodies():
             "result": {"kind": "document_report", "title": "T", "summary": "s", "markdown": "m" * 10, "spoken_text": "x", "display_blocks": [1], "artifacts": [{"kind": "file"}]}}
     compact = compact_snapshot(task)
     assert compact["checkpoint"] == {"phase": "assemble", "retry": False}
-    assert compact["result"] == {"kind": "document_report", "title": "T", "summary": "s", "artifacts": [{"kind": "file"}]}
+    assert compact["result"] == {"kind": "document_report", "title": "T", "summary": "s", "markdown": "m" * 10, "artifacts": [{"kind": "file"}]}
     assert "markdown" in task["result"]

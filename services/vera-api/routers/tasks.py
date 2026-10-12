@@ -80,7 +80,7 @@ def compact_snapshot(task: dict[str, Any]) -> dict[str, Any]:
     if isinstance(compact.get('checkpoint'), dict):
         compact['checkpoint'] = {key: value for key, value in compact['checkpoint'].items() if key not in ('outline', 'drafts', 'revisions')}
     if isinstance(compact.get('result'), dict):
-        compact['result'] = {key: value for key, value in compact['result'].items() if key not in ('markdown', 'report', 'display_blocks', 'spoken_text')}
+        compact['result'] = {key: value for key, value in compact['result'].items() if key not in ('report', 'display_blocks', 'spoken_text')}
     return compact
 
 
