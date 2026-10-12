@@ -1,6 +1,7 @@
 import json
 import re
 import time
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -329,3 +330,33 @@ def test_dcr_grant_order_and_non_ascii_csrf(setup):
     with pytest.raises(OAuthError) as failure:
         oauth.consent(session, "invalid-☃", oauth.enroll("alpha"))
     assert failure.value.status == 403
+
+
+def test_refresh_churn_stays_isolated_per_grant_and_revocation_releases_capacity(setup):
+    oauth, _, _ = setup
+    alpha, alpha_client = tokens(oauth)
+    beta, beta_client = tokens(oauth, "beta")
+    current = alpha
+    for _ in range(100):
+        current = oauth.token(refresh(oauth, current, alpha_client))
+    with oauth.store.tx() as db:
+        counts = {row[0]: row[1] for row in db.execute("SELECT g.endpoint, count(*) FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id GROUP BY g.endpoint")}
+    assert counts["alpha"] <= 40 and counts["beta"] == 2
+    rotated = oauth.token(refresh(oauth, beta, beta_client))
+    assert oauth.principal("Bearer " + rotated["access_token"]) == "beta"
+    assert oauth.principal("Bearer " + current["access_token"]) == "alpha"
+    with pytest.raises(OAuthError):
+        oauth.token(refresh(oauth, alpha, alpha_client))
+    oauth.revoke({"client_id": alpha_client, "token": current["refresh_token"]})
+    oauth.token(refresh(oauth, rotated, beta_client))
+    with oauth.store.tx() as db:
+        assert db.execute("SELECT count(*) FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id WHERE g.endpoint='alpha'").fetchone()[0] == 0
+    with pytest.raises(OAuthError):
+        oauth.principal("Bearer " + current["access_token"])
+
+
+def test_deployment_passes_public_origin_into_the_container():
+    compose = (Path(__file__).resolve().parents[1] / "compose.household.yml").read_text()
+    environment = compose.split("environment:")[1].split("tmpfs:")[0]
+    assert "HOUSEHOLD_PUBLIC_ORIGIN: ${HOUSEHOLD_PUBLIC_ORIGIN:-}" in environment
+    assert "HOUSEHOLD_CONFIG_PATH: /config/gateway.json" in environment

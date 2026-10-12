@@ -13,6 +13,7 @@ services:
       - "${HOUSEHOLD_CONFIG_FILE:?Set private configuration file}:/config/gateway.json:ro"
     environment:
       HOUSEHOLD_CONFIG_PATH: /config/gateway.json
+      HOUSEHOLD_PUBLIC_ORIGIN: ${HOUSEHOLD_PUBLIC_ORIGIN:-}
       PYTHONDONTWRITEBYTECODE: "1"
     tmpfs:
       - /tmp:size=16m,mode=1777

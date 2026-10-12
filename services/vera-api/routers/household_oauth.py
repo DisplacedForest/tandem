@@ -85,6 +85,7 @@ class OAuth:
 
     def cleanup(self, db: sqlite3.Connection) -> None:
         db.execute("DELETE FROM oauth_tokens WHERE kind='access' AND expires<=?", (time.time(),))
+        db.execute("DELETE FROM oauth_tokens WHERE grant_id IN (SELECT id FROM oauth_grants WHERE revoked=1 OR expires<=?)", (time.time(),))
         for statement in (
             "DELETE FROM oauth_enrollment WHERE expires<=?",
             "DELETE FROM oauth_pending WHERE expires<=?",
@@ -201,7 +202,16 @@ class OAuth:
         expires = min(now + 3600, grant["expires"], endpoint["expires"])
         db.execute("INSERT INTO oauth_tokens VALUES (?,?, 'access',?,0)", (digest(access), grant["id"], expires))
         db.execute("INSERT INTO oauth_tokens VALUES (?,?, 'refresh',?,0)", (digest(refresh), grant["id"], grant["expires"]))
+        self.retain(db, grant["id"], "access", 0, 4)
+        self.retain(db, grant["id"], "refresh", 1, 32)
         return {"access_token": access, "refresh_token": refresh, "token_type": "Bearer", "expires_in": max(0, int(expires - now)), "scope": SCOPE}
+
+    @staticmethod
+    def retain(db: sqlite3.Connection, grant_id: str, kind: str, used: int, keep: int) -> None:
+        db.execute(
+            "DELETE FROM oauth_tokens WHERE grant_id=? AND kind=? AND used=? AND rowid NOT IN (SELECT rowid FROM oauth_tokens WHERE grant_id=? AND kind=? AND used=? ORDER BY rowid DESC LIMIT ?)",
+            (grant_id, kind, used, grant_id, kind, used, keep),
+        )
 
     def token(self, data: dict[str, str]) -> dict:
         replay = False
