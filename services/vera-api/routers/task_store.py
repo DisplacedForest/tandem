@@ -47,6 +47,8 @@ class TaskStore:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
+            if 'tasks' in {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")} and 'request' not in {row[1] for row in db.execute('PRAGMA table_info(tasks)')}:
+                db.execute('ALTER TABLE tasks ADD COLUMN request TEXT')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY, worker_type TEXT NOT NULL,
@@ -56,7 +58,8 @@ class TaskStore:
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     generation INTEGER NOT NULL DEFAULT 0,
                     queue_order INTEGER NOT NULL DEFAULT 0,
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    request TEXT
                 );
                 CREATE TABLE IF NOT EXISTS task_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +142,7 @@ class TaskStore:
         with self.transaction() as db:
             existing = db.execute('SELECT * FROM tasks WHERE creation_key = ?', (idempotency_key,)).fetchone()
             if existing is not None:
-                if existing['worker_type'] == worker_type and existing['payload'] == body:
+                if existing['worker_type'] == worker_type and body in (existing['request'], existing['payload']):
                     return self._snapshot(existing)
                 try:
                     matches = existing['worker_type'] == worker_type and existing['payload'] == normalized()
@@ -148,10 +151,10 @@ class TaskStore:
                 if not matches:
                     raise TaskConflict('Idempotency key already used with different task data')
                 return self._snapshot(existing)
-            body = normalized()
+            request, body = body, normalized()
             task_id, now = str(uuid.uuid4()), time.time()
-            db.execute('INSERT INTO tasks(id, worker_type, payload, creation_key, state, created_at, updated_at) VALUES(?,?,?,?,?,?,?)',
-                       (task_id, worker_type, body, idempotency_key, 'queued', now, now))
+            db.execute('INSERT INTO tasks(id, worker_type, payload, creation_key, state, created_at, updated_at, request) VALUES(?,?,?,?,?,?,?,?)',
+                       (task_id, worker_type, body, idempotency_key, 'queued', now, now, request))
             order = self._event(db, task_id, 'created', 'queued', {})
             db.execute('UPDATE tasks SET queue_order = ? WHERE id = ?', (order, task_id))
             return self._snapshot(self._row(db, task_id))

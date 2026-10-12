@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -509,8 +510,10 @@ async def test_oversized_outline_retries_with_a_shortening_constraint_then_stops
         await advance(store)
         await advance(store)
         current = await until(store, task["id"], "needs_decision")
-    assert "under " + str(current["checkpoint"]["outline_limit"]) in calls[-1][0][0]["content"]
+    assert "characters combined" in calls[-1][0][0]["content"]
     assert current["checkpoint"]["outline_attempts"] == 3 and "Start a new document" in current["decision"]["prompt"]
+    limits = [int(re.search(r"under (\d+) characters", call[0][0]["content"]).group(1)) for call in calls[1:]]
+    assert limits == sorted(limits, reverse=True) and limits[0] > limits[-1]
     before = len(calls)
     store.respond(task["id"], current["decision"]["id"], "retry4", {"action": "retry"})
     await advance(store)
@@ -518,9 +521,31 @@ async def test_oversized_outline_retries_with_a_shortening_constraint_then_stops
     assert len(calls) == before and "Start a new document" in current["decision"]["prompt"]
 
 
-def test_payload_is_stored_normalized(store):
+def test_payload_is_stored_normalized_and_exact_replays_skip_validation(store):
     task = create(store, {**PAYLOAD, "brief": " " * 1000 + "b"})
     assert task["payload"]["brief"] == "b"
+    def reject(payload):
+        raise ValueError("Schema changed")
+    replay = store.create("document", {**PAYLOAD, "brief": " " * 1000 + "b"}, "create-document", reject)
+    assert replay["id"] == task["id"]
+    minimal = store.create("document", {"title": "Title", "brief": "Brief"}, "create-minimal", document.validate_payload)
+    assert store.create("document", {"title": "Title", "brief": "Brief"}, "create-minimal", reject)["id"] == minimal["id"]
+
+
+@pytest.mark.asyncio
+async def test_multibyte_outline_limit_tightens_until_it_fits(store, model):
+    calls, responses = model
+    wide = {"sections": [{"heading": "\u4e2d" * 60, "instructions": "\u4e2d" * 200} for _ in range(6)]}
+    narrow = {"sections": [{"heading": "\u4e2d" * 10, "instructions": "\u4e2d" * 40} for _ in range(2)]}
+    responses[:] = [wide, wide, narrow]
+    task = create(store, {**PAYLOAD, "brief": "b" * 5000, "inputs": ["x" * 2000], "max_sections": 6})
+    for attempt in range(3):
+        await advance(store)
+        await advance(store)
+        current = await until(store, task["id"], "needs_decision" if attempt < 2 else "queued")
+        if attempt < 2:
+            store.respond(task["id"], current["decision"]["id"], "retry" + str(attempt), {"action": "retry"})
+    assert current["checkpoint"]["phase"] == "draft"
 
 
 @pytest.mark.asyncio

@@ -243,8 +243,12 @@ async def step(task: dict[str, Any], generate: Callable[[DocumentPayload, Checkp
         planned_size = prompt_bytes(_messages(payload, planned))
         if planned_size > PROMPT_BYTES:
             outline_bytes = len(json.dumps([section.model_dump() for section in planned.outline], ensure_ascii=False).encode("utf-8"))
+            outline_chars = max(1, sum(len(section.heading) + len(section.instructions) for section in planned.outline))
             allowance = PROMPT_BYTES - (planned_size - outline_bytes) - 256
-            checkpoint.outline_limit = max(100, min(allowance // 2, checkpoint.outline_limit or allowance))
+            proposed = int(allowance * outline_chars / outline_bytes / 2)
+            if checkpoint.outline_limit is not None:
+                proposed = min(proposed, checkpoint.outline_limit // 2)
+            checkpoint.outline_limit = max(50, proposed)
             checkpoint.outline_attempts += 1
             if checkpoint.outline_attempts >= 3:
                 return _pause(payload, checkpoint, "The writing model could not plan this document within its limits. Start a new document with a shorter brief or fewer inputs.")
