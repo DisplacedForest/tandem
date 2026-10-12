@@ -83,44 +83,62 @@ struct PiSelectedProfileOperation: PiMockModelExecutor {
     }
     func retryDocument(_ subject: String) async throws { try await accounting.retryDocument(subject) }
     func complete(_ request: PiModelRequest) async throws -> PiValue {
-        try await validate()
+        do { try await validate() } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
         let request = try await prepareBeforeDispatch(request)
-        let body = try checkpointPricing?.body(request) ?? productionPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
-        try piCheck(body.count <= (request.scope.role == "document" ? 49152 : 16384))
-        let dispatch = PiAdmissionDispatch()
+        let body: Data
+        do {
+            body = try checkpointPricing?.body(request) ?? productionPricing?.body(request) ?? PiProviderCodec.body(request, model: binding.model).piData()
+            try piCheck(body.count <= (request.scope.role == "document" ? 49152 : 16384))
+        } catch where !(error is CancellationError) { throw PiNoSpendRejection(error: error) }
+        let reserved = PiDispatchFlag()
+        let entered = PiAdmissionDispatch()
         do {
             return try await admission.perform(endpoint: binding.endpoint, priority: request.scope.role == "foreground" ? .foreground : .background, requestedSeconds: 30) { budget in
-                dispatch.enter()
-                try budget.check()
-                try await validate()
-                try await validateBeforeDispatch(request)
-                if let saved = try await accounting.reserve(request) {
-                    try await validate()
-                    try await validateBeforeDispatch(request)
-                    try PiModelReply.validate(saved, request: request)
-                    return saved
-                }
-                do {
-                    try await validateBeforeDispatch(request)
-                    let (data, status) = try await send(request, body)
-                    try budget.check()
-                    try piCheck(status == 200 && data.count <= 65536, .unavailable)
-                    let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
-                    try await accounting.settle(request, reply: reply)
-                    return reply
-                } catch let noSpend as PiNoSpendRejection {
-                    await accounting.reject(request)
-                    throw noSpend
-                } catch {
-                    await accounting.uncertain(request)
-                    throw PiBrokerError.unavailable
-                }
+                entered.enter()
+                return try await dispatch(request, body: body, budget: budget, reserved: reserved)
             }
-        } catch {
-            if productionPricing != nil && !dispatch.didEnter && !Task.isCancelled { throw PiInferenceNotDispatched() }
-            throw error
+        } catch let noSpend as PiNoSpendRejection {
+            throw noSpend
+        } catch where productionPricing != nil && !entered.didEnter && !Task.isCancelled {
+            throw PiInferenceNotDispatched()
+        } catch where !(error is CancellationError) && !reserved.value {
+            throw PiNoSpendRejection(error: error)
         }
     }
+    private func dispatch(_ request: PiModelRequest, body: Data, budget: NativeInferenceBudget, reserved: PiDispatchFlag) async throws -> PiValue {
+            try budget.check()
+            try await validate()
+            try await validateBeforeDispatch(request)
+            if let saved = try await accounting.reserve(request) {
+                try await validate()
+                try await validateBeforeDispatch(request)
+                try PiModelReply.validate(saved, request: request)
+                return saved
+            }
+            reserved.set()
+            do {
+                try await validateBeforeDispatch(request)
+                let (data, status) = try await send(request, body)
+                try budget.check()
+                try piCheck(status == 200 && data.count <= 65536, .unavailable)
+                let reply = try PiProviderCodec.reply(PiValue.piRead(data), request: request, model: binding.model)
+                try await accounting.settle(request, reply: reply)
+                return reply
+            } catch let noSpend as PiNoSpendRejection {
+                await accounting.reject(request)
+                throw noSpend
+            } catch {
+                await accounting.uncertain(request)
+                throw PiBrokerError.unavailable
+            }
+    }
+}
+
+final class PiDispatchFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    func set() { lock.lock(); flag = true; lock.unlock() }
 }
 
 enum PiProviderCodec {

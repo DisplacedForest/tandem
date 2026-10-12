@@ -40,6 +40,22 @@ enum NativePiCheckpointSelftest {
                 try await NativePiProviderSelftest.reject { try ledger.consume() }
             }
             try await NativePiProviderSelftest.reject { _ = try PiCheckpointLedger(path: path, id: id) }
+            do {
+                let rollbackRoot = root.appendingPathComponent("rollback")
+                try FileManager.default.createDirectory(at: rollbackRoot, withIntermediateDirectories: true)
+                let rollbackID = UUID().uuidString.lowercased(), rollbackPath = rollbackRoot.appendingPathComponent("ledger.json")
+                try seed(rollbackPath, id: rollbackID)
+                let journal = try PiCheckpointLedger(path: rollbackPath, id: rollbackID)
+                try journal.consume(); try journal.metadata("models"); try journal.metadata("usage")
+                try piCheck(chmod(rollbackRoot.path, 0o500) == 0)
+                try await NativePiProviderSelftest.reject { try journal.reserve(baseline: 5_676_254_486, body: Data("synthetic".utf8)) }
+                try piCheck(chmod(rollbackRoot.path, 0o700) == 0)
+                try piCheck(journal.report().pi("inference_requests") == .number(0) && journal.report().pi("stage") == .string("usage_pending"))
+                let persisted = try PiValue.piRead(Data(contentsOf: rollbackPath)).pi("checkpoint_authorizations").pi(rollbackID)
+                try piCheck(persisted.pi("inference_requests") == .number(0) && persisted.pi("stage") == .string("usage_pending"))
+                try journal.reserve(baseline: 5_676_254_486, body: Data("synthetic".utf8))
+                try piCheck(journal.report().pi("stage") == .string("inference_pending"))
+            }
             var selectedReads: [String] = []
             let selected = UUID().uuidString.lowercased()
             let credentials = PiCheckpointCredentials(selected: selected) { profile in selectedReads.append(profile); return PiCandidateCredentials.key }

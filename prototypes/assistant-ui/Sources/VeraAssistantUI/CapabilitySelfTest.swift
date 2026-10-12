@@ -20,6 +20,25 @@ enum CapabilitySelfTest {
             ("native-mock-detail", oldNativeMock, "Test runtime"), ("cloud", cloud, "Cloud model")
         ]
         let endpoint = URL(string: "http://127.0.0.1:49155")!
+        try PrototypeSelfTest.require(Capabilities.encodedByteCount("a\"b\nc\u{1}\u{1F600}") == 17, "Encoded byte count matches the runtime's JSON measure")
+        var bounded = legacy
+        bounded["message_bytes"] = 16
+        do {
+            let transport = ContractFixture()
+            await transport.advertise(try JSONSerialization.data(withJSONObject: bounded))
+            let store = try PrototypeStore(configuration: PrototypeConfiguration(dataRoot: root.appendingPathComponent("bounded"), endpoint: endpoint, workspaceRoot: nil),
+                                           client: PrototypeClient(base: endpoint) { try await transport.send($0) })
+            await transport.bind(store.saved.assistantID, store.saved.assistant.id)
+            await store.refresh()
+            try PrototypeSelfTest.require(store.canSend && store.accepts("sixteen bytes xx") && !store.accepts("seventeen bytes x") && !store.accepts("twelve\u{1F600}\u{1F600}\u{1F600}"),
+                                          "Composer limit follows the advertised message budget")
+            store.setDraft("seventeen bytes x")
+            await store.send()
+            try PrototypeSelfTest.require(await transport.requests.isEmpty, "Oversized draft never leaves the composer")
+            store.setDraft("sixteen bytes xx")
+            await store.send()
+            try PrototypeSelfTest.require(await transport.requests.count == 1, "Draft inside the budget is sent")
+        }
         for (name, payload, label) in valid {
             let transport = ContractFixture()
             await transport.advertise(try JSONSerialization.data(withJSONObject: payload))

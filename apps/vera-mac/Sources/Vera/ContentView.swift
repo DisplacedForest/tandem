@@ -273,6 +273,7 @@ private struct ChatPane: View {
                                                store.resolveTurnConfirmation(msg.id, approved: approved,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
+                                    .modifier(NativePiTranscriptImagePolicy(untrusted: assistant != nil))
                                 if let assistant {
                                     NativePiTaskSection(assistant: assistant, messageID: msg.id)
                                         .padding(.leading, 34)

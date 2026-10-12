@@ -127,6 +127,7 @@ enum NativeRuntimeMemorySelftest {
         try await settledContextChange(root)
         try await heldContextRejection(root, stage: "prepare", holdAt: 3)
         try await heldContextRejection(root, stage: "grant", holdAt: 4)
+        try await sendGuardNoSpend(root)
         bridge.close()
         try await rejected { _ = try await bridge.prepare(request(offBinding)) }
         print("shared-runtime-memory: PASS (one store, focused/persistent/worker identity, model-independent context, sources/reopen, scope isolation, memory off, cancellation, replay and queued dispatch; synthetic only)")
@@ -266,6 +267,46 @@ enum NativeRuntimeMemorySelftest {
         await broker.close()
         bridge.close()
         print("  shared memory: settled reply after context change rejected alone, accounting certain, next request served PASS")
+    }
+
+    private static func sendGuardNoSpend(_ root: URL) async throws {
+        let repository = try LocalChatRepository(url: root.appendingPathComponent("send-guard.sqlite"))
+        _ = try fixture(repository)
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true; settings.bankScope = "farm"
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let assistant = UUID().uuidString.lowercased()
+        let bridge = NativeRuntimeMemoryBridge(store: store)
+        try bridge.bindAssistant(assistant)
+        let profileID = UUID().uuidString.lowercased()
+        let credentials = PiCandidateCredentials(profile: profileID)
+        let owner = NativePiCandidateSelftest.config(credentials, profileID: profileID)
+        let profile = try owner.piSelectedProfileBinding()
+        let accounting = try PiSharedAccounting(root: root.appendingPathComponent("send-guard-accounting"), baselineNanos: 0)
+        let admission = PiAdmissionFixtureProtocol.admission()
+        defer { admission.session.invalidateAndCancel() }
+        let transport = NativeRuntimeSendCounter()
+        var operation = try owner.piSelectedProfileOperation(binding: profile, admission: admission, accounting: accounting) { _, _ in
+            await transport.record()
+            throw PiBrokerError.invalid
+        }
+        operation.memoryBridge = bridge
+        let bound = binding(assistant)
+        try bridge.authorize(bound, query: "Current livestock?")
+        let scope = try PiModelScope(bound, profile: UUID().uuidString.lowercased())
+        let request = try PiModelRequest(NativePiModelBrokerFixture.request(scope, channel: "fixture", text: "Current livestock?"), scope: scope, channel: "fixture")
+        let prepared = try await bridge.prepare(request)
+        try bridge.validate(prepared)
+        bridge.close()
+        do {
+            _ = try await operation.send(prepared, Data("{}".utf8))
+            throw NSError(domain: "SharedMemoryTest", code: 2, userInfo: [NSLocalizedDescriptionKey: "Send guard let a stale context through"])
+        } catch let noSpend as PiNoSpendRejection {
+            try piCheck((noSpend.error as? PiBrokerError) == .unauthorized)
+        }
+        let calls = await transport.calls
+        try piCheck(calls == 0)
+        print("  shared memory: stale context at the app send guard is a no-spend rejection with no transport call PASS")
     }
 
     private static func heldContextRejection(_ root: URL, stage: String, holdAt: Int) async throws {
@@ -442,4 +483,9 @@ private actor NativeRuntimeHeldValidation: PiMockModelExecutor {
         calls += 1
         return try await PiFixtureModel().complete(request)
     }
+}
+
+private actor NativeRuntimeSendCounter {
+    var calls = 0
+    func record() { calls += 1 }
 }

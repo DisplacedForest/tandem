@@ -1,3 +1,4 @@
+import MarkdownUI
 import SwiftUI
 import VeraAssistantUI
 
@@ -99,5 +100,18 @@ struct NativePiTaskSection: View {
     static func confirmation(_ task: AssistantSessionTask, _ decisionID: String) -> NativeToolConfirmationRequest {
         NativeToolConfirmationRequest(activity: NativeToolActivity(id: decisionID, toolID: "pi_worker", name: "worker",
             title: task.title, round: 0, request: "", result: nil, state: .pending, confirmationRequired: true))
+    }
+}
+
+struct NativePiTranscriptImagePolicy: ViewModifier {
+    let untrusted: Bool
+    func body(content: Content) -> some View {
+        if untrusted {
+            content
+                .markdownImageProvider(NativeResearchImageProvider())
+                .markdownInlineImageProvider(NativeResearchInlineImageProvider())
+        } else {
+            content
+        }
     }
 }

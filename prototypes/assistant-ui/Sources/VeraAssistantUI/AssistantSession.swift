@@ -57,8 +57,7 @@ public final class AssistantSession: ObservableObject {
     public var canRetry: Bool { selected && pendingID != nil && connected && !busy && !reviewing && store.capabilities?.foreground == true }
     public var canCreateDocument: Bool { selected && store.canSend }
     public var canSend: Bool {
-        selected && store.canSend && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && draft.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count <= 8000
+        selected && store.canSend && store.accepts(draft.trimmingCharacters(in: .whitespacesAndNewlines))
     }
     private var selected: Bool { store.destination == .assistant }
     public var messages: [AssistantSessionMessage] {

@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 
 from pi_assistant.bridge import create_app
 from pi_assistant.process import PiFailure, PiProcess
-from pi_assistant.runtime import Runtime
+from pi_assistant.native import NativeMockTransport, encoded
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request, request_size
 from routers.task_store import TaskConflict
 
 NODE = shutil.which('node')
@@ -147,7 +148,7 @@ async def test_effect_reconciliation_and_external_edit_fence(tmp_path):
 def test_http_contract_and_local_boundary(tmp_path):
     with TestClient(create_app(tmp_path, NODE)) as client:
         cap = client.get('/assistant/capabilities').json()
-        assert cap['transport'] == 'mock' and cap['computers'] is False
+        assert cap['transport'] == 'mock' and cap['computers'] is False and cap['message_bytes'] == MESSAGE_BYTES
         request = body('hello', mode='focused')
         answer = client.post('/assistant/messages', json=request)
         assert answer.status_code == 200
@@ -158,7 +159,14 @@ def test_http_contract_and_local_boundary(tmp_path):
         assert client.get('/assistant/capabilities', headers={'Origin': 'https://example.org'}).status_code == 403
         assert client.get('/assistant/capabilities', headers={'Host': 'evil.example'}).status_code == 403
         assert client.post('/assistant/messages', content='{}').status_code == 415
-        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 2
+        oversized = body('x' * 8000, mode='focused', conversation_id=request['conversation_id'], assistant_id=request['assistant_id'])
+        assert client.post('/assistant/messages', json=oversized).status_code == 413
+        edge = 'é' * ((MESSAGE_BYTES - 2) // 2) + '"' + ('x' if MESSAGE_BYTES % 2 else '')
+        assert len(encoded(edge)) - 2 == MESSAGE_BYTES
+        assert client.post('/assistant/messages', json={**oversized, 'text': edge}).status_code == 200
+        assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': edge + 'x'}).status_code == 413
+        assert client.post('/assistant/messages', json={**oversized, 'message_id': str(uuid.uuid4()), 'text': 'short again'}).status_code == 200
+        assert len(client.get('/assistant/messages', params={'conversation_id': request['conversation_id']}).json()['messages']) == 6
 
 
 @pytest.mark.asyncio
@@ -214,7 +222,8 @@ async def test_real_sigkill_after_effect_requires_decision_and_no_duplicate_writ
     runner = tmp_path / 'crash.py'
     runner.write_text('''import asyncio,json,shutil,sys
 from pathlib import Path
-from pi_assistant.runtime import Runtime
+from pi_assistant.native import NativeMockTransport, encoded
+from pi_assistant.runtime import CONTEXT_LIMIT, CONTEXT_RESERVE, MESSAGE_BYTES, SYSTEM_PROMPT, ContextOverflow, Runtime, context_size, fit_request, request_size
 async def main():
  r=Runtime(Path(sys.argv[1]),shutil.which('node'),worker_delay_ms=450)
  await r.start()
@@ -416,3 +425,128 @@ def test_owned_http_session_lifetime(tmp_path, monkeypatch, persistent):
         assert client.get('/assistant/capabilities', headers={'Authorization': 'Bearer ' + capability, 'Origin': 'https://example.invalid'}).status_code == 403
     finally:
         client.close()
+
+
+@pytest.mark.asyncio
+async def test_context_budget_rejects_oversized_message_and_trims_history(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    await runtime.start()
+    request = body('first question', mode='focused')
+    try:
+        with pytest.raises(ContextOverflow):
+            await runtime.message(body('y' * (MESSAGE_BYTES + 1), mode='focused'))
+        with runtime.connect() as db:
+            assert db.execute('SELECT COUNT(*) FROM turns').fetchone()[0] == 0
+        await runtime.message(request)
+        for index in range(6):
+            with runtime.connect() as db:
+                db.execute('INSERT INTO deliveries VALUES(?,?,?,?)', ('older:' + str(index), request['conversation_id'], json.dumps({'id': 'older:' + str(index), 'role': 'assistant', 'text': str(index) * 2500, 'task_ids': []}), time.time() + index))
+        captured = []
+        original = runtime.process.run
+        async def capture(config, host, canceled=lambda: False):
+            captured.append(config)
+            return await original(config, host, canceled)
+        runtime.process.run = capture
+        later = body('z' * 3000, mode='focused', assistant_id=request['assistant_id'], conversation_id=request['conversation_id'])
+        assert 3000 <= MESSAGE_BYTES
+        await runtime.message(later)
+        config = captured[-1]
+        assert config['system_prompt'] == SYSTEM_PROMPT
+        history = config['history']
+        texts = [entry['content'] if entry['role'] == 'user' else entry['content'][0]['text'] for entry in history]
+        assert texts == ['5' * 2500]
+        assert context_size(SYSTEM_PROMPT, history, later['text']) <= CONTEXT_LIMIT - CONTEXT_RESERVE
+        assert context_size(SYSTEM_PROMPT, [{'role': 'assistant', 'content': '4' * 2500}] + history, later['text']) > CONTEXT_LIMIT - CONTEXT_RESERVE
+        assert any(item['id'] == later['message_id'] for item in runtime.messages(request['conversation_id'])['messages'])
+    finally:
+        await runtime.stop()
+
+
+class RecordingNative:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.sizes = []
+        self.events = []
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def complete(self, event, task_id, role, mode):
+        self.sizes.append(len(encoded(NativeMockTransport._messages(event['context']))))
+        self.events.append(event)
+        return self.replies.pop(0)
+
+
+def text_reply(text):
+    return {'content': [{'type': 'text', 'text': text}]}
+
+
+def delegate_reply(objective, text=None, call_id=None):
+    blocks = [{'type': 'text', 'text': text}] if text else []
+    return {'content': blocks + [{'type': 'toolCall', 'id': call_id or str(uuid.uuid4()), 'name': 'delegate', 'arguments': {'objective': objective}}]}
+
+
+def test_fit_request_trims_only_history_and_fails_when_the_turn_cannot_fit():
+    def context(history, turn):
+        system = {'role': 'system', 'content': SYSTEM_PROMPT, 'toolsAdded': [{'name': 'delegate'}], 'timestamp': 0}
+        return {'messages': [system] + [{'role': 'user', 'content': item, 'timestamp': 0} for item in history] + [{'role': 'user', 'content': [{'type': 'text', 'text': turn}], 'timestamp': 0}]}
+    trimmed = context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question')
+    assert fit_request(trimmed, 3) == (request_size(trimmed), 1)
+    assert [message['role'] for message in trimmed['messages']] == ['system', 'user', 'user', 'user']
+    assert [str(message['content'])[:1] for message in trimmed['messages'][1:]] == ['b', 'c', '[']
+    assert request_size(trimmed) == len(encoded([{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': 'b' * 3000}, {'role': 'user', 'content': 'c' * 3000}, {'role': 'user', 'content': 'current question'}]))
+    with pytest.raises(PiFailure):
+        fit_request(context(['a' * 3000, 'b' * 3000, 'c' * 3000], 'current question'), 0)
+    with pytest.raises(PiFailure):
+        fit_request(context([], 'z' * 9000), 5)
+
+
+@pytest.mark.asyncio
+async def test_delegate_objective_must_fit_the_continuation(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    runtime.native = RecordingNative([delegate_reply('o' * (MESSAGE_BYTES + 1)), text_reply('shortened'), delegate_reply('o' * 1000), text_reply('delegated'), delegate_reply('o' * MESSAGE_BYTES, text='t' * 1200)])
+    runtime.transport = 'native-mock'
+    await runtime.start()
+    try:
+        first = await runtime.message(body('/task ' + 'x' * 3000))
+        assert first['text'] == 'shortened' and first['task_ids'] == []
+        error = runtime.native.events[1]['context']['messages'][-1]
+        assert error['role'] == 'toolResult' and error['isError'] is True
+        second = await runtime.message(body('/task ' + 'x' * 3000))
+        assert second['text'] == 'delegated' and len(second['task_ids']) == 1
+        with pytest.raises(PiFailure):
+            await runtime.message(body('/task ' + 'x' * (MESSAGE_BYTES - 6)))
+        assert len(runtime.store.list(10, None)) == 1
+        assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_delegation_admission_matches_the_real_continuation(tmp_path):
+    runtime = Runtime(tmp_path, NODE)
+    long_id = 'i' * 128
+    runtime.native = RecordingNative([
+        delegate_reply('o' * 1000, text='t' * 2949, call_id=long_id), text_reply('refused'),
+        text_reply('seed'),
+        delegate_reply('o' * 1500), text_reply('accepted'),
+        delegate_reply('o' * 1000, text='t' * 2910, call_id=long_id), text_reply('boundary'),
+    ])
+    runtime.transport = 'native-mock'
+    await runtime.start()
+    try:
+        first = await runtime.message(body('/task ' + 'x' * 3469))
+        assert first['text'] == 'refused' and first['task_ids'] == [] and len(runtime.store.list(10, None)) == 0
+        conversation = body('m' * 3400, mode='assistant')
+        await runtime.message(conversation)
+        later = body('/task ' + 'y' * 2994, assistant_id=conversation['assistant_id'], conversation_id=conversation['conversation_id'])
+        second = await runtime.message(later)
+        assert second['text'] == 'accepted' and len(second['task_ids']) == 1
+        third = await runtime.message(body('/task ' + 'x' * 3469))
+        assert third['text'] == 'boundary' and len(third['task_ids']) == 1
+        assert all(size <= CONTEXT_LIMIT for size in runtime.native.sizes)
+    finally:
+        await runtime.stop()

@@ -199,6 +199,9 @@ class NativeMockTransport:
             if not isinstance(message, dict):
                 raise PiFailure('native_context')
             clean = {key: message[key] for key in ('role', 'content', 'toolCallId', 'toolName', 'isError') if key in message}
+            content = clean.get('content')
+            if clean.get('role') == 'user' and isinstance(content, list) and content and all(isinstance(block, dict) and set(block) == {'type', 'text'} and block['type'] == 'text' and isinstance(block['text'], str) for block in content):
+                clean['content'] = ''.join(block['text'] for block in content)
             messages.append(clean)
         return messages
 
