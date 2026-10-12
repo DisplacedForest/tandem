@@ -30,12 +30,7 @@ extension ChatStore {
         return currentTurnProfile + ":bridge:" + binding + (bridge.apiKey?.isEmpty == false ? Self.turnProcessIdentity : "")
     }
 
-    var pendingProfileAvailable: Bool {
-        guard let configuration = nativeTaskConfiguration else { return true }
-        guard let config = currentNativeConfig,
-              let binding = try? configuration.enroll(config: config) else { return false }
-        return configuration.isAvailable(binding)
-    }
+    var pendingProfileAvailable: Bool { currentNativeConfig != nil }
 
     func prepareTurnDispatch(_ activity: NativeToolActivity, turn: NativeConversationTurn) -> Bool {
         guard turnAllowsDispatch(turn, activity: activity), let attempt = turn.attempt else { return false }
