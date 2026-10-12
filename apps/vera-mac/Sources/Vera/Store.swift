@@ -624,7 +624,7 @@ final class ChatStore: ObservableObject {
         Task {
             do {
                 let proposals = try await service.proposal(
-                    request: trimmed, existing: try memoryRepository.approvedMemories(), now: Date())
+                    request: trimmed, existing: { try memoryRepository.extractionMemories() }, now: Date())
                 try await saveMemoryProposals(
                     proposals, service: service, repository: memoryRepository)
                 reloadNativeMemory()
@@ -667,7 +667,7 @@ final class ChatStore: ObservableObject {
                             user: messages[index].text, assistant: messages[index + 1].text,
                             sourceConversationID: conversation.id,
                             sourceMessageID: messages[index].id.uuidString,
-                            existing: try memoryRepository.approvedMemories(), now: Date())
+                            existing: { try memoryRepository.extractionMemories() }, now: Date())
                         try await saveMemoryProposals(
                             proposals, service: service, repository: memoryRepository)
                         reviewedTurns += 1
@@ -1757,7 +1757,7 @@ final class ChatStore: ObservableObject {
                                     user: text, assistant: completedAssistant.text,
                                     sourceConversationID: id,
                                     sourceMessageID: turn.userMessageID.uuidString,
-                                    existing: try memoryRepository.approvedMemories(), now: Date())
+                                    existing: { try memoryRepository.extractionMemories() }, now: Date())
                                 try await self.saveMemoryProposals(
                                     proposals, service: memoryService, repository: memoryRepository)
                                 reloadNativeMemory()

@@ -153,6 +153,26 @@ extension LocalChatRepository {
         }
     }
 
+    static let sourceEligibleSQL = """
+        (m.source_conversation_id IS NULL OR (c.id IS NOT NULL AND c.memory_excluded = 0))
+          AND (m.source_message_id IS NULL OR EXISTS (
+            SELECT 1 FROM messages s JOIN native_memory_revisions r ON r.memory_id = m.id
+            WHERE s.id = m.source_message_id AND s.conversation_id = m.source_conversation_id
+              AND s.content = r.source_text AND s.state = 'complete' AND s.failure IS NULL
+              AND r.revision = (SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = m.id)))
+        """
+
+    func extractionMemories() throws -> [NativeMemoryRecord] {
+        try database.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT m.record_json FROM native_memories m
+                LEFT JOIN conversations c ON c.id = m.source_conversation_id
+                WHERE m.status = 'approved' AND \(Self.sourceEligibleSQL)
+                ORDER BY m.updated_at DESC, m.id ASC
+                """).map { try JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
+        }
+    }
+
     func recallMemory(_ text: String, bankScope: String, now: Date = Date(),
                       itemLimit: Int = 8, byteLimit: Int = 2_800) throws -> [NativeMemoryRanked] {
         guard itemLimit > 0, byteLimit > 0, !NativeMemorySafety.containsSensitiveData(text) else { return [] }
@@ -168,12 +188,7 @@ extension LocalChatRepository {
                   AND (? = 'all' OR lower(m.bank) = lower(?))
                   AND (m.expiry IS NULL OR m.expiry > ?)
                   AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
-                  AND (m.source_conversation_id IS NULL OR (c.id IS NOT NULL AND c.memory_excluded = 0))
-                  AND (m.source_message_id IS NULL OR EXISTS (
-                    SELECT 1 FROM messages s JOIN native_memory_revisions r ON r.memory_id = m.id
-                    WHERE s.id = m.source_message_id AND s.conversation_id = m.source_conversation_id
-                      AND s.content = r.source_text AND s.state = 'complete' AND s.failure IS NULL
-                      AND r.revision = (SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = m.id)))
+                  AND \(Self.sourceEligibleSQL)
                 ORDER BY bm25(native_memory_fts), m.updated_at DESC, m.id LIMIT 64
                 """, arguments: [query, bankScope, bankScope, now.timeIntervalSince1970])
             var result: [NativeMemoryRanked] = []
