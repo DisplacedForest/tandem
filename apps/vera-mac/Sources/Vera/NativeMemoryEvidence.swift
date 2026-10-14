@@ -71,6 +71,20 @@ extension LocalChatRepository {
         }
     }
 
+    static func memorySourceVersion(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func memorySourceVersion(conversationID: String, messageID: String) throws -> String? {
+        try database.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT messages.content FROM messages JOIN conversations ON conversations.id = messages.conversation_id
+                WHERE messages.id = ? AND conversations.id = ? AND conversations.memory_excluded = 0
+                  AND messages.state = 'complete' AND messages.failure IS NULL
+                """, arguments: [messageID, conversationID]).map(Self.memorySourceVersion)
+        }
+    }
+
     static func preserveMemoryEvidence(_ memory: NativeMemoryRecord, db: Database) throws {
         let previous = try String.fetchOne(db, sql: "SELECT record_json FROM native_memory_revisions WHERE memory_id = ? ORDER BY revision DESC LIMIT 1", arguments: [memory.id])
         var snapshot = memory
@@ -89,14 +103,14 @@ extension LocalChatRepository {
                 WHERE messages.id = ? AND conversations.id = ? AND conversations.memory_excluded = 0
                   AND messages.state = 'complete' AND messages.failure IS NULL
                 """, arguments: [message, conversation])
-            if let text = sourceText, (memory.sensitiveConsent == true
+            if let text = sourceText, (memory.sensitiveConsent == true && memory.sensitiveConsentVersion == memorySourceVersion(text)
                     ? NativeMemorySafety.containsSecret(text)
                     : NativeMemorySafety.containsSensitiveData(text))
                 || text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("private:") || text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("do not remember") {
                 sourceText = nil
             }
         }
-        let version = sourceText.map { SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
+        let version = sourceText.map(memorySourceVersion)
         try db.execute(sql: """
             INSERT INTO native_memory_revisions(memory_id, revision, record_json, source_conversation_id, source_message_id, source_text, source_version)
             SELECT ?, COALESCE(MAX(revision), 0) + 1, ?, ?, ?, ?, ? FROM native_memory_revisions WHERE memory_id = ?

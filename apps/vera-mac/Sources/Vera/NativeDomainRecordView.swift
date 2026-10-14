@@ -10,6 +10,12 @@ private struct DomainSourceChoice: Identifiable {
 struct NativeDomainRecordPrefill: Sendable {
     let memoryID: String
     let replaces: NativeDomainEntry?
+
+    static func latest(_ sources: [NativeDomainCitation]) -> NativeDomainEntry? {
+        sources.filter { !$0.superseded }.compactMap(\.entry)
+            .filter { if case .retraction = $0.payload { return false }; return $0.payload != nil }
+            .max { $0.occurredAt == $1.occurredAt ? $0.learnedAt < $1.learnedAt : $0.occurredAt < $1.occurredAt }
+    }
 }
 
 struct NativeDomainRecordView: View {

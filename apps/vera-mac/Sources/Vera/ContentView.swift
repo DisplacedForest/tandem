@@ -59,6 +59,7 @@ struct ContentView: View {
             .task { await store.connect() }
             .onChange(of: store.section) { if store.section != .chat { assistant.isSelected = false } }
             .onChange(of: store.selectedID) { assistant.isSelected = false }
+            .onChange(of: store.classicChatRequest) { assistant.isSelected = false }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)
@@ -276,6 +277,22 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if assistant == nil, let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
+                    Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button { store.dismissSourceNotice() } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                        .accessibilityLabel("Dismiss")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+                .frame(maxWidth: 760)
+                .padding(.horizontal, 28).padding(.top, 10)
+                .accessibilityElement(children: .contain)
+            }
             if let convo = conversation, !convo.messages.isEmpty || assistant?.session?.tasks.isEmpty == false {
                 ScrollViewReader { proxy in
                     ScrollView {

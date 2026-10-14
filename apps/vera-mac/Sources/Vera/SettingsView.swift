@@ -426,16 +426,16 @@ struct NativeMemorySettingsTab: View {
     var body: some View {
         Form {
             Section("Local memory") {
-                Toggle("Use approved memory in native chat", isOn: config.memoryBoolBinding(\.enabled))
+                Toggle("Use approved memory in native chat", isOn: config.liveMemoryBinding(\.enabled, store: store))
                 Text("Approved memory is stored only on this Mac. Vera only recalls approved items, and every model-suggested change waits for your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Toggle("Search past chats", isOn: config.memoryBoolBinding(\.searchPastChats))
+                Toggle("Search past chats", isOn: config.liveMemoryBinding(\.searchPastChats, store: store))
                 Text("When enabled, Vera may use completed local chats to suggest memory changes. Chats are not copied into memory.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Toggle("Generate proposals from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
+                Toggle("Generate proposals from completed chats", isOn: config.liveMemoryBinding(\.generateFromChats, store: store))
                 Text("Suggestions appear in the Memory review queue. They never become approved memory on their own.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Picker("Sensitive information", selection: config.memoryBinding(\.sensitiveHandling)) {
+                Picker("Sensitive information", selection: config.liveMemoryBinding(\.sensitiveHandling, store: store)) {
                     ForEach(NativeMemorySensitiveHandling.allCases, id: \.self) { option in
                         Text(option.title).tag(option)
                     }

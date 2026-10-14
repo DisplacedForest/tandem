@@ -483,7 +483,7 @@ private struct MemoryProposalRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(proposal.title).font(.system(size: 13, weight: .semibold))
                 MemoryLineView(text: proposal.summary, color: Theme.textSecondary)
-                Text(proposal.kind.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange)
+                Text(proposal.displayLabel).font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange)
             }
             .accessibilityElement(children: .combine)
             Spacer()
@@ -516,6 +516,7 @@ private struct MemoryProposalReviewView: View {
     let proposal: NativeMemoryProposal
     @State private var details: String
     @State private var reviewError: String?
+    @State private var projected: [String]?
 
     init(proposal: NativeMemoryProposal) {
         self.proposal = proposal
@@ -547,7 +548,7 @@ private struct MemoryProposalReviewView: View {
             HStack {
                 Text(proposal.title).font(.system(size: 18, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
-                Text(proposal.kind.label)
+                Text(proposal.displayLabel)
                     .font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange)
                     .padding(.horizontal, 7).padding(.vertical, 2)
                     .background(.orange.opacity(0.12), in: Capsule())
@@ -578,7 +579,9 @@ private struct MemoryProposalReviewView: View {
                                     if before.count > 1 {
                                         Text(record.title).font(.system(size: 12, weight: .semibold))
                                     }
-                                    MemoryLineView(text: record.summary, size: 12, color: Theme.textSecondary)
+                                    if proposal.domain == nil {
+                                        MemoryLineView(text: record.summary, size: 12, color: Theme.textSecondary)
+                                    }
                                     ForEach(Array(record.details.enumerated()), id: \.offset) { _, line in
                                         MemoryLineView(text: line, size: 12)
                                     }
@@ -588,16 +591,32 @@ private struct MemoryProposalReviewView: View {
                             }
                         }
                     }
-                    Text(before.isEmpty ? "Proposed details" : "After").font(.system(size: 12, weight: .semibold))
-                    if proposal.domain != nil {
+                    if let domain = proposal.domain {
+                        Text("After").font(.system(size: 12, weight: .semibold))
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let projected, !projected.isEmpty {
+                                ForEach(Array(projected.enumerated()), id: \.offset) { _, line in
+                                    MemoryLineView(text: line, size: 13).textSelection(.enabled)
+                                }
+                            } else if projected != nil {
+                                Text(domain.entry.occurredAt > Date()
+                                     ? "Takes effect on " + domain.entry.occurredAt.formatted(date: .long, time: .shortened)
+                                     : "Nothing current is established yet")
+                                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        Text("Evidence being added").font(.system(size: 12, weight: .semibold))
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(proposal.details.enumerated()), id: \.offset) { _, line in
-                                MemoryLineView(text: line, size: 13).textSelection(.enabled)
+                                MemoryLineView(text: line, size: 12, color: Theme.textSecondary).textSelection(.enabled)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
                     } else {
+                        Text(before.isEmpty ? "Proposed details" : "After").font(.system(size: 12, weight: .semibold))
                         TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 160)
                             .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
                             .accessibilityLabel("Proposed details")
@@ -632,7 +651,13 @@ private struct MemoryProposalReviewView: View {
                 .accessibilityLabel(proposal.domain == nil ? "Accept edited proposal" : "Accept record")
                 .accessibilityHint("Applies this change to approved memory")
             }
-        }.padding(24).frame(width: 640, height: 560)
+        }
+        .padding(24).frame(width: 640, height: 600)
+        .task {
+            guard let domain = proposal.domain, let repository = store.repository as? LocalChatRepository else { return }
+            do { projected = try repository.domainProjectionPreview(domain.entry) }
+            catch { reviewError = "The result of this record could not be calculated. \(error.localizedDescription)" }
+        }
     }
 }
 
@@ -666,10 +691,7 @@ struct MemoryDetailView: View {
     }
 
     private var correction: NativeDomainRecordPrefill {
-        let latest = evidence.first?.domainSources.filter { !$0.superseded }.compactMap(\.entry)
-            .filter { if case .retraction = $0.payload { return false }; return $0.payload != nil }
-            .max { $0.occurredAt == $1.occurredAt ? $0.learnedAt < $1.learnedAt : $0.occurredAt < $1.occurredAt }
-        return NativeDomainRecordPrefill(memoryID: memory.id, replaces: latest)
+        NativeDomainRecordPrefill(memoryID: memory.id, replaces: NativeDomainRecordPrefill.latest(evidence.first?.domainSources ?? []))
     }
 
     var body: some View {

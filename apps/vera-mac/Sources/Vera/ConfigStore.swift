@@ -551,6 +551,21 @@ final class ConfigStore: ObservableObject {
             set: { value in self.updateMemory { $0[keyPath: keyPath] = value } })
     }
 
+    func liveMemoryBinding<Value>(_ keyPath: WritableKeyPath<NativeMemorySettings, Value>, store: ChatStore) -> Binding<Value> {
+        Binding(
+            get: { self.nativeSettings.memory[keyPath: keyPath] },
+            set: { value in self.applyMemorySetting(to: store) { $0[keyPath: keyPath] = value } })
+    }
+
+    func applyMemorySetting(to store: ChatStore, _ update: (inout NativeMemorySettings) -> Void) {
+        updateMemory(update)
+        let saved = (try? save()) != nil
+        store.updateNativeMemory(settings: nativeSettings.memory, service: nativeMemoryService)
+        if !saved {
+            store.memoryServiceState = .failed("This change applies now, but it couldn't be saved for the next launch.")
+        }
+    }
+
     var memoryEndpointLocation: String? {
         let url = nativeResolved?.baseURL ?? URL(string: activeNativeProfile?.baseURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
         guard let host = url?.host, !host.isEmpty else { return nil }

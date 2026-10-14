@@ -82,6 +82,40 @@ enum NativeDomainRepositorySelftest {
             && NativeCareLine.parse("Current count: 6") == nil, "care phrases not parsed")
     }
 
+    static func futureCorrectionPresentation(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("future-correction.sqlite"))
+        let entity = UUID()
+        let baseline = try fixture(repository, entity: entity, text: "We have twelve sheep.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("12", unit: .count)))
+        try repository.approveDomainProposal(repository.stageDomainProposal(baseline, label: "Sheep")!)
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let later = try fixture(repository, entity: entity, text: "From next week the count should read eleven sheep.",
+            at: next.timeIntervalSince1970, payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("11", unit: .count)), supersedes: [baseline.id])
+        let laterProposal = try repository.stageDomainProposal(later, label: "Sheep")!
+        try require(laterProposal.displayLabel == "Change", "superseding domain proposal not labeled Change")
+        try repository.approveDomainProposal(laterProposal)
+        guard let memory = try repository.approvedMemories().first(where: { $0.domainEntityID == entity }) else {
+            throw NSError(domain: "DomainRepositoryTest", code: 3, userInfo: [NSLocalizedDescriptionKey: "future correction projection missing"])
+        }
+        try require(memory.summary == "Current count: 12", "future correction applied early")
+        let evidence = try repository.memoryEvidence(memory.id)
+        let today = evidence.first?.domainSources ?? []
+        try require(today.contains { $0.id == baseline.id && !$0.superseded && $0.supersededAt == nil },
+                    "future correction marked current baseline superseded today")
+        try require(NativeDomainRecordPrefill.latest(today)?.id == baseline.id, "correction prefill lost the current entry")
+        let afterwards = try repository.domainCitations(memory.id, revision: evidence[0].revision, now: next.addingTimeInterval(60))
+        try require(afterwards.contains { $0.id == baseline.id && $0.superseded && $0.supersededAt == later.occurredAt },
+                    "applied correction not marked superseded with its date")
+        let loss = try fixture(repository, entity: entity, text: "One sheep was sold today.", at: Date().addingTimeInterval(-60).timeIntervalSince1970,
+            payload: .stock(kind: .removal, quantity: NativeDomainQuantity("1", unit: .count)))
+        let lossProposal = try repository.stageDomainProposal(loss, label: "Sheep")!
+        try require(lossProposal.displayLabel == "New memory", "additive domain proposal mislabeled")
+        try require(try repository.domainProjectionPreview(lossProposal.domain!.entry).first == "Current count: 11",
+                    "review preview did not show the resulting projection")
+        try require(try repository.approvedMemories().first(where: { $0.domainEntityID == entity })?.summary == "Current count: 12",
+                    "review preview changed approved memory")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -191,6 +225,7 @@ enum NativeDomainRepositorySelftest {
         try await correctionPrivacy()
         try futureClear(directory)
         try presentation(directory)
+        try futureCorrectionPresentation(directory)
         print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 

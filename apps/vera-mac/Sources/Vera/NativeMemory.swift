@@ -201,6 +201,7 @@ struct NativeMemoryRecord: Codable, Identifiable, Hashable, Sendable {
     var domainEntityID: UUID? = nil
     var domainRevision: Int? = nil
     var sensitiveConsent: Bool? = nil
+    var sensitiveConsentVersion: String? = nil
 
     var embeddingState: NativeMemoryEmbeddingState {
         guard let embedding else { return .missing }
