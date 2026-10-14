@@ -229,7 +229,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
         return [NativeMemoryProposal(
             id: UUID().uuidString, kind: .create, title: "Meeting preference",
             summary: "Prefers morning meetings", details: ["The user prefers morning meetings"],
-            group: .you, category: .preference, bank: "personal", durability: .durable,
+            group: .profile, category: .preference, bank: "personal", durability: .durable,
             expiry: nil, targetIDs: [], sourceConversationID: sourceConversationID,
             sourceMessageID: sourceMessageID, createdAt: now, status: .pending)]
     }
@@ -240,7 +240,7 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
         locked { extracts += 1 }
         return [NativeMemoryProposal(
             id: UUID().uuidString, kind: .create, title: "Requested change",
-            summary: request, details: [request], group: .you, category: .preference,
+            summary: request, details: [request], group: .profile, category: .preference,
             bank: "personal", durability: .durable, expiry: nil, targetIDs: [],
             sourceConversationID: nil, sourceMessageID: nil, createdAt: now, status: .pending)]
     }
@@ -834,7 +834,7 @@ enum SelfTest {
         let ranked = [NativeMemoryRanked(
             record: NativeMemoryRecord(
                 id: "memory", title: "Coffee", summary: "Drinks oat lattes",
-                details: ["Prefers oat milk lattes"], group: .you, category: .preference,
+                details: ["Prefers oat milk lattes"], group: .profile, category: .preference,
                 bank: "personal", durability: .durable, expiry: nil, status: .approved,
                 embedding: [1, 0], sourceConversationID: nil, sourceMessageID: nil,
                 createdAt: timestamp, updatedAt: timestamp),
@@ -1520,7 +1520,7 @@ enum SelfTest {
             try repository.saveConversation(Conversation(id: "source", title: "Source", messages: [], updatedAt: now))
             let approved = NativeMemoryRecord(
                 id: "approved", title: "Favorite drink", summary: "Prefers natural wine",
-                details: ["The user prefers natural wine"], group: .you, category: .preference,
+                details: ["The user prefers natural wine"], group: .profile, category: .preference,
                 bank: "personal", durability: .durable, expiry: nil, status: .approved,
                 embedding: [1, 0], sourceConversationID: "source", sourceMessageID: nil,
                 createdAt: now, updatedAt: now)
@@ -1536,7 +1536,7 @@ enum SelfTest {
             let proposal = NativeMemoryProposal(
                 id: "proposal", kind: .update, title: "Update favorite drink",
                 summary: "Change the saved preference", details: ["Now prefers orange wine"],
-                group: .you, category: .preference, bank: "personal", durability: .durable,
+                group: .profile, category: .preference, bank: "personal", durability: .durable,
                 expiry: nil, targetIDs: [approved.id], sourceConversationID: "source",
                 sourceMessageID: nil, createdAt: now, status: .pending)
             try repository.saveProposal(proposal)
@@ -1629,7 +1629,7 @@ enum SelfTest {
             }
             let similar = NativeMemoryRecord(
                 id: "similar", title: "Drink preference", summary: "Likes natural wine",
-                details: ["The user likes natural wine"], group: .you, category: .preference,
+                details: ["The user likes natural wine"], group: .profile, category: .preference,
                 bank: "personal", durability: .durable, expiry: nil, status: .approved,
                 embedding: [0.99, 0.01], sourceConversationID: nil, sourceMessageID: nil,
                 createdAt: now.addingTimeInterval(-10), updatedAt: now.addingTimeInterval(-10))
@@ -1641,7 +1641,7 @@ enum SelfTest {
             var suppressed = approved
             suppressed.status = .suppressed
             let approvedFilter = NativeMemoryLibraryFilter(
-                query: "wine", group: .you, bank: "personal", category: .preference,
+                query: "wine", group: .profile, bank: "personal", category: .preference,
                 status: .approved, expiry: .noExpiry)
             let expiredFilter = NativeMemoryLibraryFilter(
                 status: .approved, expiry: .expired)
@@ -1658,7 +1658,7 @@ enum SelfTest {
             let semanticCreate = NativeMemoryProposal(
                 id: "semantic", kind: .create, title: "Wine preference",
                 summary: "Enjoys natural wine", details: ["The user enjoys natural wine"],
-                group: .you, category: .preference, bank: "personal", durability: .durable,
+                group: .profile, category: .preference, bank: "personal", durability: .durable,
                 expiry: nil, targetIDs: [], sourceConversationID: nil, sourceMessageID: nil,
                 createdAt: now, status: .pending)
             let reconciled = NativeMemoryReconciliation.reconcile(

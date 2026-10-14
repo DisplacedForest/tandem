@@ -45,6 +45,43 @@ enum NativeDomainRepositorySelftest {
         try require(try repository.approvedMemories().isEmpty, "cleared future fact became approved memory without a new approval")
     }
 
+    static func presentation(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("presentation.sqlite"))
+        let entity = UUID()
+        let baseline = try fixture(repository, entity: entity, text: "We have five goats.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("5", unit: .count)))
+        try repository.approveDomainProposal(repository.stageDomainProposal(baseline, label: "Goats")!)
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let planned = try fixture(repository, entity: entity, text: "Hoof trimming is planned for next week.",
+            at: next.timeIntervalSince1970, payload: .care(activity: "Hoof trimming", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Goats")!)
+        guard let memory = try repository.approvedMemories().first(where: { $0.domainEntityID == entity }) else {
+            throw NSError(domain: "DomainRepositoryTest", code: 2, userInfo: [NSLocalizedDescriptionKey: "presentation projection missing"])
+        }
+        try require(!memory.details.contains { $0.contains("Hoof trimming") }, "future planned care changed projection semantics")
+        let upcoming = try repository.upcomingDomainCare()[memory.id] ?? []
+        try require(upcoming.map(\.id) == [planned.id], "future planned care not exposed as upcoming")
+        try require(try repository.upcomingDomainCare(now: next.addingTimeInterval(60))[memory.id] == nil, "past planned care still listed as upcoming")
+        let corrected = try fixture(repository, entity: entity, text: "Correction: we had six goats, not five.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("6", unit: .count)), supersedes: [baseline.id])
+        try repository.approveDomainProposal(repository.stageDomainProposal(corrected, label: "Goats")!)
+        let evidence = try repository.memoryEvidence(memory.id)
+        try require(evidence.first?.record.summary == "Current count: 6", "presentation correction not projected")
+        let replaced = evidence.flatMap(\.domainSources).filter { $0.id == baseline.id }
+        try require(!replaced.isEmpty && replaced.allSatisfy { $0.superseded && $0.supersededAt == corrected.occurredAt },
+                    "superseded evidence not marked with its replacement date")
+        try require(evidence.first?.domainSources.contains { $0.id == corrected.id && !$0.superseded && $0.entry?.id == corrected.id } == true,
+                    "current evidence lost its entry")
+        try require(NativeCareLine.parse("Vaccination: planned, not completed") == NativeCareLine(activity: "Vaccination", state: .planned)
+            && NativeCareLine.parse("Vaccination: completed")?.state == .completed
+            && NativeCareLine.parse("Shearing: recommended, not completed")?.state == .recommended
+            && NativeCareLine.parse("Shearing: possible, not completed")?.state == .possible
+            && NativeCareLine.parse("Shearing: did not occur")?.state == .notOccurred
+            && NativeCareLine.parse("Needs clarification: Shearing: completed")?.state == .uncertain
+            && NativeCareLine.parse("Care completion needs clarification.")?.state == .uncertain
+            && NativeCareLine.parse("Current count: 6") == nil, "care phrases not parsed")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -153,7 +190,8 @@ enum NativeDomainRepositorySelftest {
         try await migrationAndRestore(directory)
         try await correctionPrivacy()
         try futureClear(directory)
-        print("domain-repository: PASS (review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
+        try presentation(directory)
+        print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 
     static func privacyAndValidation() async throws {

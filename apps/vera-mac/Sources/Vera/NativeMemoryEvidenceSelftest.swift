@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import GRDB
 
@@ -107,6 +108,8 @@ enum NativeMemoryEvidenceSelftest {
         try await adversarial(directory)
         try await admissionAndRounds(directory)
         try await extractionRevocation(directory)
+        try libraryPresentation(directory)
+        try await liveMemoryControls(directory)
         print("native-memory-evidence: PASS (cross-chat correction, reopen, planned care, citation, edit route, scope, expiry, budget, off, removal, replay; zero model calls)")
     }
 
@@ -318,7 +321,7 @@ enum NativeMemoryEvidenceSelftest {
             let (_, revoked) = try fixture(repository, name: "revoked")
             let now = Date()
             let kept = NativeMemoryRecord(id: "kept", title: "Drinks", summary: "Prefers green tea",
-                details: ["The user prefers green tea"], group: .you, category: .preference, bank: "personal",
+                details: ["The user prefers green tea"], group: .profile, category: .preference, bank: "personal",
                 durability: .durable, expiry: nil, status: .approved, embedding: nil, sourceConversationID: nil,
                 sourceMessageID: nil, createdAt: now, updatedAt: now)
             try repository.saveMemory(kept, decision: .accepted, note: "Synthetic approved fixture")
@@ -360,6 +363,198 @@ enum NativeMemoryEvidenceSelftest {
                         "excluded source reached extraction " + (queued ? "after queued admission" : "request"))
         }
         print("  memory extraction: PASS (excluded source absent from extraction before and during queued admission)")
+    }
+
+    private static func libraryPresentation(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("library.sqlite"))
+        let now = Date()
+        try require(NativeMemoryCategory.project.defaultGroup == .projects && NativeMemoryCategory.plan.defaultGroup == .areas
+            && NativeMemoryCategory.preference.defaultGroup == .profile, "category default groups changed")
+        let project = NativeMemoryRecord(id: "project", title: "Barn rebuild", summary: "Rebuilding the barn",
+            details: ["Rebuilding the barn this year"], group: NativeMemoryCategory.project.defaultGroup, category: .project,
+            bank: "farm", durability: .durable, expiry: nil, status: .approved, embedding: nil,
+            sourceConversationID: nil, sourceMessageID: nil, createdAt: now, updatedAt: now)
+        var legacyProject = project
+        legacyProject.id = "legacy-project"
+        legacyProject.group = .areas
+        try repository.saveMemory(project, decision: .accepted, note: "Synthetic user approval")
+        try repository.saveMemory(legacyProject, decision: .accepted, note: "Synthetic user approval")
+        let reopened = try repository.allMemories()
+        let projects = NativeMemoryLibraryFilter(group: .projects)
+        try require(Set(reopened.filter { projects.matches($0) }.map(\.id)) == ["project", "legacy-project"], "project memory missing from Projects")
+        try require(!reopened.contains { NativeMemoryLibraryFilter(group: .areas).matches($0) }, "project memory still listed in Areas")
+        var legacy = String(decoding: try JSONEncoder().encode(project), as: UTF8.self)
+        legacy = legacy.replacingOccurrences(of: "\"Projects\"", with: "\"You\"")
+        let decoded = try JSONDecoder().decode(NativeMemoryRecord.self, from: Data(legacy.utf8))
+        try require(decoded.group == .profile && decoded.libraryGroup == .profile, "old You group did not decode to Profile and Preferences")
+        try require(NativeMemoryProposalKind.allCases.allSatisfy { !$0.label.isEmpty && $0.label != $0.rawValue }
+            && NativeMemoryProposalKind.update.label == "Change", "proposal kinds shown as raw values")
+        let source = Message(role: .user, text: "I prefer tea in the morning.")
+        try repository.saveConversation(Conversation(id: "chat-source", title: "Source", messages: [], updatedAt: now))
+        try repository.saveMessage(source, conversationID: "chat-source", ordinal: 0)
+        let sourced = NativeMemoryRecord(id: "sourced", title: "Morning drink", summary: "Prefers tea",
+            details: ["Prefers tea in the morning"], group: .profile, category: .preference, bank: "personal",
+            durability: .durable, expiry: nil, status: .approved, embedding: nil, sourceConversationID: "chat-source",
+            sourceMessageID: source.id.uuidString, createdAt: now, updatedAt: now)
+        try repository.saveMemory(sourced, decision: .accepted, note: "Synthetic user approval")
+        try require(try repository.memoriesWithUnavailableSources().isEmpty, "eligible source reported unavailable")
+        try repository.deleteConversation("chat-source")
+        try require(try repository.memoriesWithUnavailableSources() == ["sourced"], "deleted source not reported unavailable")
+        print("  memory library: PASS (Projects group, legacy You decode, plain proposal kinds, unavailable source)")
+    }
+
+    private static func liveMemoryControls(_ directory: URL) async throws {
+        func makeStore(_ repository: LocalChatRepository, _ settings: NativeMemorySettings,
+                       _ service: any NativeMemoryServing) -> ChatStore {
+            ChatStore(nativeConfig: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil, model: "local-model", chatTemplateKwargs: nil), nativeTransport: SelfTestNativeTransport(),
+                repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
+        }
+        var generating = NativeMemorySettings.fresh
+        generating.enabled = true
+        generating.generateFromChats = true
+        for flip in [false, true] {
+            let repository = try LocalChatRepository(url: directory.appendingPathComponent("live-generate-\(flip).sqlite"))
+            let service = SelfTestMemoryService()
+            let store = makeStore(repository, generating, service)
+            var flipped = false
+            var off = generating
+            off.generateFromChats = false
+            let watcher = store.$conversations.sink { conversations in
+                guard flip, !flipped,
+                      let reply = conversations.first(where: { $0.id == store.selectedID })?.messages.last,
+                      reply.role == .assistant, reply.state == .complete, !reply.text.isEmpty else { return }
+                flipped = true
+                store.updateNativeMemory(settings: off, service: service)
+            }
+            store.newConversation()
+            store.sendText("I like morning walks before work")
+            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await Task.sleep(for: .milliseconds(300))
+            watcher.cancel()
+            if flip {
+                try require(flipped, "settings never flipped between completion and extraction")
+                try require(service.extractionCalls == 0, "extraction ran after generation was turned off")
+                try require(try repository.pendingProposals().isEmpty, "proposal saved after generation was turned off")
+            } else {
+                try require(service.extractionCalls == 1, "control turn did not extract")
+            }
+        }
+
+        let scanRepository = try LocalChatRepository(url: directory.appendingPathComponent("live-scan.sqlite"))
+        let now = Date()
+        for index in 0..<4 {
+            let id = "scan-\(index)"
+            try scanRepository.saveConversation(Conversation(id: id, title: id, messages: [], updatedAt: now.addingTimeInterval(Double(index))))
+            try scanRepository.saveMessage(Message(role: .user, text: "I keep bees in garden plot \(index)"), conversationID: id, ordinal: 0)
+            try scanRepository.saveMessage(Message(role: .assistant, text: "Noted, plot \(index)."), conversationID: id, ordinal: 1)
+        }
+        var scanning = NativeMemorySettings.fresh
+        scanning.enabled = true
+        scanning.searchPastChats = true
+        let scanService = NativeMemoryScanStub()
+        let scanStore = makeStore(scanRepository, scanning, scanService)
+        await scanStore.connect()
+        let scanOff = NativeMemorySettings(
+            enabled: true, embeddingsModel: "", extractionModel: "", bankScope: "all",
+            searchPastChats: false, generateFromChats: false)
+        scanService.onExtract = { await MainActor.run { scanStore.updateNativeMemory(settings: scanOff, service: scanService) } }
+        scanStore.searchPastChatsForMemory()
+        for _ in 0..<300 where scanService.calls == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(300))
+        try require(scanService.calls == 1, "past-chat scan kept reviewing turns after Search past chats was turned off")
+        try require(try scanRepository.pendingProposals().isEmpty, "past-chat scan saved proposals after it was turned off")
+        try require(scanStore.memoryServiceState == .ready, "stopped scan was reported as a failure")
+        scanStore.scanPastChatsIfAllowed()
+        try await Task.sleep(for: .milliseconds(100))
+        try require(scanService.calls == 1 && scanStore.memoryServiceState == .notice("Turn on Search past chats in Settings to scan."),
+                    "scan request ran or enabled Search past chats while it was off")
+
+        let sourceMessage = try scanRepository.messages(conversationID: "scan-1")[0]
+        scanStore.openMemorySource(conversationID: "scan-1", messageID: sourceMessage.id.uuidString)
+        try require(scanStore.selectedID == "scan-1" && scanStore.pendingHighlightMessageID == sourceMessage.id,
+                    "source opening did not target the exact message")
+        scanStore.openMemorySource(conversationID: "scan-2", messageID: UUID().uuidString)
+        try require(scanStore.selectedID == "scan-2" && scanStore.pendingHighlightMessageID == nil
+                    && scanStore.memoryServiceState == .notice("The source message was deleted or changed, so Vera opened the conversation instead."),
+                    "missing source message was not explained")
+        var excludedSource = try scanRepository.listConversations().first { $0.id == "scan-3" }!
+        excludedSource.memoryExcluded = true
+        try scanRepository.saveConversation(excludedSource)
+        await scanStore.connect()
+        let excludedMessage = try scanRepository.messages(conversationID: "scan-3")[0]
+        scanStore.openMemorySource(conversationID: "scan-3", messageID: excludedMessage.id.uuidString)
+        try require(scanStore.selectedID == "scan-3" && scanStore.pendingHighlightMessageID == excludedMessage.id
+                    && scanStore.memoryServiceState == .notice("This conversation is excluded from memory suggestions."),
+                    "excluded source conversation was not opened with an explanation")
+
+        let sensitiveUser = "settings: I prefer dark mode everywhere"
+        let secretUser = "password: hunter2hunter2 for the router"
+        for handling in NativeMemorySensitiveHandling.allCases {
+            for (index, user) in [sensitiveUser, secretUser].enumerated() {
+                let repository = try LocalChatRepository(url: directory.appendingPathComponent("sensitive-\(handling.rawValue)-\(index).sqlite"))
+                let service = SelfTestMemoryService()
+                var settings = generating
+                settings.sensitiveHandling = handling
+                let store = makeStore(repository, settings, service)
+                store.newConversation()
+                store.sendText(user)
+                for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+                try await Task.sleep(for: .milliseconds(300))
+                let pending = try repository.pendingProposals()
+                if handling == .reviewOnly && user == sensitiveUser {
+                    try require(service.extractionCalls == 1 && pending.count == 1
+                                && pending[0].summary.hasPrefix("Contains sensitive text:"),
+                                "review-only sensitive turn was not flagged for review")
+                    try require(try repository.approvedMemories().isEmpty
+                                && (try repository.recallMemory("morning meetings", bankScope: "all")).isEmpty,
+                                "sensitive proposal was stored or recalled without acceptance")
+                    try require(store.acceptMemoryProposal(pending[0]), "flagged proposal could not be accepted")
+                    try require(try repository.approvedMemories().first?.summary == "Prefers morning meetings",
+                                "accepted memory kept the review flag in its summary")
+                    let reopened = try LocalChatRepository(url: directory.appendingPathComponent("sensitive-\(handling.rawValue)-\(index).sqlite"))
+                    let recalled = try reopened.recallMemory("morning meetings", bankScope: "all", sensitive: .reviewOnly)
+                    try require(recalled.count == 1 && recalled[0].record.sensitiveConsent == true,
+                                "accepted review-only memory was not recalled after reopen")
+                    try require(try reopened.eligibleMemory(recalled, bankScope: "all", sensitive: .reviewOnly).count == 1,
+                                "accepted review-only memory failed admission")
+                    try require(try reopened.recallMemory("morning meetings", bankScope: "all").isEmpty
+                                && (try reopened.eligibleMemory(recalled, bankScope: "all")).isEmpty,
+                                "consented sensitive memory was recalled under never remember")
+                    var switched = settings
+                    switched.sensitiveHandling = .neverStore
+                    store.updateNativeMemory(settings: switched, service: service)
+                    try require(await store.selectApprovedMemory("morning meetings").isEmpty,
+                                "switching to never remember did not stop recall")
+                    try require(try repository.approvedMemories().count == 1,
+                                "switching to never remember removed the stored memory")
+                    store.updateNativeMemory(settings: settings, service: service)
+                    try require(await store.selectApprovedMemory("morning meetings").count == 1,
+                                "switching back to review only did not restore recall")
+                    try require(try reopened.memoryEvidence(recalled[0].record.id).first?.sourceText == user,
+                                "accepted review-only memory lost its source snapshot")
+                } else if handling == .neverStore && user == sensitiveUser {
+                    try require(service.extractionCalls == 0 && pending.isEmpty,
+                                "sensitive turn reached extraction under never remember")
+                    var stale = NativeMemoryProposal(
+                        id: UUID().uuidString, kind: .create, title: "Meeting preference",
+                        summary: "Prefers morning meetings", details: ["The user prefers morning meetings"],
+                        group: .profile, category: .preference, bank: "personal", durability: .durable,
+                        expiry: nil, targetIDs: [], sourceConversationID: store.selectedID,
+                        sourceMessageID: store.selected?.messages.first?.id.uuidString, createdAt: Date(), status: .pending)
+                    stale = NativeMemorySensitiveHandling.flagged(stale)
+                    try repository.saveProposal(stale)
+                    try require(!store.acceptMemoryProposal(stale) && (try repository.approvedMemories()).isEmpty,
+                                "flagged proposal became memory under never remember")
+                } else {
+                    try require(service.extractionCalls == 0 && pending.isEmpty,
+                                "sensitive turn reached extraction under \(handling.rawValue)")
+                }
+            }
+        }
+        let legacy = try JSONDecoder().decode(NativeMemorySettings.self, from: Data(#"{"enabled":true,"embeddingsModel":"","extractionModel":"","bankScope":"all","searchPastChats":false,"generateFromChats":true}"#.utf8))
+        try require(legacy.sensitiveHandling == .neverStore, "saved settings without a sensitive choice did not default to never remember")
+        print("  memory controls: PASS (generation off after completion skips extraction, scan stops when turned off, scan request never forces the toggle, exact source opening, sensitive review accepted and recalled after reopen, refused under never remember, credentials blocked in both modes)")
     }
 
     private static func require(_ condition: Bool, _ reason: String) throws {
@@ -430,4 +625,35 @@ private final class NativeMemoryAdmissionProtocol: URLProtocol, @unchecked Senda
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() { }
+}
+
+private final class NativeMemoryScanStub: NativeMemoryServing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var hook: (@Sendable () async -> Void)?
+    var calls: Int { lock.withLock { count } }
+    var onExtract: (@Sendable () async -> Void)? {
+        get { lock.withLock { hook } }
+        set { lock.withLock { hook = newValue } }
+    }
+
+    func embed(_ text: String) async throws -> [Double] { [1, 0] }
+
+    func proposals(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] {
+        let first = lock.withLock { count += 1; return count == 1 }
+        if first, let hook = onExtract { await hook() }
+        return [NativeMemoryProposal(
+            id: UUID().uuidString, kind: .create, title: "Bees",
+            summary: "Keeps bees", details: ["The user keeps bees"],
+            group: .profile, category: .interest, bank: "personal", durability: .durable,
+            expiry: nil, targetIDs: [], sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, createdAt: now, status: .pending)]
+    }
+
+    func proposal(
+        request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] { [] }
 }

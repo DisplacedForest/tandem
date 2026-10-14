@@ -372,9 +372,15 @@ the vera-api base URL is configured.
 
 ### Native personal memory
 
-Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. With embeddings unset, approved memory uses local lexical recall without model calls. A configured embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable. The native persistent-workspace adapter shares this store and its memory controls; changing the internal runtime does not create a separate memory library.
+Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved memory is stored only on this Mac, in the app's local database, and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. With embeddings unset, approved memory uses local lexical recall without model calls. A configured embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable. Generating proposals and embeddings sends the current turn and your existing memories to the configured model endpoint. Settings names that endpoint's host and says whether it's on this Mac or remote. The native persistent-workspace adapter shares this store and its memory controls; changing the internal runtime does not create a separate memory library.
 
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
+
+Search past chats and Generate proposals from completed chats are separate switches. Turning either one off, or turning memory off, stops work already underway: a past-chat scan stops at the next turn, and a reply that just finished doesn't get reviewed. The Memory screen's scan button won't turn Search past chats on for you.
+
+Sensitive information has two choices. Never remember (the default) skips any turn that looks like it holds a password, key, code, or settings text. Suggest for review only lets those turns produce suggestions marked "Contains sensitive text:" in the review queue. Nothing is saved until you accept it, and passwords and keys are skipped either way.
+
+Opening a memory's source jumps to the exact message in the conversation and highlights it briefly. If that message was deleted or edited, Vera opens the conversation and says so.
 
 For explicit facts, stock changes, and care records, use **Record from evidence** in Memory, select a saved user message, and review the proposal before accepting it. This needs no extraction model and does not synchronize live inventory. See [Native memory](NATIVE_MEMORY.md) for recall budgets, source deletion, corrections, and the privacy boundary.
 

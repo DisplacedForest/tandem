@@ -12,6 +12,9 @@ struct NativeDomainCitation: Identifiable, Sendable {
     let id: UUID
     let source: NativeDomainSource
     let text: String
+    var entry: NativeDomainEntry? = nil
+    var supersededAt: Date? = nil
+    var superseded = false
 }
 
 extension LocalChatRepository {
@@ -336,13 +339,49 @@ extension LocalChatRepository {
     }
 
     static func domainCitations(_ memoryID: String, revision: Int, db: Database) throws -> [NativeDomainCitation] {
-            try Row.fetchAll(db, sql: """
-                SELECT e.entry_json, e.source_text FROM native_domain_projection_sources p
-                JOIN native_domain_entries e ON e.id = p.entry_id WHERE p.memory_id = ? AND p.revision = ? ORDER BY e.id
-                """, arguments: [memoryID, revision]).compactMap { row in
-                    let entry = try JSONDecoder().decode(NativeDomainEntry.self, from: Data((row["entry_json"] as String).utf8))
-                    guard let source = entry.source, let text: String = row["source_text"] else { return nil }
-                    return NativeDomainCitation(id: entry.id, source: source, text: text)
-                }
+        var streams: [String: [NativeDomainEntry]] = [:]
+        return try Row.fetchAll(db, sql: """
+            SELECT e.entry_json, e.source_text FROM native_domain_projection_sources p
+            JOIN native_domain_entries e ON e.id = p.entry_id WHERE p.memory_id = ? AND p.revision = ? ORDER BY e.id
+            """, arguments: [memoryID, revision]).compactMap { row in
+                let entry = try JSONDecoder().decode(NativeDomainEntry.self, from: Data((row["entry_json"] as String).utf8))
+                guard let source = entry.source, let text: String = row["source_text"] else { return nil }
+                let key = entry.entityID.uuidString + "|" + entry.scope
+                if streams[key] == nil { streams[key] = try domainEntries(entry.entityID, scope: entry.scope, db: db) }
+                let replacements = (streams[key] ?? []).filter { $0.supersedes.contains(entry.id) && $0.status != .deleted }
+                return NativeDomainCitation(id: entry.id, source: source, text: text, entry: entry,
+                    supersededAt: replacements.map(\.occurredAt).max(),
+                    superseded: !replacements.isEmpty || entry.status == .superseded)
+            }
+    }
+
+    func upcomingDomainCare(now: Date = Date()) throws -> [String: [NativeDomainEntry]] {
+        try database.read { db in
+            var result: [String: [NativeDomainEntry]] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT entity_id, scope, memory_id FROM native_domain_streams WHERE disabled = 0 AND memory_id IS NOT NULL") {
+                guard let entity = UUID(uuidString: row["entity_id"]) else { continue }
+                let entries = try Self.domainEntries(entity, scope: row["scope"], db: db)
+                let replaced = Set(entries.filter { ($0.status == .supported || $0.status == .deleted) && $0.entityResolved && $0.evidence == .asserted }.flatMap(\.supersedes))
+                let upcoming = entries.filter { entry in
+                    guard case .care(_, .planned) = entry.payload, entry.status == .supported, entry.occurredAt > now,
+                          !replaced.contains(entry.id), entry.validUntil.map({ $0 > now }) ?? true else { return false }
+                    return true
+                }.sorted { $0.occurredAt < $1.occurredAt }
+                if !upcoming.isEmpty { result[row["memory_id"]] = upcoming }
+            }
+            return result
+        }
+    }
+
+    func memoriesWithUnavailableSources() throws -> Set<String> {
+        try database.read { db in
+            Set(try String.fetchAll(db, sql: """
+                SELECT m.id FROM native_memories m
+                LEFT JOIN conversations c ON c.id = m.source_conversation_id
+                WHERE m.status != 'deleted' AND m.source_message_id IS NOT NULL
+                  AND json_extract(m.record_json, '$.domainEntityID') IS NULL
+                  AND NOT (\(Self.sourceEligibleSQL))
+                """))
+        }
     }
 }
