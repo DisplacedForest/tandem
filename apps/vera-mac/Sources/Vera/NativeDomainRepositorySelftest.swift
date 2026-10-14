@@ -223,6 +223,28 @@ enum NativeDomainRepositorySelftest {
                     "library load did not project past planned care as planned")
     }
 
+    static func reloadProjectsDueCare(_ directory: URL) async throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("reload-due.sqlite"))
+        try repository.saveConversation(Conversation(id: "unrelated", title: "Unrelated", messages: [], updatedAt: Date()))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        await store.connect()
+        let entity = UUID()
+        let date = Date().addingTimeInterval(3_600)
+        let planned = try fixture(repository, entity: entity, text: "Farrier visit is planned for two o'clock.",
+            at: date.timeIntervalSince1970, payload: .care(activity: "Farrier visit", status: .planned))
+        try require(store.acceptMemoryProposal(try repository.stageDomainProposal(planned, label: "Horses")!), "due care approval failed")
+        try require(store.memoryRecords.allSatisfy { $0.domainEntityID != entity }, "planned care projected before its time")
+        let later = date.addingTimeInterval(60)
+        store.nativeMemoryNow = { later }
+        store.deleteConversation("unrelated")
+        try require(store.memoryRecords.contains { $0.domainEntityID == entity && $0.details.contains("Farrier visit: planned, not completed") },
+                    "reload after the planned time did not project the care as planned")
+        try require(try repository.upcomingOnlySubjects(now: later).isEmpty && repository.upcomingDomainCare(now: later).isEmpty,
+                    "due care still listed as upcoming after reload")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -338,6 +360,7 @@ enum NativeDomainRepositorySelftest {
         try upcomingExpiryFilters()
         try await sourceChangeRefresh(directory)
         try libraryLoadProjects(directory)
+        try await reloadProjectsDueCare(directory)
         print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 

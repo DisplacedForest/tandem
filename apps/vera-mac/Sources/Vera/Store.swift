@@ -19,6 +19,8 @@ final class ChatStore: ObservableObject {
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memoryRecords: [NativeMemoryRecord] = []
     @Published var memoryLibraryRevision = 0
+    var nativeMemoryNow: () -> Date = { Date() }
+    private var reloadingNativeMemory = false
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var inspectedMemoryRevision: Int?
     @Published var inspectedMemory: NativeMemoryRecord?
@@ -594,17 +596,19 @@ final class ChatStore: ObservableObject {
         return try local.memoryEvidence(id)
     }
 
-    func loadMemoryLibrary(now: Date = Date()) {
-        var refreshError: Error?
-        if nativeMemorySettings.enabled, let local = repository as? LocalChatRepository {
-            do { try local.refreshDomainProjections(now: now) } catch { refreshError = error }
-        }
-        reloadNativeMemory()
-        if let refreshError { memoryServiceState = .retrievalUnavailable(refreshError.localizedDescription) }
+    func loadMemoryLibrary(now: Date? = nil) {
+        reloadNativeMemory(now: now)
     }
 
-    func reloadNativeMemory() {
-        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+    func reloadNativeMemory(now: Date? = nil) {
+        guard !reloadingNativeMemory, let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        reloadingNativeMemory = true
+        defer { reloadingNativeMemory = false }
+        var refreshError: Error?
+        if nativeMemorySettings.enabled, let local = repository as? LocalChatRepository {
+            do { try local.refreshDomainProjections(now: now ?? nativeMemoryNow()) } catch { refreshError = error }
+        }
+        defer { if let refreshError { memoryServiceState = .retrievalUnavailable(refreshError.localizedDescription) } }
         memoryLibraryRevision += 1
         do {
             memoryRecords = try memoryRepository.allMemories().filter { $0.status != .deleted }
