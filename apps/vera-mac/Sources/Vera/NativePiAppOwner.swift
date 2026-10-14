@@ -169,6 +169,10 @@ actor NativePiAppOwner {
             if response.1 == 200, let reply = try PiValue.piRead(response.0).pi("reply_id").piString {
                 if body.pi("document") == .null {
                     try await memoryBridge?.recordDelivery(subject: identifier(body.pi("message_id")), messageID: reply)
+                    if let answer = try PiValue.piRead(response.0).pi("text").piString {
+                        await memoryBridge?.learn(conversation: try identifier(body.pi("conversation_id")),
+                            message: try identifier(body.pi("message_id")), user: query, reply: answer)
+                    }
                 } else {
                     try piCheck(body.pi("mode") == .string("assistant"), .unauthorized)
                     let answer = try PiValue.piRead(response.0)

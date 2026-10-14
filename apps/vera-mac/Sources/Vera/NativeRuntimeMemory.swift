@@ -115,6 +115,15 @@ final class NativeRuntimeMemoryBridge {
             references: references, replace: grant.binding.pi("role").piString == "worker")
     }
 
+    func learn(conversation: String, message: String, user: String, reply: String) {
+        guard !closed, let store else { return }
+        Task {
+            await store.learnFromCompletedTurn(
+                user: user, assistant: Message(role: .assistant, text: reply), source: nil,
+                turnKey: "runtime|" + conversation + "|" + message, conversationExcluded: false)
+        }
+    }
+
     func sources(conversation: String, message: String) -> [PulseSource] {
         guard let assistant, let local = store?.repository as? LocalChatRepository else { return [] }
         return (try? local.runtimeMemorySources(assistant: assistant, conversation: conversation, message: message)) ?? []

@@ -55,7 +55,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "shared-runtime-memory-test", "domain-state-test", "native-entry-test", "native-mcp-test", "native-prepared-invocation-test", "native-document-test"]
+depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-prepared-invocation-test", "native-document-test"]
 
 [tasks.selected-credential-authorization-test]
 run = "bash apps/vera-mac/scripts/test-selected-credential-authorization.sh"
@@ -115,6 +115,10 @@ run = "apps/vera-mac/.build/debug/Vera --shared-runtime-memory-selftest"
 [tasks.domain-state-test]
 depends = ["mac-build"]
 run = "apps/vera-mac/.build/debug/Vera --domain-state-selftest"
+
+[tasks.domain-extraction-test]
+depends = ["mac-build"]
+run = "apps/vera-mac/.build/debug/Vera --domain-extraction-selftest"
 
 [tasks.native-entry-test]
 run = "sh apps/vera-mac/scripts/test-native-entry.sh"
