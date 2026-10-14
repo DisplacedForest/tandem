@@ -22,7 +22,7 @@ enum NativeDomainExtractionSelftest {
         try await removedReplayRenamed(directory)
         print("  removed record replay renamed: PASS (subject case change does not bring it back, new message still eligible)")
         try await legacyRemoval(directory)
-        print("  legacy removal: PASS (an earlier build's removed proposal id still blocks the record)")
+        print("  legacy removal: PASS (removed proposal ids and separator keys from earlier builds still block the record)")
         try await removalKeyParts(directory)
         print("  removal key parts: PASS (separator characters in a fact cannot collide)")
         try await dismissDuringEmbed(directory)
@@ -396,6 +396,20 @@ enum NativeDomainExtractionSelftest {
         try require(try domainPending(repository).isEmpty, "a record removed by an earlier build came back")
         try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
                     "legacy removal was not audited")
+
+        let separatedRepository = try LocalChatRepository(url: directory.appendingPathComponent("legacy-separated.sqlite"))
+        let separatedStore = Self.store(separatedRepository, DomainExtractionService())
+        let separatedSource = try turn(separatedRepository, text)
+        let separated = LocalChatRepository.domainExtractionID(["removed", separatedSource.conversationID, separatedSource.messageID,
+            LocalChatRepository.domainSubjectKey("Llamas"), LocalChatRepository.domainSubjectKey("personal"),
+            "stock|baseline|2|count"].joined(separator: "|"))
+        try await separatedRepository.database.write { db in
+            try db.execute(sql: "INSERT INTO native_domain_removed_proposals(id) VALUES (?)", arguments: [separated])
+        }
+        await learn(separatedStore, text, separatedSource)
+        try require(try domainPending(separatedRepository).isEmpty, "a record removed under the separator key format came back")
+        try require(try audits(separatedRepository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
+                    "separator key format removal was not audited")
     }
 
     static func removalKeyParts(_ directory: URL) async throws {
