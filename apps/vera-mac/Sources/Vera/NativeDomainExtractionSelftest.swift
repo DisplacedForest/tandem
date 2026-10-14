@@ -21,6 +21,10 @@ enum NativeDomainExtractionSelftest {
         print("  pending chain preview: PASS (correction of a pending count previews Current count: 10 with the waiting line)")
         try await removedReplayRenamed(directory)
         print("  removed record replay renamed: PASS (subject case change does not bring it back, new message still eligible)")
+        try await legacyRemoval(directory)
+        print("  legacy removal: PASS (an earlier build's removed proposal id still blocks the record)")
+        try await removalKeyParts(directory)
+        print("  removal key parts: PASS (separator characters in a fact cannot collide)")
         try await dismissDuringEmbed(directory)
         print("  dismissal during embedding: PASS (stale refresh does not re-pend a dismissed proposal)")
         try await refreshedSource(directory)
@@ -372,6 +376,52 @@ enum NativeDomainExtractionSelftest {
                     "renamed removed replay was not audited")
         await learn(store, text, try turn(repository, text))
         try require(try domainPending(repository).count == 1, "a new message about the removed subject was not suggested")
+    }
+
+    static func legacyRemoval(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("legacy-removal.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let text = "We keep two llamas."
+        let reply = content("Llamas", [entry("Llamas", "baseline", quantity: 2, span: "We keep two llamas")])
+        DomainExtractionWire.state.respond(text, reply)
+        let source = try turn(repository, text)
+        let candidate = NativeDomainCandidateParser.parse(reply).candidates[0]
+        let legacy = LocalChatRepository.domainExtractionID("entry|" + source.conversationID + "|" + source.messageID + "|"
+            + (try LocalChatRepository.domainJSON(candidate)))
+        try await repository.database.write { db in
+            try db.execute(sql: "INSERT INTO native_domain_removed_proposals(id) VALUES (?)", arguments: [legacy])
+        }
+        await learn(store, text, source)
+        try require(try domainPending(repository).isEmpty, "a record removed by an earlier build came back")
+        try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
+                    "legacy removal was not audited")
+    }
+
+    static func removalKeyParts(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("removal-parts.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let text = "Set filter|model to alpha and filter to model|alpha."
+        let first = NativeDomainPayload.fact(predicate: "filter|model", value: "alpha", quantity: nil)
+        let second = NativeDomainPayload.fact(predicate: "filter", value: "model|alpha", quantity: nil)
+        try require(LocalChatRepository.domainRemovalKey(conversationID: "c", messageID: "m", subject: "Pump", scope: "personal", payload: first)
+            != LocalChatRepository.domainRemovalKey(conversationID: "c", messageID: "m", subject: "Pump", scope: "personal", payload: second),
+            "different facts produced the same removal key")
+        DomainExtractionWire.state.respond(text, content("Pump", [
+            entry("Pump", "fact", property: "filter|model", value: "alpha", span: "filter|model to alpha")]))
+        let source = try turn(repository, text)
+        await learn(store, text, source)
+        let staged = try domainPending(repository)
+        try require(staged.count == 1 && store.acceptMemoryProposal(staged[0]), "first fact was not staged and approved")
+        guard let memory = try repository.approvedMemories().first(where: { $0.title == "Pump" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 11, userInfo: [NSLocalizedDescriptionKey: "pump memory missing"])
+        }
+        store.deleteNativeMemory(memory)
+        DomainExtractionWire.state.respond(text, content("Pump", [
+            entry("Pump", "fact", property: "filter", value: "model|alpha", span: "filter to model|alpha")]))
+        await learn(store, text, source)
+        try require(try domainPending(repository).count == 1, "removing one fact blocked a different fact from the same message")
     }
 
     static func dismissDuringEmbed(_ directory: URL) async throws {
