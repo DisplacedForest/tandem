@@ -1200,6 +1200,9 @@ final class ChatStore: ObservableObject {
                 if match.sourceVersion == reconciled.sourceVersion { continue }
                 reconciled.id = match.id
                 reconciled.createdAt = match.createdAt
+                guard let local = repository as? LocalChatRepository else { continue }
+                _ = try local.refreshPendingProposal(reconciled, replacing: match.sourceVersion)
+                continue
             }
             try repository.saveProposal(reconciled)
         }

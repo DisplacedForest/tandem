@@ -177,6 +177,20 @@ extension LocalChatRepository {
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    static func domainRemovalKey(conversationID: String, messageID: String, subject: String, scope: String,
+                                 payload: NativeDomainPayload) -> String {
+        let fact: String = switch payload {
+        case .stock(let kind, let quantity): "stock|" + kind.rawValue + "|" + quantity.amount + "|" + quantity.unit.rawValue
+        case .fact(let predicate, let value, let quantity):
+            "fact|" + domainSubjectKey(predicate) + "|" + domainSubjectKey(value) + "|"
+                + (quantity.map { $0.amount + "|" + $0.unit.rawValue } ?? "")
+        case .care(let activity, let status): "care|" + domainSubjectKey(activity) + "|" + status.rawValue
+        case .retraction: "retraction"
+        }
+        return domainExtractionID(["removed", conversationID, messageID, domainSubjectKey(subject),
+            domainSubjectKey(scope), fact].joined(separator: "|"))
+    }
+
     func approvedDomainStream(label: String, scope: String) throws -> UUID? {
         let key = Self.domainSubjectKey(label)
         return try database.read { db in
@@ -210,9 +224,11 @@ extension LocalChatRepository {
     func stageExtractedDomainEntry(_ candidate: NativeDomainCandidate, conversationID: String, messageID: String,
                                    sourceText: String, fallbackDate: Date, now: Date = Date()) throws -> NativeMemoryProposal? {
         let proposalID = Self.domainExtractionID("entry|" + conversationID + "|" + messageID + "|" + (try Self.domainJSON(candidate)))
+        let removal = Self.domainRemovalKey(conversationID: conversationID, messageID: messageID,
+            subject: candidate.subject, scope: candidate.scope, payload: candidate.payload)
         let (known, removed) = try database.read { db in
             (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_memory_proposals WHERE id = ?", arguments: [proposalID]) ?? 0,
-             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_domain_removed_proposals WHERE id = ?", arguments: [proposalID]) ?? 0)
+             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_domain_removed_proposals WHERE id = ?", arguments: [removal]) ?? 0)
         }
         if removed > 0 { throw NativeDomainExtractionSkip(reason: "this record was removed") }
         if known > 0 { return nil }

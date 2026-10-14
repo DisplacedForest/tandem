@@ -17,6 +17,12 @@ enum NativeDomainExtractionSelftest {
         print("  dismissed correction target: PASS (correction rebuilt without it, retraction dropped and audited)")
         try await removedReplay(directory)
         print("  removed record replay: PASS (deleted memory not suggested again, audited)")
+        try await pendingPreview(directory)
+        print("  pending chain preview: PASS (correction of a pending count previews Current count: 10 with the waiting line)")
+        try await removedReplayRenamed(directory)
+        print("  removed record replay renamed: PASS (subject case change does not bring it back, new message still eligible)")
+        try await dismissDuringEmbed(directory)
+        print("  dismissal during embedding: PASS (stale refresh does not re-pend a dismissed proposal)")
         try await refreshedSource(directory)
         print("  refreshed source: PASS (stale pending proposal replaced with the new source version)")
         try await subjectKey(directory)
@@ -321,6 +327,88 @@ enum NativeDomainExtractionSelftest {
         try require(streams == 0, "removed record created a new subject")
         try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
                     "removed replay was not audited")
+    }
+
+    static func pendingPreview(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("pending-preview.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let start = Date().addingTimeInterval(-3_600)
+        let first = "We have twelve hens.", second = "Actually it's ten, I miscounted."
+        DomainExtractionWire.state.respond(first, content("Flock", [entry("Hens", "baseline", quantity: 12, span: "We have twelve hens")]))
+        DomainExtractionWire.state.respond(second, content("Flock count", [entry("Hens", "baseline", quantity: 10, supersedes: "Hens", span: "Actually it's ten")]))
+        await learn(store, first, try turn(repository, first, at: start))
+        await learn(store, second, try turn(repository, second, at: start.addingTimeInterval(60)))
+        guard let correction = try domainPending(repository).first(where: { $0.summary == "Observed count: 10" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 10, userInfo: [NSLocalizedDescriptionKey: "correction against the pending count was not staged"])
+        }
+        let preview = repository.domainReviewPreview(correction)
+        try require(preview.error == nil, "review preview failed: \(preview.error ?? "")")
+        try require(preview.after?.first == "Current count: 10", "review preview read \(String(describing: preview.after))")
+        try require(preview.notice == "Accept the earlier record this one corrects first.", "review preview omitted the waiting line")
+        let firstPreview = repository.domainReviewPreview(try domainPending(repository).first { $0.summary == "Observed count: 12" }!)
+        try require(firstPreview.after?.first == "Current count: 12" && firstPreview.notice == nil && firstPreview.error == nil,
+                    "the earlier record's preview changed")
+    }
+
+    static func removedReplayRenamed(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("removed-renamed.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let text = "We keep three alpacas."
+        DomainExtractionWire.state.respond(text, content("Alpacas", [entry("Alpacas", "baseline", quantity: 3, span: "We keep three alpacas")]))
+        let source = try turn(repository, text)
+        await learn(store, text, source)
+        let staged = try domainPending(repository)
+        try require(staged.count == 1 && store.acceptMemoryProposal(staged[0]), "alpaca count was not staged and approved")
+        guard let memory = try repository.approvedMemories().first(where: { $0.title == "Alpacas" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 8, userInfo: [NSLocalizedDescriptionKey: "alpaca memory missing"])
+        }
+        store.deleteNativeMemory(memory)
+        DomainExtractionWire.state.respond(text, content("Alpacas", [entry("alpacas", "baseline", quantity: 3, span: "We keep three alpacas")]))
+        await learn(store, text, source)
+        try require(try domainPending(repository).isEmpty, "removed record came back with the subject spelled differently")
+        try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
+                    "renamed removed replay was not audited")
+        await learn(store, text, try turn(repository, text))
+        try require(try domainPending(repository).count == 1, "a new message about the removed subject was not suggested")
+    }
+
+    static func dismissDuringEmbed(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("dismiss-embed.sqlite"))
+        let service = DomainExtractionService()
+        let store = store(repository, service)
+        let now = Date()
+        try repository.saveMemory(NativeMemoryRecord(id: "indexed", title: "Tea", summary: "Prefers green tea",
+            details: ["The user prefers green tea"], group: .profile, category: .preference, bank: "personal",
+            durability: .durable, expiry: nil, status: .approved, embedding: [0, 1], sourceConversationID: nil,
+            sourceMessageID: nil, createdAt: now, updatedAt: now), decision: .accepted, note: "Synthetic approved fixture")
+        let original = "We keep bees", edited = "We keep bees."
+        DomainExtractionWire.state.respond(original, content("Bees", []))
+        DomainExtractionWire.state.respond(edited, content("Bees", []))
+        let conversation = UUID().uuidString
+        let user = Message(role: .user, text: original)
+        try repository.saveConversation(Conversation(id: conversation, title: "Fixture", messages: [], updatedAt: now))
+        try repository.saveMessage(user, conversationID: conversation, ordinal: 0)
+        try repository.saveMessage(Message(role: .assistant, text: "Noted."), conversationID: conversation, ordinal: 1)
+        let source = NativeMemoryTurnSource(conversationID: conversation, messageID: user.id.uuidString, date: user.createdAt)
+        await learn(store, original, source)
+        guard let first = try repository.pendingProposals().first(where: { $0.title == "Bees" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 9, userInfo: [NSLocalizedDescriptionKey: "bees proposal missing"])
+        }
+        var changed = user
+        changed.text = edited
+        try repository.saveMessage(changed, conversationID: conversation, ordinal: 0)
+        service.onEmbed = { @MainActor in store.dismissMemoryProposal(first) }
+        await learn(store, edited, source)
+        try require(service.embeds > 0, "the refresh never waited on an embedding")
+        let status = try await repository.database.read { db in
+            try String.fetchOne(db, sql: "SELECT status FROM native_memory_proposals WHERE id = ?", arguments: [first.id])
+        }
+        try require(status == "dismissed", "a proposal dismissed during the embedding wait was made pending again")
+        try require(try repository.pendingProposals().filter { $0.title == "Bees" }.isEmpty,
+                    "a new pending proposal appeared after the dismissal")
     }
 
     static func refreshedSource(_ directory: URL) async throws {
@@ -665,6 +753,8 @@ final class DomainExtractionService: NativeMemoryServing, @unchecked Sendable {
     private var count = 0
     private var done = 0
     private var hook: (@MainActor @Sendable () -> Void)?
+    private var embedHook: (@MainActor @Sendable () -> Void)?
+    private var embedCount = 0
     private var turns: [[String]] = []
     private var outputs: [[NativeDomainCandidate]] = []
 
@@ -685,7 +775,18 @@ final class DomainExtractionService: NativeMemoryServing, @unchecked Sendable {
         set { lock.withLock { hook = newValue } }
     }
 
-    func embed(_ text: String) async throws -> [Double] { throw NativeMemoryServiceError.notConfigured }
+    var embeds: Int { lock.withLock { embedCount } }
+    var onEmbed: (@MainActor @Sendable () -> Void)? {
+        get { lock.withLock { embedHook } }
+        set { lock.withLock { embedHook = newValue } }
+    }
+
+    func embed(_ text: String) async throws -> [Double] {
+        let hook = lock.withLock { embedCount += 1; return embedHook }
+        guard let hook else { throw NativeMemoryServiceError.notConfigured }
+        await hook()
+        return [1, 0]
+    }
 
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,

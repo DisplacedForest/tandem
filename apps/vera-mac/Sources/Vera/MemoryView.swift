@@ -604,6 +604,7 @@ private struct MemoryProposalReviewView: View {
     @State private var details: String
     @State private var reviewError: String?
     @State private var projected: [String]?
+    @State private var awaitingNotice: String?
 
     init(proposal: NativeMemoryProposal) {
         self.proposal = proposal
@@ -694,6 +695,9 @@ private struct MemoryProposalReviewView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        if let awaitingNotice {
+                            Text(awaitingNotice).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        }
                         Text("Evidence being added").font(.system(size: 12, weight: .semibold))
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(proposal.details.enumerated()), id: \.offset) { _, line in
@@ -741,9 +745,11 @@ private struct MemoryProposalReviewView: View {
         }
         .padding(24).frame(width: 640, height: 600)
         .task {
-            guard let domain = proposal.domain, let repository = store.repository as? LocalChatRepository else { return }
-            do { projected = try repository.domainProjectionPreview(domain.entry) }
-            catch { reviewError = "The result of this record could not be calculated. \(error.localizedDescription)" }
+            guard proposal.domain != nil, let repository = store.repository as? LocalChatRepository else { return }
+            let preview = repository.domainReviewPreview(proposal)
+            projected = preview.after
+            awaitingNotice = preview.notice
+            if let error = preview.error { reviewError = error }
         }
     }
 }

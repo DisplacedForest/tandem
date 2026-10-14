@@ -9,6 +9,12 @@ struct NativeDomainProposal: Codable, Hashable, Sendable {
     var awaiting: [UUID]? = nil
 }
 
+struct NativeDomainReviewPreview: Sendable {
+    let after: [String]?
+    let notice: String?
+    let error: String?
+}
+
 struct NativeUpcomingSubject: Identifiable, Sendable {
     let entityID: UUID
     let scope: String
@@ -155,15 +161,7 @@ extension LocalChatRepository {
             validUntil: entry.validUntil, learnedAt: learned, actor: entry.actor, source: source, evidence: entry.evidence,
             entityResolved: entry.entityResolved, status: entry.status, supersedes: entry.supersedes, payload: entry.payload)
         let entries = try domainEntries(entry.entityID, scope: entry.scope, db: db)
-        let journal = Set(entries.map(\.id))
-        var waiting: [NativeDomainEntry] = []
-        var queue = staged.supersedes.filter { !journal.contains($0) }
-        while let id = queue.popLast() {
-            guard !waiting.contains(where: { $0.id == id }) else { continue }
-            guard let target = try pendingDomainEntry(id, db: db) else { throw NativeDomainError.invalid }
-            waiting.append(target)
-            queue.append(contentsOf: target.supersedes.filter { !journal.contains($0) })
-        }
+        let waiting = try pendingChain(staged, journal: Set(entries.map(\.id)), db: db)
         let direct = waiting.filter { staged.supersedes.contains($0.id) }
         _ = try NativeDomainProjection.active(entries + waiting + [staged], entity: entry.entityID, scope: entry.scope, at: .distantFuture, knownAt: .distantFuture)
         let replacing = try (entries + waiting).filter { staged.supersedes.contains($0.id) }.flatMap { target -> [String] in
@@ -183,6 +181,18 @@ extension LocalChatRepository {
             sourceVersion: source.version)
         guard NativeMemorySafety.proposalIsSafe(proposal) else { throw NativeDomainError.invalid }
         return proposal
+    }
+
+    static func pendingChain(_ entry: NativeDomainEntry, journal: Set<UUID>, db: Database) throws -> [NativeDomainEntry] {
+        var waiting: [NativeDomainEntry] = []
+        var queue = entry.supersedes.filter { !journal.contains($0) }
+        while let id = queue.popLast() {
+            guard !waiting.contains(where: { $0.id == id }) else { continue }
+            guard let target = try pendingDomainEntry(id, db: db) else { throw NativeDomainError.invalid }
+            waiting.append(target)
+            queue.append(contentsOf: target.supersedes.filter { !journal.contains($0) })
+        }
+        return waiting
     }
 
     static func pendingDomainEntry(_ id: UUID, db: Database) throws -> NativeDomainEntry? {
@@ -409,13 +419,25 @@ extension LocalChatRepository {
 
     func domainProjectionPreview(_ entry: NativeDomainEntry, now: Date = Date()) throws -> [String] {
         try database.read { db in
-            let existing = try Self.domainEntries(entry.entityID, scope: entry.scope, db: db).filter { $0.id != entry.id }
+            let journal = try Self.domainEntries(entry.entityID, scope: entry.scope, db: db).filter { $0.id != entry.id }
+            let existing = journal + (try Self.pendingChain(entry, journal: Set(journal.map(\.id)), db: db))
             let streamStock = try Int.fetchOne(db, sql: "SELECT has_stock FROM native_domain_streams WHERE entity_id = ? AND scope = ?",
                 arguments: [entry.entityID.uuidString, entry.scope]) == 1
             var hasStock = streamStock
             if case .stock = entry.payload { hasStock = true }
             return try Self.projectedState(existing + [entry], entity: entry.entityID, scope: entry.scope,
                 hasStock: hasStock, now: max(now, entry.learnedAt))?.details ?? []
+        }
+    }
+
+    func domainReviewPreview(_ proposal: NativeMemoryProposal, now: Date = Date()) -> NativeDomainReviewPreview {
+        guard let domain = proposal.domain else { return NativeDomainReviewPreview(after: [], notice: nil, error: nil) }
+        let notice = (domain.awaiting?.isEmpty ?? true) ? nil : NativeDomainError.awaiting.errorDescription
+        do {
+            return NativeDomainReviewPreview(after: try domainProjectionPreview(domain.entry, now: now), notice: notice, error: nil)
+        } catch {
+            return NativeDomainReviewPreview(after: nil, notice: notice,
+                error: "The result of this record could not be calculated. " + error.localizedDescription)
         }
     }
 
@@ -445,11 +467,16 @@ extension LocalChatRepository {
 
     static func redactDomainStream(_ entity: String, scope: String, db: Database) throws {
         try db.execute(sql: "UPDATE native_domain_streams SET disabled = 1 WHERE entity_id = ? AND scope = ?", arguments: [entity, scope])
-        try db.execute(sql: """
-            INSERT OR IGNORE INTO native_domain_removed_proposals(id)
-            SELECT id FROM native_memory_proposals
+        for raw in try String.fetchAll(db, sql: """
+            SELECT proposal_json FROM native_memory_proposals
             WHERE json_extract(proposal_json, '$.domain.entry.entityID') = ? AND json_extract(proposal_json, '$.domain.entry.scope') = ?
-            """, arguments: [entity, scope])
+            """, arguments: [entity, scope]) {
+            guard let domain = try? JSONDecoder().decode(NativeMemoryProposal.self, from: Data(raw.utf8)).domain,
+                  let source = domain.entry.source, let payload = domain.entry.payload else { continue }
+            try db.execute(sql: "INSERT OR IGNORE INTO native_domain_removed_proposals(id) VALUES (?)", arguments: [
+                domainRemovalKey(conversationID: source.conversationID, messageID: source.messageID,
+                    subject: domain.label, scope: domain.entry.scope, payload: payload)])
+        }
         try db.execute(sql: "DELETE FROM native_memory_proposals WHERE json_extract(proposal_json, '$.domain.entry.entityID') = ? AND json_extract(proposal_json, '$.domain.entry.scope') = ?", arguments: [entity, scope])
         try db.execute(sql: """
             UPDATE native_domain_entries SET source_text = NULL, source_message_id = NULL, source_conversation_id = NULL,
