@@ -594,6 +594,15 @@ final class ChatStore: ObservableObject {
         return try local.memoryEvidence(id)
     }
 
+    func loadMemoryLibrary(now: Date = Date()) {
+        var refreshError: Error?
+        if nativeMemorySettings.enabled, let local = repository as? LocalChatRepository {
+            do { try local.refreshDomainProjections(now: now) } catch { refreshError = error }
+        }
+        reloadNativeMemory()
+        if let refreshError { memoryServiceState = .retrievalUnavailable(refreshError.localizedDescription) }
+    }
+
     func reloadNativeMemory() {
         guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
         memoryLibraryRevision += 1
@@ -1141,6 +1150,7 @@ final class ChatStore: ObservableObject {
         conversations[index].updatedAt = Date()
         do { try repository?.saveConversation(conversations[index]) }
         catch { chatConfigurationError = "The conversation memory setting could not save: \(error.localizedDescription)" }
+        reloadNativeMemory()
     }
 
     var promptLibrary: (any NativePromptLibraryRepository)? {
@@ -1252,6 +1262,7 @@ final class ChatStore: ObservableObject {
         } catch {
             chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)"
         }
+        reloadNativeMemory()
         if selectedID == nil { newConversation() }
     }
 

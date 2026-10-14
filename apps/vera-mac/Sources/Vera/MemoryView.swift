@@ -70,7 +70,7 @@ struct MemoryView: View {
             Text("This removes approved memory from later chat requests. Conversation history is not changed.")
         }
         .memoryRemovalConfirmation($pendingRemoval)
-        .task { store.reloadNativeMemory(); loadLibraryState() }
+        .task { store.loadMemoryLibrary(); loadLibraryState() }
         .onChange(of: store.memoryRecords) { _, _ in loadLibraryState() }
         .onChange(of: store.memoryLibraryRevision) { _, _ in loadLibraryState() }
     }

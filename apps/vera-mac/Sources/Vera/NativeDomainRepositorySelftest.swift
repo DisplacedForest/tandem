@@ -178,6 +178,51 @@ enum NativeDomainRepositorySelftest {
         try require(shown(.active) == [true, true, false], "Active filter misapplied to upcoming care")
     }
 
+    static func sourceChangeRefresh(_ directory: URL) async throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("source-refresh.sqlite"))
+        let now = Date()
+        for (conversation, memoryID) in [("refresh-exclude", "excluded-memory"), ("refresh-delete", "deleted-memory")] {
+            let message = Message(role: .user, text: "I keep the feed in the " + conversation + " barn.")
+            try repository.saveConversation(Conversation(id: conversation, title: conversation, messages: [], updatedAt: now))
+            try repository.saveMessage(message, conversationID: conversation, ordinal: 0)
+            try repository.saveMemory(NativeMemoryRecord(id: memoryID, title: "Feed storage", summary: "Feed is kept in the barn",
+                details: ["Feed is kept in the barn"], group: .areas, category: .other, bank: "farm", durability: .durable,
+                expiry: nil, status: .approved, embedding: nil, sourceConversationID: conversation,
+                sourceMessageID: message.id.uuidString, createdAt: now, updatedAt: now), decision: .accepted, note: "Synthetic user approval")
+        }
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        await store.connect()
+        try require(try repository.memoriesWithUnavailableSources().isEmpty, "source refresh fixture started unavailable")
+        let beforeExclude = store.memoryLibraryRevision
+        store.toggleMemoryExclusion("refresh-exclude")
+        try require(store.memoryLibraryRevision > beforeExclude, "excluding a conversation did not refresh the memory library")
+        try require(try repository.memoriesWithUnavailableSources() == ["excluded-memory"], "excluded source not listed as unavailable")
+        let beforeDelete = store.memoryLibraryRevision
+        store.deleteConversation("refresh-delete")
+        try require(store.memoryLibraryRevision > beforeDelete, "deleting a conversation did not refresh the memory library")
+        try require(try repository.memoriesWithUnavailableSources() == ["excluded-memory", "deleted-memory"], "deleted source not listed as unavailable")
+    }
+
+    static func libraryLoadProjects(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("library-load.sqlite"))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let entity = UUID()
+        let date = Date().addingTimeInterval(3_600)
+        let planned = try fixture(repository, entity: entity, text: "Hoof care is planned for this afternoon.",
+            at: date.timeIntervalSince1970, payload: .care(activity: "Hoof care", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Ponies")!)
+        try require(try repository.upcomingOnlySubjects().count == 1, "library load fixture did not start upcoming")
+        let later = date.addingTimeInterval(60)
+        store.loadMemoryLibrary(now: later)
+        try require(try repository.upcomingOnlySubjects(now: later).isEmpty, "past planned care still upcoming after library load")
+        try require(store.memoryRecords.contains { $0.domainEntityID == entity && $0.details.contains("Hoof care: planned, not completed") },
+                    "library load did not project past planned care as planned")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -291,6 +336,8 @@ enum NativeDomainRepositorySelftest {
         try futureOnlyCare(directory)
         try upcomingLibraryRevision(directory)
         try upcomingExpiryFilters()
+        try await sourceChangeRefresh(directory)
+        try libraryLoadProjects(directory)
         print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 
