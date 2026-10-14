@@ -423,20 +423,47 @@ struct NativeMemorySettingsTab: View {
     @EnvironmentObject var store: ChatStore
     @State private var saved = false
 
+    private func live<Value>(_ keyPath: WritableKeyPath<NativeMemorySettings, Value>) -> Binding<Value> {
+        let binding = config.liveMemoryBinding(keyPath, store: store)
+        return Binding(get: { binding.wrappedValue }, set: { value in
+            saved = false
+            binding.wrappedValue = value
+        })
+    }
+
     var body: some View {
         Form {
             Section("Local memory") {
-                Toggle("Use approved memory in native chat", isOn: config.memoryBoolBinding(\.enabled))
-                Text("Memory stays on this Mac. Vera only recalls approved items, and every model-suggested change waits for your review.")
+                if let notice = store.memorySettingsNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                Toggle("Use approved memory in native chat", isOn: live(\.enabled))
+                Text("Approved memory is stored only on this Mac. Vera only recalls approved items, and every model-suggested change waits for your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Toggle("Search past chats", isOn: config.memoryBoolBinding(\.searchPastChats))
+                Toggle("Search past chats", isOn: live(\.searchPastChats))
                 Text("When enabled, Vera may use completed local chats to suggest memory changes. Chats are not copied into memory.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Toggle("Generate proposals from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
+                Toggle("Generate proposals from completed chats", isOn: live(\.generateFromChats))
                 Text("Suggestions appear in the Memory review queue. They never become approved memory on their own.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Picker("Sensitive information", selection: live(\.sensitiveHandling)) {
+                    ForEach(NativeMemorySensitiveHandling.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                ForEach(NativeMemorySensitiveHandling.allCases, id: \.self) { option in
+                    Text("\(option.title): \(option.caption)")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
             }
             Section("Compatible models") {
+                Text("Generating proposals and embeddings sends the current turn and your existing memories to the configured model endpoint.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let location = config.memoryEndpointLocation {
+                    Text(location)
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
                 DiscoveredModelPicker(title: "Embeddings model",
                                       models: config.activeNativeProfile?.discoveredModels ?? [],
                                       selection: config.memoryStringBinding(\.embeddingsModel))
@@ -470,6 +497,7 @@ struct NativeMemorySettingsTab: View {
                             store.updateNativeMemory(
                                 settings: config.nativeSettings.memory,
                                 service: config.nativeMemoryService)
+                            store.memorySettingsNotice = nil
                             saved = true
                         } catch {
                             saved = false

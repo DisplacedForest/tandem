@@ -59,6 +59,7 @@ struct ContentView: View {
             .task { await store.connect() }
             .onChange(of: store.section) { if store.section != .chat { assistant.isSelected = false } }
             .onChange(of: store.selectedID) { assistant.isSelected = false }
+            .onChange(of: store.classicChatRequest) { assistant.isSelected = false }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)
@@ -254,9 +255,44 @@ private struct ChatPane: View {
     }
     private var conversation: Conversation? { assistant == nil ? store.selected : assistant?.conversation }
     private var generating: Bool { assistant?.session?.busy ?? (assistant == nil && store.generating) }
+    @State private var highlightedMessageID: UUID?
+    @State private var highlightVisible = false
+
+    private func revealPendingSource(_ proxy: ScrollViewProxy) {
+        guard assistant == nil, let id = store.pendingHighlightMessageID,
+              conversation?.messages.contains(where: { $0.id == id }) == true else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard store.pendingHighlightMessageID == id else { return }
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+            store.clearPendingHighlight(id)
+            highlightedMessageID = id
+            highlightVisible = true
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            withAnimation(.easeOut(duration: 1.8)) { highlightVisible = false }
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            if highlightedMessageID == id { highlightedMessageID = nil }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            if assistant == nil, let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
+                    Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button { store.dismissSourceNotice() } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                        .accessibilityLabel("Dismiss")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+                .frame(maxWidth: 760)
+                .padding(.horizontal, 28).padding(.top, 10)
+                .accessibilityElement(children: .contain)
+            }
             if let convo = conversation, !convo.messages.isEmpty || assistant?.session?.tasks.isEmpty == false {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -274,6 +310,11 @@ private struct ChatPane: View {
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
                                     .modifier(NativePiTranscriptImagePolicy(untrusted: assistant != nil))
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
+                                            .padding(-8))
+                                    .id(msg.id)
                                 if let assistant {
                                     NativePiTaskSection(assistant: assistant, messageID: msg.id)
                                         .padding(.leading, 34)
@@ -295,8 +336,15 @@ private struct ChatPane: View {
                     // Follow the text as it streams in, and on new turns / chat switches.
                     .onChange(of: convo.messages.last?.text ?? "") { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: convo.messages.count) { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
-                    .onChange(of: store.selectedID) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: store.selectedID) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                        revealPendingSource(proxy)
+                    }
+                    .onChange(of: store.pendingHighlightMessageID) { revealPendingSource(proxy) }
+                    .onAppear {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                        revealPendingSource(proxy)
+                    }
                 }
                 if assistant == nil, let status = store.streamStatus {
                     HStack(spacing: 8) {

@@ -9,6 +9,7 @@ enum NativeMemoryServiceState: Equatable, Sendable {
     case maintenanceNeeded
     case retrievalUnavailable(String)
     case failed(String)
+    case notice(String)
 
     var label: String {
         switch self {
@@ -20,7 +21,51 @@ enum NativeMemoryServiceState: Equatable, Sendable {
         case .maintenanceNeeded: "Memory needs review"
         case .retrievalUnavailable: "Memory recall is unavailable"
         case .failed: "Memory needs attention"
+        case .notice(let message): message
         }
+    }
+}
+
+enum NativeMemorySensitiveHandling: String, Codable, CaseIterable, Sendable {
+    case neverStore
+    case reviewOnly
+
+    static let reviewPrefix = "Contains sensitive text: "
+
+    var title: String {
+        switch self {
+        case .neverStore: "Never remember"
+        case .reviewOnly: "Suggest for review only"
+        }
+    }
+
+    var caption: String {
+        switch self {
+        case .neverStore: "Vera skips any turn that looks like it holds a password, key, code, or other sensitive text."
+        case .reviewOnly: "Vera may suggest memory from turns with sensitive text, marked so you can check it. Nothing is saved unless you accept it, and passwords or keys are always skipped."
+        }
+    }
+
+    func allows(_ texts: String...) -> Bool {
+        switch self {
+        case .neverStore: !texts.contains(where: NativeMemorySafety.containsSensitiveData)
+        case .reviewOnly: !texts.contains(where: NativeMemorySafety.containsSecret)
+        }
+    }
+
+    static func needsReview(_ texts: String...) -> Bool {
+        texts.contains(where: NativeMemorySafety.containsSensitiveData)
+    }
+
+    static func flagged(_ proposal: NativeMemoryProposal) -> NativeMemoryProposal {
+        var result = proposal
+        result.sensitiveReview = true
+        if !proposal.summary.hasPrefix(reviewPrefix) { result.summary = reviewPrefix + proposal.summary }
+        return result
+    }
+
+    static func unflagged(_ summary: String) -> String {
+        summary.hasPrefix(reviewPrefix) ? String(summary.dropFirst(reviewPrefix.count)) : summary
     }
 }
 
@@ -37,7 +82,8 @@ enum NativeMemoryTurnDisposition: Equatable, Sendable {
 
 enum NativeMemoryExtractionPolicy {
     static func disposition(
-        user: String, assistant: Message, conversationExcluded: Bool
+        user: String, assistant: Message, conversationExcluded: Bool,
+        sensitiveHandling: NativeMemorySensitiveHandling = .neverStore
     ) -> NativeMemoryTurnDisposition {
         if conversationExcluded { return .excluded }
         let trimmed = user.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,8 +91,7 @@ enum NativeMemoryExtractionPolicy {
         if trimmed.lowercased().hasPrefix("private:") || trimmed.lowercased().hasPrefix("do not remember") {
             return .privateTurn
         }
-        if NativeMemorySafety.containsSensitiveData(user)
-            || NativeMemorySafety.containsSensitiveData(assistant.text) { return .privateTurn }
+        if !sensitiveHandling.allows(user, assistant.text) { return .privateTurn }
         if assistant.state == .interrupted { return .interrupted }
         if assistant.failure != nil { return .failed }
         if assistant.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -216,6 +261,36 @@ protocol NativeMemoryServing: Sendable {
     func proposal(
         request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal]
+    func proposals(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal]
+    func proposal(
+        request: String, sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal]
+}
+
+extension NativeMemoryServing {
+    func proposals(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] {
+        guard sensitiveHandling.allows(user, assistant) else { throw NativeMemoryServiceError.sensitiveData }
+        return try await proposals(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, existing: existing, now: now)
+    }
+
+    func proposal(
+        request: String, sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] {
+        guard sensitiveHandling.allows(request) else { throw NativeMemoryServiceError.sensitiveData }
+        return try await proposal(request: request, existing: existing, now: now)
+    }
 }
 
 enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
@@ -272,8 +347,17 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
-        guard !NativeMemorySafety.containsSensitiveData(user),
-              !NativeMemorySafety.containsSensitiveData(assistant) else {
+        try await proposals(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, sensitiveHandling: .neverStore, existing: existing, now: now)
+    }
+
+    func proposals(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
+    ) async throws -> [NativeMemoryProposal] {
+        guard sensitiveHandling.allows(user, assistant) else {
             throw NativeMemoryServiceError.sensitiveData
         }
         let input = """
@@ -291,7 +375,14 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
     func proposal(
         request: String, existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
-        guard !NativeMemorySafety.containsSensitiveData(request) else {
+        try await proposal(request: request, sensitiveHandling: .neverStore, existing: existing, now: now)
+    }
+
+    func proposal(
+        request: String, sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
+    ) async throws -> [NativeMemoryProposal] {
+        guard sensitiveHandling.allows(request) else {
             throw NativeMemoryServiceError.sensitiveData
         }
         return try await extract(

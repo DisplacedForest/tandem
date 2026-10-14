@@ -45,6 +45,206 @@ enum NativeDomainRepositorySelftest {
         try require(try repository.approvedMemories().isEmpty, "cleared future fact became approved memory without a new approval")
     }
 
+    static func presentation(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("presentation.sqlite"))
+        let entity = UUID()
+        let baseline = try fixture(repository, entity: entity, text: "We have five goats.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("5", unit: .count)))
+        try repository.approveDomainProposal(repository.stageDomainProposal(baseline, label: "Goats")!)
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let planned = try fixture(repository, entity: entity, text: "Hoof trimming is planned for next week.",
+            at: next.timeIntervalSince1970, payload: .care(activity: "Hoof trimming", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Goats")!)
+        guard let memory = try repository.approvedMemories().first(where: { $0.domainEntityID == entity }) else {
+            throw NSError(domain: "DomainRepositoryTest", code: 2, userInfo: [NSLocalizedDescriptionKey: "presentation projection missing"])
+        }
+        try require(!memory.details.contains { $0.contains("Hoof trimming") }, "future planned care changed projection semantics")
+        let upcoming = try repository.upcomingDomainCare()[memory.id] ?? []
+        try require(upcoming.map(\.id) == [planned.id], "future planned care not exposed as upcoming")
+        try require(try repository.upcomingDomainCare(now: next.addingTimeInterval(60))[memory.id] == nil, "past planned care still listed as upcoming")
+        let corrected = try fixture(repository, entity: entity, text: "Correction: we had six goats, not five.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("6", unit: .count)), supersedes: [baseline.id])
+        try repository.approveDomainProposal(repository.stageDomainProposal(corrected, label: "Goats")!)
+        let evidence = try repository.memoryEvidence(memory.id)
+        try require(evidence.first?.record.summary == "Current count: 6", "presentation correction not projected")
+        let replaced = evidence.flatMap(\.domainSources).filter { $0.id == baseline.id }
+        try require(!replaced.isEmpty && replaced.allSatisfy { $0.superseded && $0.supersededAt == corrected.occurredAt },
+                    "superseded evidence not marked with its replacement date")
+        try require(evidence.first?.domainSources.contains { $0.id == corrected.id && !$0.superseded && $0.entry?.id == corrected.id } == true,
+                    "current evidence lost its entry")
+        try require(NativeCareLine.parse("Vaccination: planned, not completed") == NativeCareLine(activity: "Vaccination", state: .planned)
+            && NativeCareLine.parse("Vaccination: completed")?.state == .completed
+            && NativeCareLine.parse("Shearing: recommended, not completed")?.state == .recommended
+            && NativeCareLine.parse("Shearing: possible, not completed")?.state == .possible
+            && NativeCareLine.parse("Shearing: did not occur")?.state == .notOccurred
+            && NativeCareLine.parse("Needs clarification: Shearing: completed")?.state == .uncertain
+            && NativeCareLine.parse("Care completion needs clarification.")?.state == .uncertain
+            && NativeCareLine.parse("Current count: 6") == nil, "care phrases not parsed")
+    }
+
+    static func futureCorrectionPresentation(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("future-correction.sqlite"))
+        let entity = UUID()
+        let baseline = try fixture(repository, entity: entity, text: "We have twelve sheep.", at: 10,
+            payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("12", unit: .count)))
+        try repository.approveDomainProposal(repository.stageDomainProposal(baseline, label: "Sheep")!)
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let later = try fixture(repository, entity: entity, text: "From next week the count should read eleven sheep.",
+            at: next.timeIntervalSince1970, payload: .stock(kind: .baseline, quantity: NativeDomainQuantity("11", unit: .count)), supersedes: [baseline.id])
+        let laterProposal = try repository.stageDomainProposal(later, label: "Sheep")!
+        try require(laterProposal.displayLabel == "Change", "superseding domain proposal not labeled Change")
+        try repository.approveDomainProposal(laterProposal)
+        guard let memory = try repository.approvedMemories().first(where: { $0.domainEntityID == entity }) else {
+            throw NSError(domain: "DomainRepositoryTest", code: 3, userInfo: [NSLocalizedDescriptionKey: "future correction projection missing"])
+        }
+        try require(memory.summary == "Current count: 12", "future correction applied early")
+        let evidence = try repository.memoryEvidence(memory.id)
+        let today = evidence.first?.domainSources ?? []
+        try require(today.contains { $0.id == baseline.id && !$0.superseded && $0.supersededAt == nil },
+                    "future correction marked current baseline superseded today")
+        try require(NativeDomainRecordPrefill.latest(today)?.id == baseline.id, "correction prefill lost the current entry")
+        let afterwards = try repository.domainCitations(memory.id, revision: evidence[0].revision, now: next.addingTimeInterval(60))
+        try require(afterwards.contains { $0.id == baseline.id && $0.superseded && $0.supersededAt == later.occurredAt },
+                    "applied correction not marked superseded with its date")
+        let loss = try fixture(repository, entity: entity, text: "One sheep was sold today.", at: Date().addingTimeInterval(-60).timeIntervalSince1970,
+            payload: .stock(kind: .removal, quantity: NativeDomainQuantity("1", unit: .count)))
+        let lossProposal = try repository.stageDomainProposal(loss, label: "Sheep")!
+        try require(lossProposal.displayLabel == "New memory", "additive domain proposal mislabeled")
+        try require(try repository.domainProjectionPreview(lossProposal.domain!.entry).first == "Current count: 11",
+                    "review preview did not show the resulting projection")
+        try require(try repository.approvedMemories().first(where: { $0.domainEntityID == entity })?.summary == "Current count: 12",
+                    "review preview changed approved memory")
+    }
+
+    static func futureOnlyCare(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("future-only.sqlite"))
+        let entity = UUID()
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let planned = try fixture(repository, entity: entity, text: "Shearing is planned for next week.",
+            at: next.timeIntervalSince1970, payload: .care(activity: "Shearing", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Alpacas")!)
+        try require(try repository.approvedMemories().allSatisfy { $0.domainEntityID != entity }, "future-only care created a memory record")
+        try require(try LocalChatRepository.projectedState(repository.domainEntries(entity, scope: "farm"), entity: entity, scope: "farm",
+            hasStock: false, now: Date()) == nil, "future-only care produced a current value")
+        try require(try repository.upcomingDomainCare().isEmpty, "future-only care attached to a projected memory")
+        let subjects = try repository.upcomingOnlySubjects()
+        try require(subjects.count == 1 && subjects[0].label == "Alpacas" && subjects[0].scope == "farm"
+            && subjects[0].entries.map(\.id) == [planned.id] && subjects[0].entries[0].occurredAt == planned.occurredAt
+            && subjects[0].sources.first?.text == "Shearing is planned for next week.", "future-only care missing from the library model")
+        try require(NativeMemoryLibraryFilter().matches(subjects[0]) && NativeMemoryLibraryFilter(query: "shear").matches(subjects[0])
+            && NativeMemoryLibraryFilter(group: .areas).matches(subjects[0]) && !NativeMemoryLibraryFilter(group: .projects).matches(subjects[0]),
+            "upcoming subject not placed in its library group")
+        try require(try repository.upcomingOnlySubjects(now: next.addingTimeInterval(60)).isEmpty, "past planned care still listed as upcoming only")
+        try repository.refreshDomainProjections(now: next.addingTimeInterval(60))
+        try require(try repository.upcomingOnlySubjects().isEmpty, "projected subject still listed as upcoming only")
+    }
+
+    static func upcomingLibraryRevision(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("upcoming-revision.sqlite"))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let entity = UUID()
+        let planned = try fixture(repository, entity: entity, text: "Deworming is planned for next week.",
+            at: Date().addingTimeInterval(7 * 86_400).timeIntervalSince1970, payload: .care(activity: "Deworming", status: .planned))
+        let proposal = try repository.stageDomainProposal(planned, label: "Llamas")!
+        let before = store.memoryLibraryRevision
+        try require(store.acceptMemoryProposal(proposal), "future-only care approval failed")
+        try require(store.memoryRecords.allSatisfy { $0.domainEntityID != entity }, "future-only care created a memory record through the store")
+        try require(store.memoryLibraryRevision > before, "approving future-only care did not refresh the library")
+        try require(try repository.upcomingOnlySubjects().count == 1, "approved future-only care missing before clear")
+        let approved = store.memoryLibraryRevision
+        store.clearNativeMemory()
+        try require(store.memoryLibraryRevision > approved, "clearing memory did not refresh the library")
+        try require(try repository.upcomingOnlySubjects().isEmpty, "cleared upcoming care still listed")
+    }
+
+    static func upcomingExpiryFilters() throws {
+        let now = Date()
+        func subject(_ validUntil: Date?) -> NativeUpcomingSubject {
+            let entry = NativeDomainEntry(id: UUID(), entityID: UUID(), scope: "farm", occurredAt: now.addingTimeInterval(86_400),
+                validUntil: validUntil, learnedAt: now, actor: "user", source: nil, evidence: .asserted, entityResolved: true,
+                status: .supported, supersedes: [], payload: .care(activity: "Feeding", status: .planned))
+            return NativeUpcomingSubject(entityID: entry.entityID, scope: "farm", label: "Goats", entries: [entry], sources: [])
+        }
+        let open = subject(nil), later = subject(now.addingTimeInterval(3 * 86_400)), past = subject(now.addingTimeInterval(-86_400))
+        func shown(_ expiry: NativeMemoryExpiryFilter) -> [Bool] {
+            [open, later, past].map { NativeMemoryLibraryFilter(expiry: expiry).matches($0, now: now) }
+        }
+        try require(shown(.all) == [true, true, true], "All expiry hid upcoming care")
+        try require(shown(.noExpiry) == [true, false, false], "No expiry filter misapplied to upcoming care")
+        try require(shown(.scheduled) == [false, true, false], "Expires later filter misapplied to upcoming care")
+        try require(shown(.expired) == [false, false, true], "Expired filter misapplied to upcoming care")
+        try require(shown(.active) == [true, true, false], "Active filter misapplied to upcoming care")
+    }
+
+    static func sourceChangeRefresh(_ directory: URL) async throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("source-refresh.sqlite"))
+        let now = Date()
+        for (conversation, memoryID) in [("refresh-exclude", "excluded-memory"), ("refresh-delete", "deleted-memory")] {
+            let message = Message(role: .user, text: "I keep the feed in the " + conversation + " barn.")
+            try repository.saveConversation(Conversation(id: conversation, title: conversation, messages: [], updatedAt: now))
+            try repository.saveMessage(message, conversationID: conversation, ordinal: 0)
+            try repository.saveMemory(NativeMemoryRecord(id: memoryID, title: "Feed storage", summary: "Feed is kept in the barn",
+                details: ["Feed is kept in the barn"], group: .areas, category: .other, bank: "farm", durability: .durable,
+                expiry: nil, status: .approved, embedding: nil, sourceConversationID: conversation,
+                sourceMessageID: message.id.uuidString, createdAt: now, updatedAt: now), decision: .accepted, note: "Synthetic user approval")
+        }
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        await store.connect()
+        try require(try repository.memoriesWithUnavailableSources().isEmpty, "source refresh fixture started unavailable")
+        let beforeExclude = store.memoryLibraryRevision
+        store.toggleMemoryExclusion("refresh-exclude")
+        try require(store.memoryLibraryRevision > beforeExclude, "excluding a conversation did not refresh the memory library")
+        try require(try repository.memoriesWithUnavailableSources() == ["excluded-memory"], "excluded source not listed as unavailable")
+        let beforeDelete = store.memoryLibraryRevision
+        store.deleteConversation("refresh-delete")
+        try require(store.memoryLibraryRevision > beforeDelete, "deleting a conversation did not refresh the memory library")
+        try require(try repository.memoriesWithUnavailableSources() == ["excluded-memory", "deleted-memory"], "deleted source not listed as unavailable")
+    }
+
+    static func libraryLoadProjects(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("library-load.sqlite"))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let entity = UUID()
+        let date = Date().addingTimeInterval(3_600)
+        let planned = try fixture(repository, entity: entity, text: "Hoof care is planned for this afternoon.",
+            at: date.timeIntervalSince1970, payload: .care(activity: "Hoof care", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Ponies")!)
+        try require(try repository.upcomingOnlySubjects().count == 1, "library load fixture did not start upcoming")
+        let later = date.addingTimeInterval(60)
+        store.loadMemoryLibrary(now: later)
+        try require(try repository.upcomingOnlySubjects(now: later).isEmpty, "past planned care still upcoming after library load")
+        try require(store.memoryRecords.contains { $0.domainEntityID == entity && $0.details.contains("Hoof care: planned, not completed") },
+                    "library load did not project past planned care as planned")
+    }
+
+    static func reloadProjectsDueCare(_ directory: URL) async throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("reload-due.sqlite"))
+        try repository.saveConversation(Conversation(id: "unrelated", title: "Unrelated", messages: [], updatedAt: Date()))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        await store.connect()
+        let entity = UUID()
+        let date = Date().addingTimeInterval(3_600)
+        let planned = try fixture(repository, entity: entity, text: "Farrier visit is planned for two o'clock.",
+            at: date.timeIntervalSince1970, payload: .care(activity: "Farrier visit", status: .planned))
+        try require(store.acceptMemoryProposal(try repository.stageDomainProposal(planned, label: "Horses")!), "due care approval failed")
+        try require(store.memoryRecords.allSatisfy { $0.domainEntityID != entity }, "planned care projected before its time")
+        let later = date.addingTimeInterval(60)
+        store.nativeMemoryNow = { later }
+        store.deleteConversation("unrelated")
+        try require(store.memoryRecords.contains { $0.domainEntityID == entity && $0.details.contains("Farrier visit: planned, not completed") },
+                    "reload after the planned time did not project the care as planned")
+        try require(try repository.upcomingOnlySubjects(now: later).isEmpty && repository.upcomingDomainCare(now: later).isEmpty,
+                    "due care still listed as upcoming after reload")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -153,7 +353,15 @@ enum NativeDomainRepositorySelftest {
         try await migrationAndRestore(directory)
         try await correctionPrivacy()
         try futureClear(directory)
-        print("domain-repository: PASS (review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
+        try presentation(directory)
+        try futureCorrectionPresentation(directory)
+        try futureOnlyCare(directory)
+        try upcomingLibraryRevision(directory)
+        try upcomingExpiryFilters()
+        try await sourceChangeRefresh(directory)
+        try libraryLoadProjects(directory)
+        try await reloadProjectsDueCare(directory)
+        print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 
     static func privacyAndValidation() async throws {

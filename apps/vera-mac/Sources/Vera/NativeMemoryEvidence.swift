@@ -71,6 +71,20 @@ extension LocalChatRepository {
         }
     }
 
+    static func memorySourceVersion(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func memorySourceVersion(conversationID: String, messageID: String) throws -> String? {
+        try database.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT messages.content FROM messages JOIN conversations ON conversations.id = messages.conversation_id
+                WHERE messages.id = ? AND conversations.id = ? AND conversations.memory_excluded = 0
+                  AND messages.state = 'complete' AND messages.failure IS NULL
+                """, arguments: [messageID, conversationID]).map(Self.memorySourceVersion)
+        }
+    }
+
     static func preserveMemoryEvidence(_ memory: NativeMemoryRecord, db: Database) throws {
         let previous = try String.fetchOne(db, sql: "SELECT record_json FROM native_memory_revisions WHERE memory_id = ? ORDER BY revision DESC LIMIT 1", arguments: [memory.id])
         var snapshot = memory
@@ -89,12 +103,14 @@ extension LocalChatRepository {
                 WHERE messages.id = ? AND conversations.id = ? AND conversations.memory_excluded = 0
                   AND messages.state = 'complete' AND messages.failure IS NULL
                 """, arguments: [message, conversation])
-            if let text = sourceText, NativeMemorySafety.containsSensitiveData(text)
+            if let text = sourceText, (memory.sensitiveConsent == true && memory.sensitiveConsentVersion == memorySourceVersion(text)
+                    ? NativeMemorySafety.containsSecret(text)
+                    : NativeMemorySafety.containsSensitiveData(text))
                 || text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("private:") || text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("do not remember") {
                 sourceText = nil
             }
         }
-        let version = sourceText.map { SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
+        let version = sourceText.map(memorySourceVersion)
         try db.execute(sql: """
             INSERT INTO native_memory_revisions(memory_id, revision, record_json, source_conversation_id, source_message_id, source_text, source_version)
             SELECT ?, COALESCE(MAX(revision), 0) + 1, ?, ?, ?, ?, ? FROM native_memory_revisions WHERE memory_id = ?
@@ -119,11 +135,13 @@ extension LocalChatRepository {
         }
     }
 
-    func eligibleMemory(_ selected: [NativeMemoryRanked], bankScope: String, now: Date = Date()) throws -> [NativeMemoryRanked] {
+    func eligibleMemory(_ selected: [NativeMemoryRanked], bankScope: String, now: Date = Date(),
+                        sensitive: NativeMemorySensitiveHandling = .neverStore) throws -> [NativeMemoryRanked] {
         try database.read { db in
             try selected.compactMap { item in
                 guard let json = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [item.record.id]) else { return nil }
                 let current = try JSONDecoder().decode(NativeMemoryRecord.self, from: Data(json.utf8))
+                guard sensitive == .reviewOnly || current.sensitiveConsent != true else { return nil }
                 guard NativeMemorySafety.recordIsSafe(current), current == item.record, current.eligible(at: now), current.expiry.map({ $0 > now }) ?? true,
                       bankScope == "all" || current.bank.caseInsensitiveCompare(bankScope) == .orderedSame else { return nil }
                 if let conversation = current.sourceConversationID {
@@ -174,7 +192,8 @@ extension LocalChatRepository {
     }
 
     func recallMemory(_ text: String, bankScope: String, now: Date = Date(),
-                      itemLimit: Int = 8, byteLimit: Int = 2_800) throws -> [NativeMemoryRanked] {
+                      itemLimit: Int = 8, byteLimit: Int = 2_800,
+                      sensitive: NativeMemorySensitiveHandling = .neverStore) throws -> [NativeMemoryRanked] {
         guard itemLimit > 0, byteLimit > 0, !NativeMemorySafety.containsSensitiveData(text) else { return [] }
         let terms = Array(Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.prefix(32).map(String.init))).sorted()
         guard !terms.isEmpty else { return [] }
@@ -188,9 +207,10 @@ extension LocalChatRepository {
                   AND (? = 'all' OR lower(m.bank) = lower(?))
                   AND (m.expiry IS NULL OR m.expiry > ?)
                   AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
+                  AND (? = 1 OR COALESCE(json_extract(m.record_json, '$.sensitiveConsent'), 0) = 0)
                   AND \(Self.sourceEligibleSQL)
                 ORDER BY bm25(native_memory_fts), m.updated_at DESC, m.id LIMIT 64
-                """, arguments: [query, bankScope, bankScope, now.timeIntervalSince1970])
+                """, arguments: [query, bankScope, bankScope, now.timeIntervalSince1970, sensitive == .reviewOnly])
             var result: [NativeMemoryRanked] = []
             var used = 0
             for row in rows {

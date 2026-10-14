@@ -545,6 +545,37 @@ final class ConfigStore: ObservableObject {
             set: { value in self.updateMemory { $0[keyPath: keyPath] = value } })
     }
 
+    func memoryBinding<Value>(_ keyPath: WritableKeyPath<NativeMemorySettings, Value>) -> Binding<Value> {
+        Binding(
+            get: { self.nativeSettings.memory[keyPath: keyPath] },
+            set: { value in self.updateMemory { $0[keyPath: keyPath] = value } })
+    }
+
+    func liveMemoryBinding<Value>(_ keyPath: WritableKeyPath<NativeMemorySettings, Value>, store: ChatStore) -> Binding<Value> {
+        Binding(
+            get: { self.nativeSettings.memory[keyPath: keyPath] },
+            set: { value in self.applyMemorySetting(to: store) { $0[keyPath: keyPath] = value } })
+    }
+
+    func applyMemorySetting(to store: ChatStore, _ update: (inout NativeMemorySettings) -> Void) {
+        updateMemory(update)
+        let saved = (try? save()) != nil
+        store.updateNativeMemory(settings: nativeSettings.memory, service: nativeMemoryService)
+        store.memorySettingsNotice = saved ? nil : "This change applies now, but it couldn't be saved for the next launch."
+    }
+
+    var memoryEndpointLocation: String? {
+        let url = nativeResolved?.baseURL ?? URL(string: activeNativeProfile?.baseURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        guard let host = url?.host, !host.isEmpty else { return nil }
+        return "Model endpoint: \(host), \(Self.isLoopbackHost(host) ? "on this Mac" : "remote")."
+    }
+
+    static func isLoopbackHost(_ host: String) -> Bool {
+        let normalized = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return normalized == "localhost" || normalized.hasSuffix(".localhost")
+            || normalized == "::1" || normalized.hasPrefix("127.")
+    }
+
     func memoryBoolBinding(_ keyPath: WritableKeyPath<NativeMemorySettings, Bool>) -> Binding<Bool> {
         Binding(
             get: { self.nativeSettings.memory[keyPath: keyPath] },

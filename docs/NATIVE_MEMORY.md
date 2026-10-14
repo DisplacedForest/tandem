@@ -1,8 +1,8 @@
 # Native memory
 
-Vera's personal memory is an optional local feature in the Mac app. It starts off for existing and new installations. When it is off, Vera performs no memory retrieval, embedding, proposal generation, maintenance, or memory request assembly.
+Vera's personal memory is an optional feature in the Mac app. It starts off for existing and new installations. When it is off, Vera performs no memory retrieval, embedding, proposal generation, maintenance, or memory request assembly.
 
-Approved memory stays in the same local SQLite database as native conversation history. The app does not synchronize it to vera-api, an account, or another device. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
+Approved memory is stored only on this Mac, in the same SQLite database as native conversation history. The app does not synchronize it to vera-api, an account, or another device. Generating proposals and embeddings is different: it sends the current turn and your existing memories to the configured model endpoint. Settings, Memory names that endpoint's host and says whether it's on this Mac or remote. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
 
 ## Library
 
@@ -38,7 +38,11 @@ If a configured embeddings service fails, or local retrieval fails, Vera sends t
 
 After an eligible completed turn, the optional extraction model receives only bounded user and assistant turn text plus a bounded summary of existing approved memory. It returns structured create, update, merge, suppress, expire, or delete proposals. Empty, private, excluded, failed, interrupted, or tool-only turns do not create proposals. A conversation can be excluded from memory suggestions from its sidebar menu.
 
-The past-chat search control reads at most 48 recent messages from each of 12 local conversations, stops after 12 eligible completed turns or 48,000 text bytes, and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, action-token, hidden-reasoning, function-code, or similar secret patterns is not sent to memory services and cannot be stored as a record or proposal.
+Search past chats, Generate proposals from completed chats, and Sensitive information are separate settings. Turning off a switch, or memory as a whole, stops work already underway. A past-chat scan stops at the next turn, and a reply that just finished isn't reviewed. The scan button in Memory never turns Search past chats on by itself.
+
+The past-chat search control reads at most 48 recent messages from each of 12 local conversations, stops after 12 eligible completed turns or 48,000 text bytes, and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, or action-token patterns is never sent to memory services and never stored, whatever the settings say.
+
+The Sensitive information setting covers the wider set: settings text, code, hidden reasoning, and similar content. Never remember (the default) skips those turns completely. Suggest for review only lets them produce suggestions marked "Contains sensitive text:" in the review queue. Nothing is saved until you accept it. Accepting one keeps its source so it can be recalled. Switching back to Never remember stops recall of those records without deleting them.
 
 ## Behavior and boundaries
 
@@ -57,9 +61,9 @@ Native memory covers these capabilities:
 
 The design deliberately holds these boundaries:
 
-* Personal memory has no server runtime dependencies; it runs entirely against the local store.
+* Approved memory has no server runtime dependencies and is stored only on this Mac. Optional extraction and embeddings use the configured model endpoint.
 * The only automatic removal is the expiry groom, and every removal writes an inspectable audit entry.
-* Provider settings, credentials, authorization headers, action tokens, function code, and hidden reasoning are not stored as memory.
+* Credentials, authorization headers, and action tokens are never stored as memory. Provider settings, function code, and hidden reasoning never appear in a memory's text. Under Suggest for review only, an accepted memory may keep a source message that contains them.
 * Maintenance runs only while the app is active and memory is enabled.
 * Optional service failure never blocks ordinary native chat.
 * The novice surface does not expose ranking thresholds, embeddings, scores, clusters, or pruning controls.

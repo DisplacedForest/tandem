@@ -1,12 +1,22 @@
 import Foundation
 
 enum NativeMemoryGroup: String, Codable, CaseIterable, Identifiable, Sendable {
-    case you = "You"
+    case profile = "Profile and Preferences"
     case topics = "Topics"
     case areas = "Areas"
     case people = "People"
+    case projects = "Projects"
 
     var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        if raw == "You" { self = .profile; return }
+        guard let group = NativeMemoryGroup(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown memory group"))
+        }
+        self = group
+    }
 }
 
 enum NativeMemoryCategory: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -23,9 +33,10 @@ enum NativeMemoryCategory: String, Codable, CaseIterable, Identifiable, Sendable
 
     var defaultGroup: NativeMemoryGroup {
         switch self {
-        case .profile, .preference: .you
+        case .profile, .preference: .profile
         case .interest: .topics
-        case .project, .goal, .plan: .areas
+        case .project: .projects
+        case .goal, .plan: .areas
         case .relationship: .people
         case .other: .topics
         }
@@ -75,7 +86,7 @@ struct NativeMemoryLibraryFilter: Sendable {
         case .scheduled: record.expiry.map { $0 > now } ?? false
         }
         return matchesQuery
-            && (group == nil || record.group == group)
+            && (group == nil || record.libraryGroup == group)
             && (bank == nil || record.bank == bank)
             && (category == nil || record.category == category)
             && (status == nil || record.status == status)
@@ -92,6 +103,19 @@ enum NativeMemoryProposalKind: String, Codable, CaseIterable, Sendable {
     case delete
     case consolidate
     case cleanup
+
+    var label: String {
+        switch self {
+        case .create: "New memory"
+        case .update: "Change"
+        case .merge: "Merge"
+        case .suppress: "Stop using"
+        case .expire: "Set expiry"
+        case .delete: "Remove"
+        case .consolidate: "Combine"
+        case .cleanup: "Tidy up"
+        }
+    }
 }
 
 enum NativeMemoryProposalStatus: String, Codable, Sendable {
@@ -122,6 +146,30 @@ struct NativeMemorySettings: Codable, Equatable, Sendable {
     var bankScope: String
     var searchPastChats: Bool
     var generateFromChats: Bool
+    var sensitiveHandling: NativeMemorySensitiveHandling = .neverStore
+
+    init(enabled: Bool, embeddingsModel: String, extractionModel: String, bankScope: String,
+         searchPastChats: Bool, generateFromChats: Bool,
+         sensitiveHandling: NativeMemorySensitiveHandling = .neverStore) {
+        self.enabled = enabled
+        self.embeddingsModel = embeddingsModel
+        self.extractionModel = extractionModel
+        self.bankScope = bankScope
+        self.searchPastChats = searchPastChats
+        self.generateFromChats = generateFromChats
+        self.sensitiveHandling = sensitiveHandling
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decode(Bool.self, forKey: .enabled)
+        embeddingsModel = try values.decode(String.self, forKey: .embeddingsModel)
+        extractionModel = try values.decode(String.self, forKey: .extractionModel)
+        bankScope = try values.decode(String.self, forKey: .bankScope)
+        searchPastChats = try values.decode(Bool.self, forKey: .searchPastChats)
+        generateFromChats = try values.decode(Bool.self, forKey: .generateFromChats)
+        sensitiveHandling = (try? values.decodeIfPresent(NativeMemorySensitiveHandling.self, forKey: .sensitiveHandling)) ?? .neverStore
+    }
 
     static var fresh: NativeMemorySettings {
         NativeMemorySettings(
@@ -152,10 +200,16 @@ struct NativeMemoryRecord: Codable, Identifiable, Hashable, Sendable {
     var updatedAt: Date
     var domainEntityID: UUID? = nil
     var domainRevision: Int? = nil
+    var sensitiveConsent: Bool? = nil
+    var sensitiveConsentVersion: String? = nil
 
     var embeddingState: NativeMemoryEmbeddingState {
         guard let embedding else { return .missing }
         return embedding.isEmpty ? .failed : .ready
+    }
+
+    var libraryGroup: NativeMemoryGroup {
+        group == .areas && category == .project ? .projects : group
     }
 
     func eligible(at now: Date) -> Bool {
@@ -171,7 +225,7 @@ extension NativeMemoryRecord {
         let now = Date(timeIntervalSince1970: 1_785_600_000)
         return [
             .init(id: "you", title: "Response style", summary: "Prefers direct practical answers",
-                  details: ["Prefers direct practical answers with clear tradeoffs"], group: .you,
+                  details: ["Prefers direct practical answers with clear tradeoffs"], group: .profile,
                   category: .preference, bank: "personal", durability: .durable, expiry: nil,
                   status: .approved, embedding: nil, sourceConversationID: nil,
                   sourceMessageID: nil, createdAt: now, updatedAt: now),
@@ -180,8 +234,13 @@ extension NativeMemoryRecord {
                   category: .interest, bank: "personal", durability: .durable, expiry: nil,
                   status: .approved, embedding: nil, sourceConversationID: nil,
                   sourceMessageID: nil, createdAt: now, updatedAt: now),
-            .init(id: "area", title: "Vera", summary: "Building a local personal assistant",
-                  details: ["Vera is an active local software project"], group: .areas,
+            .init(id: "area", title: "Backyard flock", summary: "Current count: 10",
+                  details: ["Current count: 10", "Vaccination: completed"], group: .areas,
+                  category: .goal, bank: "farm", durability: .durable, expiry: nil,
+                  status: .approved, embedding: nil, sourceConversationID: nil,
+                  sourceMessageID: nil, createdAt: now, updatedAt: now),
+            .init(id: "project", title: "Vera", summary: "Building a local personal assistant",
+                  details: ["Vera is an active local software project"], group: .projects,
                   category: .project, bank: "projects", durability: .durable, expiry: nil,
                   status: .approved, embedding: nil, sourceConversationID: nil,
                   sourceMessageID: nil, createdAt: now, updatedAt: now),
@@ -211,6 +270,8 @@ struct NativeMemoryProposal: Codable, Identifiable, Hashable, Sendable {
     var createdAt: Date
     var status: NativeMemoryProposalStatus
     var domain: NativeDomainProposal? = nil
+    var sensitiveReview: Bool? = nil
+    var sourceVersion: String? = nil
 }
 
 struct NativeMemoryChange: Codable, Identifiable, Sendable {
@@ -299,5 +360,64 @@ enum NativeMemoryPromptAssembler {
         \(facts)
         END USER-APPROVED MEMORY CONTEXT
         """
+    }
+}
+
+enum NativeCareState: Sendable {
+    case completed, planned, recommended, possible, notOccurred, uncertain
+
+    var label: String {
+        switch self {
+        case .completed: "Completed"
+        case .planned: "Planned"
+        case .recommended: "Recommended"
+        case .possible: "Possible"
+        case .notOccurred: "Did not happen"
+        case .uncertain: "Needs clarification"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .completed: "checkmark.circle"
+        case .planned: "calendar"
+        case .recommended: "lightbulb"
+        case .possible: "questionmark.circle"
+        case .notOccurred: "xmark.circle"
+        case .uncertain: "exclamationmark.triangle"
+        }
+    }
+
+    init(_ status: NativeCareStatus) {
+        switch status {
+        case .completed: self = .completed
+        case .planned: self = .planned
+        case .recommended: self = .recommended
+        case .possible: self = .possible
+        case .notOccurred: self = .notOccurred
+        }
+    }
+}
+
+struct NativeCareLine: Equatable, Sendable {
+    let activity: String
+    let state: NativeCareState
+
+    static func parse(_ line: String) -> NativeCareLine? {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text == "Care completion needs clarification." { return NativeCareLine(activity: "Care", state: .uncertain) }
+        let phrases: [(String, NativeCareState)] = [
+            (": planned, not completed", .planned), (": recommended, not completed", .recommended),
+            (": possible, not completed", .possible), (": did not occur", .notOccurred), (": completed", .completed)]
+        guard let match = phrases.first(where: { text.hasSuffix($0.0) }) else { return nil }
+        var activity = String(text.dropLast(match.0.count))
+        var uncertain = false
+        for prefix in ["Subject unclear: ", "Needs clarification: ", "Hypothetical, not established: ",
+                       "Reported by someone else, unconfirmed: ", "Meaning unclear: ", "Source denies this: "] where activity.hasPrefix(prefix) {
+            activity.removeFirst(prefix.count)
+            uncertain = true
+        }
+        guard !activity.isEmpty else { return nil }
+        return NativeCareLine(activity: activity, state: uncertain ? .uncertain : match.1)
     }
 }

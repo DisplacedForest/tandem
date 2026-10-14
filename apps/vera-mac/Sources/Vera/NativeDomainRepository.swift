@@ -8,10 +8,22 @@ struct NativeDomainProposal: Codable, Hashable, Sendable {
     let label: String
 }
 
+struct NativeUpcomingSubject: Identifiable, Sendable {
+    let entityID: UUID
+    let scope: String
+    let label: String
+    let entries: [NativeDomainEntry]
+    let sources: [NativeDomainCitation]
+    var id: String { entityID.uuidString + "|" + scope }
+}
+
 struct NativeDomainCitation: Identifiable, Sendable {
     let id: UUID
     let source: NativeDomainSource
     let text: String
+    var entry: NativeDomainEntry? = nil
+    var supersededAt: Date? = nil
+    var superseded = false
 }
 
 extension LocalChatRepository {
@@ -233,15 +245,49 @@ extension LocalChatRepository {
     static func refreshDomainProjection(_ entity: UUID, scope: String, now: Date, db: Database) throws {
         guard let stream = try Row.fetchOne(db, sql: "SELECT * FROM native_domain_streams WHERE entity_id = ? AND scope = ? AND disabled = 0", arguments: [entity.uuidString, scope]) else { return }
         let entries = try domainEntries(entity, scope: scope, db: db)
-        let active = try NativeDomainProjection.active(entries, entity: entity, scope: scope, at: now, knownAt: now)
-        guard !active.isEmpty else {
+        guard let state = try projectedState(entries, entity: entity, scope: scope, hasStock: (stream["has_stock"] as Int) == 1, now: now) else {
             if let id: String = stream["memory_id"] { try db.execute(sql: "DELETE FROM native_memories WHERE id = ?", arguments: [id]) }
             try db.execute(sql: "UPDATE native_domain_streams SET memory_id = NULL WHERE entity_id = ? AND scope = ?", arguments: [entity.uuidString, scope])
             return
         }
+        let active = state.active
+        let details = state.details
+        let basis = state.basis
+        let selected = entries.filter { basis.contains($0.id) && $0.source != nil }.sorted { $0.id.uuidString < $1.id.uuidString }
+        let primary = selected.max { $0.learnedAt < $1.learnedAt }
+        let id: String = (stream["memory_id"] as String?) ?? UUID().uuidString
+        let existing = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [id]).map { try JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
+        var memory = NativeMemoryRecord(id: id, title: stream["label"], summary: String(details[0].prefix(180)),
+            details: Array(details.prefix(8)), group: .areas, category: .other, bank: scope, durability: .durable,
+            expiry: active.compactMap(\.validUntil).min(), status: .approved, embedding: nil,
+            sourceConversationID: primary?.source?.conversationID, sourceMessageID: primary?.source?.messageID,
+            createdAt: existing?.createdAt ?? now, updatedAt: existing?.updatedAt ?? now, domainEntityID: entity,
+            domainRevision: stream["revision"])
+        if var previous = existing {
+            previous.embedding = nil
+            if previous == memory { return }
+        }
+        memory.updatedAt = now
+        guard NativeMemorySafety.recordIsSafe(memory) else { throw NativeDomainError.invalid }
+        if existing == nil, (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_memories WHERE status = 'approved'") ?? 0) >= NativeMemoryRecall.capacity {
+            throw NativeDomainError.changed
+        }
+        try writeMemory(memory, db: db)
+        try preserveMemoryEvidence(memory, db: db)
+        let revision = try Int.fetchOne(db, sql: "SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = ?", arguments: [id])!
+        for entry in selected {
+            try db.execute(sql: "INSERT OR IGNORE INTO native_domain_projection_sources(memory_id, revision, entry_id) VALUES (?, ?, ?)", arguments: [id, revision, entry.id.uuidString])
+        }
+        try db.execute(sql: "UPDATE native_domain_streams SET memory_id = ? WHERE entity_id = ? AND scope = ?", arguments: [id, entity.uuidString, scope])
+    }
+
+    static func projectedState(_ entries: [NativeDomainEntry], entity: UUID, scope: String, hasStock: Bool,
+                               now: Date) throws -> (active: [NativeDomainEntry], details: [String], basis: Set<UUID>)? {
+        let active = try NativeDomainProjection.active(entries, entity: entity, scope: scope, at: now, knownAt: now)
+        guard !active.isEmpty else { return nil }
         var details: [String] = []
         var basis = Set(active.filter { !$0.supersedes.isEmpty }.map(\.id))
-        if (stream["has_stock"] as Int) == 1 {
+        if hasStock {
             let stock = try NativeDomainProjection.stock(entries, entity: entity, scope: scope, at: now, knownAt: now)
             details.append(stock.quantity.map { "Current count: " + $0.amount } ?? (stock.reason ?? "The current count is uncertain."))
             basis.formUnion(stock.evidenceIDs)
@@ -277,32 +323,27 @@ extension LocalChatRepository {
             basis.insert(entry.id)
         }
         if details.isEmpty { details = ["No confirmed current state is established by this evidence."]; basis.formUnion(active.map(\.id)) }
-        let selected = entries.filter { basis.contains($0.id) && $0.source != nil }.sorted { $0.id.uuidString < $1.id.uuidString }
-        let primary = selected.max { $0.learnedAt < $1.learnedAt }
-        let id: String = (stream["memory_id"] as String?) ?? UUID().uuidString
-        let existing = try String.fetchOne(db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [id]).map { try JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
-        var memory = NativeMemoryRecord(id: id, title: stream["label"], summary: String(details[0].prefix(180)),
-            details: Array(details.prefix(8)), group: .areas, category: .other, bank: scope, durability: .durable,
-            expiry: active.compactMap(\.validUntil).min(), status: .approved, embedding: nil,
-            sourceConversationID: primary?.source?.conversationID, sourceMessageID: primary?.source?.messageID,
-            createdAt: existing?.createdAt ?? now, updatedAt: existing?.updatedAt ?? now, domainEntityID: entity,
-            domainRevision: stream["revision"])
-        if var previous = existing {
-            previous.embedding = nil
-            if previous == memory { return }
+        return (active, details, basis)
+    }
+
+    func domainProjectionPreview(_ entry: NativeDomainEntry, now: Date = Date()) throws -> [String] {
+        try database.read { db in
+            let existing = try Self.domainEntries(entry.entityID, scope: entry.scope, db: db).filter { $0.id != entry.id }
+            let streamStock = try Int.fetchOne(db, sql: "SELECT has_stock FROM native_domain_streams WHERE entity_id = ? AND scope = ?",
+                arguments: [entry.entityID.uuidString, entry.scope]) == 1
+            var hasStock = streamStock
+            if case .stock = entry.payload { hasStock = true }
+            return try Self.projectedState(existing + [entry], entity: entry.entityID, scope: entry.scope,
+                hasStock: hasStock, now: max(now, entry.learnedAt))?.details ?? []
         }
-        memory.updatedAt = now
-        guard NativeMemorySafety.recordIsSafe(memory) else { throw NativeDomainError.invalid }
-        if existing == nil, (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_memories WHERE status = 'approved'") ?? 0) >= NativeMemoryRecall.capacity {
-            throw NativeDomainError.changed
+    }
+
+    static func supersession(of entry: NativeDomainEntry, in entries: [NativeDomainEntry], now: Date) -> (superseded: Bool, at: Date?) {
+        let replacements = entries.filter {
+            $0.supersedes.contains(entry.id) && $0.occurredAt <= now && $0.learnedAt <= now
+                && ($0.status == .supported || $0.status == .deleted) && $0.entityResolved && $0.evidence == .asserted
         }
-        try writeMemory(memory, db: db)
-        try preserveMemoryEvidence(memory, db: db)
-        let revision = try Int.fetchOne(db, sql: "SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = ?", arguments: [id])!
-        for entry in selected {
-            try db.execute(sql: "INSERT OR IGNORE INTO native_domain_projection_sources(memory_id, revision, entry_id) VALUES (?, ?, ?)", arguments: [id, revision, entry.id.uuidString])
-        }
-        try db.execute(sql: "UPDATE native_domain_streams SET memory_id = ? WHERE entity_id = ? AND scope = ?", arguments: [id, entity.uuidString, scope])
+        return (!replacements.isEmpty || entry.status == .superseded, replacements.map(\.occurredAt).max())
     }
 
     static func redactDomainMemory(_ id: String, db: Database) throws {
@@ -331,18 +372,113 @@ extension LocalChatRepository {
             """, arguments: [entity, scope])
     }
 
-    func domainCitations(_ memoryID: String, revision: Int) throws -> [NativeDomainCitation] {
-        try database.read { try Self.domainCitations(memoryID, revision: revision, db: $0) }
+    func domainCitations(_ memoryID: String, revision: Int, now: Date = Date()) throws -> [NativeDomainCitation] {
+        try database.read { try Self.domainCitations(memoryID, revision: revision, now: now, db: $0) }
     }
 
-    static func domainCitations(_ memoryID: String, revision: Int, db: Database) throws -> [NativeDomainCitation] {
-            try Row.fetchAll(db, sql: """
-                SELECT e.entry_json, e.source_text FROM native_domain_projection_sources p
-                JOIN native_domain_entries e ON e.id = p.entry_id WHERE p.memory_id = ? AND p.revision = ? ORDER BY e.id
-                """, arguments: [memoryID, revision]).compactMap { row in
-                    let entry = try JSONDecoder().decode(NativeDomainEntry.self, from: Data((row["entry_json"] as String).utf8))
-                    guard let source = entry.source, let text: String = row["source_text"] else { return nil }
-                    return NativeDomainCitation(id: entry.id, source: source, text: text)
+    static func domainCitations(_ memoryID: String, revision: Int, now: Date = Date(), db: Database) throws -> [NativeDomainCitation] {
+        var streams: [String: [NativeDomainEntry]] = [:]
+        return try Row.fetchAll(db, sql: """
+            SELECT e.entry_json, e.source_text FROM native_domain_projection_sources p
+            JOIN native_domain_entries e ON e.id = p.entry_id WHERE p.memory_id = ? AND p.revision = ? ORDER BY e.id
+            """, arguments: [memoryID, revision]).compactMap { row in
+                let entry = try JSONDecoder().decode(NativeDomainEntry.self, from: Data((row["entry_json"] as String).utf8))
+                guard let source = entry.source, let text: String = row["source_text"] else { return nil }
+                let key = entry.entityID.uuidString + "|" + entry.scope
+                if streams[key] == nil { streams[key] = try domainEntries(entry.entityID, scope: entry.scope, db: db) }
+                let state = supersession(of: entry, in: streams[key] ?? [], now: now)
+                return NativeDomainCitation(id: entry.id, source: source, text: text, entry: entry,
+                    supersededAt: state.at, superseded: state.superseded)
+            }
+    }
+
+    static func upcomingCare(_ entries: [NativeDomainEntry], now: Date) -> [NativeDomainEntry] {
+        let replaced = Set(entries.filter { ($0.status == .supported || $0.status == .deleted) && $0.entityResolved && $0.evidence == .asserted }.flatMap(\.supersedes))
+        return entries.filter { entry in
+            guard case .care(_, .planned) = entry.payload, entry.status == .supported, entry.occurredAt > now,
+                  !replaced.contains(entry.id), entry.validUntil.map({ $0 > now }) ?? true else { return false }
+            return true
+        }.sorted { $0.occurredAt < $1.occurredAt }
+    }
+
+    func upcomingDomainCare(now: Date = Date()) throws -> [String: [NativeDomainEntry]] {
+        try database.read { db in
+            var result: [String: [NativeDomainEntry]] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT entity_id, scope, memory_id FROM native_domain_streams WHERE disabled = 0 AND memory_id IS NOT NULL") {
+                guard let entity = UUID(uuidString: row["entity_id"]) else { continue }
+                let upcoming = Self.upcomingCare(try Self.domainEntries(entity, scope: row["scope"], db: db), now: now)
+                if !upcoming.isEmpty { result[row["memory_id"]] = upcoming }
+            }
+            return result
+        }
+    }
+
+    func upcomingOnlySubjects(now: Date = Date()) throws -> [NativeUpcomingSubject] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: "SELECT entity_id, scope, label FROM native_domain_streams WHERE disabled = 0 AND memory_id IS NULL ORDER BY label, scope").compactMap { row in
+                guard let entity = UUID(uuidString: row["entity_id"]) else { return nil }
+                let scope: String = row["scope"]
+                let upcoming = Self.upcomingCare(try Self.domainEntries(entity, scope: scope, db: db), now: now)
+                guard !upcoming.isEmpty else { return nil }
+                let sources = try upcoming.compactMap { entry -> NativeDomainCitation? in
+                    guard let source = entry.source, let text = try String.fetchOne(db, sql: "SELECT source_text FROM native_domain_entries WHERE id = ?",
+                        arguments: [entry.id.uuidString]) else { return nil }
+                    return NativeDomainCitation(id: entry.id, source: source, text: text, entry: entry)
                 }
+                return NativeUpcomingSubject(entityID: entity, scope: scope, label: row["label"], entries: upcoming, sources: sources)
+            }
+        }
+    }
+
+    func memoriesWithUnavailableSources() throws -> Set<String> {
+        try database.read { db in
+            Set(try String.fetchAll(db, sql: """
+                SELECT m.id FROM native_memories m
+                LEFT JOIN conversations c ON c.id = m.source_conversation_id
+                WHERE m.status != 'deleted' AND m.source_message_id IS NOT NULL
+                  AND json_extract(m.record_json, '$.domainEntityID') IS NULL
+                  AND NOT (\(Self.sourceEligibleSQL))
+                """))
+        }
+    }
+}
+
+extension NativeMemoryProposal {
+    var displayLabel: String {
+        if let domain, !domain.entry.supersedes.isEmpty { return NativeMemoryProposalKind.update.label }
+        return kind.label
+    }
+}
+
+extension NativeUpcomingSubject {
+    var libraryGroup: NativeMemoryGroup { .areas }
+}
+
+extension NativeMemoryLibraryFilter {
+    func matchingEntries(_ subject: NativeUpcomingSubject, now: Date = Date()) -> [NativeDomainEntry] {
+        subject.entries.filter { entry in
+            switch expiry {
+            case .all: true
+            case .active: entry.validUntil.map { $0 > now } ?? true
+            case .expired: entry.validUntil.map { $0 <= now } ?? false
+            case .noExpiry: entry.validUntil == nil
+            case .scheduled: entry.validUntil.map { $0 > now } ?? false
+            }
+        }
+    }
+
+    func matches(_ subject: NativeUpcomingSubject, now: Date = Date()) -> Bool {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let activities = subject.entries.compactMap { entry -> String? in
+            if case .care(let activity, _) = entry.payload { return activity }
+            return nil
+        }
+        return (normalized.isEmpty || subject.label.lowercased().contains(normalized)
+                || activities.contains { $0.lowercased().contains(normalized) })
+            && (group == nil || group == subject.libraryGroup)
+            && (bank == nil || bank == subject.scope)
+            && (category == nil || category == .other)
+            && (status == nil || status == .approved)
+            && !matchingEntries(subject, now: now).isEmpty
     }
 }
