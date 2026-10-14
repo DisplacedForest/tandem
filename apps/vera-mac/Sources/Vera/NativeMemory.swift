@@ -271,6 +271,7 @@ struct NativeMemoryProposal: Codable, Identifiable, Hashable, Sendable {
     var status: NativeMemoryProposalStatus
     var domain: NativeDomainProposal? = nil
     var sensitiveReview: Bool? = nil
+    var sourceVersion: String? = nil
 }
 
 struct NativeMemoryChange: Codable, Identifiable, Sendable {

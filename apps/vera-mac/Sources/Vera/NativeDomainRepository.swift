@@ -8,6 +8,15 @@ struct NativeDomainProposal: Codable, Hashable, Sendable {
     let label: String
 }
 
+struct NativeUpcomingSubject: Identifiable, Sendable {
+    let entityID: UUID
+    let scope: String
+    let label: String
+    let entries: [NativeDomainEntry]
+    let sources: [NativeDomainCitation]
+    var id: String { entityID.uuidString + "|" + scope }
+}
+
 struct NativeDomainCitation: Identifiable, Sendable {
     let id: UUID
     let source: NativeDomainSource
@@ -383,21 +392,41 @@ extension LocalChatRepository {
             }
     }
 
+    static func upcomingCare(_ entries: [NativeDomainEntry], now: Date) -> [NativeDomainEntry] {
+        let replaced = Set(entries.filter { ($0.status == .supported || $0.status == .deleted) && $0.entityResolved && $0.evidence == .asserted }.flatMap(\.supersedes))
+        return entries.filter { entry in
+            guard case .care(_, .planned) = entry.payload, entry.status == .supported, entry.occurredAt > now,
+                  !replaced.contains(entry.id), entry.validUntil.map({ $0 > now }) ?? true else { return false }
+            return true
+        }.sorted { $0.occurredAt < $1.occurredAt }
+    }
+
     func upcomingDomainCare(now: Date = Date()) throws -> [String: [NativeDomainEntry]] {
         try database.read { db in
             var result: [String: [NativeDomainEntry]] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT entity_id, scope, memory_id FROM native_domain_streams WHERE disabled = 0 AND memory_id IS NOT NULL") {
                 guard let entity = UUID(uuidString: row["entity_id"]) else { continue }
-                let entries = try Self.domainEntries(entity, scope: row["scope"], db: db)
-                let replaced = Set(entries.filter { ($0.status == .supported || $0.status == .deleted) && $0.entityResolved && $0.evidence == .asserted }.flatMap(\.supersedes))
-                let upcoming = entries.filter { entry in
-                    guard case .care(_, .planned) = entry.payload, entry.status == .supported, entry.occurredAt > now,
-                          !replaced.contains(entry.id), entry.validUntil.map({ $0 > now }) ?? true else { return false }
-                    return true
-                }.sorted { $0.occurredAt < $1.occurredAt }
+                let upcoming = Self.upcomingCare(try Self.domainEntries(entity, scope: row["scope"], db: db), now: now)
                 if !upcoming.isEmpty { result[row["memory_id"]] = upcoming }
             }
             return result
+        }
+    }
+
+    func upcomingOnlySubjects(now: Date = Date()) throws -> [NativeUpcomingSubject] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: "SELECT entity_id, scope, label FROM native_domain_streams WHERE disabled = 0 AND memory_id IS NULL ORDER BY label, scope").compactMap { row in
+                guard let entity = UUID(uuidString: row["entity_id"]) else { return nil }
+                let scope: String = row["scope"]
+                let upcoming = Self.upcomingCare(try Self.domainEntries(entity, scope: scope, db: db), now: now)
+                guard !upcoming.isEmpty else { return nil }
+                let sources = try upcoming.compactMap { entry -> NativeDomainCitation? in
+                    guard let source = entry.source, let text = try String.fetchOne(db, sql: "SELECT source_text FROM native_domain_entries WHERE id = ?",
+                        arguments: [entry.id.uuidString]) else { return nil }
+                    return NativeDomainCitation(id: entry.id, source: source, text: text, entry: entry)
+                }
+                return NativeUpcomingSubject(entityID: entity, scope: scope, label: row["label"], entries: upcoming, sources: sources)
+            }
         }
     }
 
@@ -418,5 +447,26 @@ extension NativeMemoryProposal {
     var displayLabel: String {
         if let domain, !domain.entry.supersedes.isEmpty { return NativeMemoryProposalKind.update.label }
         return kind.label
+    }
+}
+
+extension NativeUpcomingSubject {
+    var libraryGroup: NativeMemoryGroup { .areas }
+}
+
+extension NativeMemoryLibraryFilter {
+    func matches(_ subject: NativeUpcomingSubject) -> Bool {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let activities = subject.entries.compactMap { entry -> String? in
+            if case .care(let activity, _) = entry.payload { return activity }
+            return nil
+        }
+        return (normalized.isEmpty || subject.label.lowercased().contains(normalized)
+                || activities.contains { $0.lowercased().contains(normalized) })
+            && (group == nil || group == subject.libraryGroup)
+            && (bank == nil || bank == subject.scope)
+            && (category == nil || category == .other)
+            && (status == nil || status == .approved)
+            && expiry != .expired
     }
 }

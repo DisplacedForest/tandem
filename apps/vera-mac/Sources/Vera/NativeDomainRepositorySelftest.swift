@@ -116,6 +116,29 @@ enum NativeDomainRepositorySelftest {
                     "review preview changed approved memory")
     }
 
+    static func futureOnlyCare(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("future-only.sqlite"))
+        let entity = UUID()
+        let next = Date().addingTimeInterval(7 * 86_400)
+        let planned = try fixture(repository, entity: entity, text: "Shearing is planned for next week.",
+            at: next.timeIntervalSince1970, payload: .care(activity: "Shearing", status: .planned))
+        try repository.approveDomainProposal(repository.stageDomainProposal(planned, label: "Alpacas")!)
+        try require(try repository.approvedMemories().allSatisfy { $0.domainEntityID != entity }, "future-only care created a memory record")
+        try require(try LocalChatRepository.projectedState(repository.domainEntries(entity, scope: "farm"), entity: entity, scope: "farm",
+            hasStock: false, now: Date()) == nil, "future-only care produced a current value")
+        try require(try repository.upcomingDomainCare().isEmpty, "future-only care attached to a projected memory")
+        let subjects = try repository.upcomingOnlySubjects()
+        try require(subjects.count == 1 && subjects[0].label == "Alpacas" && subjects[0].scope == "farm"
+            && subjects[0].entries.map(\.id) == [planned.id] && subjects[0].entries[0].occurredAt == planned.occurredAt
+            && subjects[0].sources.first?.text == "Shearing is planned for next week.", "future-only care missing from the library model")
+        try require(NativeMemoryLibraryFilter().matches(subjects[0]) && NativeMemoryLibraryFilter(query: "shear").matches(subjects[0])
+            && NativeMemoryLibraryFilter(group: .areas).matches(subjects[0]) && !NativeMemoryLibraryFilter(group: .projects).matches(subjects[0]),
+            "upcoming subject not placed in its library group")
+        try require(try repository.upcomingOnlySubjects(now: next.addingTimeInterval(60)).isEmpty, "past planned care still listed as upcoming only")
+        try repository.refreshDomainProjections(now: next.addingTimeInterval(60))
+        try require(try repository.upcomingOnlySubjects().isEmpty, "projected subject still listed as upcoming only")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -226,6 +249,7 @@ enum NativeDomainRepositorySelftest {
         try futureClear(directory)
         try presentation(directory)
         try futureCorrectionPresentation(directory)
+        try futureOnlyCare(directory)
         print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 

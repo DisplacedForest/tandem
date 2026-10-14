@@ -561,9 +561,7 @@ final class ConfigStore: ObservableObject {
         updateMemory(update)
         let saved = (try? save()) != nil
         store.updateNativeMemory(settings: nativeSettings.memory, service: nativeMemoryService)
-        if !saved {
-            store.memoryServiceState = .failed("This change applies now, but it couldn't be saved for the next launch.")
-        }
+        store.memorySettingsNotice = saved ? nil : "This change applies now, but it couldn't be saved for the next launch."
     }
 
     var memoryEndpointLocation: String? {

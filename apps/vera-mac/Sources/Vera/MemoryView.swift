@@ -15,6 +15,8 @@ struct MemoryView: View {
     @State private var showDomainRecord = false
     @State private var pendingRemoval: NativeMemoryRecord?
     @State private var upcoming: [String: [NativeDomainEntry]] = [:]
+    @State private var upcomingSubjects: [NativeUpcomingSubject] = []
+    @State private var openedUpcoming: NativeUpcomingSubject?
     @State private var unavailableSources: Set<String> = []
 
     private var visible: [NativeMemoryRecord] {
@@ -25,7 +27,14 @@ struct MemoryView: View {
     }
 
     private var banks: [String] {
-        Array(Set(store.memoryRecords.map(\.bank))).sorted()
+        Array(Set(store.memoryRecords.map(\.bank) + upcomingSubjects.map(\.scope))).sorted()
+    }
+
+    private var visibleUpcoming: [NativeUpcomingSubject] {
+        let filter = NativeMemoryLibraryFilter(
+            query: search, group: selectedGroup, bank: selectedBank,
+            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry)
+        return upcomingSubjects.filter { filter.matches($0) }
     }
 
     var body: some View {
@@ -45,6 +54,7 @@ struct MemoryView: View {
         }
         .background(Theme.bg)
         .sheet(item: $selected) { MemoryDetailView(memory: $0) }
+        .sheet(item: $openedUpcoming) { NativeUpcomingSubjectView(subject: $0) }
         .sheet(isPresented: $showDomainRecord) { NativeDomainRecordView() }
         .confirmationDialog(
             "Clear all approved memory?", isPresented: $showClear,
@@ -63,6 +73,7 @@ struct MemoryView: View {
     private func loadLibraryState() {
         guard let repository = store.repository as? LocalChatRepository else { return }
         upcoming = (try? repository.upcomingDomainCare()) ?? [:]
+        upcomingSubjects = (try? repository.upcomingOnlySubjects()) ?? []
         unavailableSources = (try? repository.memoriesWithUnavailableSources()) ?? []
     }
 
@@ -260,9 +271,11 @@ struct MemoryView: View {
             }
             ForEach(NativeMemoryGroup.allCases) { group in
                 let items = visible.filter { $0.libraryGroup == group }
+                let planned = visibleUpcoming.filter { $0.libraryGroup == group }
                 if selectedGroup == nil || selectedGroup == group {
-                    MemoryGroupSection(group: group, items: items, upcoming: upcoming,
-                        unavailableSources: unavailableSources, selected: $selected, pendingRemoval: $pendingRemoval)
+                    MemoryGroupSection(group: group, items: items, upcoming: upcoming, upcomingSubjects: planned,
+                        unavailableSources: unavailableSources, selected: $selected, pendingRemoval: $pendingRemoval,
+                        openedUpcoming: $openedUpcoming)
                 }
             }
         }
@@ -404,23 +417,26 @@ private struct MemoryGroupSection: View {
     let group: NativeMemoryGroup
     let items: [NativeMemoryRecord]
     let upcoming: [String: [NativeDomainEntry]]
+    let upcomingSubjects: [NativeUpcomingSubject]
     let unavailableSources: Set<String>
     @Binding var selected: NativeMemoryRecord?
     @Binding var pendingRemoval: NativeMemoryRecord?
+    @Binding var openedUpcoming: NativeUpcomingSubject?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(group.rawValue).font(.system(size: 14, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
-                Text("\(items.count)").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .accessibilityLabel("\(items.count) items")
+                Text("\(items.count + upcomingSubjects.count)").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("\(items.count + upcomingSubjects.count) items")
             }
-            if items.isEmpty {
+            if items.isEmpty && upcomingSubjects.isEmpty {
                 Text("No approved memory in this section.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .padding(.vertical, 8)
-            } else {
+            }
+            if !items.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(items) { memory in
                         HStack(spacing: 12) {
@@ -466,7 +482,73 @@ private struct MemoryGroupSection: View {
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
             }
+            ForEach(upcomingSubjects) { subject in
+                Button { openedUpcoming = subject } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(subject.label).font(.system(size: 13, weight: .semibold))
+                            Text("Upcoming").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.accent)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(Theme.accent.opacity(0.12), in: Capsule())
+                        }
+                        ForEach(subject.entries) { entry in
+                            UpcomingCareView(entry: entry, size: 11)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 11)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(subject.label + ", upcoming")
+                .accessibilityHint("Shows the planned care and its source")
+            }
         }
+    }
+}
+
+private struct NativeUpcomingSubjectView: View {
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) var dismiss
+    let subject: NativeUpcomingSubject
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(subject.label).font(.system(size: 18, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel("Done")
+            }
+            Text("Nothing here is current yet. Vera starts using it when the planned date arrives.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(subject.entries) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            UpcomingCareView(entry: entry, size: 13)
+                            if let source = subject.sources.first(where: { $0.id == entry.id }) {
+                                Text(source.text).font(.system(size: 12)).textSelection(.enabled)
+                                Button("Open source message") {
+                                    store.openMemorySource(conversationID: source.source.conversationID, messageID: source.source.messageID)
+                                    dismiss()
+                                }
+                                .accessibilityLabel("Open source message for " + source.text.prefix(60))
+                            } else {
+                                Text("Original source unavailable").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(24).frame(width: 560, height: 380)
     }
 }
 

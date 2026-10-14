@@ -8,6 +8,7 @@ final class ChatStore: ObservableObject {
         didSet { if pendingSourceNotice?.conversationID != selectedID { pendingSourceNotice = nil } }
     }
     @Published var pendingSourceNotice: NativeMemorySourceNotice?
+    @Published var memorySettingsNotice: String?
     @Published var classicChatRequest = 0
     @Published var draft: String = ""
     @Published var section: AppSection = .chat
@@ -708,6 +709,7 @@ final class ChatStore: ObservableObject {
                             proposals, service: service, repository: memoryRepository,
                             flagged: NativeMemorySensitiveHandling.needsReview(
                                 messages[index].text, messages[index + 1].text),
+                            sourceText: messages[index].text,
                             allowed: { self.pastChatScanAllowed })
                         reviewedTurns += 1
                         reviewedBytes += turnBytes
@@ -741,25 +743,25 @@ final class ChatStore: ObservableObject {
         classicChatRequest += 1
         select(conversationID)
         let loaded = conversations.first(where: { $0.id == conversationID })?.messages ?? []
-        var states: [NativeMemorySourceState] = []
-        if let messageID {
-            if let id = UUID(uuidString: messageID),
-               let message = loaded.first(where: { $0.id == id }), message.failure == nil {
-                pendingHighlightMessageID = id
-                switch snapshot {
-                case .untracked: break
-                case .missing: states.append(.edited)
-                case .text(let text): if text != message.text { states.append(.edited) }
-                }
-            } else {
-                states.append(.deleted)
-            }
+        let message = messageID.flatMap(UUID.init(uuidString:)).flatMap { id in
+            loaded.first(where: { $0.id == id && $0.failure == nil })
         }
-        if conversation.memoryExcluded { states.append(.excluded) }
-        guard let first = states.first else { return }
+        if let message { pendingHighlightMessageID = message.id }
+        let state: NativeMemorySourceState
+        if conversation.memoryExcluded {
+            state = .excluded
+        } else if messageID != nil, message == nil {
+            state = .deleted
+        } else if message != nil, snapshot == .missing {
+            state = .edited
+        } else if let message, case .text(let text) = snapshot, text != message.text {
+            state = .edited
+        } else {
+            state = .ok
+        }
+        guard state != .ok else { return }
         pendingSourceNotice = NativeMemorySourceNotice(
-            conversationID: conversationID, state: first,
-            message: states.map(\.message).joined(separator: " "))
+            conversationID: conversationID, state: state, message: state.message)
     }
 
     func dismissSourceNotice() {
@@ -826,6 +828,20 @@ final class ChatStore: ObservableObject {
             if sensitive, nativeMemorySettings.sensitiveHandling != .reviewOnly {
                 memoryServiceState = .failed("This suggestion contains sensitive text. Set Sensitive information to Suggest for review only in Settings to accept it.")
                 return false
+            }
+            if let conversation = proposal.sourceConversationID, let message = proposal.sourceMessageID,
+               sensitive || proposal.sourceVersion != nil {
+                if conversations.first(where: { $0.id == conversation })?.memoryExcluded == true {
+                    memoryServiceState = .failed("This conversation is excluded from memory suggestions.")
+                    return false
+                }
+                let current = (repository as? LocalChatRepository).flatMap {
+                    try? $0.memorySourceVersion(conversationID: conversation, messageID: message)
+                }
+                guard let expected = proposal.sourceVersion, current == expected else {
+                    memoryServiceState = .failed("The source message changed since this was suggested. Review it again.")
+                    return false
+                }
             }
             switch proposal.kind {
             case .create:
@@ -1069,7 +1085,7 @@ final class ChatStore: ObservableObject {
 
     private func saveMemoryProposals(
         _ proposals: [NativeMemoryProposal], service: any NativeMemoryServing,
-        repository: any NativeMemoryRepository, flagged: Bool = false,
+        repository: any NativeMemoryRepository, flagged: Bool = false, sourceText: String? = nil,
         allowed: () -> Bool
     ) async throws {
         guard nativeMemorySettings.enabled, allowed() else { return }
@@ -1085,6 +1101,9 @@ final class ChatStore: ObservableObject {
                     proposal, candidateEmbedding: embedding, existing: existing)
             }
             if flagged { reconciled = NativeMemorySensitiveHandling.flagged(reconciled) }
+            if reconciled.sourceMessageID != nil, let sourceText {
+                reconciled.sourceVersion = LocalChatRepository.memorySourceVersion(sourceText)
+            }
             guard nativeMemorySettings.enabled, allowed() else { return }
             try repository.saveProposal(reconciled)
         }
@@ -1899,6 +1918,7 @@ final class ChatStore: ObservableObject {
                                 try await self.saveMemoryProposals(
                                     proposals, service: memoryService, repository: memoryRepository,
                                     flagged: NativeMemorySensitiveHandling.needsReview(text, completedAssistant.text),
+                                    sourceText: text,
                                     allowed: { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats })
                                 reloadNativeMemory()
                             } catch {

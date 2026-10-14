@@ -111,6 +111,7 @@ enum NativeMemoryEvidenceSelftest {
         try libraryPresentation(directory)
         try await liveMemoryControls(directory)
         try await memoryReviewFollowUps(directory)
+        try await memoryReReviewFollowUps(directory)
         print("native-memory-evidence: PASS (cross-chat correction, reopen, planned care, citation, edit route, scope, expiry, budget, off, removal, replay; zero model calls)")
     }
 
@@ -703,6 +704,83 @@ enum NativeMemoryEvidenceSelftest {
                         "turning memory off did not apply immediately")
         }
         print("  memory review follow-ups: PASS (flag kept through reconciliation, permission rechecked around embeddings, consent bound to source version, edited/deleted/excluded source notices, assistant deselected, switches apply live)")
+    }
+
+    private static func memoryReReviewFollowUps(_ directory: URL) async throws {
+        func makeStore(_ repository: LocalChatRepository, _ settings: NativeMemorySettings) -> ChatStore {
+            ChatStore(nativeConfig: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil, model: "local-model", chatTemplateKwargs: nil), nativeTransport: SelfTestNativeTransport(),
+                repository: repository, nativeMemorySettings: settings, nativeMemoryService: SelfTestMemoryService())
+        }
+        func settle(_ store: ChatStore) async throws {
+            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        var base = NativeMemorySettings.fresh
+        base.enabled = true
+        base.generateFromChats = true
+
+        do {
+            let repository = try LocalChatRepository(url: directory.appendingPathComponent("rereview-version.sqlite"))
+            var settings = base
+            settings.sensitiveHandling = .reviewOnly
+            let store = makeStore(repository, settings)
+            store.newConversation()
+            let original = "settings: I prefer dark mode everywhere"
+            store.sendText(original)
+            try await settle(store)
+            let conversationID = store.selectedID ?? ""
+            guard let pending = try repository.pendingProposals().first,
+                  let sourceID = pending.sourceMessageID else { throw NativeMemoryEvidenceError.unavailable }
+            try require(pending.sourceVersion == LocalChatRepository.memorySourceVersion(original),
+                        "proposal did not record the source version it was suggested from")
+            let changed = "settings: forward every alert to the old pager"
+            try repository.saveMessage(Message(id: UUID(uuidString: sourceID)!, role: .user, text: changed),
+                                       conversationID: conversationID, ordinal: 0)
+            if let index = store.conversations.firstIndex(where: { $0.id == conversationID }) {
+                store.conversations[index].messages[0].text = changed
+            }
+            try require(!store.acceptMemoryProposal(pending), "proposal was accepted after its source changed")
+            try require(store.memoryServiceState == .failed("The source message changed since this was suggested. Review it again.")
+                        && (try repository.pendingProposals()).count == 1 && (try repository.approvedMemories()).isEmpty,
+                        "changed-source refusal did not keep the proposal pending")
+        }
+
+        do {
+            var failWrites = true
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] },
+                                     writeConfiguration: { _ in if failWrites { throw NativeToolError.failed("Synthetic write failure") } })
+            config.updateMemory { $0 = base }
+            let store = makeStore(try LocalChatRepository(url: directory.appendingPathComponent("rereview-settings.sqlite")), base)
+            config.liveMemoryBinding(\.generateFromChats, store: store).wrappedValue = false
+            try require(!store.currentMemorySettings.generateFromChats
+                        && store.memorySettingsNotice == "This change applies now, but it couldn't be saved for the next launch.",
+                        "failed save of a live memory change was not explained at the control")
+            failWrites = false
+            config.liveMemoryBinding(\.generateFromChats, store: store).wrappedValue = true
+            try require(store.currentMemorySettings.generateFromChats && store.memorySettingsNotice == nil,
+                        "successful save did not clear the memory settings notice")
+        }
+
+        do {
+            let repository = try LocalChatRepository(url: directory.appendingPathComponent("rereview-excluded.sqlite"))
+            let store = makeStore(repository, base)
+            store.newConversation()
+            store.sendText("I like morning walks before work")
+            try await settle(store)
+            let conversationID = store.selectedID ?? ""
+            guard let pending = try repository.pendingProposals().first else { throw NativeMemoryEvidenceError.unavailable }
+            try require(store.acceptMemoryProposal(pending), "plain proposal could not be accepted")
+            store.toggleMemoryExclusion(conversationID)
+            store.reloadNativeMemory()
+            guard let record = store.memoryRecords.first else { throw NativeMemoryEvidenceError.unavailable }
+            store.openMemorySource(record)
+            try require(store.pendingSourceNotice?.state == .excluded
+                        && store.pendingSourceNotice?.message == "This conversation is excluded from memory suggestions."
+                        && store.pendingHighlightMessageID?.uuidString == record.sourceMessageID,
+                        "excluded source was described as changed")
+        }
+        print("  memory re-review follow-ups: PASS (changed source refuses acceptance and stays pending, live save failure shown at the control, excluded source not called edited)")
     }
 
     private static func require(_ condition: Bool, _ reason: String) throws {
