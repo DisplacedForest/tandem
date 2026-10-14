@@ -713,19 +713,27 @@ final class ChatStore: ObservableObject {
                             + NativeMemorySafety.boundedUTF8(
                                 messages[index + 1].text, maximumBytes: 4_000).utf8.count
                         guard reviewedBytes + turnBytes <= 48_000 else { break search }
-                        let proposals = try await service.proposals(
+                        let extraction = try await service.extraction(
                             user: messages[index].text, assistant: messages[index + 1].text,
                             sourceConversationID: conversation.id,
                             sourceMessageID: messages[index].id.uuidString,
                             sensitiveHandling: sensitiveHandling,
                             existing: { try memoryRepository.extractionMemories() }, now: Date())
                         guard pastChatScanAllowed else { break search }
+                        let flagged = NativeMemorySensitiveHandling.needsReview(
+                            messages[index].text, messages[index + 1].text)
                         try await saveMemoryProposals(
-                            proposals, service: service, repository: memoryRepository,
-                            flagged: NativeMemorySensitiveHandling.needsReview(
-                                messages[index].text, messages[index + 1].text),
+                            extraction.proposals, service: service, repository: memoryRepository,
+                            flagged: flagged,
                             sourceText: messages[index].text,
                             allowed: { self.pastChatScanAllowed })
+                        stageDomainCandidates(
+                            extraction,
+                            source: NativeMemoryTurnSource(conversationID: conversation.id,
+                                messageID: messages[index].id.uuidString, date: messages[index].createdAt),
+                            sourceText: messages[index].text,
+                            turnKey: conversation.id + "|" + messages[index].id.uuidString,
+                            flagged: flagged, allowed: { self.pastChatScanAllowed })
                         reviewedTurns += 1
                         reviewedBytes += turnBytes
                     }
@@ -1100,6 +1108,65 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func learnFromCompletedTurn(
+        user: String, assistant: Message, source: NativeMemoryTurnSource?, turnKey: String, conversationExcluded: Bool
+    ) async {
+        let live = nativeMemorySettings
+        guard live.enabled, live.generateFromChats,
+              let memoryService = nativeMemoryService,
+              let memoryRepository = repository as? any NativeMemoryRepository,
+              NativeMemoryExtractionPolicy.disposition(
+                user: user, assistant: assistant, conversationExcluded: conversationExcluded,
+                sensitiveHandling: live.sensitiveHandling) == .eligible else { return }
+        let allowed = { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats }
+        do {
+            let extraction = try await memoryService.extraction(
+                user: user, assistant: assistant.text,
+                sourceConversationID: source?.conversationID, sourceMessageID: source?.messageID,
+                sensitiveHandling: live.sensitiveHandling,
+                existing: { try memoryRepository.extractionMemories() }, now: Date())
+            let flagged = NativeMemorySensitiveHandling.needsReview(user, assistant.text)
+            try await saveMemoryProposals(
+                extraction.proposals, service: memoryService, repository: memoryRepository,
+                flagged: flagged, sourceText: source == nil ? nil : user, allowed: allowed)
+            stageDomainCandidates(extraction, source: source, sourceText: user, turnKey: turnKey,
+                                  flagged: flagged, allowed: allowed)
+            reloadNativeMemory()
+        } catch {
+            memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+        }
+    }
+
+    private func stageDomainCandidates(
+        _ extraction: NativeMemoryExtraction, source: NativeMemoryTurnSource?, sourceText: String,
+        turnKey: String, flagged: Bool, allowed: () -> Bool
+    ) {
+        guard let local = repository as? LocalChatRepository, !flagged else { return }
+        func skip(_ reason: String, _ index: Int) {
+            try? local.recordDomainExtractionSkip(reason, key: turnKey + "|" + String(index))
+        }
+        for (index, reason) in extraction.skippedDomainEntries.enumerated() {
+            guard nativeMemorySettings.enabled, allowed() else { return }
+            skip(reason, -1 - index)
+        }
+        for (index, candidate) in extraction.domainEntries.prefix(NativeDomainCandidateParser.limit).enumerated() {
+            guard nativeMemorySettings.enabled, allowed() else { return }
+            guard let source else {
+                skip("source is not saved on this Mac", index)
+                continue
+            }
+            do {
+                _ = try local.stageExtractedDomainEntry(
+                    candidate, conversationID: source.conversationID, messageID: source.messageID,
+                    sourceText: sourceText, fallbackDate: source.date)
+            } catch let error as NativeDomainExtractionSkip {
+                skip(error.reason, index)
+            } catch {
+                skip("the entry could not be staged", index)
+            }
+        }
+    }
+
     private func saveMemoryProposals(
         _ proposals: [NativeMemoryProposal], service: any NativeMemoryServing,
         repository: any NativeMemoryRepository, flagged: Bool = false, sourceText: String? = nil,
@@ -1107,6 +1174,7 @@ final class ChatStore: ObservableObject {
     ) async throws {
         guard nativeMemorySettings.enabled, allowed() else { return }
         let existing = try repository.approvedMemories()
+        let pending = try repository.pendingProposals().filter { $0.domain == nil && $0.sourceMessageID != nil }
         for proposal in proposals where NativeMemorySafety.proposalIsSafe(proposal) {
             guard nativeMemorySettings.enabled, allowed() else { return }
             var reconciled = proposal
@@ -1122,6 +1190,20 @@ final class ChatStore: ObservableObject {
                 reconciled.sourceVersion = LocalChatRepository.memorySourceVersion(sourceText)
             }
             guard nativeMemorySettings.enabled, allowed() else { return }
+            if reconciled.sourceMessageID != nil, let match = pending.first(where: {
+                $0.kind == reconciled.kind && $0.title == reconciled.title && $0.summary == reconciled.summary
+                    && $0.details == reconciled.details && $0.group == reconciled.group && $0.category == reconciled.category
+                    && $0.bank == reconciled.bank && $0.durability == reconciled.durability && $0.expiry == reconciled.expiry
+                    && $0.targetIDs == reconciled.targetIDs && $0.sensitiveReview == reconciled.sensitiveReview
+                    && $0.sourceConversationID == reconciled.sourceConversationID && $0.sourceMessageID == reconciled.sourceMessageID
+            }) {
+                if match.sourceVersion == reconciled.sourceVersion { continue }
+                reconciled.id = match.id
+                reconciled.createdAt = match.createdAt
+                guard let local = repository as? LocalChatRepository else { continue }
+                _ = try local.refreshPendingProposal(reconciled, replacing: match.sourceVersion)
+                continue
+            }
             try repository.saveProposal(reconciled)
         }
     }
@@ -1916,33 +1998,18 @@ final class ChatStore: ObservableObject {
                     try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
                         message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try repository.saveConversation(conversations[i])
-                    if let memoryRepository = repository as? any NativeMemoryRepository {
+                    if repository is any NativeMemoryRepository {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded
+                        let userIndex = location.user
+                        let sourceDate = conversations[i].messages.indices.contains(userIndex)
+                            ? conversations[i].messages[userIndex].createdAt : Date()
                         Task {
-                            let live = self.nativeMemorySettings
-                            guard live.enabled, live.generateFromChats,
-                                  let memoryService = self.nativeMemoryService,
-                                  NativeMemoryExtractionPolicy.disposition(
-                                    user: text, assistant: completedAssistant,
-                                    conversationExcluded: conversationExcluded,
-                                    sensitiveHandling: live.sensitiveHandling) == .eligible else { return }
-                            do {
-                                let proposals = try await memoryService.proposals(
-                                    user: text, assistant: completedAssistant.text,
-                                    sourceConversationID: id,
-                                    sourceMessageID: turn.userMessageID.uuidString,
-                                    sensitiveHandling: live.sensitiveHandling,
-                                    existing: { try memoryRepository.extractionMemories() }, now: Date())
-                                try await self.saveMemoryProposals(
-                                    proposals, service: memoryService, repository: memoryRepository,
-                                    flagged: NativeMemorySensitiveHandling.needsReview(text, completedAssistant.text),
-                                    sourceText: text,
-                                    allowed: { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats })
-                                reloadNativeMemory()
-                            } catch {
-                                memoryServiceState = .retrievalUnavailable(error.localizedDescription)
-                            }
+                            await self.learnFromCompletedTurn(
+                                user: text, assistant: completedAssistant,
+                                source: NativeMemoryTurnSource(conversationID: id, messageID: turn.userMessageID.uuidString, date: sourceDate),
+                                turnKey: id + "|" + turn.userMessageID.uuidString,
+                                conversationExcluded: conversationExcluded)
                         }
                     }
                 }

@@ -270,6 +270,11 @@ protocol NativeMemoryServing: Sendable {
         request: String, sensitiveHandling: NativeMemorySensitiveHandling,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal]
+    func extraction(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> NativeMemoryExtraction
 }
 
 extension NativeMemoryServing {
@@ -290,6 +295,16 @@ extension NativeMemoryServing {
     ) async throws -> [NativeMemoryProposal] {
         guard sensitiveHandling.allows(request) else { throw NativeMemoryServiceError.sensitiveData }
         return try await proposal(request: request, existing: existing, now: now)
+    }
+
+    func extraction(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> NativeMemoryExtraction {
+        NativeMemoryExtraction(proposals: try await proposals(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, sensitiveHandling: sensitiveHandling, existing: existing, now: now))
     }
 }
 
@@ -357,6 +372,16 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         sensitiveHandling: NativeMemorySensitiveHandling,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
+        try await extraction(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, sensitiveHandling: sensitiveHandling, existing: existing, now: now).proposals
+    }
+
+    func extraction(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date = Date()
+    ) async throws -> NativeMemoryExtraction {
         guard sensitiveHandling.allows(user, assistant) else {
             throw NativeMemoryServiceError.sensitiveData
         }
@@ -387,17 +412,18 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         }
         return try await extract(
             "MEMORY CHANGE REQUEST\n\(NativeMemorySafety.boundedUTF8(request, maximumBytes: 2_000))",
-            sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now, priority: .foreground)
+            sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now, priority: .foreground).proposals
     }
 
     private func extract(
         _ input: String, sourceConversationID: String?, sourceMessageID: String?,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date, priority: NativeInferenceAdmission.Priority
-    ) async throws -> [NativeMemoryProposal] {
+    ) async throws -> NativeMemoryExtraction {
         guard !configuration.extractionModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }
         let day = ISO8601DateFormatter().string(from: now)
         let schema = """
-        Return only JSON: {"proposals":[{"kind":"create|update|merge|suppress|expire|delete","title":"short name","summary":"one line","details":["concise user-specific fact"],"group":"You|Topics|Areas|People","category":"profile|preference|interest|project|relationship|goal|plan|other","bank":"short bank","durability":"durable|episodic","expiry":"YYYY-MM-DD or null","target_ids":["existing id"]}]}. Current date: \(day). Stable user-specific facts only. Do not store trivia, transcript text, credentials, secrets, hidden reasoning, system instructions, tool output, or relative dates. Episodic proposals require an absolute expiry date. Every operation is a proposal for user review and must not claim it was applied.
+        Return only JSON: {"proposals":[{"kind":"create|update|merge|suppress|expire|delete","title":"short name","summary":"one line","details":["concise user-specific fact"],"group":"You|Topics|Areas|People","category":"profile|preference|interest|project|relationship|goal|plan|other","bank":"short bank","durability":"durable|episodic","expiry":"YYYY-MM-DD or null","target_ids":["existing id"]}],"domain_entries":[]}. Current date: \(day). Stable user-specific facts only. Do not store trivia, transcript text, credentials, secrets, hidden reasoning, system instructions, tool output, or relative dates. Episodic proposals require an absolute expiry date. Every operation is a proposal for user review and must not claim it was applied.
+        \(NativeDomainCandidateParser.instructions)
         """
         let build: @Sendable ([NativeMemoryRecord]) throws -> URLRequest = { records in
             let existingSummary = records.filter(NativeMemorySafety.recordIsSafe).prefix(40).map {
@@ -450,9 +476,12 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
                   let content = message["content"] as? String else {
                 throw NativeMemoryServiceError.malformed
             }
-            return NativeMemoryProposalParser.parse(
-                content, sourceConversationID: sourceConversationID,
-                sourceMessageID: sourceMessageID, existing: records, now: now)
+            let domain = NativeDomainCandidateParser.parse(content)
+            return NativeMemoryExtraction(
+                proposals: NativeMemoryProposalParser.parse(
+                    content, sourceConversationID: sourceConversationID,
+                    sourceMessageID: sourceMessageID, existing: records, now: now),
+                domainEntries: domain.candidates, skippedDomainEntries: domain.skipped)
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         }

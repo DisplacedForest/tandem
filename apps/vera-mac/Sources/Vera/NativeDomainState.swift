@@ -1,13 +1,14 @@
 import Foundation
 
 enum NativeDomainError: LocalizedError {
-    case invalid, conflict, sourceUnavailable, changed
+    case invalid, conflict, sourceUnavailable, changed, awaiting
     var errorDescription: String? {
         switch self {
         case .invalid: "This proposed record is incomplete or inconsistent."
         case .conflict: "The evidence disagrees. Review the conflicting records before using this value."
         case .sourceUnavailable: "The original evidence is no longer available."
         case .changed: "These records changed. Review the updated evidence before applying this proposal."
+        case .awaiting: "Accept the earlier record this one corrects first."
         }
     }
 }

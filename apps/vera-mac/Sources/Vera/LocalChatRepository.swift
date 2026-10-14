@@ -246,6 +246,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeDomainStateV16") { db in
             try Self.migrateDomainState(db)
         }
+        migrator.registerMigration("nativeDomainRemovedProposalsV17") { db in
+            try db.execute(sql: "CREATE TABLE native_domain_removed_proposals (id TEXT PRIMARY KEY NOT NULL)")
+        }
         try migrator.migrate(database)
     }
 
@@ -594,6 +597,19 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func refreshPendingProposal(_ proposal: NativeMemoryProposal, replacing version: String?) throws -> Bool {
+        guard proposal.domain == nil, proposal.status == .pending, NativeMemorySafety.proposalIsSafe(proposal) else { return false }
+        return try database.write { db in
+            guard let raw = try String.fetchOne(db, sql: "SELECT proposal_json FROM native_memory_proposals WHERE id = ? AND status = 'pending'",
+                    arguments: [proposal.id]),
+                  let stored = Self.decode(raw, as: NativeMemoryProposal.self),
+                  stored.status == .pending, stored.domain == nil, stored.sourceVersion == version else { return false }
+            try db.execute(sql: "UPDATE native_memory_proposals SET proposal_json = ? WHERE id = ? AND status = 'pending'",
+                arguments: [try Self.encode(proposal), proposal.id])
+            return true
+        }
+    }
+
     func decideProposal(
         _ id: String, status: NativeMemoryProposalStatus, note: String, memoryID: String?
     ) throws {
@@ -608,6 +624,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(
                 sql: "UPDATE native_memory_proposals SET status = ?, proposal_json = ? WHERE id = ?",
                 arguments: [status.rawValue, try Self.encode(proposal), id])
+            if proposal.domain != nil { try Self.releaseDomainDependents(db: db) }
             try Self.writeChange(
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: memoryID ?? proposal.targetIDs.first, proposalID: id,

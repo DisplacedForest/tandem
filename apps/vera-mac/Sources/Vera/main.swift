@@ -107,6 +107,11 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try NativeDomainStateSelftest.run(); try await NativeDomainRepositorySelftest.run() }
         catch { print("domain-state: FAIL \(error.localizedDescription)"); exit(1) }
     }
+} else if arguments.contains("--domain-extraction-selftest") {
+    NativeApplicationEntry.runAsync {
+        do { try await NativeDomainExtractionSelftest.run() }
+        catch { print("domain-extraction: FAIL \(error.localizedDescription)"); exit(1) }
+    }
 } else if arguments.contains("--shared-runtime-memory-selftest") {
     NativeApplicationEntry.runAsync {
         do { try await NativeRuntimeMemorySelftest.run() }
