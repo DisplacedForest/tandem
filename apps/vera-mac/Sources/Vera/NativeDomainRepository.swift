@@ -6,6 +6,7 @@ struct NativeDomainProposal: Codable, Hashable, Sendable {
     let entry: NativeDomainEntry
     let expectedRevision: Int
     let label: String
+    var awaiting: [UUID]? = nil
 }
 
 struct NativeUpcomingSubject: Identifiable, Sendable {
@@ -154,9 +155,20 @@ extension LocalChatRepository {
             validUntil: entry.validUntil, learnedAt: learned, actor: entry.actor, source: source, evidence: entry.evidence,
             entityResolved: entry.entityResolved, status: entry.status, supersedes: entry.supersedes, payload: entry.payload)
         let entries = try domainEntries(entry.entityID, scope: entry.scope, db: db)
-        _ = try NativeDomainProjection.active(entries + [staged], entity: entry.entityID, scope: entry.scope, at: .distantFuture, knownAt: .distantFuture)
-        let replacing = try entries.filter { staged.supersedes.contains($0.id) }.flatMap { target -> [String] in
-            var lines = ["Replaces: " + domainDescription(target) + " (" + target.occurredAt.formatted(date: .abbreviated, time: .standard) + ")"]
+        let journal = Set(entries.map(\.id))
+        var waiting: [NativeDomainEntry] = []
+        var queue = staged.supersedes.filter { !journal.contains($0) }
+        while let id = queue.popLast() {
+            guard !waiting.contains(where: { $0.id == id }) else { continue }
+            guard let target = try pendingDomainEntry(id, db: db) else { throw NativeDomainError.invalid }
+            waiting.append(target)
+            queue.append(contentsOf: target.supersedes.filter { !journal.contains($0) })
+        }
+        let direct = waiting.filter { staged.supersedes.contains($0.id) }
+        _ = try NativeDomainProjection.active(entries + waiting + [staged], entity: entry.entityID, scope: entry.scope, at: .distantFuture, knownAt: .distantFuture)
+        let replacing = try (entries + waiting).filter { staged.supersedes.contains($0.id) }.flatMap { target -> [String] in
+            let pending = waiting.contains { $0.id == target.id } ? ", not yet accepted" : ""
+            var lines = ["Replaces: " + domainDescription(target) + " (" + target.occurredAt.formatted(date: .abbreviated, time: .standard) + pending + ")"]
             if let source = target.source { lines.append("Earlier evidence: " + (try domainSourceText(source, db: db))) }
             return lines
         }
@@ -166,10 +178,47 @@ extension LocalChatRepository {
             summary: domainDescription(staged), details: [domainDescription(staged), "Library: " + entry.scope, "Attributed to: " + (entry.actor ?? "unknown"), timing] + ending + replacing + ["Original evidence: " + span],
             group: .areas, category: .other, bank: entry.scope, durability: .durable, expiry: nil, targetIDs: [],
             sourceConversationID: source.conversationID, sourceMessageID: source.messageID, createdAt: learned, status: .pending,
-            domain: NativeDomainProposal(entry: staged, expectedRevision: revision, label: label),
+            domain: NativeDomainProposal(entry: staged, expectedRevision: revision, label: label,
+                awaiting: direct.isEmpty ? nil : direct.map(\.id)),
             sourceVersion: source.version)
         guard NativeMemorySafety.proposalIsSafe(proposal) else { throw NativeDomainError.invalid }
         return proposal
+    }
+
+    static func pendingDomainEntry(_ id: UUID, db: Database) throws -> NativeDomainEntry? {
+        try String.fetchOne(db, sql: """
+            SELECT proposal_json FROM native_memory_proposals
+            WHERE status = 'pending' AND json_extract(proposal_json, '$.domain.entry.id') = ?
+            """, arguments: [id.uuidString]).flatMap {
+            try JSONDecoder().decode(NativeMemoryProposal.self, from: Data($0.utf8)).domain?.entry
+        }
+    }
+
+    static func releaseDomainDependents(db: Database) throws {
+        for raw in try String.fetchAll(db, sql: """
+            SELECT proposal_json FROM native_memory_proposals
+            WHERE status = 'pending' AND json_extract(proposal_json, '$.domain.awaiting') IS NOT NULL
+            """) {
+            let previous = try JSONDecoder().decode(NativeMemoryProposal.self, from: Data(raw.utf8))
+            guard let domain = previous.domain, let awaiting = domain.awaiting else { continue }
+            let journal = Set(try domainEntries(domain.entry.entityID, scope: domain.entry.scope, db: db).map(\.id))
+            let gone = try awaiting.filter { id in try !journal.contains(id) && pendingDomainEntry(id, db: db) == nil }
+            guard !gone.isEmpty else { continue }
+            let old = domain.entry
+            let entry = NativeDomainEntry(id: old.id, entityID: old.entityID, scope: old.scope, occurredAt: old.occurredAt,
+                validUntil: old.validUntil, learnedAt: old.learnedAt, actor: old.actor, source: old.source, evidence: old.evidence,
+                entityResolved: old.entityResolved, status: old.status, supersedes: old.supersedes.filter { !gone.contains($0) }, payload: old.payload)
+            let revision = try Int.fetchOne(db, sql: "SELECT revision FROM native_domain_streams WHERE entity_id = ? AND scope = ? AND disabled = 0",
+                arguments: [entry.entityID.uuidString, entry.scope])
+            if let revision, (try? entry.validate()) != nil, var rebuilt = try? domainProposal(entry, label: domain.label, proposalID: previous.id,
+                learned: entry.learnedAt, revision: revision, db: db) {
+                rebuilt.createdAt = previous.createdAt
+                try db.execute(sql: "UPDATE native_memory_proposals SET proposal_json = ? WHERE id = ?", arguments: [try domainJSON(rebuilt), previous.id])
+            } else {
+                try db.execute(sql: "DELETE FROM native_memory_proposals WHERE id = ?", arguments: [previous.id])
+                try writeDomainSkip("the record it corrects was dismissed", key: previous.id, db: db)
+            }
+        }
     }
 
     static func rebaseDomainProposals(_ entity: UUID, scope: String, db: Database) throws {
@@ -190,6 +239,7 @@ extension LocalChatRepository {
             }
             try db.execute(sql: "UPDATE native_memory_proposals SET proposal_json = ? WHERE id = ?", arguments: [try domainJSON(rebuilt), previous.id])
         }
+        try releaseDomainDependents(db: db)
     }
 
     func approveDomainProposal(_ submitted: NativeMemoryProposal) throws {
@@ -203,6 +253,7 @@ extension LocalChatRepository {
             guard proposal.status == .pending else { throw NativeDomainError.changed }
             let entry = domain.entry
             try entry.validate()
+            guard domain.awaiting?.isEmpty ?? true else { throw NativeDomainError.awaiting }
             guard let source = entry.source else { throw NativeDomainError.invalid }
             let span = try Self.domainSourceText(source, db: db)
             guard let stream = try Row.fetchOne(db, sql: "SELECT revision, disabled FROM native_domain_streams WHERE entity_id = ? AND scope = ?", arguments: [entry.entityID.uuidString, entry.scope]),
@@ -264,6 +315,7 @@ extension LocalChatRepository {
 
     func refreshDomainProjections(now: Date = Date()) throws {
         try database.write { db in
+            try Self.releaseDomainDependents(db: db)
             for row in try Row.fetchAll(db, sql: "SELECT entity_id, scope FROM native_domain_streams WHERE disabled = 0") {
                 guard let id = UUID(uuidString: row["entity_id"]) else { throw NativeDomainError.invalid }
                 try Self.refreshDomainProjection(id, scope: row["scope"], now: now, db: db)
@@ -393,6 +445,11 @@ extension LocalChatRepository {
 
     static func redactDomainStream(_ entity: String, scope: String, db: Database) throws {
         try db.execute(sql: "UPDATE native_domain_streams SET disabled = 1 WHERE entity_id = ? AND scope = ?", arguments: [entity, scope])
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO native_domain_removed_proposals(id)
+            SELECT id FROM native_memory_proposals
+            WHERE json_extract(proposal_json, '$.domain.entry.entityID') = ? AND json_extract(proposal_json, '$.domain.entry.scope') = ?
+            """, arguments: [entity, scope])
         try db.execute(sql: "DELETE FROM native_memory_proposals WHERE json_extract(proposal_json, '$.domain.entry.entityID') = ? AND json_extract(proposal_json, '$.domain.entry.scope') = ?", arguments: [entity, scope])
         try db.execute(sql: """
             UPDATE native_domain_entries SET source_text = NULL, source_message_id = NULL, source_conversation_id = NULL,

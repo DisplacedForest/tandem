@@ -1190,11 +1190,17 @@ final class ChatStore: ObservableObject {
                 reconciled.sourceVersion = LocalChatRepository.memorySourceVersion(sourceText)
             }
             guard nativeMemorySettings.enabled, allowed() else { return }
-            if reconciled.sourceMessageID != nil, pending.contains(where: {
+            if reconciled.sourceMessageID != nil, let match = pending.first(where: {
                 $0.kind == reconciled.kind && $0.title == reconciled.title && $0.summary == reconciled.summary
-                    && $0.details == reconciled.details && $0.targetIDs == reconciled.targetIDs
+                    && $0.details == reconciled.details && $0.group == reconciled.group && $0.category == reconciled.category
+                    && $0.bank == reconciled.bank && $0.durability == reconciled.durability && $0.expiry == reconciled.expiry
+                    && $0.targetIDs == reconciled.targetIDs && $0.sensitiveReview == reconciled.sensitiveReview
                     && $0.sourceConversationID == reconciled.sourceConversationID && $0.sourceMessageID == reconciled.sourceMessageID
-            }) { continue }
+            }) {
+                if match.sourceVersion == reconciled.sourceVersion { continue }
+                reconciled.id = match.id
+                reconciled.createdAt = match.createdAt
+            }
             try repository.saveProposal(reconciled)
         }
     }

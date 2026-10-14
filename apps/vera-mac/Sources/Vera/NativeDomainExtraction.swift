@@ -39,8 +39,10 @@ enum NativeDomainCandidateParser {
     static func parse(_ raw: String) -> (candidates: [NativeDomainCandidate], skipped: [String]) {
         let content = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard content.count <= 30_000, let data = content.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let value = object["domain_entries"], !(value is NSNull) else { return ([], []) }
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ([], ["the typed records could not be read"])
+        }
+        guard let value = object["domain_entries"], !(value is NSNull) else { return ([], []) }
         guard let rows = value as? [Any] else { return ([], ["the entries are not a list"]) }
         var candidates: [NativeDomainCandidate] = []
         var skipped: [String] = []
@@ -158,31 +160,41 @@ extension LocalChatRepository {
     }
 
     func recordDomainExtractionSkip(_ reason: String, key: String, now: Date = Date()) throws {
-        let change = NativeMemoryChange(id: Self.domainExtractionID("skip|" + key + "|" + reason), memoryID: nil, proposalID: nil,
-            decision: .dismissed, note: Self.domainSkipNote + reason, createdAt: now)
-        try database.write { db in
-            try db.execute(sql: """
-                INSERT OR IGNORE INTO native_memory_changes (id, memory_id, proposal_id, decision, note, created_at, change_json)
-                VALUES (?, NULL, NULL, ?, ?, ?, ?)
-                """, arguments: [change.id, change.decision.rawValue, change.note, now.timeIntervalSince1970, try Self.domainJSON(change)])
-        }
+        try database.write { db in try Self.writeDomainSkip(reason, key: key, now: now, db: db) }
+    }
+
+    static func writeDomainSkip(_ reason: String, key: String, now: Date = Date(), db: Database) throws {
+        let change = NativeMemoryChange(id: domainExtractionID("skip|" + key + "|" + reason), memoryID: nil, proposalID: nil,
+            decision: .dismissed, note: domainSkipNote + reason, createdAt: now)
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO native_memory_changes (id, memory_id, proposal_id, decision, note, created_at, change_json)
+            VALUES (?, NULL, NULL, ?, ?, ?, ?)
+            """, arguments: [change.id, change.decision.rawValue, change.note, now.timeIntervalSince1970, try domainJSON(change)])
+    }
+
+    static func domainSubjectKey(_ label: String) -> String {
+        label.folding(options: .caseInsensitive, locale: nil)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     func approvedDomainStream(label: String, scope: String) throws -> UUID? {
-        try database.read { db in
-            try String.fetchOne(db, sql: """
-                SELECT s.entity_id FROM native_domain_streams s
-                WHERE s.scope = ? AND s.disabled = 0 AND s.label = ? COLLATE NOCASE
+        let key = Self.domainSubjectKey(label)
+        return try database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT s.entity_id, s.label FROM native_domain_streams s
+                WHERE s.scope = ? AND s.disabled = 0
                   AND EXISTS (SELECT 1 FROM native_domain_entries e WHERE e.entity_id = s.entity_id AND e.scope = s.scope)
-                ORDER BY s.revision DESC, s.entity_id LIMIT 1
-                """, arguments: [scope, label]).flatMap(UUID.init(uuidString:))
+                ORDER BY s.revision DESC, s.entity_id
+                """, arguments: [scope]).first { Self.domainSubjectKey($0["label"]) == key }
+                .flatMap { UUID(uuidString: $0["entity_id"]) }
         }
     }
 
     func domainSubject(label: String, scope: String) throws -> UUID? {
         if let stream = try approvedDomainStream(label: label, scope: scope) { return stream }
+        let key = Self.domainSubjectKey(label)
         return try pendingProposals().compactMap(\.domain).first {
-            $0.label.caseInsensitiveCompare(label) == .orderedSame && $0.entry.scope == scope
+            Self.domainSubjectKey($0.label) == key && $0.entry.scope == scope
         }?.entry.entityID
     }
 
@@ -198,9 +210,11 @@ extension LocalChatRepository {
     func stageExtractedDomainEntry(_ candidate: NativeDomainCandidate, conversationID: String, messageID: String,
                                    sourceText: String, fallbackDate: Date, now: Date = Date()) throws -> NativeMemoryProposal? {
         let proposalID = Self.domainExtractionID("entry|" + conversationID + "|" + messageID + "|" + (try Self.domainJSON(candidate)))
-        let known = try database.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_memory_proposals WHERE id = ?", arguments: [proposalID]) ?? 0
+        let (known, removed) = try database.read { db in
+            (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_memory_proposals WHERE id = ?", arguments: [proposalID]) ?? 0,
+             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_domain_removed_proposals WHERE id = ?", arguments: [proposalID]) ?? 0)
         }
+        if removed > 0 { throw NativeDomainExtractionSkip(reason: "this record was removed") }
         if known > 0 { return nil }
         guard let range = sourceText.range(of: candidate.span, options: .literal) else {
             throw NativeDomainExtractionSkip(reason: "the quoted text does not match the message")
@@ -210,12 +224,15 @@ extension LocalChatRepository {
         var entity = try domainSubject(label: candidate.subject, scope: candidate.scope)
         var supersedes: [UUID] = []
         if let target = candidate.supersedes {
-            guard let stream = try approvedDomainStream(label: target, scope: candidate.scope) else {
+            guard let stream = try domainSubject(label: target, scope: candidate.scope) else {
                 throw NativeDomainExtractionSkip(reason: "there is no earlier record to correct")
             }
             if let entity, entity != stream { throw NativeDomainExtractionSkip(reason: "the correction names a different subject") }
             entity = stream
-            guard let latest = Self.correctionTarget(for: candidate.payload, in: try domainEntries(stream, scope: candidate.scope)) else {
+            let approved = try domainEntries(stream, scope: candidate.scope)
+            let pending = try pendingProposals().compactMap(\.domain).map(\.entry)
+                .filter { $0.entityID == stream && $0.scope == candidate.scope }
+            guard let latest = Self.correctionTarget(for: candidate.payload, in: approved + pending) else {
                 throw NativeDomainExtractionSkip(reason: "there is no earlier record to correct")
             }
             supersedes = [latest.id]

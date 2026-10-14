@@ -246,6 +246,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeDomainStateV16") { db in
             try Self.migrateDomainState(db)
         }
+        migrator.registerMigration("nativeDomainRemovedProposalsV17") { db in
+            try db.execute(sql: "CREATE TABLE native_domain_removed_proposals (id TEXT PRIMARY KEY NOT NULL)")
+        }
         try migrator.migrate(database)
     }
 
@@ -608,6 +611,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(
                 sql: "UPDATE native_memory_proposals SET status = ?, proposal_json = ? WHERE id = ?",
                 arguments: [status.rawValue, try Self.encode(proposal), id])
+            if proposal.domain != nil { try Self.releaseDomainDependents(db: db) }
             try Self.writeChange(
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: memoryID ?? proposal.targetIDs.first, proposalID: id,

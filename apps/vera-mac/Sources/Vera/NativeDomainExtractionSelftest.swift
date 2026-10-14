@@ -9,8 +9,20 @@ enum NativeDomainExtractionSelftest {
         defer { try? FileManager.default.removeItem(at: directory) }
         try parser()
         print("  parser: PASS (kinds, units, dates, wrong types, cap)")
-        try await livestock(directory)
-        print("  livestock end to end: PASS (baseline, correction across chats, loss, planned care, approve, reopen)")
+        try await livestock(directory, reviewLater: false)
+        print("  livestock end to end: PASS (baseline, correction across chats, loss, planned care, approve each turn, reopen)")
+        try await livestock(directory, reviewLater: true)
+        print("  livestock reviewed later: PASS (all four turns pending, correction waits, approve in order, reopen reads 8)")
+        try await dismissedTarget(directory)
+        print("  dismissed correction target: PASS (correction rebuilt without it, retraction dropped and audited)")
+        try await removedReplay(directory)
+        print("  removed record replay: PASS (deleted memory not suggested again, audited)")
+        try await refreshedSource(directory)
+        print("  refreshed source: PASS (stale pending proposal replaced with the new source version)")
+        try await subjectKey(directory)
+        print("  subject key: PASS (Écrevisses and écrevisses join one subject)")
+        try await unreadable(directory)
+        print("  unreadable output: PASS (truncated response audited, nothing proposed)")
         try await evidenceModes(directory)
         print("  evidence modes: PASS (negated, hypothetical, reported, ambiguous never move stock)")
         try await spanMismatch(directory)
@@ -153,65 +165,74 @@ enum NativeDomainExtractionSelftest {
         try require(empty.candidates.isEmpty && empty.skipped.isEmpty, "missing entries produced candidates or audits")
     }
 
-    static func livestock(_ directory: URL) async throws {
+    static func livestock(_ directory: URL, reviewLater: Bool) async throws {
         DomainExtractionWire.state.reset()
-        let url = directory.appendingPathComponent("livestock.sqlite")
+        let url = directory.appendingPathComponent(reviewLater ? "livestock-later.sqlite" : "livestock.sqlite")
         let repository = try LocalChatRepository(url: url)
         let service = DomainExtractionService()
         let store = store(repository, service)
         let planned = day(Date().addingTimeInterval(30 * 86_400))
-        let texts = (baseline: "We have twelve hens.", correction: "Actually it's ten, I miscounted.",
-                     loss: "We lost two to a fox.", care: "Vaccination is planned for next month.")
-        DomainExtractionWire.state.respond(texts.baseline, content("Flock", [entry("Hens", "baseline", quantity: 12, span: "We have twelve hens")]))
-        DomainExtractionWire.state.respond(texts.correction, content("Flock count", [
-            entry("Hens", "baseline", quantity: 10, supersedes: "Hens", span: "Actually it's ten")]))
-        DomainExtractionWire.state.respond(texts.loss, content("Fox", [entry("Hens", "removal", quantity: 2, span: "We lost two to a fox")]))
-        DomainExtractionWire.state.respond(texts.care, content("Flock care", [
-            entry("Hens", "planned", property: "Vaccination", date: planned, span: "Vaccination is planned for next month")]))
-
-        func review(_ text: String, _ spanText: String, _ payload: NativeDomainPayload, label: String) async throws -> NativeMemoryProposal {
-            try await send(store, service, text)
-            let pending = try domainPending(repository)
-            try require(pending.count == 1, "expected one typed proposal for \"\(text)\", found \(pending.count)")
-            let proposal = pending[0]
-            try require(span(proposal, in: text) == spanText, "proposal span for \"\(text)\" was not the exact quoted text")
-            try require(proposal.domain?.entry.payload == payload, "proposal kind for \"\(text)\" was \(String(describing: proposal.domain?.entry.payload))")
-            try require(proposal.details.contains("Original evidence: " + spanText), "review text omitted the original evidence")
-            try require(proposal.sourceVersion == LocalChatRepository.domainHash(text), "typed proposal missing its source version")
-            try require(proposal.domain?.label == label, "typed proposal label was not the subject")
-            try require(try repository.pendingProposals().contains { $0.domain == nil && $0.sourceMessageID == proposal.sourceMessageID },
-                        "free-text proposal from the same turn missing")
-            return proposal
-        }
-
+        let steps: [(text: String, quote: String, payload: NativeDomainPayload, reply: String)] = [
+            ("We have twelve hens.", "We have twelve hens", .stock(kind: .baseline, quantity: try NativeDomainQuantity("12", unit: .count)),
+             content("Flock", [entry("Hens", "baseline", quantity: 12, span: "We have twelve hens")])),
+            ("Actually it's ten, I miscounted.", "Actually it's ten", .stock(kind: .baseline, quantity: try NativeDomainQuantity("10", unit: .count)),
+             content("Flock count", [entry("Hens", "baseline", quantity: 10, supersedes: "Hens", span: "Actually it's ten")])),
+            ("We lost two to a fox.", "We lost two to a fox", .stock(kind: .removal, quantity: try NativeDomainQuantity("2", unit: .count)),
+             content("Fox", [entry("Hens", "removal", quantity: 2, span: "We lost two to a fox")])),
+            ("Vaccination is planned for next month.", "Vaccination is planned for next month", .care(activity: "Vaccination", status: .planned),
+             content("Flock care", [entry("Hens", "planned", property: "Vaccination", date: planned, span: "Vaccination is planned for next month")])),
+        ]
+        for step in steps { DomainExtractionWire.state.respond(step.text, step.reply) }
         store.newConversation()
         let chatA = store.selectedID
-        let baseline = try await review(texts.baseline, "We have twelve hens",
-            .stock(kind: .baseline, quantity: try NativeDomainQuantity("12", unit: .count)), label: "Hens")
-        try require(try repository.approvedMemories().isEmpty, "typed proposal changed memory before review")
-        try require(store.acceptMemoryProposal(baseline), "approving the baseline failed")
-        let entity = baseline.domain!.entry.entityID
-
-        store.newConversation()
-        try require(store.selectedID != chatA, "second chat reused the first conversation")
-        let correction = try await review(texts.correction, "Actually it's ten",
-            .stock(kind: .baseline, quantity: try NativeDomainQuantity("10", unit: .count)), label: "Hens")
-        try require(correction.domain?.entry.entityID == entity, "correction resolved to a different subject")
-        try require(correction.domain?.entry.supersedes == [baseline.domain!.entry.id], "correction did not supersede the earlier count")
-        try require(correction.details.contains { $0.hasPrefix("Replaces: Observed count: 12") }
-                    && correction.details.contains("Earlier evidence: We have twelve hens"), "correction review omitted what it replaces")
-        try require(store.acceptMemoryProposal(correction), "approving the correction failed")
-
-        let loss = try await review(texts.loss, "We lost two to a fox",
-            .stock(kind: .removal, quantity: try NativeDomainQuantity("2", unit: .count)), label: "Hens")
-        try require(loss.domain?.entry.entityID == entity && loss.domain?.entry.supersedes == [], "loss did not join the subject")
-        try require(store.acceptMemoryProposal(loss), "approving the loss failed")
-
-        let care = try await review(texts.care, "Vaccination is planned for next month",
-            .care(activity: "Vaccination", status: .planned), label: "Hens")
-        try require(day(care.domain!.entry.occurredAt) == planned, "planned care lost its absolute date")
-        try require(store.acceptMemoryProposal(care), "approving the planned care failed")
+        var staged: [NativeMemoryProposal] = []
+        for (index, step) in steps.enumerated() {
+            if index == 1 {
+                store.newConversation()
+                try require(store.selectedID != chatA, "second chat reused the first conversation")
+            }
+            try await send(store, service, step.text)
+            let fresh = try domainPending(repository).filter { item in !staged.contains { $0.id == item.id } }
+            try require(fresh.count == 1, "expected one typed proposal for \"\(step.text)\", found \(fresh.count)")
+            let proposal = fresh[0]
+            try require(span(proposal, in: step.text) == step.quote, "proposal span for \"\(step.text)\" was not the exact quoted text")
+            try require(proposal.domain?.entry.payload == step.payload, "proposal kind for \"\(step.text)\" was \(String(describing: proposal.domain?.entry.payload))")
+            try require(proposal.details.contains("Original evidence: " + step.quote), "review text omitted the original evidence")
+            try require(proposal.sourceVersion == LocalChatRepository.domainHash(step.text), "typed proposal missing its source version")
+            try require(proposal.domain?.label == "Hens", "typed proposal label was not the subject")
+            try require(try repository.pendingProposals().contains { $0.domain == nil && $0.sourceMessageID == proposal.sourceMessageID },
+                        "free-text proposal from the same turn missing")
+            if index > 0 {
+                try require(proposal.domain?.entry.entityID == staged[0].domain?.entry.entityID, "\"\(step.text)\" resolved to a different subject")
+            }
+            if index == 1 {
+                try require(proposal.domain?.entry.supersedes == [staged[0].domain!.entry.id], "correction did not supersede the earlier count")
+                try require(proposal.details.contains { $0.hasPrefix("Replaces: Observed count: 12") }
+                            && proposal.details.contains("Earlier evidence: We have twelve hens"), "correction review omitted what it replaces")
+            } else {
+                try require(proposal.domain?.entry.supersedes == [], "\"\(step.text)\" superseded a record")
+            }
+            staged.append(proposal)
+            if index == 0 { try require(try repository.approvedMemories().isEmpty, "typed proposal changed memory before review") }
+            if !reviewLater { try require(store.acceptMemoryProposal(proposal), "approving \"\(step.text)\" failed") }
+        }
+        func current(_ proposal: NativeMemoryProposal) throws -> NativeMemoryProposal {
+            guard let found = try repository.pendingProposals().first(where: { $0.id == proposal.id }) else {
+                throw NSError(domain: "DomainExtractionTest", code: 5, userInfo: [NSLocalizedDescriptionKey: "pending proposal disappeared before review"])
+            }
+            return found
+        }
+        if reviewLater {
+            try require(try repository.approvedMemories().isEmpty, "reviewing later changed memory early")
+            try require(!store.acceptMemoryProposal(try current(staged[1])), "correction accepted before the record it corrects")
+            for proposal in staged {
+                try require(store.acceptMemoryProposal(try current(proposal)), "approving \"\(proposal.details.last ?? "")\" in order failed")
+            }
+        }
         try require(try domainPending(repository).isEmpty, "typed proposals left pending after approval")
+        let entity = staged[0].domain!.entry.entityID
+        let (baseline, correction, loss, care) = (staged[0], staged[1], staged[2], staged[3])
+        try require(day(care.domain!.entry.occurredAt) == planned, "planned care lost its absolute date")
 
         let reopened = try LocalChatRepository(url: url)
         let fresh = Self.store(reopened, DomainExtractionService())
@@ -238,6 +259,125 @@ enum NativeDomainExtractionSelftest {
         let dueSources = try reopened.domainCitations(due.id, revision: try reopened.memoryEvidence(due.id).first!.revision, now: later)
         try require(dueSources.contains { $0.id == care.domain!.entry.id && $0.text == "Vaccination is planned for next month" },
                     "planned care lost its decisive source")
+    }
+
+    static func dismissedTarget(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("dismissed-target.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let start = Date().addingTimeInterval(-3_600)
+        let texts = ["We have nine geese.", "Correction: seven geese.", "Ignore the geese count."]
+        DomainExtractionWire.state.respond(texts[0], content("Geese", [entry("Geese", "baseline", quantity: 9, span: "We have nine geese")]))
+        DomainExtractionWire.state.respond(texts[1], content("Geese count", [entry("Geese", "baseline", quantity: 7, supersedes: "Geese", span: "seven geese")]))
+        DomainExtractionWire.state.respond(texts[2], content("Geese note", [entry("Geese", "retraction", supersedes: "Geese", span: "Ignore the geese count")]))
+        for (index, text) in texts.enumerated() {
+            await learn(store, text, try turn(repository, text, at: start.addingTimeInterval(Double(index) * 60)))
+        }
+        let pending = try domainPending(repository)
+        try require(pending.count == 3, "pending corrections were not staged against the pending count, found \(pending.count)")
+        let first = pending.first { $0.summary == "Observed count: 9" }!
+        let correction = pending.first { $0.summary == "Observed count: 7" }!
+        try require(!store.acceptMemoryProposal(correction), "correction accepted before the record it corrects")
+        store.dismissMemoryProposal(correction)
+        try require(try domainPending(repository).map(\.id) == [first.id], "retraction of a dismissed record was kept")
+        try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "the record it corrects was dismissed"),
+                    "dropped retraction was not audited")
+        let again = "Correction: eight geese."
+        DomainExtractionWire.state.respond(again, content("Geese recount", [entry("Geese", "baseline", quantity: 8, supersedes: "Geese", span: "eight geese")]))
+        await learn(store, again, try turn(repository, again, at: start.addingTimeInterval(240)))
+        guard let recount = try domainPending(repository).first(where: { $0.summary == "Observed count: 8" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 7, userInfo: [NSLocalizedDescriptionKey: "second correction was not staged"])
+        }
+        try require(recount.domain?.entry.supersedes == [first.domain!.entry.id], "second correction did not target the pending count")
+        store.dismissMemoryProposal(first)
+        let left = try domainPending(repository)
+        try require(left.count == 1 && left[0].id == recount.id, "dependent records after dismissal were \(left.map(\.summary))")
+        try require(left[0].domain?.entry.supersedes == [] && !left[0].details.contains { $0.hasPrefix("Replaces:") },
+                    "correction still points at the dismissed record")
+        try require(store.acceptMemoryProposal(left[0]), "rebuilt correction could not be accepted")
+        try require(try repository.approvedMemories().contains { $0.title == "Geese" && $0.details.contains("Current count: 8") },
+                    "rebuilt correction did not become the count")
+    }
+
+    static func removedReplay(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("removed-replay.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let text = "We keep three alpacas."
+        DomainExtractionWire.state.respond(text, content("Alpacas", [entry("Alpacas", "baseline", quantity: 3, span: "We keep three alpacas")]))
+        let source = try turn(repository, text)
+        await learn(store, text, source)
+        let staged = try domainPending(repository)
+        try require(staged.count == 1 && store.acceptMemoryProposal(staged[0]), "alpaca count was not staged and approved")
+        guard let memory = try repository.approvedMemories().first(where: { $0.title == "Alpacas" }) else {
+            throw NSError(domain: "DomainExtractionTest", code: 6, userInfo: [NSLocalizedDescriptionKey: "alpaca memory missing"])
+        }
+        store.deleteNativeMemory(memory)
+        await learn(store, text, source)
+        try require(try domainPending(repository).isEmpty, "removed record was suggested again")
+        let streams = try await repository.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_domain_streams WHERE disabled = 0") ?? 0
+        }
+        try require(streams == 0, "removed record created a new subject")
+        try require(try audits(repository).contains(LocalChatRepository.domainSkipNote + "this record was removed"),
+                    "removed replay was not audited")
+    }
+
+    static func refreshedSource(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("refreshed-source.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let original = "We keep bees", edited = "We keep bees."
+        DomainExtractionWire.state.respond(original, content("Bees", []))
+        DomainExtractionWire.state.respond(edited, content("Bees", []))
+        let conversation = UUID().uuidString
+        let user = Message(role: .user, text: original)
+        try repository.saveConversation(Conversation(id: conversation, title: "Fixture", messages: [], updatedAt: Date()))
+        try repository.saveMessage(user, conversationID: conversation, ordinal: 0)
+        try repository.saveMessage(Message(role: .assistant, text: "Noted."), conversationID: conversation, ordinal: 1)
+        let source = NativeMemoryTurnSource(conversationID: conversation, messageID: user.id.uuidString, date: user.createdAt)
+        await learn(store, original, source)
+        var changed = user
+        changed.text = edited
+        try repository.saveMessage(changed, conversationID: conversation, ordinal: 0)
+        await learn(store, edited, source)
+        let pending = try repository.pendingProposals().filter { $0.title == "Bees" }
+        try require(pending.count == 1, "refreshed source left \(pending.count) pending proposals")
+        try require(pending[0].sourceVersion == LocalChatRepository.memorySourceVersion(edited), "pending proposal kept the stale source version")
+        try require(store.acceptMemoryProposal(pending[0]), "refreshed proposal could not be accepted")
+    }
+
+    static func subjectKey(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("subject-key.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let start = Date().addingTimeInterval(-3_600)
+        let first = "We keep twenty Écrevisses in the tank.", second = "We lost three  écrevisses overnight."
+        DomainExtractionWire.state.respond(first, content("Crayfish", [entry("Écrevisses", "baseline", quantity: 20, span: "twenty Écrevisses")]))
+        DomainExtractionWire.state.respond(second, content("Crayfish loss", [entry("écrevisses ", "removal", quantity: 3, span: "We lost three")]))
+        await learn(store, first, try turn(repository, first, at: start))
+        let baseline = try domainPending(repository)
+        try require(baseline.count == 1 && store.acceptMemoryProposal(baseline[0]), "Écrevisses count was not staged and approved")
+        await learn(store, second, try turn(repository, second, at: start.addingTimeInterval(60)))
+        let loss = try domainPending(repository)
+        try require(loss.count == 1 && loss[0].domain?.entry.entityID == baseline[0].domain?.entry.entityID,
+                    "a differently cased subject started a new subject")
+        try require(store.acceptMemoryProposal(loss[0]), "removal on the shared subject could not be accepted")
+        try require(try repository.approvedMemories().contains { $0.title == "écrevisses" && $0.details.contains("Current count: 17") },
+                    "shared subject did not read Current count: 17")
+    }
+
+    static func unreadable(_ directory: URL) async throws {
+        DomainExtractionWire.state.reset()
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("unreadable.sqlite"))
+        let store = store(repository, DomainExtractionService())
+        let text = "We have four turkeys."
+        let full = content("Turkeys", [entry("Turkeys", "baseline", quantity: 4, span: "We have four turkeys")])
+        DomainExtractionWire.state.respond(text, String(full.prefix(full.count / 2)))
+        await learn(store, text, try turn(repository, text))
+        try require(try repository.pendingProposals().isEmpty, "truncated output produced proposals")
+        try require(try audits(repository) == [LocalChatRepository.domainSkipNote + "the typed records could not be read"],
+                    "truncated output audits were \(try audits(repository))")
     }
 
     static func evidenceModes(_ directory: URL) async throws {
