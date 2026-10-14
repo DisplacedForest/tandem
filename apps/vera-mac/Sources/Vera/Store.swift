@@ -18,6 +18,7 @@ final class ChatStore: ObservableObject {
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memoryRecords: [NativeMemoryRecord] = []
+    @Published var memoryLibraryRevision = 0
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var inspectedMemoryRevision: Int?
     @Published var inspectedMemory: NativeMemoryRecord?
@@ -595,6 +596,7 @@ final class ChatStore: ObservableObject {
 
     func reloadNativeMemory() {
         guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        memoryLibraryRevision += 1
         do {
             memoryRecords = try memoryRepository.allMemories().filter { $0.status != .deleted }
             memoryProposals = try memoryRepository.pendingProposals()
@@ -820,6 +822,7 @@ final class ChatStore: ObservableObject {
             if proposal.domain != nil {
                 guard editedDetails == nil, let local = repository as? LocalChatRepository else { throw NativeDomainError.invalid }
                 try local.approveDomainProposal(proposal)
+                memoryLibraryRevision += 1
                 reloadNativeMemory()
                 indexApprovedMemoryIfNeeded()
                 return true
@@ -961,6 +964,7 @@ final class ChatStore: ObservableObject {
                 try memoryRepository.deleteMemory(memory.id)
             }
             if let local = repository as? LocalChatRepository { try local.revokeUnprojectedDomainStreams() }
+            memoryLibraryRevision += 1
             reloadNativeMemory()
         } catch {
             memoryServiceState = .failed("The memory library could not be cleared: \(error.localizedDescription)")

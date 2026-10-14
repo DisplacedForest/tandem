@@ -455,7 +455,19 @@ extension NativeUpcomingSubject {
 }
 
 extension NativeMemoryLibraryFilter {
-    func matches(_ subject: NativeUpcomingSubject) -> Bool {
+    func matchingEntries(_ subject: NativeUpcomingSubject, now: Date = Date()) -> [NativeDomainEntry] {
+        subject.entries.filter { entry in
+            switch expiry {
+            case .all: true
+            case .active: entry.validUntil.map { $0 > now } ?? true
+            case .expired: entry.validUntil.map { $0 <= now } ?? false
+            case .noExpiry: entry.validUntil == nil
+            case .scheduled: entry.validUntil.map { $0 > now } ?? false
+            }
+        }
+    }
+
+    func matches(_ subject: NativeUpcomingSubject, now: Date = Date()) -> Bool {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let activities = subject.entries.compactMap { entry -> String? in
             if case .care(let activity, _) = entry.payload { return activity }
@@ -467,6 +479,6 @@ extension NativeMemoryLibraryFilter {
             && (bank == nil || bank == subject.scope)
             && (category == nil || category == .other)
             && (status == nil || status == .approved)
-            && expiry != .expired
+            && !matchingEntries(subject, now: now).isEmpty
     }
 }

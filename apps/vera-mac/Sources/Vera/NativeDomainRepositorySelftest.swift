@@ -139,6 +139,45 @@ enum NativeDomainRepositorySelftest {
         try require(try repository.upcomingOnlySubjects().isEmpty, "projected subject still listed as upcoming only")
     }
 
+    static func upcomingLibraryRevision(_ directory: URL) throws {
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("upcoming-revision.sqlite"))
+        var settings = NativeMemorySettings.fresh
+        settings.enabled = true
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeMemorySettings: settings)
+        let entity = UUID()
+        let planned = try fixture(repository, entity: entity, text: "Deworming is planned for next week.",
+            at: Date().addingTimeInterval(7 * 86_400).timeIntervalSince1970, payload: .care(activity: "Deworming", status: .planned))
+        let proposal = try repository.stageDomainProposal(planned, label: "Llamas")!
+        let before = store.memoryLibraryRevision
+        try require(store.acceptMemoryProposal(proposal), "future-only care approval failed")
+        try require(store.memoryRecords.allSatisfy { $0.domainEntityID != entity }, "future-only care created a memory record through the store")
+        try require(store.memoryLibraryRevision > before, "approving future-only care did not refresh the library")
+        try require(try repository.upcomingOnlySubjects().count == 1, "approved future-only care missing before clear")
+        let approved = store.memoryLibraryRevision
+        store.clearNativeMemory()
+        try require(store.memoryLibraryRevision > approved, "clearing memory did not refresh the library")
+        try require(try repository.upcomingOnlySubjects().isEmpty, "cleared upcoming care still listed")
+    }
+
+    static func upcomingExpiryFilters() throws {
+        let now = Date()
+        func subject(_ validUntil: Date?) -> NativeUpcomingSubject {
+            let entry = NativeDomainEntry(id: UUID(), entityID: UUID(), scope: "farm", occurredAt: now.addingTimeInterval(86_400),
+                validUntil: validUntil, learnedAt: now, actor: "user", source: nil, evidence: .asserted, entityResolved: true,
+                status: .supported, supersedes: [], payload: .care(activity: "Feeding", status: .planned))
+            return NativeUpcomingSubject(entityID: entry.entityID, scope: "farm", label: "Goats", entries: [entry], sources: [])
+        }
+        let open = subject(nil), later = subject(now.addingTimeInterval(3 * 86_400)), past = subject(now.addingTimeInterval(-86_400))
+        func shown(_ expiry: NativeMemoryExpiryFilter) -> [Bool] {
+            [open, later, past].map { NativeMemoryLibraryFilter(expiry: expiry).matches($0, now: now) }
+        }
+        try require(shown(.all) == [true, true, true], "All expiry hid upcoming care")
+        try require(shown(.noExpiry) == [true, false, false], "No expiry filter misapplied to upcoming care")
+        try require(shown(.scheduled) == [false, true, false], "Expires later filter misapplied to upcoming care")
+        try require(shown(.expired) == [false, false, true], "Expired filter misapplied to upcoming care")
+        try require(shown(.active) == [true, true, false], "Active filter misapplied to upcoming care")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("domain-memory-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -250,6 +289,8 @@ enum NativeDomainRepositorySelftest {
         try presentation(directory)
         try futureCorrectionPresentation(directory)
         try futureOnlyCare(directory)
+        try upcomingLibraryRevision(directory)
+        try upcomingExpiryFilters()
         print("domain-repository: PASS (presentation helpers, review transaction, CAS, duplicate/rejection, exact spans, correction/history/restart, native/Pi shared retrieval, privacy and deletion; synthetic typed inputs)")
     }
 

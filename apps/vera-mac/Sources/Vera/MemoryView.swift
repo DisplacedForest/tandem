@@ -34,7 +34,11 @@ struct MemoryView: View {
         let filter = NativeMemoryLibraryFilter(
             query: search, group: selectedGroup, bank: selectedBank,
             category: selectedCategory, status: selectedStatus, expiry: selectedExpiry)
-        return upcomingSubjects.filter { filter.matches($0) }
+        return upcomingSubjects.compactMap { subject in
+            guard filter.matches(subject) else { return nil }
+            return NativeUpcomingSubject(entityID: subject.entityID, scope: subject.scope, label: subject.label,
+                entries: filter.matchingEntries(subject), sources: subject.sources)
+        }
     }
 
     var body: some View {
@@ -68,6 +72,7 @@ struct MemoryView: View {
         .memoryRemovalConfirmation($pendingRemoval)
         .task { store.reloadNativeMemory(); loadLibraryState() }
         .onChange(of: store.memoryRecords) { _, _ in loadLibraryState() }
+        .onChange(of: store.memoryLibraryRevision) { _, _ in loadLibraryState() }
     }
 
     private func loadLibraryState() {
@@ -90,7 +95,7 @@ struct MemoryView: View {
                 .disabled(!config.nativeSettings.memory.enabled)
                 .accessibilityLabel("Record from evidence")
                 .accessibilityHint("Creates a record from a saved message for you to review")
-            Text("\(visible.count) shown")
+            Text("\(visible.count + visibleUpcoming.count) shown")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Theme.surface, in: Capsule())
