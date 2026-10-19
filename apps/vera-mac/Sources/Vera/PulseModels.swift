@@ -24,6 +24,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         }
     }
     var rail: AppSection { self == .agentic ? .pulse : self }
+    var showsSidebar: Bool { rail == .chat || rail == .pulse }
     static let railOrder: [AppSection] = [.vera, .chat, .projects, .artifacts, .scheduled, .integrations, .pulse, .memory]
     var placeholder: (title: String, note: String)? {
         switch self {

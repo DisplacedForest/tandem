@@ -370,14 +370,17 @@ struct ShotView: View {
         HStack(spacing: 0) {
             railMirror
             Rectangle().fill(Theme.hairline).frame(width: 1)
-            sidebar.frame(width: 240).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            if section.showsSidebar {
+                sidebar.frame(width: 240).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
+                Rectangle().fill(Theme.hairline).frame(width: 1)
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     private var railMirror: some View {
         VStack(spacing: 6) {
+            railMirrorGlyph(Image(systemName: "sidebar.right"), selected: false)
             ForEach(AppSection.railOrder) { item in
                 railMirrorItem(item)
                 if item == .vera || item == .integrations {
@@ -387,8 +390,9 @@ struct ShotView: View {
             Spacer(minLength: 0)
             railMirrorGlyph(Image(systemName: "gearshape"), selected: false)
         }
-        .padding(.vertical, 10)
-        .frame(width: 56)
+        .padding(.top, IconRail.topInset)
+        .padding(.bottom, 10)
+        .frame(width: IconRail.collapsedWidth)
         .frame(maxHeight: .infinity)
         .background(Theme.ink)
     }

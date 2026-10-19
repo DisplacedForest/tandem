@@ -10,9 +10,16 @@ struct ContentView: View {
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
+    @State private var columns: NavigationSplitViewVisibility = .all
+    @AppStorage("railExpanded") private var railExpanded = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
 
+    private func syncColumns() {
+        columns = store.section.showsSidebar ? .all : .detailOnly
+    }
+
     private func selectRail(_ item: AppSection) {
+        defer { syncColumns() }
         switch item {
         case .vera: store.openVeraThread()
         case .chat: store.openChats()
@@ -25,9 +32,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             HStack(spacing: 0) {
-                IconRail(selection: store.section, onSelect: selectRail)
+                IconRail(selection: store.section, expanded: $railExpanded, onSelect: selectRail)
                 Rectangle().fill(Theme.hairline).frame(width: 1)
-                NavigationSplitView {
+                NavigationSplitView(columnVisibility: $columns) {
                     Sidebar(search: $search, workflowEditor: workflowEditor)
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
                 } detail: {
@@ -52,6 +59,9 @@ struct ContentView: View {
                 }
             }
             .task { await store.connect() }
+            .onAppear { syncColumns() }
+            .onChange(of: store.section) { syncColumns() }
+            .onChange(of: columns) { if !store.section.showsSidebar, columns != .detailOnly { columns = .detailOnly } }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)

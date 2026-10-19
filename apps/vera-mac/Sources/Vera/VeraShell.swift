@@ -2,26 +2,38 @@ import SwiftUI
 
 struct IconRail: View {
     let selection: AppSection
+    @Binding var expanded: Bool
     let onSelect: (AppSection) -> Void
+    static let collapsedWidth: CGFloat = 56
+    static let expandedWidth: CGFloat = 184
+    static let topInset: CGFloat = 38
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+                railGlyph(Image(systemName: expanded ? "sidebar.left" : "sidebar.right"), label: nil, selected: false)
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Collapse navigation" : "Expand navigation")
+            .accessibilityLabel(expanded ? "Collapse navigation" : "Expand navigation")
             ForEach(AppSection.railOrder) { item in
                 railButton(item)
                 if item == .vera || item == .integrations {
-                    Rectangle().fill(Theme.hairline).frame(width: 22, height: 1).padding(.vertical, 4)
+                    Rectangle().fill(Theme.hairline).frame(width: 22, height: 1).padding(.vertical, 4).padding(.leading, 9)
                 }
             }
             Spacer(minLength: 0)
             SettingsLink {
-                railGlyph(Image(systemName: "gearshape"), selected: false)
+                railGlyph(Image(systemName: "gearshape"), label: "Settings", selected: false)
             }
             .buttonStyle(.plain)
             .help("Settings")
             .accessibilityLabel("Settings")
         }
-        .padding(.vertical, 10)
-        .frame(width: 56)
+        .padding(.top, Self.topInset)
+        .padding(.bottom, 10)
+        .padding(.horizontal, 9)
+        .frame(width: expanded ? Self.expandedWidth : Self.collapsedWidth, alignment: .leading)
         .frame(maxHeight: .infinity)
         .background(Theme.ink)
         .accessibilityElement(children: .contain)
@@ -33,9 +45,9 @@ struct IconRail: View {
         return Button { onSelect(item) } label: {
             Group {
                 if item == .vera {
-                    railGlyph(VeraMark(size: 22), selected: active)
+                    railGlyph(VeraMark(size: 22), label: item.title, selected: active)
                 } else {
-                    railGlyph(Image(systemName: item.icon), selected: active)
+                    railGlyph(Image(systemName: item.icon), label: item.title, selected: active)
                 }
             }
         }
@@ -45,14 +57,20 @@ struct IconRail: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    private func railGlyph<Content: View>(_ content: Content, selected: Bool) -> some View {
-        content
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
-            .frame(width: 38, height: 38)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selected ? Theme.surfaceHover : Color.clear))
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    private func railGlyph<Content: View>(_ content: Content, label: String?, selected: Bool) -> some View {
+        HStack(spacing: 10) {
+            content
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 38, height: 38)
+            if expanded, let label {
+                Text(label).font(.system(size: 13, weight: selected ? .semibold : .regular)).lineLimit(1)
+            }
+        }
+        .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
+        .frame(width: expanded ? Self.expandedWidth - 18 : 38, height: 38, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(selected ? Theme.surfaceHover : Color.clear))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
