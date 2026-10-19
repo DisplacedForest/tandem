@@ -113,6 +113,10 @@ struct ToolCallGroup: Identifiable {
     let id = UUID()
     let name: String
     let calls: [ToolCall]
+    var label: String {
+        name.split(whereSeparator: { $0 == "_" || $0 == "-" || $0 == "." })
+            .map { $0.lowercased() }.joined(separator: " ")
+    }
 }
 
 enum ToolCallParser {
@@ -179,7 +183,7 @@ struct ToolGroupChip: View {
             Button { if !details.isEmpty { open.toggle() } } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "wrench.and.screwdriver.fill").font(.system(size: 9))
-                    Text("used \(group.name)").font(.system(size: 11, weight: .medium))
+                    Text("Used \(group.label)").font(.system(size: 11, weight: .medium))
                     if group.calls.count > 1 {
                         Text("\(group.calls.count)×").font(.system(size: 10, weight: .semibold))
                             .padding(.horizontal, 5).padding(.vertical, 1)

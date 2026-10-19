@@ -303,7 +303,7 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view.hasPrefix("memory") {
+        } else if view.hasPrefix("memory-") {
             content = AnyView(
                 NativeMemoryShotSurface(variant: view)
                     .frame(width: size.width, height: size.height)
@@ -325,6 +325,13 @@ enum Shot {
             switch view {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
+            case "vera": section = .vera
+            case "chats": section = .chat
+            case "projects": section = .projects
+            case "artifacts": section = .artifacts
+            case "scheduled": section = .scheduled
+            case "integrations": section = .integrations
+            case "memory": section = .memory
             default: section = .chat
             }
             content = AnyView(

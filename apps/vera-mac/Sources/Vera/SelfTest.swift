@@ -357,6 +357,10 @@ enum SelfTest {
             do { try await NativeTaskTransportFixture.run(raw); exit(0) }
             catch { print("TASK TRANSPORT FIXTURE FAILED"); exit(1) }
         }
+        if ProcessInfo.processInfo.environment["VERA_SHELL_SELFTEST"] == "1" {
+            await runShell()
+            exit(0)
+        }
         if ProcessInfo.processInfo.environment["VERA_CREDENTIAL_SELFTEST"] == "1" {
             do { try NativeCredentialLifecycleFixture.run(); exit(0) }
             catch { print("NATIVE CREDENTIAL LIFECYCLE FIXTURE FAILED: \(error)"); exit(1) }
@@ -438,6 +442,7 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryGroom()
+        await runShell()
         await runPromptLibrary()
         await runNativeStore()
         runNativeMedia()
@@ -1786,6 +1791,122 @@ enum SelfTest {
         } catch {
             print("SELFTEST ERROR: native memory \(error)"); exit(1)
         }
+    }
+
+    private static func runShell() async {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vera-shell-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            let url = folder.appendingPathComponent("vera.sqlite")
+            let store = ChatStore(nativeConfig: nil, nativeTransport: nil,
+                                  repository: try LocalChatRepository(url: url))
+            await store.connect()
+            let pinned = store.conversations.filter {
+                $0.originType == ChatStore.veraThreadOriginType && $0.originID == ChatStore.veraThreadOriginID
+            }
+            guard pinned.count == 1, let veraID = store.veraThreadID, pinned.first?.id == veraID,
+                  store.isVeraThread(veraID) else {
+                print("SELFTEST ERROR: shell Vera thread was not created exactly once"); exit(1)
+            }
+            let second = ChatStore(nativeConfig: nil, nativeTransport: nil,
+                                   repository: try LocalChatRepository(url: url))
+            await second.connect()
+            let secondPinned = second.conversations.filter {
+                $0.originType == ChatStore.veraThreadOriginType && $0.originID == ChatStore.veraThreadOriginID
+            }
+            guard second.veraThreadID == veraID, secondPinned.count == 1 else {
+                print("SELFTEST ERROR: shell Vera thread was duplicated on relaunch"); exit(1)
+            }
+            guard !store.sidebarGroups(search: "").flatMap(\.convos).contains(where: { $0.id == veraID }),
+                  !store.sidebarGroups(search: "Vera").flatMap(\.convos).contains(where: { $0.id == veraID }) else {
+                print("SELFTEST ERROR: shell Vera thread appeared in the sidebar"); exit(1)
+            }
+            store.deleteConversation(veraID)
+            guard store.veraThreadID == veraID,
+                  store.conversations.contains(where: { $0.id == veraID }),
+                  try LocalChatRepository(url: url).listConversations().contains(where: { $0.id == veraID }) else {
+                print("SELFTEST ERROR: shell Vera thread was deletable"); exit(1)
+            }
+            store.openVeraThread()
+            guard store.section == .vera, store.selectedID == veraID else {
+                print("SELFTEST ERROR: shell openVeraThread did not select the Vera thread"); exit(1)
+            }
+            store.draft = "vera draft"
+            store.newConversation()
+            guard store.section == .chat, let focusedID = store.selectedID, focusedID != veraID else {
+                print("SELFTEST ERROR: shell newConversation did not leave the Vera thread"); exit(1)
+            }
+            guard store.draft.isEmpty else {
+                print("SELFTEST ERROR: shell Vera draft leaked into a new conversation"); exit(1)
+            }
+            store.draft = "focused draft"
+            store.openVeraThread()
+            guard store.draft == "vera draft" else {
+                print("SELFTEST ERROR: shell Vera draft was not restored"); exit(1)
+            }
+            store.select(focusedID)
+            guard store.draft == "focused draft", store.section == .chat else {
+                print("SELFTEST ERROR: shell focused draft was not restored"); exit(1)
+            }
+            store.openVeraThread()
+            store.openChats()
+            guard store.selectedID == focusedID, store.draft == "focused draft", store.section == .chat else {
+                print("SELFTEST ERROR: shell returning to Chats did not restore the focused chat and its draft"); exit(1)
+            }
+            store.openVeraThread()
+            store.newConversation()
+            guard store.selectedID == focusedID, store.draft == "focused draft" else {
+                print("SELFTEST ERROR: shell reusing the empty chat dropped its draft"); exit(1)
+            }
+            await store.connect()
+            guard store.selectedID == focusedID, store.draft == "focused draft", store.section == .chat,
+                  store.veraThreadID == veraID else {
+                print("SELFTEST ERROR: shell reconnect lost the unsent chat or its draft"); exit(1)
+            }
+            let saved = Conversation(id: UUID().uuidString, title: "Saved chat", messages: [], updatedAt: Date())
+            try LocalChatRepository(url: url).saveConversation(saved)
+            await store.connect()
+            store.select(saved.id)
+            store.draft = "doomed draft"
+            store.deleteConversation(saved.id)
+            guard let after = store.selectedID, !store.isVeraThread(after), store.section == .chat,
+                  store.draft != "doomed draft" else {
+                print("SELFTEST ERROR: shell delete fallback landed on the Vera thread or kept the deleted draft"); exit(1)
+            }
+            guard ToolCallGroup(name: "kitchen_status", calls: []).label == "kitchen status",
+                  ToolCallGroup(name: "web-search", calls: []).label == "web search" else {
+                print("SELFTEST ERROR: shell tool chip label still shows an identifier"); exit(1)
+            }
+        } catch {
+            print("SELFTEST ERROR: shell Vera thread \(error)"); exit(1)
+        }
+        var written: [String: Any]?
+        let migrated = ConfigStore(
+            credentialStore: NativeCredentialFixtureStore(),
+            readConfiguration: {
+                ["base": "http://old.example", "api_key": "k", "owui_email": "e",
+                 "owui_password": "p", "owner_name": "Test"]
+            },
+            writeConfiguration: { written = $0 })
+        let retired = ["base", "api_key", "owui_email", "owui_password"]
+        guard retired.allSatisfy({ migrated[$0].isEmpty }),
+              migrated["owner_name"] == "Test" else {
+            print("SELFTEST ERROR: shell config migration kept retired keys in memory"); exit(1)
+        }
+        guard let saved = written, retired.allSatisfy({ saved[$0] == nil }),
+              saved["owner_name"] as? String == "Test" else {
+            print("SELFTEST ERROR: shell config migration did not rewrite the file"); exit(1)
+        }
+        var untouched: [String: Any]?
+        let clean = ConfigStore(
+            credentialStore: NativeCredentialFixtureStore(),
+            readConfiguration: { ["owner_name": "Test"] },
+            writeConfiguration: { untouched = $0 })
+        guard untouched == nil, clean["owner_name"] == "Test" else {
+            print("SELFTEST ERROR: shell config migration rewrote a clean file"); exit(1)
+        }
+        print("  shell OK (Vera thread, relaunch, sidebar, delete guard, drafts, reconnect, delete fallback, tool labels, config migration)")
     }
 
     private static func runNativeMemoryGroom() async {

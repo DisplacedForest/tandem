@@ -10,6 +10,7 @@ struct SettingsView: View {
             ModelTab().tabItem { Label("Model", systemImage: "cpu") }.tag(SettingsTab.model)
             PersonaTab().tabItem { Label("Persona", systemImage: "text.quote") }.tag(SettingsTab.persona)
             NativeMemorySettingsTab().tabItem { Label("Memory", systemImage: "tray.full") }.tag(SettingsTab.memory)
+            KnowledgeView().tabItem { Label("Knowledge", systemImage: "books.vertical") }.tag(SettingsTab.knowledge)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
             PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)

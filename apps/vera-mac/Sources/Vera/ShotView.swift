@@ -28,14 +28,14 @@ struct ShotView: View {
 
     private var windowBody: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 268).background(Theme.sidebar)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            shellChrome
             Group {
                 switch section {
                 case .pulse: pulse
                 case .memory: memory
                 case .agentic: agenticBoard
-                default: if emptyChat { emptyChatShot } else { chat }
+                case .projects, .artifacts, .scheduled, .integrations: DestinationPlaceholder(section: section)
+                case .vera, .chat: if emptyChat { emptyChatShot } else { chat }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
@@ -64,11 +64,7 @@ struct ShotView: View {
     }
 
     private var windowBodyForPulse: some View {
-        HStack(spacing: 0) {
-            sidebar.frame(width: 268).background(Theme.sidebar)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            pulse.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
-        }
+        ShotView(store: store, section: .pulse)
     }
 
     private var veinBrowseShot: some View {
@@ -370,54 +366,87 @@ struct ShotView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
     }
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    VeraMark(size: 18)
-                    Text("Vera").font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                }
-                HStack(spacing: 3) {
-                    shotTab("Chat", "message", active: section != .agentic)
-                    shotTab("Agentic", "slider.horizontal.3", active: section == .agentic)
-                }
-                .padding(3).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
-            }
-            .padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 10)
-
-            if section == .agentic {
-                VStack(spacing: 1) {
-                    shotNav("Canvas", "point.3.connected.trianglepath.dotted", active: true)
-                    shotNav("Activity", "bolt", active: false)
-                }
-                .padding(.horizontal, 8)
-            } else {
-                chatSidebarBody
-            }
-            Spacer()
-            HStack(spacing: 8) {
-                Circle().fill(Theme.accent).frame(width: 22, height: 22)
-                    .overlay(Text("J").font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
-                Text("Jordan").font(.system(size: 13, weight: .medium))
-                Spacer()
-                Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
+    private var shellChrome: some View {
+        HStack(spacing: 0) {
+            railMirror
+            Rectangle().fill(Theme.hairline).frame(width: 1)
+            sidebar.frame(width: 240).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
+            Rectangle().fill(Theme.hairline).frame(width: 1)
         }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var railMirror: some View {
+        VStack(spacing: 6) {
+            ForEach(AppSection.railOrder) { item in
+                railMirrorItem(item)
+                if item == .vera || item == .integrations {
+                    Rectangle().fill(Theme.hairline).frame(width: 22, height: 1).padding(.vertical, 4)
+                }
+            }
+            Spacer(minLength: 0)
+            railMirrorGlyph(Image(systemName: "gearshape"), selected: false)
+        }
+        .padding(.vertical, 10)
+        .frame(width: 56)
+        .frame(maxHeight: .infinity)
+        .background(Theme.ink)
     }
 
     @ViewBuilder
-    private var chatSidebarBody: some View {
-            VStack(spacing: 1) {
-                shotNav("New chat", "square.and.pencil", active: false)
-                shotNav("Pulse", "newspaper", active: section == .pulse)
-                shotNav("Memory", "tray.full", active: section == .memory)
-            }
-            .padding(.horizontal, 8)
+    private func railMirrorItem(_ item: AppSection) -> some View {
+        let active = section.rail == item
+        if item == .vera {
+            railMirrorGlyph(VeraMark(size: 22), selected: active)
+        } else {
+            railMirrorGlyph(Image(systemName: item.icon), selected: active)
+        }
+    }
 
+    private func railMirrorGlyph<Content: View>(_ content: Content, selected: Bool) -> some View {
+        content
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
+            .frame(width: 38, height: 38)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(selected ? Theme.surfaceHover : Color.clear))
+    }
+
+    @ViewBuilder
+    private var sidebar: some View {
+        switch section.rail {
+        case .vera: veraSidebarPanel
+        case .chat: chatSidebarBody
+        case .pulse:
+            VStack(spacing: 1) {
+                shotNav("Feed", "newspaper", active: section == .pulse)
+                shotNav("Workflows", "point.3.connected.trianglepath.dotted", active: section == .agentic)
+                shotNav("Activity", "bolt", active: false)
+            }
+            .padding(.horizontal, 8).padding(.top, 12)
+        case .memory:
+            SidebarHeading(title: "Memory", note: "What Vera remembers about you, with its sources.")
+        default:
+            SidebarHeading(title: section.placeholder?.title ?? section.title)
+        }
+    }
+
+    private var veraSidebarPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                VeraMark(size: 24)
+                Text("Vera").font(.system(size: 15, weight: .semibold))
+            }
+            Text("Your ongoing thread. It keeps its history, drafts and background work between visits.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var chatSidebarBody: some View {
+        VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text("Search").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
@@ -425,35 +454,31 @@ struct ShotView: View {
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 2)
+            .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 6)
+
+            VStack(spacing: 1) {
+                shotNav("New chat", "square.and.pencil", active: false)
+            }
+            .padding(.horizontal, 8)
 
             VStack(alignment: .leading, spacing: 1) {
                 shotSection("Pinned")
                 shotChatRow("Greenhouse irrigation plan", selected: false, pinned: true)
                 shotSection("Today")
-                shotChatRow("Weather watch", selected: true, pinned: false)
+                shotChatRow("Weather watch", selected: !emptyChat, pinned: false)
                 shotChatRow("Local LLM + AMD GPU news", selected: false, pinned: false)
                 shotSection("Previous 7 Days")
                 shotChatRow("Sourdough starter notes", selected: false, pinned: false)
                 shotChatRow("Server rebuild plan", selected: false, pinned: false)
             }
             .padding(.horizontal, 8).padding(.top, 2)
-    }
-
-    private func shotTab(_ title: String, _ icon: String, active: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 12, weight: .medium))
-            Text(title).font(.system(size: 12, weight: .medium))
         }
-        .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-        .frame(maxWidth: .infinity).padding(.vertical, 5)
-        .background(active ? Theme.surfaceHover : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private func shotNav(_ title: String, _ icon: String, active: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon).font(.system(size: 14)).frame(width: 18)
+                .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
             Text(title).font(.system(size: 13, weight: .medium))
             Spacer()
         }
@@ -491,7 +516,8 @@ struct ShotView: View {
             }
             .padding(.horizontal, 28).padding(.vertical, 26)
             .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+            .clipped()
             HStack(alignment: .bottom, spacing: 10) {
                 Text("Message Vera…").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
                 Spacer()
@@ -599,8 +625,7 @@ struct ShotView: View {
                 Spacer()
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
-            // The live canvas scrolls; the shot scales the whole organism to fit its frame.
-            let viewport = CGSize(width: 911, height: 666)
+            let viewport = CGSize(width: 882, height: 666)
             let laid = OrganismLayout(graph: graph, viewport: viewport).size
             let scale = min(1, viewport.width / laid.width, viewport.height / laid.height)
             OrganismMap(graph: graph, jobs: jobs, size: viewport, pulses: pulses, animated: false)

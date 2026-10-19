@@ -11,6 +11,11 @@ final class ChatStore: ObservableObject {
     @Published var memorySettingsNotice: String?
     @Published var classicChatRequest = 0
     @Published var draft: String = ""
+    @Published private(set) var veraThreadID: String?
+    private(set) var lastFocusedConversationID: String?
+    private var drafts: [String: String] = [:]
+    static let veraThreadOriginType = "assistant"
+    static let veraThreadOriginID = "vera"
     @Published var section: AppSection = .chat
     @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
@@ -330,6 +335,10 @@ final class ChatStore: ObservableObject {
     }
 
     func connect() async {
+        stashDraft()
+        let previousSelected = selectedID
+        let previousSection = section
+        let unsaved = conversations.filter { !$0.isPersisted && $0.messages.isEmpty }
         if let repository {
             do {
                 conversations = try repository.listConversations()
@@ -342,7 +351,16 @@ final class ChatStore: ObservableObject {
             conversations = []
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
         }
-        newConversation()
+        for convo in unsaved.reversed() where !conversations.contains(where: { $0.id == convo.id }) {
+            conversations.insert(convo, at: 0)
+        }
+        ensureVeraThread()
+        if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
+            select(previousSelected)
+            section = previousSection
+        } else {
+            newConversation()
+        }
         resumeConversationTurns()
         startNativeTaskRecovery()
         await refreshPulse()
@@ -550,19 +568,68 @@ final class ChatStore: ObservableObject {
         messageRatings[message.id] = sentiment
     }
 
-    func select(_ id: String) {
-        section = .chat
-        selectedID = id
+    func isVeraThread(_ id: String?) -> Bool { id != nil && id == veraThreadID }
+
+    func ensureVeraThread() {
+        if let existing = conversations.first(where: { $0.originType == Self.veraThreadOriginType && $0.originID == Self.veraThreadOriginID }) {
+            veraThreadID = existing.id
+            return
+        }
+        guard let repository else { veraThreadID = nil; return }
+        var thread = Conversation(id: UUID().uuidString, title: "Vera", messages: [], updatedAt: Date(),
+                                  originType: Self.veraThreadOriginType, originID: Self.veraThreadOriginID)
+        do {
+            try repository.saveConversation(thread)
+            thread.isPersisted = true
+            conversations.append(thread)
+            veraThreadID = thread.id
+        } catch {
+            veraThreadID = nil
+            chatConfigurationError = "The Vera thread couldn't be created: \(error.localizedDescription)"
+        }
+    }
+
+    func openVeraThread() {
+        guard let veraThreadID else { section = .vera; return }
+        stashDraft()
+        section = .vera
+        selectedID = veraThreadID
+        draft = drafts[veraThreadID] ?? ""
+        loadMessagesIfNeeded(veraThreadID)
+        focusTick &+= 1
+    }
+
+    private func stashDraft() {
+        guard let selectedID else { return }
+        if draft.isEmpty { drafts.removeValue(forKey: selectedID) } else { drafts[selectedID] = draft }
+    }
+
+    private func loadMessagesIfNeeded(_ id: String) {
         guard let repository,
               let idx = conversations.firstIndex(where: { $0.id == id }),
               conversations[idx].messages.isEmpty else { return }
         do {
             let msgs = try repository.messages(conversationID: id)
-            if let i = conversations.firstIndex(where: { $0.id == id }) {
-                conversations[i].messages = msgs
-            }
+            conversations[idx].messages = msgs
         } catch {
-            chatConfigurationError = "This conversation couldn't load: \(error.localizedDescription)"
+            chatConfigurationError = "Messages couldn't load: \(error.localizedDescription)"
+        }
+    }
+
+    func select(_ id: String) {
+        stashDraft()
+        section = isVeraThread(id) ? .vera : .chat
+        selectedID = id
+        if !isVeraThread(id) { lastFocusedConversationID = id }
+        draft = drafts[id] ?? ""
+        loadMessagesIfNeeded(id)
+    }
+
+    func openChats() {
+        if let id = lastFocusedConversationID, conversations.contains(where: { $0.id == id }) {
+            select(id)
+        } else {
+            newConversation()
         }
     }
 
@@ -1209,16 +1276,18 @@ final class ChatStore: ObservableObject {
     }
 
     func newConversation() {
+        stashDraft()
         section = .chat
-        draft = ""
-        // Reuse an existing empty "New chat" instead of stacking duplicates.
-        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty }) {
+        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty && !isVeraThread($0.id) }) {
             selectedID = existing.id
+            draft = drafts[existing.id] ?? ""
         } else {
             let convo = Conversation(id: UUID().uuidString, title: "New chat", messages: [], updatedAt: Date())
             conversations.insert(convo, at: 0)
             selectedID = convo.id
+            draft = ""
         }
+        lastFocusedConversationID = selectedID
         focusTick &+= 1
     }
 
@@ -1305,7 +1374,8 @@ final class ChatStore: ObservableObject {
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var seenIDs = Set<String>()
         let visible = conversations.filter {
-            guard seenIDs.insert($0.id).inserted else { return false }   // defensive: one row per id
+            guard seenIDs.insert($0.id).inserted else { return false }
+            guard $0.id != veraThreadID else { return false }
             return (!$0.messages.isEmpty || $0.isPersisted) && (q.isEmpty || $0.title.lowercased().contains(q))
         }
         let pinned = visible.filter { $0.pinned }.sorted { $0.updatedAt > $1.updatedAt }
@@ -1328,6 +1398,7 @@ final class ChatStore: ObservableObject {
     }
 
     func deleteConversation(_ id: String) {
+        guard !isVeraThread(id) else { return }
         suspendsTurnScheduling = true
         defer { suspendsTurnScheduling = false; scheduleConversationTurns() }
         for turn in conversationTurns where turn.conversationID == id {
@@ -1336,9 +1407,14 @@ final class ChatStore: ObservableObject {
         let idx = conversations.firstIndex { $0.id == id }
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         conversations.removeAll { $0.id == id }
+        drafts.removeValue(forKey: id)
+        if lastFocusedConversationID == id { lastFocusedConversationID = nil }
         if selectedID == id {
-            let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
-            selectedID = next?.id ?? conversations.first?.id
+            let candidates = conversations.filter { !isVeraThread($0.id) }
+            let next = idx.flatMap { candidates.indices.contains($0) ? candidates[$0] : candidates.last }
+            selectedID = nil
+            draft = ""
+            if let next { select(next.id) }
         }
         do {
             try repository?.deleteConversation(id)
@@ -1426,8 +1502,7 @@ final class ChatStore: ObservableObject {
             conversations.insert(conversation, at: 0)
             pulseDetail = nil
             onOpened?()
-            section = .chat
-            selectedID = conversation.id
+            select(conversation.id)
             focusTick &+= 1
         }
     }

@@ -7,7 +7,7 @@ struct OnboardingSheet: View {
     @State private var loaded = false
     @State private var error: String?
 
-    private let steps = ["Endpoint", "Model", "Persona", "Memory", "Tools"]
+    private let steps = ["Endpoint", "Model", "Memory", "Pulse"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -15,7 +15,7 @@ struct OnboardingSheet: View {
                 VeraMark(size: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Set up Vera").font(.system(size: 20, weight: .semibold))
-                    Text("Connect a model, choose how Vera responds, and review available tools.")
+                    Text("Connect a model. Memory and Pulse are optional and can be set up later in Settings.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -37,9 +37,8 @@ struct OnboardingSheet: View {
                     switch step {
                     case 0: NativeEndpointEditor()
                     case 1: NativeModelEditor()
-                    case 2: PromptLibraryView()
-                    case 3: NativeMemoryOnboardingEditor()
-                    default: NativeToolEditor()
+                    case 2: NativeMemoryOnboardingEditor()
+                    default: PulseOnboardingEditor()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -58,6 +57,9 @@ struct OnboardingSheet: View {
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if step > 0 { Button("Back") { move(to: step - 1) } }
+                if step >= 2, step < steps.count - 1 {
+                    Button("Skip this step") { move(to: step + 1) }
+                }
                 Button(step == steps.count - 1 ? "Finish" : "Continue") { advance() }
                     .keyboardShortcut(.defaultAction)
             }
@@ -91,11 +93,6 @@ struct OnboardingSheet: View {
                 return
             }
         case 2:
-            guard !config.nativeSettings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                error = "Keep a system prompt or reset it to Vera’s default."
-                return
-            }
-        case 3:
             break
         default:
             finish()
@@ -152,6 +149,23 @@ struct NativeMemoryOnboardingEditor: View {
                 Text("Episodic facts need an absolute expiry date and stop being recalled when they expire. A daily groom removes them after that date passes, with every removal recorded in the audit trail.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
+        }
+    }
+}
+
+struct PulseOnboardingEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Pulse is Vera's daily briefing and ambient watches. It runs on a separate vera-api service; leave this empty if you don't run one.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            LabeledContent("Service URL") {
+                TextField("http://vera-host.example:8089", text: config.binding("vera_api_base"))
+                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+            }
+            Text("You can add or change this later in Settings, Services.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }
     }
 }

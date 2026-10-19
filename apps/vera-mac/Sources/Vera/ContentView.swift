@@ -1,65 +1,57 @@
 import SwiftUI
 
-/// The sidebar's selectable destinations — nav surfaces, one conversation, or an Agentic pane.
 enum SidebarItem: Hashable {
-    case pulse, memory, knowledge, assistant
     case convo(String)
-    case canvas, activity
+    case feed, workflows, activity
 }
 
 struct ContentView: View {
-    @ObservedObject var assistant = NativePiNativeContext.presentation
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
     @StateObject private var workflowEditor = WorkflowEditorStore()
 
-    /// The toolbar modality picker's view of `store.section`: any non-agentic surface reads
-    /// as Chat; picking a mode routes to that mode's home surface.
-    private var mode: Binding<AppSection> {
-        Binding(get: { store.section == .agentic ? .agentic : .chat },
-                set: { assistant.isSelected = false; store.section = $0 == .agentic ? .agentic : .chat })
+    private func selectRail(_ item: AppSection) {
+        switch item {
+        case .vera: store.openVeraThread()
+        case .chat: store.openChats()
+        case .pulse: store.goToPulse()
+        case .memory: store.section = .memory
+        case .projects, .artifacts, .scheduled, .integrations, .agentic: store.section = item
+        }
     }
 
     var body: some View {
         ZStack {
-            NavigationSplitView {
-                Sidebar(search: $search, workflowEditor: workflowEditor, assistant: assistant)
-                    .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 320)
-            } detail: {
-                HStack(spacing: 0) {
-                    Group {
-                        switch store.section {
-                        case .chat: ChatPane(assistant: assistant.isSelected ? assistant : nil)
-                                .id(assistant.isSelected ? "assistant" : "classic")
-                        case .pulse: PulseView()
-                        case .memory: MemoryView()
-                        case .knowledge: KnowledgeView()
-                        case .agentic: AgenticView(workflowEditor: workflowEditor)
+            HStack(spacing: 0) {
+                IconRail(selection: store.section, onSelect: selectRail)
+                Rectangle().fill(Theme.hairline).frame(width: 1)
+                NavigationSplitView {
+                    Sidebar(search: $search, workflowEditor: workflowEditor)
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+                } detail: {
+                    HStack(spacing: 0) {
+                        Group {
+                            switch store.section {
+                            case .vera, .chat: ChatPane()
+                            case .pulse: PulseView()
+                            case .memory: MemoryView()
+                            case .agentic: AgenticView(workflowEditor: workflowEditor)
+                            case .projects, .artifacts, .scheduled, .integrations:
+                                DestinationPlaceholder(section: store.section)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if store.showCanvas, store.section == .chat || store.section == .vera {
+                            Divider()
+                            CanvasPanel().frame(width: 480)
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if store.showCanvas && !assistant.isSelected {
-                        Divider()
-                        CanvasPanel().frame(width: 480)
-                    }
-                }
-                .background(Theme.ink)
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        Picker("Mode", selection: mode) {
-                            Text("Chat").tag(AppSection.chat)
-                            Text("Agentic").tag(AppSection.agentic)
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                    .background(Theme.ink)
                 }
             }
             .task { await store.connect() }
-            .onChange(of: store.section) { if store.section != .chat { assistant.isSelected = false } }
-            .onChange(of: store.selectedID) { assistant.isSelected = false }
-            .onChange(of: store.classicChatRequest) { assistant.isSelected = false }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)
@@ -86,100 +78,112 @@ struct Placeholder: View {
     }
 }
 
-// MARK: - Sidebar
-
 private struct Sidebar: View {
     @EnvironmentObject var store: ChatStore
     @Binding var search: String
     @ObservedObject var workflowEditor: WorkflowEditorStore
-    @ObservedObject var assistant: NativePiPresentation
 
-    private var agenticTab: Bool { store.section == .agentic }
-
-    /// Bridges native list selection to the store's section / conversation / pane state.
-    private var selection: Binding<SidebarItem?> {
+    private var pulseSelection: Binding<SidebarItem?> {
         Binding(
             get: {
                 switch store.section {
-                case .pulse: return .pulse
-                case .memory: return .memory
-                case .knowledge: return .knowledge
-                case .agentic: return store.agenticPane == .canvas ? .canvas : .activity
-                case .chat: return assistant.isSelected ? .assistant : store.selectedID.map(SidebarItem.convo)
+                case .agentic: return store.agenticPane == .canvas ? .workflows : .activity
+                default: return .feed
                 }
             },
             set: { item in
-                assistant.isSelected = item == .assistant
                 switch item {
-                case .assistant: store.section = .chat
-                case .pulse: store.goToPulse()
-                case .memory: store.section = .memory
-                case .knowledge: store.section = .knowledge
-                case .canvas: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
+                case .feed: store.goToPulse()
+                case .workflows: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
                 case .activity: store.section = .agentic; store.agenticPane = .activity; store.agenticFlowID = nil
-                case .convo(let id): store.select(id)
-                case nil: break
+                default: break
                 }
             })
     }
 
+    private var chatSelection: Binding<SidebarItem?> {
+        Binding(
+            get: { store.section == .chat ? store.selectedID.map(SidebarItem.convo) : nil },
+            set: { if case .convo(let id)? = $0 { store.select(id) } })
+    }
+
     var body: some View {
         Group {
-            if agenticTab, store.agenticFlowID != nil {
-                WorkflowPalette(store: workflowEditor, searchText: $search) {
-                    store.agenticFlowID = nil
+            switch store.section.rail {
+            case .vera: veraPanel
+            case .chat: chatList
+            case .pulse:
+                if store.section == .agentic, store.agenticFlowID != nil {
+                    WorkflowPalette(store: workflowEditor, searchText: $search) { store.agenticFlowID = nil }
+                } else {
+                    pulseList
                 }
-            } else {
-                navigationList
+            case .memory:
+                SidebarHeading(title: "Memory", note: "What Vera remembers about you, with its sources.")
+                Spacer()
+            default:
+                SidebarHeading(title: store.section.placeholder?.title ?? store.section.title)
+                Spacer()
             }
         }
+        .background(Theme.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
         .toolbar {
-            ToolbarItem {
-                Button {
-                    assistant.newChat(in: store)
-                } label: {
-                    Label("New chat", systemImage: "square.and.pencil")
+            if store.section.rail == .chat {
+                ToolbarItem {
+                    Button { store.newConversation() } label: {
+                        Label("New chat", systemImage: "square.and.pencil")
+                    }
+                    .help("New chat")
                 }
-                .help("New chat")
             }
         }
     }
 
-    private var navigationList: some View {
-        List(selection: selection) {
-            if agenticTab {
-                Section {
-                    Label("Canvas", systemImage: "point.3.connected.trianglepath.dotted")
-                        .tag(SidebarItem.canvas)
-                    Label("Activity", systemImage: "bolt").tag(SidebarItem.activity)
+    private var veraPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                VeraMark(size: 24)
+                Text("Vera").font(.system(size: 15, weight: .semibold))
+            }
+            Text("Your ongoing thread. It keeps its history, drafts and background work between visits.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var pulseList: some View {
+        List(selection: pulseSelection) {
+            Section {
+                Label("Feed", systemImage: "newspaper").tag(SidebarItem.feed)
+                Label("Workflows", systemImage: "point.3.connected.trianglepath.dotted").tag(SidebarItem.workflows)
+                Label("Activity", systemImage: "bolt").tag(SidebarItem.activity)
+            }
+        }
+        .listStyle(.sidebar)
+        .labelStyle(NativeSidebarLabelStyle())
+        .tint(Theme.accent)
+    }
+
+    private var chatList: some View {
+        List(selection: chatSelection) {
+            Section {
+                Button { store.newConversation() } label: {
+                    Label("New chat", systemImage: "square.and.pencil")
                 }
-            } else {
-                Section {
-                    Button {
-                        assistant.newChat(in: store)
-                    } label: {
-                        Label("New chat", systemImage: "square.and.pencil")
-                    }
-                    .buttonStyle(.plain)
-                    Label { Text("Vera") } icon: { VeraMark(size: 18) }
-                        .tag(SidebarItem.assistant)
-                    Label("Pulse", systemImage: "newspaper").tag(SidebarItem.pulse)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .simultaneousGesture(TapGesture().onEnded { store.goToPulse() })
-                    Label("Memory", systemImage: "tray.full").tag(SidebarItem.memory)
-                    Label("Knowledge", systemImage: "books.vertical").tag(SidebarItem.knowledge)
-                }
-                ForEach(store.sidebarGroups(search: search)) { group in
-                    Section(group.title) {
-                        ForEach(group.convos) { convo in
-                            SidebarRow(convo: convo,
-                                       onPin: { store.togglePin(convo.id) },
-                                       onMemoryExclusion: { store.toggleMemoryExclusion(convo.id) },
-                                       onDelete: { store.deleteConversation(convo.id) })
-                                .tag(SidebarItem.convo(convo.id))
-                        }
+                .buttonStyle(.plain)
+            }
+            ForEach(store.sidebarGroups(search: search)) { group in
+                Section(group.title) {
+                    ForEach(group.convos) { convo in
+                        SidebarRow(convo: convo,
+                                   onPin: { store.togglePin(convo.id) },
+                                   onMemoryExclusion: { store.toggleMemoryExclusion(convo.id) },
+                                   onDelete: { store.deleteConversation(convo.id) })
+                            .tag(SidebarItem.convo(convo.id))
                     }
                 }
             }
@@ -246,20 +250,13 @@ struct SidebarRow: View {
 
 private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
-    @ObservedObject private var presentation: NativePiPresentation
-    private let usesAssistant: Bool
-    private var assistant: NativePiPresentation? { usesAssistant ? presentation : nil }
-    init(assistant: NativePiPresentation? = nil) {
-        _presentation = ObservedObject(wrappedValue: assistant ?? NativePiNativeContext.presentation)
-        usesAssistant = assistant != nil
-    }
-    private var conversation: Conversation? { assistant == nil ? store.selected : assistant?.conversation }
-    private var generating: Bool { assistant?.session?.busy ?? (assistant == nil && store.generating) }
+    private var conversation: Conversation? { store.selected }
+    private var generating: Bool { store.generating }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
 
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
-        guard assistant == nil, let id = store.pendingHighlightMessageID,
+        guard let id = store.pendingHighlightMessageID,
               conversation?.messages.contains(where: { $0.id == id }) == true else { return }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 80_000_000)
@@ -277,7 +274,7 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if assistant == nil, let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
+            if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
                     Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
@@ -293,14 +290,14 @@ private struct ChatPane: View {
                 .padding(.horizontal, 28).padding(.top, 10)
                 .accessibilityElement(children: .contain)
             }
-            if let convo = conversation, !convo.messages.isEmpty || assistant?.session?.tasks.isEmpty == false {
+            if let convo = conversation, !convo.messages.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
                             ForEach(convo.messages) { msg in
-                                let confirmation = assistant == nil ? store.turnConfirmations[msg.id] : nil
-                                let confirmationToken = assistant == nil ? store.turnConfirmationTokens[msg.id] : nil
-                                MessageRow(message: msg, nativeActions: assistant == nil,
+                                let confirmation = store.turnConfirmations[msg.id]
+                                let confirmationToken = store.turnConfirmationTokens[msg.id]
+                                MessageRow(message: msg, nativeActions: true,
                                            onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
                                            onOpenArtifact: { store.openArtifact($0) },
                                            attachmentStore: store.attachmentStore,
@@ -309,20 +306,12 @@ private struct ChatPane: View {
                                                store.resolveTurnConfirmation(msg.id, approved: approved,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
-                                    .modifier(NativePiTranscriptImagePolicy(untrusted: assistant != nil))
                                     .background(
                                         RoundedRectangle(cornerRadius: 10)
                                             .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
                                             .padding(-8))
                                     .id(msg.id)
-                                if let assistant {
-                                    NativePiTaskSection(assistant: assistant, messageID: msg.id)
-                                        .padding(.leading, 34)
-                                }
                             }
-                            // One mark per chat at the leading edge — below the last response; animates
-                            // while Vera works, sits still when idle. (Like Claude's single mark.)
-                            if let assistant { NativePiTaskSection(assistant: assistant) }
                             VeraMark(size: 27, animated: generating)
                                 .frame(width: 27, height: 27)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,7 +335,7 @@ private struct ChatPane: View {
                         revealPendingSource(proxy)
                     }
                 }
-                if assistant == nil, let status = store.streamStatus {
+                if let status = store.streamStatus {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -355,7 +344,6 @@ private struct ChatPane: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28).padding(.bottom, 2)
                 }
-                if let assistant { NativePiSessionStatus(assistant: assistant).frame(maxWidth: 760).padding(.horizontal, 28) }
                 if convo.isPersisted {
                     HStack(spacing: 12) {
                         ConversationInstructionsChip(conversation: convo)
@@ -367,22 +355,14 @@ private struct ChatPane: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28).padding(.top, 4)
                 }
-                ComposerField(assistant: assistant).padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
+                ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: 760)
-            } else if let convo = conversation, convo.isPersisted {
-                // A real chat whose history is still loading — skeleton, not the welcome flash.
+            } else if let convo = conversation, convo.isPersisted, !store.isVeraThread(convo.id) {
                 ChatLoadingSkeleton()
-                ComposerField(assistant: assistant).padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
+                ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: 760)
             } else {
-                EmptyChatView(assistant: assistant)
-            }
-        }
-        .task(id: assistant?.session?.id) {
-            guard let session = assistant?.session else { return }
-            while !Task.isCancelled {
-                await session.poll()
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                EmptyChatView()
             }
         }
     }
@@ -412,11 +392,11 @@ private struct ChatLoadingSkeleton: View {
 /// Centered welcome shown for an empty chat — greeting, centered composer, and starter prompts.
 /// When the app isn't connected, offers the setup sheet instead of pretending to work.
 private struct EmptyChatView: View {
-    var assistant: NativePiPresentation? = nil
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
 
     private var greeting: String {
+        if store.isVeraThread(store.selectedID) { return "What are we working on?" }
         let h = Calendar.current.component(.hour, from: Date())
         let part = h < 12 ? "morning" : (h < 18 ? "afternoon" : "evening")
         guard let name = config.ownerName else { return "Good \(part)" }
@@ -435,10 +415,8 @@ private struct EmptyChatView: View {
                     VeraMark(size: 30)
                     Text(greeting).font(.system(size: 28, weight: .semibold))
                 }
-                ComposerField(assistant: assistant)
-                if let assistant {
-                    NativePiSessionStatus(assistant: assistant)
-                } else if let error = store.chatConfigurationError {
+                ComposerField()
+                if let error = store.chatConfigurationError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive {
@@ -727,13 +705,6 @@ struct ArtifactChip: View {
 /// The rounded chat input box (text field + send), reused by the bottom bar and the empty state.
 /// Moves the cursor into the field whenever `store.focusTick` changes (new chat, starter tap).
 struct ComposerField: View {
-    @ObservedObject private var presentation: NativePiPresentation
-    private let usesAssistant: Bool
-    private var assistant: NativePiPresentation? { usesAssistant ? presentation : nil }
-    init(assistant: NativePiPresentation? = nil) {
-        _presentation = ObservedObject(wrappedValue: assistant ?? NativePiNativeContext.presentation)
-        usesAssistant = assistant != nil
-    }
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
@@ -741,7 +712,7 @@ struct ComposerField: View {
     @State private var dropTargeted = false
     @State private var pasteMonitor: Any?
 
-    private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: assistant) }
+    private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
         Binding(get: { route.draft }, set: { route.draft = $0 })
     }
@@ -750,7 +721,7 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if assistant == nil, let error = store.attachmentError {
+            if let error = store.attachmentError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 11))
@@ -764,11 +735,10 @@ struct ComposerField: View {
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
-            if assistant == nil && !store.attachments.isEmpty {
+            if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }
             TextField("Message Vera…", text: draft, axis: .vertical)
-                .disabled(usesAssistant && assistant?.session == nil)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .lineLimit(1...8)
@@ -785,7 +755,6 @@ struct ComposerField: View {
                     return .handled
                 }
             HStack(spacing: 10) {
-                if assistant == nil {
                 Menu {
                     Button("Add files or photos") { pickFiles() }
                     if let prompts = try? store.promptLibrary?.reusablePrompts(), !prompts.isEmpty {
@@ -806,7 +775,6 @@ struct ComposerField: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Add images or insert a saved prompt")
-                }
                 Spacer()
                 Button(action: {}) {
                     Image(systemName: "waveform")
@@ -821,17 +789,14 @@ struct ComposerField: View {
                 Button(action: submit) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
-                        .foregroundStyle((assistant?.session?.busy ?? (assistant == nil && store.generating)) ? Theme.accentGlow
+                        .foregroundStyle(store.generating ? Theme.accentGlow
                                          : (canSend ? Theme.accent : Theme.textSecondary))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
             }
-            // Hidden ⌘U shortcut for the file picker.
-            if assistant == nil {
-                Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
-                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-            }
+            Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
+                .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -839,7 +804,7 @@ struct ComposerField: View {
             .stroke(dropTargeted ? Theme.accent : .clear, lineWidth: 2))
         .onAppear {
             focused = true
-            if assistant == nil { installPasteMonitor() }
+            installPasteMonitor()
         }
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
@@ -847,7 +812,7 @@ struct ComposerField: View {
             store.pendingSendDecision?.imageLimit == nil
                 ? "This model can't take images" : "Too many images for this model",
             isPresented: Binding(
-                get: { assistant == nil && store.pendingSendDecision != nil },
+                get: { store.pendingSendDecision != nil },
                 set: { if !$0 { route.cancelPendingSend() } }),
             titleVisibility: .visible
         ) {
@@ -865,7 +830,7 @@ struct ComposerField: View {
         .confirmationDialog(
             "The endpoint rejected a parameter",
             isPresented: Binding(
-                get: { assistant == nil && store.parameterRejection != nil },
+                get: { store.parameterRejection != nil },
                 set: { if !$0 { route.clearParameterRejection() } }),
             titleVisibility: .visible
         ) {
@@ -884,7 +849,6 @@ struct ComposerField: View {
     }
 
     private func resetRejectedParameter() {
-        guard assistant == nil else { return }
         guard let prompt = store.parameterRejection else { return }
         store.parameterRejection = nil
         config.clearRejectedParameter(model: prompt.model, rejection: prompt.rejection)
@@ -894,7 +858,6 @@ struct ComposerField: View {
     }
 
     private func pickFiles() {
-        guard assistant == nil else { return }
         FilePicker.pick { urls in route.addFiles(urls) }
     }
 
