@@ -81,6 +81,7 @@ struct NativeContextInput: Sendable {
     var timestamp: Date
     var timeZone: TimeZone
     var ownerName: String?
+    var assistantName: String?
     var memories: [NativeMemoryRanked]
     var worldModel: String
     var knowledgeGrounding: String
@@ -90,7 +91,7 @@ struct NativeContextInput: Sendable {
 
     init(
         persona: String, userScope: String = "", conversationInstructions: String = "",
-        timestamp: Date, timeZone: TimeZone, ownerName: String? = nil,
+        timestamp: Date, timeZone: TimeZone, ownerName: String? = nil, assistantName: String? = nil,
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
         knowledgeGrounding: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
@@ -102,6 +103,7 @@ struct NativeContextInput: Sendable {
         self.timestamp = timestamp
         self.timeZone = timeZone
         self.ownerName = ownerName
+        self.assistantName = assistantName
         self.memories = memories
         self.worldModel = worldModel
         self.knowledgeGrounding = knowledgeGrounding
@@ -207,6 +209,9 @@ enum NativeContextAssembler {
             "SESSION",
             "Current date and time: \(formatter.string(from: input.timestamp)) (\(input.timeZone.identifier)).",
         ]
+        if let name = input.assistantName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            lines.append("Your name is \(name).")
+        }
         if let owner = input.ownerName?.trimmingCharacters(in: .whitespaces), !owner.isEmpty {
             lines.append("You are speaking with \(owner).")
         }

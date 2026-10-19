@@ -66,6 +66,7 @@ struct VeraApp: App {
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
             nativePersonaID: configInstance.nativeSettings.activePersonaID,
             nativeOwnerName: configInstance.ownerName,
+            nativeAssistantName: configInstance.assistantName,
             nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
             nativeCapabilityOverrides: configInstance.nativeSettings.capabilityOverrides,
             visionBridgeConfig: configInstance.visionBridgeResolved,
@@ -88,7 +89,7 @@ struct VeraApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Vera") {
+        WindowGroup("Tandem") {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(voice)

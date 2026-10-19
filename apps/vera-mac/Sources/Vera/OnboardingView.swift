@@ -14,7 +14,7 @@ struct OnboardingSheet: View {
             HStack(spacing: 12) {
                 VeraMark(size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Set up Vera").font(.system(size: 20, weight: .semibold))
+                    Text("Set up Tandem").font(.system(size: 20, weight: .semibold))
                     Text("Connect a model. Memory and Pulse are optional and can be set up later in Settings.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
@@ -35,7 +35,10 @@ struct OnboardingSheet: View {
             ScrollView {
                 Group {
                     switch step {
-                    case 0: NativeEndpointEditor()
+                    case 0:
+                        IdentityOnboardingEditor()
+                        Divider().padding(.vertical, 6)
+                        NativeEndpointEditor()
                     case 1: NativeModelEditor()
                     case 2: NativeMemoryOnboardingEditor()
                     default: PulseOnboardingEditor()
@@ -108,7 +111,7 @@ struct OnboardingSheet: View {
 
     private func finish() {
         do { try config.save() } catch let saveError {
-            error = "Vera could not save these settings: \(saveError.localizedDescription)"
+            error = "Tandem could not save these settings: \(saveError.localizedDescription)"
             return
         }
         guard let resolved = config.nativeResolved else {
@@ -120,6 +123,7 @@ struct OnboardingSheet: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
+            assistantName: config.assistantName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
@@ -166,6 +170,25 @@ struct PulseOnboardingEditor: View {
             }
             Text("You can add or change this later in Settings, Services.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+
+struct IdentityOnboardingEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tandem is the app. The assistant inside it is yours to name.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            LabeledContent("Assistant's name") {
+                TextField(ConfigStore.defaultAssistantName, text: config.binding("assistant_name"))
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+            }
+            LabeledContent("Your name") {
+                TextField("Optional", text: config.binding("owner_name"))
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-# Vera
+# Tandem
 
 **A self-hosted AI assistant for your home.**
 
@@ -20,7 +20,7 @@
 
 ---
 
-Vera is a self-hosted personal AI assistant: scheduled research briefings, opt-in ambient monitoring, persistent memory, local voice, and Home Assistant integration, running entirely on your own hardware with no cloud dependency.
+Tandem is a self-hosted personal AI assistant app: scheduled research briefings, opt-in ambient monitoring, persistent memory, local voice, and Home Assistant integration, running entirely on your own hardware with no cloud dependency. Tandem is the application; the assistant inside it is yours to name during setup. The default name is Vera, and that is the name these docs use for the assistant.
 
 All endpoints, model servers, thresholds, and behavioral defaults are configuration: nothing is hardcoded: and every capability degrades gracefully when its dependencies are unconfigured.
 

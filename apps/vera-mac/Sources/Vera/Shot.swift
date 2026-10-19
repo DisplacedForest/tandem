@@ -34,6 +34,7 @@ enum Shot {
             content = AnyView(
                 VoiceView()
                     .environmentObject(voice)
+                    .environmentObject(store)
                     .frame(width: size.width, height: size.height)
                     .background(Color.black)
             )

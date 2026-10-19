@@ -64,6 +64,7 @@ final class ChatStore: ObservableObject {
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
+    @Published private(set) var assistantName: String = ConfigStore.defaultAssistantName
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?
@@ -121,6 +122,7 @@ final class ChatStore: ObservableObject {
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativePersonaID: String? = nil,
          nativeOwnerName: String? = nil,
+         nativeAssistantName: String = ConfigStore.defaultAssistantName,
          nativeEnabledToolIDs: Set<String> = [],
          nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
          visionBridgeConfig: VisionBridgeConfig? = nil,
@@ -169,6 +171,7 @@ final class ChatStore: ObservableObject {
         self.nativeSystemPrompt = nativeSystemPrompt
         self.nativePersonaID = nativePersonaID
         self.nativeOwnerName = nativeOwnerName
+        self.assistantName = nativeAssistantName
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
         self.nativeCapabilityOverrides = nativeCapabilityOverrides
         self.visionBridgeConfig = visionBridgeConfig
@@ -256,6 +259,7 @@ final class ChatStore: ObservableObject {
             nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
             nativeOwnerName: configStore.ownerName,
+            nativeAssistantName: configStore.assistantName,
             nativeMemorySettings: .fresh)
     }
 
@@ -310,6 +314,7 @@ final class ChatStore: ObservableObject {
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
         activePersonaID: String? = nil,
         ownerName: String? = nil,
+        assistantName: String? = nil,
         enabledToolIDs: Set<String>? = nil,
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
         visionBridge: VisionBridgeConfig? = nil,
@@ -322,6 +327,7 @@ final class ChatStore: ObservableObject {
         nativeSystemPrompt = systemPrompt
         nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
+        if let assistantName { adoptAssistantName(assistantName) }
         if let enabledToolIDs { updateNativeToolConsent(enabledToolIDs) }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
         visionBridgeConfig = visionBridge
@@ -570,13 +576,27 @@ final class ChatStore: ObservableObject {
 
     func isVeraThread(_ id: String?) -> Bool { id != nil && id == veraThreadID }
 
+    func adoptAssistantName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        assistantName = trimmed.isEmpty ? ConfigStore.defaultAssistantName : trimmed
+        retitleVeraThread()
+    }
+
+    private func retitleVeraThread() {
+        guard let veraThreadID, let index = conversations.firstIndex(where: { $0.id == veraThreadID }),
+              conversations[index].title != assistantName else { return }
+        conversations[index].title = assistantName
+        try? repository?.saveConversation(conversations[index])
+    }
+
     func ensureVeraThread() {
         if let existing = conversations.first(where: { $0.originType == Self.veraThreadOriginType && $0.originID == Self.veraThreadOriginID }) {
             veraThreadID = existing.id
+            retitleVeraThread()
             return
         }
         guard let repository else { veraThreadID = nil; return }
-        var thread = Conversation(id: UUID().uuidString, title: "Vera", messages: [], updatedAt: Date(),
+        var thread = Conversation(id: UUID().uuidString, title: assistantName, messages: [], updatedAt: Date(),
                                   originType: Self.veraThreadOriginType, originID: Self.veraThreadOriginID)
         do {
             try repository.saveConversation(thread)
@@ -1904,6 +1924,7 @@ final class ChatStore: ObservableObject {
         let scopes = ResolvedPromptScopes(persona: turn.persona, userScope: turn.userScope, instructions: turn.instructions)
         let persona = scopes.persona
         let ownerName = nativeOwnerName
+        let assistantName = self.assistantName
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
         let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])
         let groundingCollections = turn.grounding.filter { allowedGrounding.contains($0) }
@@ -2019,7 +2040,7 @@ final class ChatStore: ObservableObject {
                     persona: persona, userScope: scopes.userScope,
                     conversationInstructions: scopes.instructions,
                     timestamp: Date(), timeZone: .current,
-                    ownerName: ownerName, memories: selectedMemories,
+                    ownerName: ownerName, assistantName: assistantName, memories: selectedMemories,
                     knowledgeGrounding: groundingAssembly?.block ?? "",
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts))

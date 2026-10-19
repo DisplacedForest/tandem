@@ -298,7 +298,7 @@ private struct EmptyChatView: View {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else {
                     Button { config.showOnboarding = true } label: {
-                        Label("Vera isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label("\(store.assistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(Theme.surface).clipShape(Capsule())
@@ -535,7 +535,7 @@ struct NativeToolConfirmationBar: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(prompt ?? "Run \(request.title)?")
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text("Vera waits for your decision before this tool runs.")
+                Text("This tool runs only after your decision.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 8)
@@ -613,7 +613,7 @@ struct ComposerField: View {
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }
-            TextField("Message Vera…", text: draft, axis: .vertical)
+            TextField("Message \(store.assistantName)…", text: draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .lineLimit(1...8)
