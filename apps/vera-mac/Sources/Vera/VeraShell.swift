@@ -7,7 +7,7 @@ struct VeraSidebar: View {
     @ObservedObject var workflowEditor: WorkflowEditorStore
     let onSelect: (AppSection) -> Void
     static let expandedWidth: CGFloat = 256
-    static let collapsedWidth: CGFloat = 64
+    static let collapsedWidth: CGFloat = 84
     static let topInset: CGFloat = 40
 
     private var paletteOpen: Bool { store.section == .agentic && store.agenticFlowID != nil }
@@ -25,6 +25,7 @@ struct VeraSidebar: View {
         .frame(width: wide ? Self.expandedWidth : Self.collapsedWidth)
         .frame(maxHeight: .infinity)
         .background(Theme.sidebar)
+        .animation(.easeInOut(duration: 0.22), value: wide)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if wide {
                 UpdateBanner()
@@ -38,7 +39,7 @@ struct VeraSidebar: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 if !collapsed { Spacer(minLength: 0) }
-                Button { withAnimation(.easeInOut(duration: 0.18)) { collapsed.toggle() } } label: {
+                Button { withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() } } label: {
                     Image(systemName: "sidebar.left").font(.system(size: 15, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 32, height: 32)
@@ -68,9 +69,12 @@ struct VeraSidebar: View {
             if collapsed {
                 Spacer(minLength: 0)
             } else {
-                divider
-                searchField
-                history
+                Group {
+                    divider
+                    searchField
+                    history
+                }
+                .transition(.opacity)
             }
 
             SettingsLink {
@@ -179,6 +183,7 @@ struct VeraSidebar: View {
                 .frame(width: 22, height: 22)
             if !collapsed {
                 Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular)).lineLimit(1)
+                    .transition(.opacity)
                 Spacer(minLength: 0)
             }
         }
