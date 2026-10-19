@@ -1,25 +1,14 @@
 import SwiftUI
 
-enum SidebarItem: Hashable {
-    case convo(String)
-    case feed, workflows, activity
-}
-
 struct ContentView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
-    @State private var columns: NavigationSplitViewVisibility = .all
-    @AppStorage("railExpanded") private var railExpanded = false
+    @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
 
-    private func syncColumns() {
-        columns = store.section.showsSidebar ? .all : .detailOnly
-    }
-
-    private func selectRail(_ item: AppSection) {
-        defer { syncColumns() }
+    private func select(_ item: AppSection) {
         switch item {
         case .vera: store.openVeraThread()
         case .chat: store.openChats()
@@ -32,36 +21,29 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             HStack(spacing: 0) {
-                IconRail(selection: store.section, expanded: $railExpanded, onSelect: selectRail)
+                VeraSidebar(collapsed: $sidebarCollapsed, search: $search, workflowEditor: workflowEditor, onSelect: select)
                 Rectangle().fill(Theme.hairline).frame(width: 1)
-                NavigationSplitView(columnVisibility: $columns) {
-                    Sidebar(search: $search, workflowEditor: workflowEditor)
-                        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
-                } detail: {
-                    HStack(spacing: 0) {
-                        Group {
-                            switch store.section {
-                            case .vera, .chat: ChatPane()
-                            case .pulse: PulseView()
-                            case .memory: MemoryView()
-                            case .agentic: AgenticView(workflowEditor: workflowEditor)
-                            case .projects, .artifacts, .scheduled, .integrations:
-                                DestinationPlaceholder(section: store.section)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if store.showCanvas, store.section == .chat || store.section == .vera {
-                            Divider()
-                            CanvasPanel().frame(width: 480)
+                HStack(spacing: 0) {
+                    Group {
+                        switch store.section {
+                        case .vera, .chat: ChatPane()
+                        case .pulse: PulseView()
+                        case .memory: MemoryView()
+                        case .agentic: AgenticView(workflowEditor: workflowEditor)
+                        case .projects, .artifacts, .scheduled, .integrations:
+                            DestinationPlaceholder(section: store.section)
                         }
                     }
-                    .background(Theme.ink)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if store.showCanvas, store.section == .chat || store.section == .vera {
+                        Divider()
+                        CanvasPanel().frame(width: 480)
+                    }
                 }
+                .background(Theme.ink)
             }
+            .ignoresSafeArea(.container, edges: .top)
             .task { await store.connect() }
-            .onAppear { syncColumns() }
-            .onChange(of: store.section) { syncColumns() }
-            .onChange(of: columns) { if !store.section.showsSidebar, columns != .detailOnly { columns = .detailOnly } }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)
@@ -85,123 +67,6 @@ struct Placeholder: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-    }
-}
-
-private struct Sidebar: View {
-    @EnvironmentObject var store: ChatStore
-    @Binding var search: String
-    @ObservedObject var workflowEditor: WorkflowEditorStore
-
-    private var pulseSelection: Binding<SidebarItem?> {
-        Binding(
-            get: {
-                switch store.section {
-                case .agentic: return store.agenticPane == .canvas ? .workflows : .activity
-                default: return .feed
-                }
-            },
-            set: { item in
-                switch item {
-                case .feed: store.goToPulse()
-                case .workflows: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
-                case .activity: store.section = .agentic; store.agenticPane = .activity; store.agenticFlowID = nil
-                default: break
-                }
-            })
-    }
-
-    private var chatSelection: Binding<SidebarItem?> {
-        Binding(
-            get: { store.section == .chat ? store.selectedID.map(SidebarItem.convo) : nil },
-            set: { if case .convo(let id)? = $0 { store.select(id) } })
-    }
-
-    var body: some View {
-        Group {
-            switch store.section.rail {
-            case .vera: veraPanel
-            case .chat: chatList
-            case .pulse:
-                if store.section == .agentic, store.agenticFlowID != nil {
-                    WorkflowPalette(store: workflowEditor, searchText: $search) { store.agenticFlowID = nil }
-                } else {
-                    pulseList
-                }
-            case .memory:
-                SidebarHeading(title: "Memory", note: "What Vera remembers about you, with its sources.")
-                Spacer()
-            default:
-                SidebarHeading(title: store.section.placeholder?.title ?? store.section.title)
-                Spacer()
-            }
-        }
-        .background(Theme.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
-        .toolbar {
-            if store.section.rail == .chat {
-                ToolbarItem {
-                    Button { store.newConversation() } label: {
-                        Label("New chat", systemImage: "square.and.pencil")
-                    }
-                    .help("New chat")
-                }
-            }
-        }
-    }
-
-    private var veraPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                VeraMark(size: 24)
-                Text("Vera").font(.system(size: 15, weight: .semibold))
-            }
-            Text("Your ongoing thread. It keeps its history, drafts and background work between visits.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var pulseList: some View {
-        List(selection: pulseSelection) {
-            Section {
-                Label("Feed", systemImage: "newspaper").tag(SidebarItem.feed)
-                Label("Workflows", systemImage: "point.3.connected.trianglepath.dotted").tag(SidebarItem.workflows)
-                Label("Activity", systemImage: "bolt").tag(SidebarItem.activity)
-            }
-        }
-        .listStyle(.sidebar)
-        .labelStyle(NativeSidebarLabelStyle())
-        .tint(Theme.accent)
-    }
-
-    private var chatList: some View {
-        List(selection: chatSelection) {
-            Section {
-                Button { store.newConversation() } label: {
-                    Label("New chat", systemImage: "square.and.pencil")
-                }
-                .buttonStyle(.plain)
-            }
-            ForEach(store.sidebarGroups(search: search)) { group in
-                Section(group.title) {
-                    ForEach(group.convos) { convo in
-                        SidebarRow(convo: convo,
-                                   onPin: { store.togglePin(convo.id) },
-                                   onMemoryExclusion: { store.toggleMemoryExclusion(convo.id) },
-                                   onDelete: { store.deleteConversation(convo.id) })
-                            .tag(SidebarItem.convo(convo.id))
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .labelStyle(NativeSidebarLabelStyle())
-        .tint(Theme.accent)
-        .searchable(text: $search, placement: .sidebar, prompt: "Search")
     }
 }
 

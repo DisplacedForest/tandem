@@ -368,125 +368,79 @@ struct ShotView: View {
 
     private var shellChrome: some View {
         HStack(spacing: 0) {
-            railMirror
+            sidebarMirror.frame(width: VeraSidebar.expandedWidth).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
             Rectangle().fill(Theme.hairline).frame(width: 1)
-            if section.showsSidebar {
-                sidebar.frame(width: 240).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-            }
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var railMirror: some View {
-        VStack(spacing: 6) {
-            railMirrorGlyph(Image(systemName: "sidebar.right"), selected: false)
-            ForEach(AppSection.railOrder) { item in
-                railMirrorItem(item)
-                if item == .vera || item == .integrations {
-                    Rectangle().fill(Theme.hairline).frame(width: 22, height: 1).padding(.vertical, 4)
-                }
+    private var sidebarMirror: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Spacer()
+                Image(systemName: "sidebar.left").font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary).frame(width: 32, height: 32)
             }
-            Spacer(minLength: 0)
-            railMirrorGlyph(Image(systemName: "gearshape"), selected: false)
-        }
-        .padding(.top, IconRail.topInset)
-        .padding(.bottom, 10)
-        .frame(width: IconRail.collapsedWidth)
-        .frame(maxHeight: .infinity)
-        .background(Theme.ink)
-    }
-
-    @ViewBuilder
-    private func railMirrorItem(_ item: AppSection) -> some View {
-        let active = section.rail == item
-        if item == .vera {
-            railMirrorGlyph(VeraMark(size: 22), selected: active)
-        } else {
-            railMirrorGlyph(Image(systemName: item.icon), selected: active)
-        }
-    }
-
-    private func railMirrorGlyph<Content: View>(_ content: Content, selected: Bool) -> some View {
-        content
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
-            .frame(width: 38, height: 38)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selected ? Theme.surfaceHover : Color.clear))
-    }
-
-    @ViewBuilder
-    private var sidebar: some View {
-        switch section.rail {
-        case .vera: veraSidebarPanel
-        case .chat: chatSidebarBody
-        case .pulse:
-            VStack(spacing: 1) {
-                shotNav("Feed", "newspaper", active: section == .pulse)
-                shotNav("Workflows", "point.3.connected.trianglepath.dotted", active: section == .agentic)
-                shotNav("Activity", "bolt", active: false)
-            }
-            .padding(.horizontal, 8).padding(.top, 12)
-        case .memory:
-            SidebarHeading(title: "Memory", note: "What Vera remembers about you, with its sources.")
-        default:
-            SidebarHeading(title: section.placeholder?.title ?? section.title)
-        }
-    }
-
-    private var veraSidebarPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                VeraMark(size: 24)
-                Text("Vera").font(.system(size: 15, weight: .semibold))
-            }
-            Text("Your ongoing thread. It keeps its history, drafts and background work between visits.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var chatSidebarBody: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            .padding(.top, VeraSidebar.topInset).padding(.bottom, 6)
+            shotNavMark("Vera", active: section == .vera)
+            shotNav("New chat", "square.and.pencil", active: false)
+            shotNav("Projects", AppSection.projects.icon, active: section == .projects)
+            shotNav("Artifacts", AppSection.artifacts.icon, active: section == .artifacts)
+            shotNav("Scheduled", AppSection.scheduled.icon, active: section == .scheduled)
+            shotNav("Integrations", AppSection.integrations.icon, active: section == .integrations)
+            shotDivider
+            shotNav("Pulse", AppSection.pulse.icon, active: section == .pulse)
+            shotNav("Workflows", "point.3.connected.trianglepath.dotted", active: section == .agentic)
+            shotNav("Activity", "bolt", active: false)
+            shotNav("Memory", AppSection.memory.icon, active: section == .memory)
+            shotDivider
+            HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Text("Search").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text("Search chats").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 6)
-
-            VStack(spacing: 1) {
-                shotNav("New chat", "square.and.pencil", active: false)
-            }
-            .padding(.horizontal, 8)
-
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+            .padding(.bottom, 4)
             VStack(alignment: .leading, spacing: 1) {
                 shotSection("Pinned")
                 shotChatRow("Greenhouse irrigation plan", selected: false, pinned: true)
                 shotSection("Today")
-                shotChatRow("Weather watch", selected: !emptyChat, pinned: false)
+                shotChatRow("Weather watch", selected: section == .chat && !emptyChat, pinned: false)
                 shotChatRow("Local LLM + AMD GPU news", selected: false, pinned: false)
                 shotSection("Previous 7 Days")
                 shotChatRow("Sourdough starter notes", selected: false, pinned: false)
                 shotChatRow("Server rebuild plan", selected: false, pinned: false)
             }
-            .padding(.horizontal, 8).padding(.top, 2)
+            Spacer(minLength: 0)
+            shotNav("Settings", "gearshape", active: false).padding(.bottom, 10)
         }
+        .padding(.horizontal, 10)
+    }
+
+    private var shotDivider: some View {
+        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
+    }
+
+    private func shotNavMark(_ title: String, active: Bool) -> some View {
+        HStack(spacing: 10) {
+            VeraMark(size: 20).frame(width: 22, height: 22)
+            Text(title).font(.system(size: 13, weight: active ? .semibold : .regular))
+            Spacer()
+        }
+        .foregroundStyle(active ? Theme.accent : Theme.textPrimary)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(active ? Theme.surfaceHover : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func shotNav(_ title: String, _ icon: String, active: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 14)).frame(width: 18)
-                .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
-            Text(title).font(.system(size: 13, weight: .medium))
+            Image(systemName: icon).font(.system(size: 15, weight: .medium)).frame(width: 22, height: 22)
+            Text(title).font(.system(size: 13, weight: active ? .semibold : .regular))
             Spacer()
         }
-        .foregroundStyle(active ? Theme.textPrimary : Theme.textPrimary.opacity(0.82))
+        .foregroundStyle(active ? Theme.accent : Theme.textPrimary)
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(active ? Theme.surfaceHover : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))

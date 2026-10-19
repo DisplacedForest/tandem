@@ -102,6 +102,7 @@ struct VeraApp: App {
                 .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
         }
         .defaultSize(width: 1180, height: 760)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button(updates.checking ? "Checking…" : "Check for Updates…") {
