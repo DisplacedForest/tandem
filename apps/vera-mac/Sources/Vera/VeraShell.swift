@@ -10,19 +10,28 @@ struct VeraSidebar: View {
     static let collapsedWidth: CGFloat = 64
     static let topInset: CGFloat = 40
 
+    private var paletteOpen: Bool { store.section == .agentic && store.agenticFlowID != nil }
+    private var wide: Bool { !collapsed || paletteOpen }
+
     var body: some View {
         Group {
-            if store.section == .agentic, store.agenticFlowID != nil {
+            if paletteOpen {
                 WorkflowPalette(store: workflowEditor, searchText: $search) { store.agenticFlowID = nil }
                     .padding(.top, Self.topInset)
             } else {
                 column
             }
         }
-        .frame(width: collapsed ? Self.collapsedWidth : Self.expandedWidth)
+        .frame(width: wide ? Self.expandedWidth : Self.collapsedWidth)
         .frame(maxHeight: .infinity)
         .background(Theme.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if wide {
+                UpdateBanner()
+            } else {
+                CompactUpdateBadge { withAnimation(.easeInOut(duration: 0.18)) { collapsed = false } }
+            }
+        }
     }
 
     private var column: some View {
@@ -125,7 +134,7 @@ struct VeraSidebar: View {
     }
 
     private func navRow(_ section: AppSection) -> some View {
-        let selected = store.section.rail == section
+        let selected = store.section == section
         return Button { onSelect(section) } label: {
             if section == .vera {
                 rowLabel(icon: VeraMark(size: 20), title: section.title, selected: selected)
@@ -179,6 +188,27 @@ struct VeraSidebar: View {
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(selected ? Theme.surfaceHover : Color.clear))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct CompactUpdateBadge: View {
+    @EnvironmentObject var updates: UpdateChecker
+    let onOpen: () -> Void
+
+    var body: some View {
+        if let release = updates.available {
+            Button(action: onOpen) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 15)).foregroundStyle(Theme.accent)
+                    .frame(width: 32, height: 32)
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Update available (\(release.tag_name))")
+            .accessibilityLabel("Update available, expand the sidebar to install")
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 6)
+        }
     }
 }
 
