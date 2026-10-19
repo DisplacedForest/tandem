@@ -19,6 +19,7 @@ struct ContentView: View {
     }
 
     private func selectRail(_ item: AppSection) {
+        defer { syncColumns() }
         switch item {
         case .vera: store.openVeraThread()
         case .chat: store.openChats()
@@ -60,6 +61,7 @@ struct ContentView: View {
             .task { await store.connect() }
             .onAppear { syncColumns() }
             .onChange(of: store.section) { syncColumns() }
+            .onChange(of: columns) { if !store.section.showsSidebar, columns != .detailOnly { columns = .detailOnly } }
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)
