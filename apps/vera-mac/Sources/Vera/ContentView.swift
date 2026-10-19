@@ -15,8 +15,7 @@ struct ContentView: View {
     private func selectRail(_ item: AppSection) {
         switch item {
         case .vera: store.openVeraThread()
-        case .chat:
-            if let id = store.selectedID, !store.isVeraThread(id) { store.select(id) } else { store.newConversation() }
+        case .chat: store.openChats()
         case .pulse: store.goToPulse()
         case .memory: store.section = .memory
         case .projects, .artifacts, .scheduled, .integrations, .agentic: store.section = item

@@ -12,6 +12,7 @@ final class ChatStore: ObservableObject {
     @Published var classicChatRequest = 0
     @Published var draft: String = ""
     @Published private(set) var veraThreadID: String?
+    private(set) var lastFocusedConversationID: String?
     private var drafts: [String: String] = [:]
     static let veraThreadOriginType = "assistant"
     static let veraThreadOriginID = "vera"
@@ -334,6 +335,10 @@ final class ChatStore: ObservableObject {
     }
 
     func connect() async {
+        stashDraft()
+        let previousSelected = selectedID
+        let previousSection = section
+        let unsaved = conversations.filter { !$0.isPersisted && $0.messages.isEmpty }
         if let repository {
             do {
                 conversations = try repository.listConversations()
@@ -346,8 +351,16 @@ final class ChatStore: ObservableObject {
             conversations = []
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
         }
+        for convo in unsaved.reversed() where !conversations.contains(where: { $0.id == convo.id }) {
+            conversations.insert(convo, at: 0)
+        }
         ensureVeraThread()
-        newConversation()
+        if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
+            select(previousSelected)
+            section = previousSection
+        } else {
+            newConversation()
+        }
         resumeConversationTurns()
         startNativeTaskRecovery()
         await refreshPulse()
@@ -607,8 +620,17 @@ final class ChatStore: ObservableObject {
         stashDraft()
         section = isVeraThread(id) ? .vera : .chat
         selectedID = id
+        if !isVeraThread(id) { lastFocusedConversationID = id }
         draft = drafts[id] ?? ""
         loadMessagesIfNeeded(id)
+    }
+
+    func openChats() {
+        if let id = lastFocusedConversationID, conversations.contains(where: { $0.id == id }) {
+            select(id)
+        } else {
+            newConversation()
+        }
     }
 
     var selected: Conversation? {
@@ -1256,14 +1278,16 @@ final class ChatStore: ObservableObject {
     func newConversation() {
         stashDraft()
         section = .chat
-        draft = ""
-        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty }) {
+        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty && !isVeraThread($0.id) }) {
             selectedID = existing.id
+            draft = drafts[existing.id] ?? ""
         } else {
             let convo = Conversation(id: UUID().uuidString, title: "New chat", messages: [], updatedAt: Date())
             conversations.insert(convo, at: 0)
             selectedID = convo.id
+            draft = ""
         }
+        lastFocusedConversationID = selectedID
         focusTick &+= 1
     }
 
@@ -1383,9 +1407,14 @@ final class ChatStore: ObservableObject {
         let idx = conversations.firstIndex { $0.id == id }
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         conversations.removeAll { $0.id == id }
+        drafts.removeValue(forKey: id)
+        if lastFocusedConversationID == id { lastFocusedConversationID = nil }
         if selectedID == id {
-            let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
-            selectedID = next?.id ?? conversations.first?.id
+            let candidates = conversations.filter { !isVeraThread($0.id) }
+            let next = idx.flatMap { candidates.indices.contains($0) ? candidates[$0] : candidates.last }
+            selectedID = nil
+            draft = ""
+            if let next { select(next.id) }
         }
         do {
             try repository?.deleteConversation(id)
@@ -1473,8 +1502,7 @@ final class ChatStore: ObservableObject {
             conversations.insert(conversation, at: 0)
             pulseDetail = nil
             onOpened?()
-            section = .chat
-            selectedID = conversation.id
+            select(conversation.id)
             focusTick &+= 1
         }
     }

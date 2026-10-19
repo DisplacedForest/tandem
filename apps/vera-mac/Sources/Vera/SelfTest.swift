@@ -1849,6 +1849,35 @@ enum SelfTest {
             guard store.draft == "focused draft", store.section == .chat else {
                 print("SELFTEST ERROR: shell focused draft was not restored"); exit(1)
             }
+            store.openVeraThread()
+            store.openChats()
+            guard store.selectedID == focusedID, store.draft == "focused draft", store.section == .chat else {
+                print("SELFTEST ERROR: shell returning to Chats did not restore the focused chat and its draft"); exit(1)
+            }
+            store.openVeraThread()
+            store.newConversation()
+            guard store.selectedID == focusedID, store.draft == "focused draft" else {
+                print("SELFTEST ERROR: shell reusing the empty chat dropped its draft"); exit(1)
+            }
+            await store.connect()
+            guard store.selectedID == focusedID, store.draft == "focused draft", store.section == .chat,
+                  store.veraThreadID == veraID else {
+                print("SELFTEST ERROR: shell reconnect lost the unsent chat or its draft"); exit(1)
+            }
+            let saved = Conversation(id: UUID().uuidString, title: "Saved chat", messages: [], updatedAt: Date())
+            try LocalChatRepository(url: url).saveConversation(saved)
+            await store.connect()
+            store.select(saved.id)
+            store.draft = "doomed draft"
+            store.deleteConversation(saved.id)
+            guard let after = store.selectedID, !store.isVeraThread(after), store.section == .chat,
+                  store.draft != "doomed draft" else {
+                print("SELFTEST ERROR: shell delete fallback landed on the Vera thread or kept the deleted draft"); exit(1)
+            }
+            guard ToolCallGroup(name: "kitchen_status", calls: []).label == "kitchen status",
+                  ToolCallGroup(name: "web-search", calls: []).label == "web search" else {
+                print("SELFTEST ERROR: shell tool chip label still shows an identifier"); exit(1)
+            }
         } catch {
             print("SELFTEST ERROR: shell Vera thread \(error)"); exit(1)
         }
@@ -1877,7 +1906,7 @@ enum SelfTest {
         guard untouched == nil, clean["owner_name"] == "Test" else {
             print("SELFTEST ERROR: shell config migration rewrote a clean file"); exit(1)
         }
-        print("  shell OK (Vera thread, relaunch, sidebar, delete guard, drafts, config migration)")
+        print("  shell OK (Vera thread, relaunch, sidebar, delete guard, drafts, reconnect, delete fallback, tool labels, config migration)")
     }
 
     private static func runNativeMemoryGroom() async {
