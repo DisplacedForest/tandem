@@ -80,8 +80,12 @@ final class ConfigStore: ObservableObject {
             do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
-        raw = loaded
-        nativeMCP = injectedMCP ?? NativeMCPManager(raw: loaded, enabled: settings.enabledToolIDs)
+        let retiredKeys = ["base", "api_key", "owui_email", "owui_password"]
+        var cleaned = loaded
+        for key in retiredKeys { cleaned.removeValue(forKey: key) }
+        if cleaned.count != loaded.count { try? writeConfiguration(cleaned) }
+        raw = cleaned
+        nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs)
         nativeSettings = settings
         nativeAPIKeys = keys
         savedCredentials = keys

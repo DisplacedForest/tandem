@@ -1,32 +1,43 @@
 import Foundation
 
-/// App surfaces the sidebar carries. `chat` and `agentic` are the top modality tabs; `pulse`
-/// and `memory` are nav rows under the Chat tab. Veins lives inside Pulse, and
-/// Plugins/MCP live inside Settings, so none of those three are sections.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, memory, knowledge, agentic
+    case vera, chat, projects, artifacts, scheduled, integrations, pulse, memory, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .chat: "Chat"; case .pulse: "Pulse"
-        case .memory: "Memory"; case .knowledge: "Knowledge"; case .agentic: "Agentic"
+        case .vera: "Vera"; case .chat: "Chats"; case .projects: "Projects"
+        case .artifacts: "Artifacts"; case .scheduled: "Scheduled"; case .integrations: "Integrations"
+        case .pulse: "Pulse"; case .memory: "Memory"; case .agentic: "Workflows"
         }
     }
     var icon: String {
         switch self {
-        case .chat: "message"
+        case .vera: "sparkle"
+        case .chat: "bubble.left.and.bubble.right"
+        case .projects: "folder"
+        case .artifacts: "doc.richtext"
+        case .scheduled: "calendar.badge.clock"
+        case .integrations: "puzzlepiece.extension"
         case .pulse: "newspaper"
         case .memory: "tray.full"
-        case .knowledge: "books.vertical"
-        case .agentic: "slider.horizontal.3"
+        case .agentic: "point.3.connected.trianglepath.dotted"
         }
     }
-    /// True when this surface lives under the Chat tab (vs the Agentic tab).
-    var underChatTab: Bool { self != .agentic }
+    var rail: AppSection { self == .agentic ? .pulse : self }
+    static let railOrder: [AppSection] = [.vera, .chat, .projects, .artifacts, .scheduled, .integrations, .pulse, .memory]
+    var placeholder: (title: String, note: String)? {
+        switch self {
+        case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")
+        case .artifacts: ("Artifacts", "Documents, images and file changes Vera produces will be collected here to open, revise and save.")
+        case .scheduled: ("Scheduled", "Work Vera runs on a schedule, with its upcoming runs and history.")
+        case .integrations: ("Integrations", "Services Vera can use, with what each one is allowed to do.")
+        default: nil
+        }
+    }
 }
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case connection, model, persona, memory, nativeTools, services, plugins, identity, about
+    case connection, model, persona, memory, knowledge, nativeTools, services, plugins, identity, about
     var id: String { rawValue }
 }
 

@@ -80,7 +80,7 @@ Native personal memory is an optional Mac feature. Approved memory is stored onl
 
 ### Knowledge: document collections that ground chat
 
-The Knowledge area manages document collections stored in vera-api's document engine: create and describe collections, add txt, md, pdf, docx, or html files, watch each file's index state (pending, indexing, ready, failed with the reason, stale), search and sort within a collection, and reindex or remove files. Any chat can then ground itself on selected collections: each turn retrieves the most relevant passages, the reply cites them inline, and the sources row names the collection and file behind every citation. Retrieval status is always visible (searching, how many passages, none relevant, or unavailable). Knowledge is an API-backed surface like Pulse: without a vera-api URL the area shows a clean unconfigured state and chat shows no knowledge controls, and nothing retrieved ever writes into personal memory automatically.
+Settings, Knowledge manages document collections stored in vera-api's document engine: create and describe collections, add txt, md, pdf, docx, or html files, watch each file's index state (pending, indexing, ready, failed with the reason, stale), search and sort within a collection, and reindex or remove files. Any chat can then ground itself on selected collections: each turn retrieves the most relevant passages, the reply cites them inline, and the sources row names the collection and file behind every citation. Retrieval status is always visible (searching, how many passages, none relevant, or unavailable). Knowledge is an API-backed surface like Pulse: without a vera-api URL Settings, Knowledge shows a clean unconfigured state and chat shows no knowledge controls, and nothing retrieved ever writes into personal memory automatically.
 
 ### Foreground model priority
 
@@ -88,7 +88,7 @@ When the native app has a Vera engine configured, chat and vision requests reser
 
 ### Vera and ordinary chats
 
-The sidebar has one persistent **Vera** destination for the ongoing assistant thread and its background work. **New chat** opens a separate ordinary conversation. Ordinary chats answer one message at a time in each conversation and save later messages in a visible queue. Returning to Vera preserves its thread, draft and tasks. Ordinary chat queues allow at most two active foreground turns across their conversations and eight waiting messages. A full queue keeps your draft and attachments intact.
+The app has a compact icon rail beside a contextual sidebar. The rail lists Vera, Chats, Projects, Artifacts, Scheduled, Integrations, Pulse and Memory, with Settings at the bottom, and the sidebar shows content for the selected item. Under Chats it holds **New chat**, search and the grouped history. Under Pulse it has three rows: Feed, Workflows and Activity. **Vera** is one pinned, ongoing conversation on the native chat engine. It keeps its own history and draft, separate from focused chats, and cannot be deleted from the list. **New chat** opens a separate ordinary conversation, and drafts are kept per conversation. Projects, Artifacts, Scheduled and Integrations are in the rail as destinations with an empty state describing what each will hold. They have no capability yet. Ordinary chats answer one message at a time in each conversation and save later messages in a visible queue. Returning to Vera preserves its thread, draft and tasks. Ordinary chat queues allow at most two active foreground turns across their conversations and eight waiting messages. A full queue keeps your draft and attachments intact.
 
 Each answer has its own Stop control and tool approvals. Stopping an answer does not cancel a separate research task; use the task card's Stop research control for that. Accepted messages are saved before the composer clears. After a restart, unsent messages can resume with their original settings, while interrupted requests stay available for explicit review or retry. An uncertain action is never automatically replayed. Ephemeral keyed configurations without a stable saved profile require a new message after restart.
 
@@ -116,9 +116,9 @@ The third way to author a vein is to just ask. Tell Vera in chat to keep an eye 
 
 <div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its vein chips" width="850"></div>
 
-### Agentic: the autonomy control room
+### Workflows and Activity: the autonomy control room
 
-The Agentic tab opens on a living canvas: every flow Vera runs on her own: briefings, vein runs, grooming: drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
+Pulse, Workflows opens on a living canvas: every flow Vera runs on her own: briefings, vein runs, grooming: drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
 The map and the editor are two zoom levels of one surface: clicking any flow opens it in the same workflow editor. Every flow is served as a workflow definition through the same endpoints (`GET /agentic/workflows/{id}` and its catalog), with a Schedule trigger at the head reflecting the flow's real schedule: scheduled code-backed flows project their steps, veins project their block pipelines, and Pulse serves its stored graph. Opening a flow turns the existing app sidebar into a searchable node library and dedicates the main workspace to the connected workflow and selected-node inspector. The library, each node's configuration fields, and the graph rules all come from the server's catalog, so a node type registered server-side appears in the palette with editable, schema-rendered settings without an app update.
 
@@ -126,7 +126,7 @@ Each flow carries a served profile that decides what editing it allows. Pulse's 
 
 The same canvas also replays results: a Run toggle overlays the latest recorded run on the graph, tinting each node by how it finished and captioning it with its output count and duration. Selecting a node in run mode swaps the inspector to what that node actually recorded (input, output, timing, state, and any error) and the visual review nodes show their per-card evidence, cover image, verdict, and retry. Run mode is read-only over recorded runs; with no run recorded yet it says so instead of inventing one.
 
-Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges scheduled job runs and autonomous actions into a single newest-first list, rendered as the Activity pane of the Agentic tab. Autonomy is wanted, and it is always visible.
+Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges scheduled job runs and autonomous actions into a single newest-first list, shown under Pulse, Activity. Autonomy is wanted, and it is always visible.
 
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic canvas: every autonomous flow, live" width="850"></div>
 
@@ -200,7 +200,7 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app: packages Vera.app and installs it to /Applications
 ```
 
-Onboarding walks through a friendly endpoint name, an OpenAI-compatible URL ending in `/v1`, an optional key saved in the Mac keychain, explicit model discovery and selection, the system prompt, optional local memory, and the native tool picker. The guide is skippable and can be resumed from Settings without touching chat history. vera-api remains optional and independently powers Pulse and the other ambient surfaces.
+Onboarding has four steps: Endpoint (a friendly name, an OpenAI-compatible URL ending in `/v1`, and an optional key saved in the Mac keychain), Model (explicit discovery and selection), Memory (optional local memory, can be skipped) and Pulse (an optional vera-api service URL, can be skipped). Persona and tools live in Settings. The guide is skippable and can be resumed from Settings, Endpoints without touching chat history. vera-api remains optional and independently powers Pulse and the other ambient surfaces.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 
