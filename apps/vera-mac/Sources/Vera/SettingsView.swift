@@ -668,7 +668,9 @@ private struct IdentityTab: View {
     var body: some View {
         Form {
             Section("Identity") {
-                ConfigField(label: "Your name", key: "owner_name", placeholder: "how Vera greets you",
+                ConfigField(label: "Assistant's name", key: "assistant_name", placeholder: ConfigStore.defaultAssistantName,
+                            tip: "How your assistant is named across chat, voice and background work. Tandem is the app; this is the assistant.")
+                ConfigField(label: "Your name", key: "owner_name", placeholder: "how your assistant greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
             }
             Section("Appearance") {
@@ -837,6 +839,7 @@ private struct SaveSection: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
+            assistantName: config.assistantName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,

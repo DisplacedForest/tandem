@@ -1874,6 +1874,30 @@ enum SelfTest {
                   store.draft != "doomed draft" else {
                 print("SELFTEST ERROR: shell delete fallback landed on the Vera thread or kept the deleted draft"); exit(1)
             }
+            let named = ChatStore(nativeConfig: nil, nativeTransport: nil,
+                                  repository: try LocalChatRepository(url: url), nativeAssistantName: "Ada")
+            await named.connect()
+            guard named.veraThreadID == veraID, named.conversations.first(where: { $0.id == veraID })?.title == "Ada",
+                  try LocalChatRepository(url: url).listConversations().first(where: { $0.id == veraID })?.title == "Ada" else {
+                print("SELFTEST ERROR: shell assistant name did not retitle the pinned thread"); exit(1)
+            }
+            named.adoptAssistantName("  ")
+            guard named.assistantName == ConfigStore.defaultAssistantName else {
+                print("SELFTEST ERROR: shell blank assistant name did not fall back to the default"); exit(1)
+            }
+            let identity = NativeContextAssembler.assemble(NativeContextInput(
+                persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: "Ada"))
+            guard identity.prompt.contains("Your name is Ada."), identity.prompt.contains("You are speaking with Riley.") else {
+                print("SELFTEST ERROR: shell assistant name missing from the assembled context"); exit(1)
+            }
+            let defaults = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] },
+                                       writeConfiguration: { _ in })
+            let chosen = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
+                                     readConfiguration: { ["assistant_name": " Ada "] }, writeConfiguration: { _ in })
+            guard defaults.assistantName == "Vera", chosen.assistantName == "Ada" else {
+                print("SELFTEST ERROR: shell assistant name config default or trimming"); exit(1)
+            }
             guard ToolCallGroup(name: "kitchen_status", calls: []).label == "kitchen status",
                   ToolCallGroup(name: "web-search", calls: []).label == "web search" else {
                 print("SELFTEST ERROR: shell tool chip label still shows an identifier"); exit(1)
@@ -1906,7 +1930,7 @@ enum SelfTest {
         guard untouched == nil, clean["owner_name"] == "Test" else {
             print("SELFTEST ERROR: shell config migration rewrote a clean file"); exit(1)
         }
-        print("  shell OK (Vera thread, relaunch, sidebar, delete guard, drafts, reconnect, delete fallback, tool labels, config migration)")
+        print("  shell OK (Vera thread, relaunch, sidebar, delete guard, drafts, reconnect, delete fallback, assistant name, tool labels, config migration)")
     }
 
     private static func runNativeMemoryGroom() async {

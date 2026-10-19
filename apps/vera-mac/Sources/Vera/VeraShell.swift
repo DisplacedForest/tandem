@@ -137,7 +137,7 @@ struct VeraSidebar: View {
         let selected = store.section == section
         return Button { onSelect(section) } label: {
             if section == .vera {
-                rowLabel(icon: VeraMark(size: 20), title: section.title, selected: selected)
+                rowLabel(icon: VeraMark(size: 20), title: store.assistantName, selected: selected)
             } else {
                 rowLabel(icon: Image(systemName: section.icon), title: section.title, selected: selected)
             }

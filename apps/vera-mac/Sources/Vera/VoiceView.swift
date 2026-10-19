@@ -4,13 +4,14 @@ import SwiftUI
 /// caption, and a close control. Mirrors ChatGPT's voice screen. Icons only — no emojis.
 struct VoiceView: View {
     @EnvironmentObject var voice: VoiceSession
+    @EnvironmentObject var store: ChatStore
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
                 HStack {
-                    (Text("Vera ").foregroundStyle(.white)
+                    (Text("\(store.assistantName) ").foregroundStyle(.white)
                         + Text("Voice").foregroundStyle(Theme.textSecondary))
                         .font(.system(size: 17, weight: .semibold))
                     Spacer()

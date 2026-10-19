@@ -64,7 +64,7 @@ final class ConfigStore: ObservableObject {
         "model_base": "VERA_MODEL_BASE", "model_api_key": "VERA_MODEL_API_KEY",
         "model": "VERA_MODEL", "completions_url": "VERA_COMPLETIONS_URL",
         "voice_base": "VERA_VOICE_BASE", "vera_api_base": "VERA_API_BASE",
-        "owner_name": "VERA_OWNER_NAME",
+        "owner_name": "VERA_OWNER_NAME", "assistant_name": "VERA_ASSISTANT_NAME",
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
     ]
 
@@ -638,6 +638,15 @@ final class ConfigStore: ObservableObject {
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["owner_name"] as? String)
         let trimmed = v?.trimmingCharacters(in: .whitespaces)
         return (trimmed?.isEmpty == false) ? trimmed : nil
+    }
+
+    static let defaultAssistantName = "Vera"
+
+    var assistantName: String {
+        let env = ProcessInfo.processInfo.environment["VERA_ASSISTANT_NAME"]
+        let v = (env?.isEmpty == false ? env : nil) ?? (raw["assistant_name"] as? String)
+        let trimmed = v?.trimmingCharacters(in: .whitespaces) ?? ""
+        return trimmed.isEmpty ? Self.defaultAssistantName : trimmed
     }
 }
 
