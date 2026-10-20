@@ -7,7 +7,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | Piece | What it is | Required? |
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
-| **Vera.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
+| **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
@@ -235,14 +235,14 @@ Two host scripts cover the standing ops work, and each documents its own environ
 
 ## 3. The Mac app
 
-**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
+**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Tandem.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch: right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
 **From source** (Swift toolchain):
 
 ```sh
 cd apps/vera-mac
 swift build -c release
-scripts/deploy.sh    # packages Vera.app and installs it to /Applications
+scripts/deploy.sh    # packages Tandem.app and installs it to /Applications
 ```
 
 ### Stable signing for local builds
@@ -266,7 +266,7 @@ Startup reads saved credentials without requesting macOS interaction. If access 
 
 For a reviewed installed build whose selected credential needs renewed access, the diagnostic `--credential-reauthorization` entry accepts `--certificate`, `--code-hash`, and `--profile-digest`. It requires the exact installed Vera identity and selected profile, then performs one ordinary credential read with macOS handling authentication. It does not initialize all endpoint credentials, edit ACL payloads, replace the credential, or send a model request. Its result confirms only that read; it does not claim persistent access. Any persistence depends on the user's macOS choice, and future local builds can require another authorization. Keep passwords in the macOS prompt, never in command arguments or scripts. This diagnostic must be deliberately coordinated for the final build; it is never a startup action or automatic retry.
 
-To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Vera.app` and `codesign -d -r- build/Vera.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
+To inspect a packaged build, run `codesign --verify --deep --strict --verbose=2 build/Tandem.app` and `codesign -d -r- build/Tandem.app` from `apps/vera-mac`. Compare the designated requirement of two separately packaged builds before replacing an installed app. Keep the same certificate for future local builds; replacing it also changes the identity.
 
 First launch runs **onboarding**. Tandem is the app; the first step asks what to call your assistant (Vera by default) and, optionally, your own name. Both can be changed later in Settings, Identity. Then give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. The guide has four steps: Endpoint, Model, Memory and Pulse. Discover models, inspect every returned identifier, and choose one explicitly. Memory (local memory) and Pulse (an optional vera-api service URL) can be skipped. Persona and Tools are set in Settings. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. On upgrade the app removes retired keys from earlier versions (base, api_key, owui_email, owui_password) from `~/.vera/config.json`. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off.
 

@@ -44,7 +44,7 @@ do {
                 let directory = URL(fileURLWithPath: args[2]).deletingLastPathComponent()
                 for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                     where file.lastPathComponent.hasPrefix(".Vera-replacement-") {
-                    try FileManager.default.removeItem(at: file.appendingPathComponent("Vera.app"))
+                    try FileManager.default.removeItem(at: file.appendingPathComponent(URL(fileURLWithPath: args[2]).lastPathComponent))
                 }
             }
         }

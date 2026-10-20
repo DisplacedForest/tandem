@@ -40,8 +40,8 @@ struct AppReplacementReceipt: Codable {
 
     func state(at receipt: URL) throws -> State {
         let current = try AppFileIdentity.read(target)
-        let retained = try AppFileIdentity.read(receipt.deletingLastPathComponent().appendingPathComponent("Vera.app"))
-        let retainedURL = receipt.deletingLastPathComponent().appendingPathComponent("Vera.app")
+        let retainedURL = receipt.deletingLastPathComponent().appendingPathComponent(target.lastPathComponent)
+        let retained = try AppFileIdentity.read(retainedURL)
         let currentContent = current == nil ? nil : try? SafeAppReplacement.manifest(target)
         let retainedContent = retained == nil ? nil : try? SafeAppReplacement.manifest(retainedURL)
         if current == staged, retained == previous, currentContent == stagedManifest,
@@ -91,7 +91,7 @@ struct SafeAppReplacement {
             .appendingPathComponent(".Vera-replacement-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: transaction, withIntermediateDirectories: false,
                                attributes: [.posixPermissions: 0o700])
-        let candidate = transaction.appendingPathComponent("Vera.app", isDirectory: true)
+        let candidate = transaction.appendingPathComponent(target.lastPathComponent, isDirectory: true)
         let receiptURL = transaction.appendingPathComponent("receipt.json")
         var retain = false
         defer { if !retain { try? fm.removeItem(at: transaction) } }
@@ -129,7 +129,7 @@ struct SafeAppReplacement {
         guard receipt.previous != nil, try receipt.state(at: receiptURL) == .installed else {
             throw AppReplacementError("This receipt does not describe the current installation")
         }
-        let previous = receiptURL.deletingLastPathComponent().appendingPathComponent("Vera.app")
+        let previous = receiptURL.deletingLastPathComponent().appendingPathComponent(receipt.target.lastPathComponent)
         let version = try validateBundle(previous, identifier: receipt.identifier)
         return try replace(source: previous, target: receipt.target, version: version,
                            identifier: receipt.identifier, expectedTarget: receipt.staged,

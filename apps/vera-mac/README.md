@@ -74,19 +74,19 @@ Runtime inputs are pinned in `runtime/runtime-lock.json` and the Pi npm lock. As
 The packaged headless fixture uses a fresh explicit data directory and injected credentials and model responses:
 
 ```sh
-build/Vera.app/Contents/MacOS/Vera --pi-candidate-contract --root /tmp/vera-packaged-fixture
+build/Tandem.app/Contents/MacOS/Vera --pi-candidate-contract --root /tmp/vera-packaged-fixture
 ```
 
 For checkout-denied cancellation, real process-kill recovery and integrity checks, copy the package outside the checkout and run the portable contract from the repository with the development Python environment:
 
 ```sh
-python3 scripts/tests/packaged_runtime_contract.py --app /tmp/vera-portable/Vera.app --output-dir /tmp/vera-portable/evidence
+python3 scripts/tests/packaged_runtime_contract.py --app /tmp/vera-portable/Tandem.app --output-dir /tmp/vera-portable/evidence
 ```
 
 These are offline fixture checks. Clean-user onboarding, real provider access, signing distribution policy and target-device validation remain separate requirements. User settings, conversations and credentials are never package inputs.
 
 ```bash
-scripts/package.sh              # -> build/Vera.app (ad-hoc signed)
+scripts/package.sh              # -> build/Tandem.app (ad-hoc signed)
 scripts/deploy.sh               # package + install to /Applications (+ a second Mac if configured)
 VERA_STUDIO_HOST=user@my-other-mac scripts/deploy.sh    # also push to a second Mac
 ```
@@ -97,7 +97,7 @@ The app is **ad-hoc signed** (no Developer ID), so Gatekeeper will block a doubl
 on a fresh copy. `deploy.sh` clears the quarantine attribute on install. If you ever
 copy it manually, either right-click → **Open** once, or:
 ```bash
-xattr -dr com.apple.quarantine /Applications/Vera.app
+xattr -dr com.apple.quarantine /Applications/Tandem.app
 ```
 `spctl --assess` will report it as rejected: expected for ad-hoc; it still runs.
 

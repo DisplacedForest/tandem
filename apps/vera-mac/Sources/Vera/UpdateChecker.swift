@@ -45,7 +45,7 @@ struct ReleaseInfo: Decodable, Equatable {
     let assets: [Asset]
 
     var version: String { tag_name.hasPrefix("v") ? String(tag_name.dropFirst()) : tag_name }
-    var appZip: Asset? { assets.first { $0.name == "Vera.app.zip" } }
+    var appZip: Asset? { assets.first { $0.name == "Tandem.app.zip" } }
     func asset(named: String) -> Asset? { assets.first { $0.name == named } }
 }
 
@@ -110,11 +110,11 @@ final class UpdateChecker: ObservableObject {
             guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
                 throw UpdateError("The update download failed")
             }
-            let zip = tmp.appendingPathComponent("Vera.app.zip")
+            let zip = tmp.appendingPathComponent("Tandem.app.zip")
             try FileManager.default.moveItem(at: zipTmp, to: zip)
             let expanded = tmp.appendingPathComponent("expanded", isDirectory: true)
             try AppUpdateArchive.extract(zip, to: expanded)
-            let staged = expanded.appendingPathComponent("Vera.app")
+            let staged = expanded.appendingPathComponent("Tandem.app")
             let installed = Bundle.main.bundleURL
             let identifier = Bundle.main.bundleIdentifier ?? "app.vera.mac"
             let version = release.version
