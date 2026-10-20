@@ -1,5 +1,111 @@
 import SwiftUI
 
+enum SidebarMetrics {
+    static let rowHeight: CGFloat = 28
+    static let iconSize: CGFloat = 15
+    static let iconSlot: CGFloat = 18
+    static let inset: CGFloat = 8
+    static let labelSize: CGFloat = 13
+    static let radius: CGFloat = 6
+    static let spacing: CGFloat = 1
+}
+
+struct SidebarRowStyle: ButtonStyle {
+    var selected = false
+
+    static func fill(selected: Bool, hovering: Bool, pressed: Bool) -> Color {
+        if pressed || selected { return Theme.surfaceSelected }
+        if hovering { return Theme.surfaceHover }
+        return .clear
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration, selected: selected)
+    }
+
+    private struct RowBody: View {
+        let configuration: Configuration
+        let selected: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+                    .fill(Self.fill(selected: selected, hovering: hovering, pressed: configuration.isPressed)))
+                .contentShape(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous))
+                .onHover { hovering = $0 }
+                .onChange(of: selected) { _, _ in hovering = false }
+        }
+
+        private static func fill(selected: Bool, hovering: Bool, pressed: Bool) -> Color {
+            SidebarRowStyle.fill(selected: selected, hovering: hovering, pressed: pressed)
+        }
+    }
+}
+
+struct SidebarRowLabel<Icon: View>: View {
+    let icon: Icon
+    let title: String
+    var selected = false
+    var collapsed = false
+    var tintsIcon = true
+
+    var body: some View {
+        HStack(spacing: SidebarMetrics.inset) {
+            icon
+                .font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                .foregroundStyle(tintsIcon && selected ? Theme.accent : Theme.textSecondary)
+                .frame(width: SidebarMetrics.iconSlot, height: SidebarMetrics.iconSlot)
+            if !collapsed {
+                Text(title).font(.system(size: SidebarMetrics.labelSize, weight: selected ? .medium : .regular))
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    .transition(.opacity)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, collapsed ? 0 : SidebarMetrics.inset)
+        .frame(height: SidebarMetrics.rowHeight)
+        .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
+    }
+}
+
+struct SidebarSectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title).font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SidebarMetrics.inset).padding(.top, 14).padding(.bottom, 4)
+    }
+}
+
+struct SidebarChatRowLabel<Trailing: View>: View {
+    let title: String
+    var selected = false
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: SidebarMetrics.inset) {
+            Text(title).font(.system(size: SidebarMetrics.labelSize)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Spacer(minLength: 0)
+            trailing
+        }
+        .padding(.horizontal, SidebarMetrics.inset)
+        .frame(height: SidebarMetrics.rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct SidebarFieldChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, SidebarMetrics.inset)
+            .frame(height: SidebarMetrics.rowHeight)
+            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
 struct VeraSidebar: View {
     @EnvironmentObject var store: ChatStore
     @Binding var collapsed: Bool
@@ -36,22 +142,20 @@ struct VeraSidebar: View {
     }
 
     private var column: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
             HStack {
                 if !collapsed { Spacer(minLength: 0) }
                 Button { withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() } } label: {
-                    Image(systemName: "sidebar.left").font(.system(size: 15, weight: .medium))
+                    Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 32, height: 32)
-                        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(SidebarRowStyle())
                 .help(collapsed ? "Expand sidebar" : "Collapse sidebar")
                 .accessibilityLabel(collapsed ? "Expand sidebar" : "Collapse sidebar")
                 if collapsed { Spacer(minLength: 0) }
             }
             .padding(.top, Self.topInset)
-            .padding(.horizontal, 10)
             .padding(.bottom, 6)
 
             navRow(.vera)
@@ -78,58 +182,51 @@ struct VeraSidebar: View {
             }
 
             SettingsLink {
-                rowLabel(icon: Image(systemName: "gearshape"), title: "Settings", selected: false)
+                SidebarRowLabel(icon: Image(systemName: "gearshape"), title: "Settings", collapsed: collapsed)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(SidebarRowStyle())
             .help("Settings")
             .accessibilityLabel("Settings")
             .padding(.bottom, 10)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, SidebarMetrics.inset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var divider: some View {
-        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
+        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
     }
 
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            TextField("Search chats", text: $search).textFieldStyle(.plain).font(.system(size: 13))
+            Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            TextField("Search chats", text: $search).textFieldStyle(.plain).font(.system(size: SidebarMetrics.labelSize))
             if !search.isEmpty {
                 Button { search = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)) }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-        .padding(.bottom, 4)
+        .modifier(SidebarFieldChrome())
+        .padding(.bottom, 2)
     }
 
     private var history: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
+            LazyVStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
                 ForEach(store.sidebarGroups(search: search)) { group in
-                    Text(group.title.uppercased())
-                        .font(.system(size: 10, weight: .semibold)).tracking(0.6)
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 3)
+                    SidebarSectionHeader(title: group.title)
                     ForEach(group.convos) { convo in
+                        let selected = store.section == .chat && store.selectedID == convo.id
                         Button { store.select(convo.id) } label: {
                             SidebarRow(convo: convo,
                                        onPin: { store.togglePin(convo.id) },
+                                       onRename: { store.renameConversation(convo.id, title: $0) },
                                        onMemoryExclusion: { store.toggleMemoryExclusion(convo.id) },
                                        onDelete: { store.deleteConversation(convo.id) })
-                                .font(.system(size: 13))
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(store.section == .chat && store.selectedID == convo.id ? Theme.surfaceHover : Color.clear))
-                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(SidebarRowStyle(selected: selected))
                         .accessibilityLabel(convo.title)
+                        .accessibilityAddTraits(selected ? [.isSelected] : [])
                     }
                 }
             }
@@ -141,12 +238,12 @@ struct VeraSidebar: View {
         let selected = store.section == section
         return Button { onSelect(section) } label: {
             if section == .vera {
-                rowLabel(icon: VeraMark(size: 20), title: store.assistantName, selected: selected)
+                SidebarRowLabel(icon: VeraMark(size: 18), title: store.assistantName, selected: selected, collapsed: collapsed, tintsIcon: false)
             } else {
-                rowLabel(icon: Image(systemName: section.icon), title: section.title, selected: selected)
+                SidebarRowLabel(icon: Image(systemName: section.icon), title: section.title, selected: selected, collapsed: collapsed)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarRowStyle(selected: selected))
         .help(section.title)
         .accessibilityLabel(section.title)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -159,9 +256,9 @@ struct VeraSidebar: View {
             store.agenticPane = pane
             store.agenticFlowID = nil
         } label: {
-            rowLabel(icon: Image(systemName: icon), title: title, selected: selected)
+            SidebarRowLabel(icon: Image(systemName: icon), title: title, selected: selected, collapsed: collapsed)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarRowStyle(selected: selected))
         .help(title)
         .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -169,30 +266,11 @@ struct VeraSidebar: View {
 
     private func actionRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            rowLabel(icon: Image(systemName: icon), title: title, selected: false)
+            SidebarRowLabel(icon: Image(systemName: icon), title: title, collapsed: collapsed)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarRowStyle())
         .help(title)
         .accessibilityLabel(title)
-    }
-
-    private func rowLabel<Icon: View>(icon: Icon, title: String, selected: Bool) -> some View {
-        HStack(spacing: 10) {
-            icon
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 22, height: 22)
-            if !collapsed {
-                Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular)).lineLimit(1)
-                    .transition(.opacity)
-                Spacer(minLength: 0)
-            }
-        }
-        .foregroundStyle(selected ? Theme.accent : Theme.textPrimary)
-        .padding(.horizontal, collapsed ? 0 : 10).padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(selected ? Theme.surfaceHover : Color.clear))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

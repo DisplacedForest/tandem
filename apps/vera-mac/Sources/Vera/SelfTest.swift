@@ -452,6 +452,8 @@ enum SelfTest {
         await runShell()
         await runPromptLibrary()
         await runNativeStore()
+        do { try await runConversationTitles() }
+        catch { print("SELFTEST ERROR: conversation titles \(error)"); exit(1) }
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()

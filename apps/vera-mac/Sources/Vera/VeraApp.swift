@@ -79,6 +79,7 @@ struct VeraApp: App {
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
+        storeInstance.generatesConversationTitles = fixture == nil
         if fixture == nil {
             NativePiNativeContext.presentation = NativePiProduction.presentation(config: configInstance, store: storeInstance)
         }

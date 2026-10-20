@@ -66,6 +66,10 @@ final class ChatStore: ObservableObject {
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
+    private var titleGenerationInFlight: Set<String> = []
+    private var titleGenerationAttempted: Set<String> = []
+    var titleGenerationTimeout: Duration = .seconds(20)
+    var generatesConversationTitles = false
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
@@ -1418,6 +1422,41 @@ final class ChatStore: ObservableObject {
         catch { chatConfigurationError = "Pin state couldn't save: \(error.localizedDescription)" }
     }
 
+    func renameConversation(_ id: String, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[i].title = trimmed
+        conversations[i].titleSource = .user
+        do { try repository?.saveConversation(conversations[i]) }
+        catch { chatConfigurationError = "The new name couldn't save: \(error.localizedDescription)" }
+    }
+
+    func generateTitleIfNeeded(conversationID: String) {
+        guard generatesConversationTitles, !titleGenerationInFlight.contains(conversationID),
+              !titleGenerationAttempted.contains(conversationID),
+              let conversation = conversations.first(where: { $0.id == conversationID }),
+              ConversationTitleGenerator.shouldGenerate(for: conversation, isAssistantThread: isVeraThread(conversationID)),
+              let transport = nativeTransport, let model = nativeConfig?.model, !model.isEmpty,
+              let user = conversation.messages.first(where: { $0.role == .user }),
+              let reply = conversation.messages.first(where: { $0.role == .assistant }) else { return }
+        titleGenerationInFlight.insert(conversationID)
+        titleGenerationAttempted.insert(conversationID)
+        let userID = user.id
+        let timeout = titleGenerationTimeout
+        Task {
+            let title = await ConversationTitleGenerator.generate(
+                transport: transport, model: model, user: user.text, assistant: reply.text, timeout: timeout)
+            self.titleGenerationInFlight.remove(conversationID)
+            guard let title,
+                  let i = self.conversations.firstIndex(where: { $0.id == conversationID }),
+                  self.conversations[i].titleSource == .fallback,
+                  self.conversations[i].messages.first(where: { $0.role == .user })?.id == userID else { return }
+            self.conversations[i].title = title
+            self.conversations[i].titleSource = .generated
+            try? self.repository?.saveConversation(self.conversations[i])
+        }
+    }
+
     func toggleMemoryExclusion(_ id: String) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].memoryExcluded.toggle()
@@ -1506,11 +1545,11 @@ final class ChatStore: ObservableObject {
             if cal.isDateInToday(d) { return "Today" }
             if cal.isDateInYesterday(d) { return "Yesterday" }
             let days = cal.dateComponents([.day], from: d, to: now).day ?? 0
-            return days < 7 ? "Previous 7 Days" : (days < 30 ? "Previous 30 Days" : "Older")
+            return days < 7 ? "Previous 7 days" : (days < 30 ? "Previous 30 days" : "Older")
         }
         var byBucket: [String: [Conversation]] = [:]
         for c in rest { byBucket[bucket(c.updatedAt), default: []].append(c) }
-        for b in ["Today", "Yesterday", "Previous 7 Days", "Previous 30 Days", "Older"] {
+        for b in ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"] {
             if let cs = byBucket[b], !cs.isEmpty { groups.append(.init(title: b, convos: cs)) }
         }
         return groups
@@ -1651,8 +1690,8 @@ final class ChatStore: ObservableObject {
         }
         guard let id = selectedID, let idx = conversations.firstIndex(where: { $0.id == id }) else { return nil }
         conversations[idx].messages.append(.init(role: .user, text: userText))
-        if conversations[idx].title == "New chat" {
-            conversations[idx].title = String(userText.prefix(40))
+        if conversations[idx].title == "New chat" && conversations[idx].titleSource == .fallback {
+            conversations[idx].title = String(userText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
         }
         conversations[idx].updatedAt = Date()
         let history: [[String: Any]] = conversations[idx].messages.map { ["role": $0.role.rawValue, "content": $0.text] }
@@ -1838,8 +1877,8 @@ final class ChatStore: ObservableObject {
         let user = Message(role: .user, text: text, attachments: atts.compactMap(\.nativeRecord), routeNote: routeNote)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig?.model)
         var conversation = conversations[index]
-        if conversation.title == "New chat" {
-            conversation.title = text.isEmpty ? (user.attachments.first?.name ?? "New chat") : String(text.prefix(40))
+        if conversation.title == "New chat" && conversation.titleSource == .fallback {
+            conversation.title = text.isEmpty ? (user.attachments.first?.name ?? "New chat") : String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
         }
         conversation.updatedAt = Date()
         conversation.isPersisted = true
@@ -2213,6 +2252,10 @@ final class ChatStore: ObservableObject {
                     try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
                         message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try repository.saveConversation(conversations[i])
+                    if !partialAnswer, conversations[i].messages[replyIndex].id
+                        == conversations[i].messages.first(where: { $0.role == .assistant })?.id {
+                        generateTitleIfNeeded(conversationID: id)
+                    }
                     if repository is any NativeMemoryRepository {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded

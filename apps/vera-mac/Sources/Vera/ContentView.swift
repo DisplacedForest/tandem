@@ -70,53 +70,49 @@ struct Placeholder: View {
     }
 }
 
-private struct NativeSidebarLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 8) {
-            configuration.icon
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 18)
-            configuration.title
-        }
-    }
-}
-
 struct SidebarRow: View {
     let convo: Conversation
     var onPin: () -> Void = {}
+    var onRename: (String) -> Void = { _ in }
     var onMemoryExclusion: () -> Void = {}
     var onDelete: () -> Void = {}
     @State private var hovering = false
+    @State private var renaming = false
+    @State private var renameText = ""
+
+    private func beginRename() {
+        renameText = convo.title
+        renaming = true
+    }
+
+    @ViewBuilder private var menuItems: some View {
+        Button("Rename", action: beginRename)
+        Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
+        Button(
+            convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
+            action: onMemoryExclusion)
+        Button("Delete", role: .destructive, action: onDelete)
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Text(convo.title).lineLimit(1)
-            Spacer(minLength: 0)
-            // Hover only reveals the ⋯ menu — no hover background, since macOS drops
-            // onHover-exit events and would leave rows stuck looking selected.
+        SidebarChatRowLabel(title: convo.title) {
             if hovering {
-                Menu {
-                    Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
-                    Button(
-                        convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
-                        action: onMemoryExclusion)
-                    Button("Delete", role: .destructive, action: onDelete)
-                } label: {
+                Menu { menuItems } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             } else if convo.pinned {
-                Image(systemName: "pin.fill").font(.system(size: 9))
-                    .foregroundStyle(Theme.textSecondary).rotationEffect(.degrees(45))
+                Image(systemName: "pin").font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
         .onHover { hovering = $0 }
-        .contextMenu {
-            Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
-            Button(
-                convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
-                action: onMemoryExclusion)
-            Button("Delete", role: .destructive, action: onDelete)
+        .contextMenu { menuItems }
+        .alert("Rename chat", isPresented: $renaming) {
+            TextField("Title", text: $renameText)
+            Button("Rename") { onRename(renameText) }
+            Button("Cancel", role: .cancel) {}
         }
     }
 }
@@ -259,7 +255,7 @@ private struct ChatLoadingSkeleton: View {
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { on = true } }
     }
     private func bar(_ w: CGFloat?) -> some View {
-        RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)).frame(height: 12)
+        RoundedRectangle(cornerRadius: 6).fill(Theme.surfaceHover).frame(height: 12)
             .frame(maxWidth: w ?? .infinity, alignment: .leading)
     }
 }
@@ -299,10 +295,9 @@ private struct EmptyChatView: View {
                 } else {
                     Button { config.showOnboarding = true } label: {
                         Label("\(store.assistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
-                            .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())
-                            .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                 }
@@ -324,15 +319,61 @@ private struct FlowChips: View {
     var body: some View {
         HStack(spacing: 8) {
             ForEach(items, id: \.self) { s in
-                Button { onTap(s) } label: {
-                    Text(s).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 12).padding(.vertical, 7)
-                        .background(Theme.surface).clipShape(Capsule())
-                        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                Button { onTap(s) } label: { StarterChipLabel(title: s) }
+                    .buttonStyle(.plain)
             }
         }
+    }
+}
+
+struct StarterChipLabel: View {
+    let title: String
+    var body: some View {
+        Text(title).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Theme.surface).clipShape(Capsule())
+    }
+}
+
+enum ComposerControlKind {
+    case plus, voice, send(active: Bool, generating: Bool)
+}
+
+struct ComposerControlGlyph: View {
+    let kind: ComposerControlKind
+    static let size: CGFloat = 28
+
+    private var fill: Color {
+        switch kind {
+        case .plus: .clear
+        case .voice: Theme.surfaceHover
+        case .send(let active, let generating): generating ? Theme.accentGlow : (active ? Theme.accent : Theme.surfaceHover)
+        }
+    }
+
+    private var tint: Color {
+        switch kind {
+        case .plus, .voice: Theme.textSecondary
+        case .send(let active, let generating): active || generating ? Theme.onAccent : Theme.textSecondary
+        }
+    }
+
+    private var symbol: String {
+        switch kind {
+        case .plus: "plus"
+        case .voice: "waveform"
+        case .send: "arrow.up"
+        }
+    }
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(tint)
+            .frame(width: Self.size, height: Self.size)
+            .background(Circle().fill(fill))
+            .contentShape(Circle())
     }
 }
 
@@ -395,7 +436,7 @@ struct MessageRow: View {
                     if !message.text.isEmpty {
                         Text(message.text)
                             .font(.system(size: 14)).textSelection(.enabled)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.textPrimary)
                             .padding(.horizontal, 14).padding(.vertical, 10)
                             .background(Theme.userBubble)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -494,8 +535,8 @@ struct NativeToolActivityChip: View {
     private var iconColor: Color {
         switch activity.state {
         case .failed: return Color.orange
-        case .canceled: return Theme.textSecondary
-        default: return Theme.accent
+        case .pending: return Theme.accent
+        default: return Theme.textSecondary
         }
     }
 
@@ -663,7 +704,7 @@ struct ComposerField: View {
                     submit()
                     return .handled
                 }
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Menu {
                     Button("Add files or photos") { pickFiles() }
                     if let prompts = try? store.promptLibrary?.reusablePrompts(), !prompts.isEmpty {
@@ -677,40 +718,29 @@ struct ComposerField: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "plus").font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(.quaternary, in: Circle())
+                    ComposerControlGlyph(kind: .plus)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Add images or insert a saved prompt")
                 Spacer()
-                Button(action: {}) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(.quaternary, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(true)
-                .help("Voice is not available in native chat yet")
+                Button(action: {}) { ComposerControlGlyph(kind: .voice) }
+                    .buttonStyle(.plain)
+                    .disabled(true)
+                    .help("Voice is not available in native chat yet")
                 Button(action: submit) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundStyle(store.generating ? Theme.accentGlow
-                                         : (canSend ? Theme.accent : Theme.textSecondary))
+                    ComposerControlGlyph(kind: .send(active: canSend, generating: store.generating))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
+                .accessibilityLabel("Send")
             }
             Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .stroke(dropTargeted ? Theme.accent : .clear, lineWidth: 2))
+            .stroke(dropTargeted ? Theme.accent : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
         .onAppear {
             focused = true
             installPasteMonitor()
