@@ -305,8 +305,7 @@ struct ShotView: View {
                     if attachDemo {
                         HStack(spacing: 10) {
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(LinearGradient(colors: [Color(red: 0.85, green: 0.35, blue: 0.2),
-                                                              Color(red: 0.96, green: 0.62, blue: 0.32)],
+                                .fill(LinearGradient(colors: [Theme.accent, Theme.accentGlow],
                                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                                 .frame(width: 76, height: 76)
                                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))

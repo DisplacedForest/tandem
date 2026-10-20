@@ -39,12 +39,11 @@ enum ConversationTitleGenerator {
 
     static func shouldGenerate(for conversation: Conversation, isAssistantThread: Bool) -> Bool {
         guard conversation.titleSource == .fallback, !isAssistantThread else { return false }
-        let users = conversation.messages.filter { $0.role == .user }
-        let replies = conversation.messages.filter { $0.role == .assistant }
-        guard conversation.messages.count == 2, users.count == 1, replies.count == 1,
-              let reply = replies.first, reply.state == .complete,
-              !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let user = users.first, !user.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard let user = conversation.messages.first(where: { $0.role == .user }),
+              !user.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let reply = conversation.messages.first(where: { $0.role == .assistant }),
+              reply.state == .complete,
+              !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return true
     }
 

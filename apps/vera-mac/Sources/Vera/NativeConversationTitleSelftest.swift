@@ -7,14 +7,18 @@ final class ConversationTitleStubTransport: NativeChatTransport, @unchecked Send
     private let lock = NSLock()
     private var currentMode: Mode
     private var titleRequestCount = 0
+    private var replyRequestCount = 0
     let gate: NativeSessionGate?
+    let replyGate: NativeSessionGate?
 
-    init(_ mode: Mode, gate: NativeSessionGate? = nil) {
+    init(_ mode: Mode, gate: NativeSessionGate? = nil, replyGate: NativeSessionGate? = nil) {
         currentMode = mode
         self.gate = gate
+        self.replyGate = replyGate
     }
 
     var titleRequests: Int { lock.withLock { titleRequestCount } }
+    var replyRequests: Int { lock.withLock { replyRequestCount } }
     var mode: Mode {
         get { lock.withLock { currentMode } }
         set { lock.withLock { currentMode = newValue } }
@@ -26,9 +30,15 @@ final class ConversationTitleStubTransport: NativeChatTransport, @unchecked Send
         let isTitle = messages.first?.role == "system" && messages.first?.content.contains("title for this conversation") == true
         guard isTitle else {
             let query = messages.last(where: { $0.role == "user" })?.content ?? ""
+            lock.withLock { replyRequestCount += 1 }
+            let replyGate = self.replyGate
             return AsyncThrowingStream { continuation in
-                continuation.yield(NativeChatStreamSnapshot(content: "Answer for \(query).", toolCalls: [], finishReason: "stop"))
-                continuation.finish()
+                let task = Task {
+                    if let replyGate { await replyGate.wait() }
+                    continuation.yield(NativeChatStreamSnapshot(content: "Answer for \(query).", toolCalls: [], finishReason: "stop"))
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
             }
         }
         lock.withLock { titleRequestCount += 1 }
@@ -91,7 +101,11 @@ extension SelfTest {
         try await titleStoreFirstReply()
         try await titleStoreRenameWins()
         try await titleStoreExistingConversation()
-        print("  conversation titles OK (clean, prompt, stream, failure, timeout, first reply, no retitle, rename wins, existing history)")
+        try await titleMigrationKeepsExisting()
+        try await titleStoreQueuedFollowUp()
+        try await titleStoreUserNewChat()
+        try await titleStoreFailedAttemptOnce()
+        print("  conversation titles OK (clean, prompt, stream, failure, timeout, first reply, no retitle, rename wins, existing history, migration keeps, queued follow-up, user New chat, one attempt)")
     }
 
     private static func titleStore(_ transport: ConversationTitleStubTransport, repository: LocalChatRepository) -> ChatStore {
@@ -173,12 +187,109 @@ extension SelfTest {
 
         var four = existing
         four.messages = try repository.messages(conversationID: existing.id)
-        try require(!ConversationTitleGenerator.shouldGenerate(for: four, isAssistantThread: false), "Four messages never qualify")
+        try require(ConversationTitleGenerator.shouldGenerate(for: four, isAssistantThread: false),
+                    "A fallback conversation with a complete first reply qualifies regardless of later messages")
+        four.titleSource = .kept
+        try require(!ConversationTitleGenerator.shouldGenerate(for: four, isAssistantThread: false), "A kept title never qualifies")
         var fresh = Conversation(id: "fresh", title: "Hi", messages: [Message(role: .user, text: "Hi there"), Message(role: .assistant, text: "Hello")], updatedAt: Date())
         try require(ConversationTitleGenerator.shouldGenerate(for: fresh, isAssistantThread: false), "A fresh first exchange qualifies")
         try require(!ConversationTitleGenerator.shouldGenerate(for: fresh, isAssistantThread: true), "The assistant thread never qualifies")
         fresh.messages[1].state = .interrupted
         try require(!ConversationTitleGenerator.shouldGenerate(for: fresh, isAssistantThread: false), "An interrupted reply never qualifies")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    private static func titleMigrationKeepsExisting() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("chat.sqlite")
+        let id = UUID().uuidString
+        do {
+            let before = try LocalChatRepository(url: url)
+            try await before.database.write { db in
+                try db.execute(sql: "ALTER TABLE conversations DROP COLUMN title_source")
+                try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'conversationTitleSourceV18'")
+                try db.execute(sql: """
+                    INSERT INTO conversations (id, title, created_at, updated_at, pinned, memory_excluded)
+                    VALUES (?, 'Trip notes', 0, 0, 0, 0)
+                    """, arguments: [id])
+            }
+        }
+        let after = try LocalChatRepository(url: url)
+        let migrated = try after.listConversations().first { $0.id == id }
+        try require(migrated?.titleSource == .kept, "A conversation that existed before the migration is kept")
+        let created = Conversation(id: UUID().uuidString, title: "New chat", messages: [], updatedAt: Date())
+        try after.saveConversation(created)
+        try require(try after.listConversations().first { $0.id == created.id }?.titleSource == .fallback,
+                    "A conversation created after the migration starts as fallback")
+        var loaded = migrated!
+        loaded.messages = [Message(role: .user, text: "Plan the trip"), Message(role: .assistant, text: "Here is a plan")]
+        try require(!ConversationTitleGenerator.shouldGenerate(for: loaded, isAssistantThread: false), "A kept conversation is never retitled")
+    }
+
+    private static func titleStoreQueuedFollowUp() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let replyGate = NativeSessionGate()
+        let transport = ConversationTitleStubTransport(.reply("Weekend hiking plans"), replyGate: replyGate)
+        let store = titleStore(transport, repository: repository)
+        store.newConversation()
+        try require(store.sendText("Where should I hike this weekend?"), "The first message sends")
+        try await NativeSessionFixture.eventually("The first reply starts streaming") { transport.replyRequests == 1 }
+        try require(store.sendText("Something under ten miles please"), "A follow-up queues while the first reply streams")
+        try require(store.selected?.messages.count == 4, "The queued follow-up adds its turn")
+        await replyGate.release()
+        try await NativeSessionFixture.eventually("Both replies complete and a title is generated") {
+            store.selected?.titleSource == .generated
+                && store.selected?.messages.count == 4
+                && store.selected?.messages.allSatisfy({ $0.state == .complete }) == true
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        try require(store.selected?.title == "Weekend hiking plans", "The queued conversation gets its generated title")
+        try require(transport.titleRequests == 1, "A queued follow-up still produces exactly one title request")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    private static func titleStoreUserNewChat() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let transport = ConversationTitleStubTransport(.reply("Should not apply"))
+        let store = titleStore(transport, repository: repository)
+        store.newConversation()
+        let id = store.selectedID!
+        store.renameConversation(id, title: "New chat")
+        try require(store.sendText("Keep my chosen name"), "The message sends")
+        try require(store.selected?.title == "New chat", "A user title of New chat survives the send")
+        try await NativeSessionFixture.eventually("The reply completes") { store.selected?.messages.last?.state == .complete }
+        try await Task.sleep(for: .milliseconds(100))
+        try require(store.selected?.title == "New chat" && store.selected?.titleSource == .user, "A user title is never replaced")
+        try require(transport.titleRequests == 0, "A user title never requests a generated one")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    private static func titleStoreFailedAttemptOnce() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let transport = ConversationTitleStubTransport(.fail)
+        let store = titleStore(transport, repository: repository)
+        store.newConversation()
+        try require(store.sendText("What is a good houseplant?"), "The message sends")
+        let id = store.selectedID!
+        try await NativeSessionFixture.eventually("The failed title request runs") {
+            transport.titleRequests == 1 && store.selected?.messages.last?.state == .complete
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        transport.mode = .reply("Choosing a houseplant")
+        store.generateTitleIfNeeded(conversationID: id)
+        try require(store.sendText("One that likes low light"), "A follow-up sends")
+        try await NativeSessionFixture.eventually("The follow-up completes") {
+            store.selected?.messages.count == 4 && store.selected?.messages.last?.state == .complete
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        try require(transport.titleRequests == 1, "A failed attempt is not retried in the same launch")
+        try require(store.selected?.titleSource == .fallback, "A failed attempt leaves the fallback title")
         store.conversationTurnLoop?.cancel()
     }
 }

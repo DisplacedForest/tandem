@@ -60,5 +60,5 @@ struct Conversation: Identifiable, Hashable {
 }
 
 enum ConversationTitleSource: String, Codable, Sendable {
-    case fallback, generated, user
+    case fallback, generated, user, kept
 }

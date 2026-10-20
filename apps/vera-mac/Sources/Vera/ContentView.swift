@@ -535,8 +535,8 @@ struct NativeToolActivityChip: View {
     private var iconColor: Color {
         switch activity.state {
         case .failed: return Color.orange
-        case .canceled: return Theme.textSecondary
-        default: return Theme.accent
+        case .pending: return Theme.accent
+        default: return Theme.textSecondary
         }
     }
 
