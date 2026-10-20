@@ -23,6 +23,14 @@ final class SelfTestComfyTransport: @unchecked Sendable {
     var echoPromptID = false
     var holdPrompt = false
     var cancelPrompt = false
+    private var historyFinished = false
+
+    func finishHistory() {
+        lock.lock()
+        historyFinished = true
+        if historyResponses.count > 1 { historyResponses.removeFirst(historyResponses.count - 1) }
+        lock.unlock()
+    }
 
     var lastPromptID: String? {
         lock.lock()
@@ -78,6 +86,7 @@ final class SelfTestComfyTransport: @unchecked Sendable {
         echoPromptID = false
         holdPrompt = false
         cancelPrompt = false
+        historyFinished = false
     }
 
     private func shouldHold(_ url: URL, _ method: String, _ body: Data?) -> Bool {
@@ -111,6 +120,9 @@ final class SelfTestComfyTransport: @unchecked Sendable {
             return (Data("{\"prompt_id\":\"\(id)\",\"number\":3,\"node_errors\":{}}".utf8), 200)
         }
         if method == "GET", path.hasPrefix("history/"), !historyResponses.isEmpty {
+            if historyResponses.count > 1, !historyFinished {
+                return (Data(historyResponses[0].0.replacingOccurrences(of: "{{id}}", with: promptID ?? "").utf8), historyResponses[0].1)
+            }
             let response = historyResponses.count == 1 ? historyResponses[0] : historyResponses.removeFirst()
             let filled = response.0.replacingOccurrences(of: "{{id}}", with: promptID ?? "")
             return (Data(filled.utf8), response.1)
@@ -287,6 +299,7 @@ extension SelfTest {
             {"{{id}}":{"status":{"status_str":"success","completed":true},"outputs":{"save":{"images":[{"filename":"tandem_00001_.png","subfolder":"","type":"output"}]}}}}
             """)
             transport.respond("GET", "view", status: 200, data: pngData)
+            transport.finishHistory()
             transport.events([
                 .progress(completed: 10, total: 40, promptID: nil),
                 .progress(completed: 40, total: 40, promptID: nil),
@@ -394,11 +407,14 @@ extension SelfTest {
             }
             pendingRunner.cancel()
             _ = await pendingRunner.result
+            transport.finishHistory()
             let deleteStart = ContinuousClock.now
-            while transport.requests.filter({ $0.method == "GET" && $0.path == "queue" }).count < 2,
+            while transport.requests.filter({ $0.method == "GET" && $0.path == "queue" }).count < 2
+                  || transport.requests.last?.path.hasPrefix("history/") != true,
                   deleteStart.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
+            try await Task.sleep(for: .milliseconds(80))
             guard let deletion = transport.requests.first(where: { $0.method == "POST" && $0.path == "queue" }),
                   let deletedIDs = deletion.body?["delete"] as? [String], deletedIDs.count == 1,
                   deletedIDs[0] == transport.lastPromptID,
@@ -444,11 +460,13 @@ extension SelfTest {
             }
             heldRunner.cancel()
             _ = await heldRunner.result
+            transport.finishHistory()
             let heldWait = ContinuousClock.now
             while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }),
                   heldWait.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
+            try await Task.sleep(for: .milliseconds(80))
             guard let heldDelete = transport.requests.first(where: { $0.method == "POST" && $0.path == "queue" }),
                   (heldDelete.body?["delete"] as? [String]) == [transport.lastPromptID ?? ""],
                   !transport.requests.contains(where: { $0.path == "interrupt" }) else {
@@ -505,7 +523,12 @@ extension SelfTest {
             }
             finishedRunner.cancel()
             _ = await finishedRunner.result
-            try await Task.sleep(for: .milliseconds(300))
+            transport.finishHistory()
+            let finishedWait = ContinuousClock.now
+            while transport.requests.last?.path.hasPrefix("history/") != true || !transport.requests.contains(where: { $0.method == "GET" && $0.path == "queue" }),
+                  finishedWait.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
             guard transport.requests.contains(where: { $0.method == "GET" && $0.path == "queue" }),
                   !transport.requests.contains(where: { $0.path == "interrupt" }),
                   !transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }) else {

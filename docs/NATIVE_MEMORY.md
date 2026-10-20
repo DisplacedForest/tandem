@@ -2,7 +2,7 @@
 
 Vera's personal memory is an optional feature in the Mac app. It starts off for existing and new installations. When it is off, Vera performs no memory retrieval, embedding, proposal generation, maintenance, or memory request assembly.
 
-Approved memory is stored only on this Mac, in the same SQLite database as native conversation history. The app does not synchronize it to vera-api, an account, or another device. Generating proposals and embeddings is different: it sends the current turn and your existing memories to the configured model endpoint. Settings, Memory names that endpoint's host and says whether it's on this Mac or remote. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
+Approved memory is stored only on this Mac, in the same SQLite database as native conversation history. The app does not synchronize it to vera-api, an account, or another device. Generating proposals and embeddings is different: it sends the current turn and your existing memories to the memory endpoint, a separate OpenAI-compatible endpoint set in Settings, Memory with its own URL, keychain API key, embeddings model, extraction model and optional rerank model. Settings names that endpoint's host and says whether it's on this Mac or remote, and shows whether it is connected, unreachable or not configured. Switching chat profiles never changes where memory calls go. Upgrading from a version that used the chat endpoint for memory copies that endpoint into the memory endpoint so nothing turns off. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
 
 ## Library
 
@@ -21,7 +21,7 @@ Each record also has an internal category and bank. Banks scope recall without r
 
 With embeddings unset, native chat searches approved memory locally using SQLite FTS5. It selects at most eight records within a 2,800-byte evidence budget, ranked by lexical relevance with stable ties. No embedding or extraction call is needed for this recall. Selected bank scope, approval, expiry, and source availability are checked again after model admission, before each native HTTP request. A changed memory context stops the turn visibly instead of sending a stale snapshot. Lexical retrieval can miss paraphrases that share no terms.
 
-An explicitly configured embeddings model retains semantic recall at the active OpenAI-compatible endpoint. Its limits are:
+An explicitly configured embeddings model on the memory endpoint retains semantic recall. Its limits are:
 
 * 8 selected records per turn
 * about 700 memory-context tokens per turn
@@ -34,7 +34,7 @@ An explicitly configured embeddings model retains semantic recall at the active 
 
 The saved system prompt stays first. A clearly delimited block of approved, unexpired, unsuppressed memory follows it, then completed local conversation history. The block says that memory is untrusted background context, not instructions. Pending, deleted, dismissed, suppressed, expired, irrelevant, malformed, and failed-retrieval records are excluded.
 
-If a configured embeddings service fails, or local retrieval fails, Vera sends the ordinary chat request without memory and shows an understandable local status. Leaving extraction unconfigured disables suggestions, but approved records remain available to local recall. Native streaming, endpoint selection, conversation history, the saved system prompt, the tool loop, Apple Reminders, and tool preferences continue to work.
+If the memory endpoint cannot be reached, recall falls back to the local lexical search for that turn and the status says so. If local retrieval fails, Vera sends the ordinary chat request without memory and shows an understandable local status. A completed turn whose extraction fails because the endpoint is unreachable is kept in a short in-memory queue and retried once the endpoint answers again or memory settings are saved; the queue does not survive a relaunch. Leaving extraction unconfigured disables suggestions, but approved records remain available to local recall. Native streaming, endpoint selection, conversation history, the saved system prompt, the tool loop, Apple Reminders, and tool preferences continue to work.
 
 After an eligible completed turn, the optional extraction model receives only bounded user and assistant turn text plus a bounded summary of existing approved memory. It returns structured create, update, merge, suppress, expire, or delete proposals, and it can also suggest evidence-backed records (counts and changes to them, care, facts, corrections, and retractions) taken from the user's own words. Empty, private, excluded, failed, interrupted, or tool-only turns do not create proposals. A conversation can be excluded from memory suggestions from its sidebar menu.
 
@@ -61,7 +61,7 @@ Native memory covers these capabilities:
 
 The design deliberately holds these boundaries:
 
-* Approved memory has no server runtime dependencies and is stored only on this Mac. Optional extraction and embeddings use the configured model endpoint.
+* Approved memory has no server runtime dependencies and is stored only on this Mac. Optional extraction, embeddings and rerank use the memory endpoint only.
 * The only automatic removal is the expiry groom, and every removal writes an inspectable audit entry.
 * Credentials, authorization headers, and action tokens are never stored as memory. Provider settings, function code, and hidden reasoning never appear in a memory's text. Under Suggest for review only, an accepted memory may keep a source message that contains them.
 * Maintenance runs only while the app is active and memory is enabled.
@@ -70,7 +70,7 @@ The design deliberately holds these boundaries:
 
 ## Review and maintenance
 
-The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are immediately available to lexical recall. Embeddings are prepared only when a model is explicitly configured. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
+The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are immediately available to lexical recall. Embeddings are prepared only when a model is explicitly configured; approved records that still lack one are embedded at launch, after memory settings are saved and after a successful endpoint test, with progress shown in Settings, Memory. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
 
 Maintenance never performs network work when memory is off or the optional memory service is unavailable. Records expiring today and capacity pressure create proposals; they do not delete or prune records on their own.
 

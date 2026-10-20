@@ -26,6 +26,37 @@ enum NativeMemoryServiceState: Equatable, Sendable {
     }
 }
 
+enum NativeMemoryEndpointStatus: Equatable, Sendable {
+    case notConfigured
+    case checking
+    case connected(models: Int)
+    case unreachable(String)
+
+    var label: String {
+        switch self {
+        case .notConfigured: "No memory endpoint. Recall uses local search only."
+        case .checking: "Checking the memory endpoint"
+        case .connected(let models): models == 1 ? "Connected, 1 model available" : "Connected, \(models) models available"
+        case .unreachable(let detail): "Unreachable: \(detail)"
+        }
+    }
+}
+
+struct NativeMemoryIndexingProgress: Equatable, Sendable {
+    var completed: Int
+    var total: Int
+
+    var label: String { "Preparing memory \(completed) of \(total)" }
+}
+
+struct NativeMemoryQueuedTurn {
+    let user: String
+    let assistant: Message
+    let source: NativeMemoryTurnSource?
+    let turnKey: String
+    let conversationExcluded: Bool
+}
+
 enum NativeMemorySensitiveHandling: String, Codable, CaseIterable, Sendable {
     case neverStore
     case reviewOnly
@@ -247,13 +278,23 @@ struct NativeMemoryServiceConfiguration: Sendable {
     let apiKey: String?
     let embeddingsModel: String
     let extractionModel: String
+    var rerankModel: String = ""
 
     var embeddingsURL: URL { baseURL.appendingPathComponent("embeddings") }
     var completionsURL: URL { baseURL.appendingPathComponent("chat/completions") }
+    var rerankURL: URL { baseURL.appendingPathComponent("rerank") }
+    var modelsURL: URL { baseURL.appendingPathComponent("models") }
+}
+
+struct NativeMemoryRerankScore: Equatable, Sendable {
+    let index: Int
+    let score: Double
 }
 
 protocol NativeMemoryServing: Sendable {
     func embed(_ text: String) async throws -> [Double]
+    func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore]
+    func probe() async throws -> [String]
     func proposals(
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
@@ -316,6 +357,13 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
     case unavailable(String)
     case sensitiveData
 
+    var isEndpointOutage: Bool {
+        switch self {
+        case .timeout, .unavailable, .authentication: true
+        default: false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .notConfigured: "The optional memory model is not configured"
@@ -328,10 +376,62 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
     }
 }
 
+extension NativeMemoryServing {
+    func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore] { [] }
+    func probe() async throws -> [String] { [] }
+}
+
 struct NativeMemoryService: NativeMemoryServing, Sendable {
     let configuration: NativeMemoryServiceConfiguration
     var session: URLSession = .shared
     var admission: NativeInferenceAdmission? = nil
+
+    func probe() async throws -> [String] {
+        var request = URLRequest(url: configuration.modelsURL)
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        authorize(&request)
+        do {
+            let (data, response) = try await session.data(for: request)
+            try validate(response, data: data)
+            return try NativeChatClient.modelIDs(from: data)
+        } catch let error as URLError where error.code == .timedOut {
+            throw NativeMemoryServiceError.timeout
+        } catch let error as URLError {
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
+        }
+    }
+
+    func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore] {
+        guard !configuration.rerankModel.isEmpty, !documents.isEmpty else { return [] }
+        guard !NativeMemorySafety.containsSensitiveData(query) else { throw NativeMemoryServiceError.sensitiveData }
+        var request = URLRequest(url: configuration.rerankURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorize(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": configuration.rerankModel,
+            "query": NativeMemorySafety.boundedUTF8(query, maximumBytes: 4_000),
+            "documents": documents.map { NativeMemorySafety.boundedUTF8($0, maximumBytes: 4_000) },
+            "top_n": documents.count,
+        ])
+        do {
+            let (data, response) = try await session.data(for: request)
+            try validate(response, data: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rows = object["results"] as? [[String: Any]] else { throw NativeMemoryServiceError.malformed }
+            let scores = rows.compactMap { row -> NativeMemoryRerankScore? in
+                guard let index = (row["index"] as? NSNumber)?.intValue, documents.indices.contains(index),
+                      let score = (row["relevance_score"] as? NSNumber)?.doubleValue, score.isFinite else { return nil }
+                return NativeMemoryRerankScore(index: index, score: score)
+            }
+            guard !scores.isEmpty else { throw NativeMemoryServiceError.malformed }
+            return scores.sorted { $0.score > $1.score }
+        } catch let error as URLError where error.code == .timedOut {
+            throw NativeMemoryServiceError.timeout
+        }
+    }
 
     func embed(_ text: String) async throws -> [Double] {
         guard !configuration.embeddingsModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }

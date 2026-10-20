@@ -421,6 +421,86 @@ struct NativeToolEditor: View {
     }
 }
 
+struct MemoryEndpointEditor: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
+    @State private var testing = false
+    @State private var testResult: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField("Base URL", text: config.memoryEndpointBinding(\.baseURL), prompt: Text("http://my-memory-host:11434/v1"))
+                .autocorrectionDisabled()
+            if let env = config.memoryEndpointEnvironmentOverride {
+                InfoTip(text: "Set by \(env) in the environment. The environment value wins; change it there.")
+            } else {
+                InfoTip(text: "The OpenAI-compatible endpoint that serves your embeddings, extraction and rerank models. Switching chat profiles never changes it.")
+            }
+        }
+        SecureField("API key", text: $config.memoryEndpointAPIKey, prompt: Text("Optional"))
+        if let credentialError = config.credentialError {
+            Text(credentialError).font(.system(size: 11)).foregroundStyle(.orange)
+        }
+        HStack(spacing: 10) {
+            Button("Test memory endpoint") { test() }.disabled(testing)
+            if testing { ProgressView().controlSize(.small) }
+            if let testResult {
+                Text(testResult).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer(minLength: 0)
+        }
+        Text(statusLine)
+            .font(.system(size: 11))
+            .foregroundStyle(statusColor)
+            .accessibilityLabel("Memory endpoint status: \(statusLine)")
+        if let progress = store.memoryIndexingProgress {
+            HStack(spacing: 8) {
+                ProgressView(value: Double(progress.completed), total: Double(max(progress.total, 1)))
+                    .progressViewStyle(.linear).frame(width: 160)
+                Text(progress.label).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        Color.clear.frame(height: 0).task { await store.probeMemoryEndpoint() }
+    }
+
+    private var statusLine: String {
+        if !config.nativeSettings.memoryEndpoint.isConfigured && config.memoryEndpointEnvironmentOverride == nil {
+            return NativeMemoryEndpointStatus.notConfigured.label
+        }
+        return store.memoryEndpointStatus.label
+    }
+
+    private var statusColor: Color {
+        switch store.memoryEndpointStatus {
+        case .unreachable: .orange
+        case .connected: .green
+        default: Theme.textSecondary
+        }
+    }
+
+    private func test() {
+        testing = true
+        testResult = nil
+        Task {
+            defer { testing = false }
+            guard let resolved = config.memoryEndpointResolved else {
+                testResult = "Enter an HTTP or HTTPS memory endpoint ending in /v1."
+                return
+            }
+            do {
+                let models = try await ConnectionTest.models(base: resolved.baseURL.absoluteString, apiKey: resolved.apiKey ?? "")
+                config.cacheMemoryModels(models)
+                try config.save()
+                store.updateNativeMemory(settings: config.nativeSettings.memory, service: config.nativeMemoryService)
+                testResult = models.isEmpty ? "Reachable, but it lists no models." : "Found \(models.count) model\(models.count == 1 ? "" : "s")."
+            } catch {
+                testResult = error.localizedDescription
+                _ = await store.probeMemoryEndpoint()
+            }
+        }
+    }
+}
+
 struct NativeMemorySettingsTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
@@ -460,22 +540,26 @@ struct NativeMemorySettingsTab: View {
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Section("Compatible models") {
-                Text("Generating proposals and embeddings sends the current turn and your existing memories to the configured model endpoint.")
+            Section("Memory endpoint") {
+                MemoryEndpointEditor()
+            }
+            Section("Memory models") {
+                Text("Generating proposals and embeddings sends the current turn and your existing memories to the memory endpoint above, never to the chat endpoint.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                if let location = config.memoryEndpointLocation {
-                    Text(location)
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                }
                 DiscoveredModelPicker(title: "Embeddings model",
-                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      models: config.nativeSettings.memoryEndpoint.discoveredModels,
                                       selection: config.memoryStringBinding(\.embeddingsModel))
-                Text("Leave embeddings unset to search approved memory locally. An optional embeddings model uses the active OpenAI-compatible endpoint for semantic recall. Model-suggested changes still require an extraction model and your review.")
+                Text("Leave embeddings unset to search approved memory locally. An embeddings model on the memory endpoint enables semantic recall. Model-suggested changes still require an extraction model and your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 DiscoveredModelPicker(title: "Extraction model",
-                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      models: config.nativeSettings.memoryEndpoint.discoveredModels,
                                       selection: config.memoryStringBinding(\.extractionModel))
                 Text("The extraction model only creates reviewable proposals from bounded completed turns and natural-language requests in Memory.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                DiscoveredModelPicker(title: "Rerank model",
+                                      models: config.nativeSettings.memoryEndpoint.discoveredModels,
+                                      selection: config.memoryEndpointBinding(\.rerankModel))
+                Text("Optional. A reranker on the memory endpoint can reorder recalled memory. Leave it unset to skip rerank calls.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Section("Recall scope") {
@@ -491,7 +575,7 @@ struct NativeMemorySettingsTab: View {
             }
             Section {
                 HStack {
-                    Text(saved ? "Saved" : store.memoryServiceState.label)
+                    Text(saved ? "Saved" : (store.memoryIndexingProgress?.label ?? store.memoryServiceState.label))
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     Button("Save memory settings") {
@@ -888,6 +972,8 @@ private struct SaveSection: View {
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
+            memorySettings: config.nativeSettings.memory,
+            memoryService: config.nativeMemoryService,
             capabilityDeclarations: config.capabilityTools.declarations)
         status = "Saved"
     }

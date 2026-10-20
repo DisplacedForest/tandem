@@ -59,6 +59,12 @@ final class ConfigStore: ObservableObject {
     private var blockedLegacyMigrationID: String?
 
     static let visionBridgeCredentialID = "vision-bridge"
+    static let memoryCredentialID = "memory-endpoint"
+    @Published var memoryEndpointAPIKey: String {
+        didSet {
+            if oldValue != memoryEndpointAPIKey { queueCredential(memoryEndpointAPIKey, for: Self.memoryCredentialID) }
+        }
+    }
 
     static let envNames: [String: String] = [
         "model_base": "VERA_MODEL_BASE", "model_api_key": "VERA_MODEL_API_KEY",
@@ -77,14 +83,16 @@ final class ConfigStore: ObservableObject {
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
         var unavailable: Set<String> = []
-        for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]) {
+        for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID, Self.memoryCredentialID]) {
             do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
         let retiredKeys = ["base", "api_key", "owui_email", "owui_password"]
         var cleaned = loaded
         for key in retiredKeys { cleaned.removeValue(forKey: key) }
-        if cleaned.count != loaded.count { try? writeConfiguration(cleaned) }
+        let migratedMemoryEndpoint = NativeChatSettings.needsMemoryEndpointMigration(loaded) && settings.memoryEndpoint.isConfigured
+        if migratedMemoryEndpoint { cleaned = settings.merging(into: cleaned) }
+        if cleaned.count != loaded.count || migratedMemoryEndpoint { try? writeConfiguration(cleaned) }
         raw = cleaned
         nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs)
         nativeSettings = settings
@@ -95,6 +103,7 @@ final class ConfigStore: ObservableObject {
         piCommittedSettings = settings
         unavailableCredentials = unavailable
         visionBridgeAPIKey = keys[Self.visionBridgeCredentialID] ?? ""
+        memoryEndpointAPIKey = keys[Self.memoryCredentialID] ?? ""
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
         self.credentialStore = credentialStore
         self.writeConfiguration = writeConfiguration
@@ -102,6 +111,13 @@ final class ConfigStore: ObservableObject {
         showOnboarding = !settings.hasValidConfiguration
             && settings.onboardingState != .skipped
             && settings.onboardingState != .complete
+        if migratedMemoryEndpoint, keys[Self.memoryCredentialID] == nil,
+           let profile = settings.activeProfile, let chatKey = keys[profile.id], !chatKey.isEmpty,
+           !unavailable.contains(Self.memoryCredentialID) {
+            nativeAPIKeys[Self.memoryCredentialID] = chatKey
+            legacyCredentials[Self.memoryCredentialID] = chatKey
+            memoryEndpointAPIKey = chatKey
+        }
         if let profile = settings.activeProfile, keys[profile.id] == nil,
            let legacy = loaded["model_api_key"] as? String, !legacy.isEmpty {
             if unavailable.contains(profile.id) { blockedLegacyMigrationID = profile.id }
@@ -390,12 +406,35 @@ final class ConfigStore: ObservableObject {
             environment: ProcessInfo.processInfo.environment)
     }
 
+    var memoryEndpointResolved: NativeMemoryEndpointConfig? {
+        NativeMemoryEndpointConfig.resolve(
+            endpoint: nativeSettings.memoryEndpoint, memory: nativeSettings.memory,
+            apiKey: memoryEndpointAPIKey, environment: ProcessInfo.processInfo.environment)
+    }
+
     var nativeMemoryService: NativeMemoryService? {
-        guard let config = nativeResolved else { return nil }
+        guard let config = memoryEndpointResolved else { return nil }
         return NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
             baseURL: config.baseURL, apiKey: config.apiKey,
-            embeddingsModel: nativeSettings.memory.embeddingsModel,
-            extractionModel: nativeSettings.memory.extractionModel), admission: .configured())
+            embeddingsModel: config.embeddingsModel,
+            extractionModel: config.extractionModel,
+            rerankModel: config.rerankModel), admission: .configured())
+    }
+
+    func memoryEndpointBinding(_ keyPath: WritableKeyPath<NativeMemoryEndpointSettings, String>) -> Binding<String> {
+        Binding(
+            get: { self.nativeSettings.memoryEndpoint[keyPath: keyPath] },
+            set: { self.nativeSettings.memoryEndpoint[keyPath: keyPath] = $0 })
+    }
+
+    func cacheMemoryModels(_ models: [String]) {
+        nativeSettings.memoryEndpoint.discoveredModels = Array(Set(models)).sorted()
+        nativeSettings.memoryEndpoint.lastDiscoveryAt = Date()
+    }
+
+    var memoryEndpointEnvironmentOverride: String? {
+        let env = ProcessInfo.processInfo.environment
+        return (env["VERA_MEMORY_BASE"]?.isEmpty == false) ? "VERA_MEMORY_BASE" : nil
     }
 
     func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {
@@ -570,9 +609,8 @@ final class ConfigStore: ObservableObject {
     }
 
     var memoryEndpointLocation: String? {
-        let url = nativeResolved?.baseURL ?? URL(string: activeNativeProfile?.baseURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-        guard let host = url?.host, !host.isEmpty else { return nil }
-        return "Model endpoint: \(host), \(Self.isLoopbackHost(host) ? "on this Mac" : "remote")."
+        guard let host = memoryEndpointResolved?.baseURL.host, !host.isEmpty else { return nil }
+        return "Memory endpoint: \(host), \(Self.isLoopbackHost(host) ? "on this Mac" : "remote")."
     }
 
     static func isLoopbackHost(_ host: String) -> Bool {
