@@ -60,6 +60,7 @@ final class ConfigStore: ObservableObject {
 
     static let visionBridgeCredentialID = "vision-bridge"
     static let memoryCredentialID = "memory-endpoint"
+    private var memoryCredentialLoaded = false
     @Published var memoryEndpointAPIKey: String {
         didSet {
             if oldValue != memoryEndpointAPIKey { queueCredential(memoryEndpointAPIKey, for: Self.memoryCredentialID) }
@@ -95,8 +96,7 @@ final class ConfigStore: ObservableObject {
         var cleaned = loaded
         for key in retiredKeys { cleaned.removeValue(forKey: key) }
         let migratedMemoryEndpoint = NativeChatSettings.needsMemoryEndpointMigration(loaded) && settings.memoryEndpoint.isConfigured
-        if migratedMemoryEndpoint { cleaned = settings.merging(into: cleaned) }
-        if cleaned.count != loaded.count || migratedMemoryEndpoint { try? writeConfiguration(cleaned) }
+        if cleaned.count != loaded.count { try? writeConfiguration(cleaned) }
         raw = cleaned
         nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs)
         nativeSettings = settings
@@ -115,13 +115,6 @@ final class ConfigStore: ObservableObject {
         showOnboarding = !settings.hasValidConfiguration
             && settings.onboardingState != .skipped
             && settings.onboardingState != .complete
-        if migratedMemoryEndpoint, keys[Self.memoryCredentialID] == nil,
-           let profile = settings.activeProfile, let chatKey = keys[profile.id], !chatKey.isEmpty,
-           !unavailable.contains(Self.memoryCredentialID) {
-            nativeAPIKeys[Self.memoryCredentialID] = chatKey
-            legacyCredentials[Self.memoryCredentialID] = chatKey
-            memoryEndpointAPIKey = chatKey
-        }
         if let profile = settings.activeProfile, keys[profile.id] == nil,
            let legacy = loaded["model_api_key"] as? String, !legacy.isEmpty {
             if unavailable.contains(profile.id) { blockedLegacyMigrationID = profile.id }
@@ -130,6 +123,14 @@ final class ConfigStore: ObservableObject {
                 legacyCredentials[profile.id] = legacy
             }
         }
+        if migratedMemoryEndpoint, keys[Self.memoryCredentialID] == nil,
+           let profile = settings.activeProfile, let chatKey = nativeAPIKeys[profile.id], !chatKey.isEmpty,
+           !unavailable.contains(Self.memoryCredentialID) {
+            nativeAPIKeys[Self.memoryCredentialID] = chatKey
+            legacyCredentials[Self.memoryCredentialID] = chatKey
+            memoryEndpointAPIKey = chatKey
+        }
+        memoryCredentialLoaded = memoryEndpointWanted
     }
 
     subscript(_ key: String) -> String {
@@ -411,7 +412,8 @@ final class ConfigStore: ObservableObject {
     }
 
     var memoryEndpointResolved: NativeMemoryEndpointConfig? {
-        NativeMemoryEndpointConfig.resolve(
+        loadMemoryCredentialIfNeeded()
+        return NativeMemoryEndpointConfig.resolve(
             endpoint: nativeSettings.memoryEndpoint, memory: nativeSettings.memory,
             apiKey: memoryEndpointAPIKey, environment: ProcessInfo.processInfo.environment)
     }
@@ -428,7 +430,20 @@ final class ConfigStore: ObservableObject {
     func memoryEndpointBinding(_ keyPath: WritableKeyPath<NativeMemoryEndpointSettings, String>) -> Binding<String> {
         Binding(
             get: { self.nativeSettings.memoryEndpoint[keyPath: keyPath] },
-            set: { self.nativeSettings.memoryEndpoint[keyPath: keyPath] = $0 })
+            set: { value in
+                self.nativeSettings.memoryEndpoint[keyPath: keyPath] = value
+                self.loadMemoryCredentialIfNeeded()
+            })
+    }
+
+    func loadMemoryCredentialIfNeeded() {
+        guard !memoryCredentialLoaded, nativeSettings.memoryEndpoint.isConfigured,
+              pendingCredentials[Self.memoryCredentialID] == nil, memoryEndpointAPIKey.isEmpty else { return }
+        memoryCredentialLoaded = true
+        guard let stored = try? credentialStore.read(for: Self.memoryCredentialID), !stored.isEmpty else { return }
+        nativeAPIKeys[Self.memoryCredentialID] = stored
+        savedCredentials[Self.memoryCredentialID] = stored
+        memoryEndpointAPIKey = stored
     }
 
     func cacheMemoryModels(_ models: [String]) {

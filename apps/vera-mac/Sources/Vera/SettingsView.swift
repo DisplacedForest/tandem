@@ -492,6 +492,7 @@ struct MemoryEndpointEditor: View {
                 config.cacheMemoryModels(models)
                 try config.save()
                 store.updateNativeMemory(settings: config.nativeSettings.memory, service: config.nativeMemoryService)
+                _ = await store.probeMemoryEndpoint()
                 testResult = models.isEmpty ? "Reachable, but it lists no models." : "Found \(models.count) model\(models.count == 1 ? "" : "s")."
             } catch {
                 testResult = error.localizedDescription

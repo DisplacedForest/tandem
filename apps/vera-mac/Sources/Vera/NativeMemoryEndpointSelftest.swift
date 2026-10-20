@@ -5,6 +5,7 @@ final class SelfTestOutageMemoryService: NativeMemoryServing, @unchecked Sendabl
     fileprivate var embeds = 0
     fileprivate var extracts = 0
     var failing = true
+    var supportsSemanticRecall: Bool { true }
 
     var embedCalls: Int { lock.lock(); defer { lock.unlock() }; return embeds }
     var extractionCalls: Int { lock.lock(); defer { lock.unlock() }; return extracts }
@@ -61,10 +62,11 @@ final class MemoryEndpointWireState: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [(path: String, body: [String: Any]?)] = []
     var modelsStatus = 200
+    var refuseConnections = false
 
     var requests: [(path: String, body: [String: Any]?)] { lock.lock(); defer { lock.unlock() }; return recorded }
     func record(_ path: String, _ body: [String: Any]?) { lock.lock(); recorded.append((path, body)); lock.unlock() }
-    func reset() { lock.lock(); recorded = []; modelsStatus = 200; lock.unlock() }
+    func reset() { lock.lock(); recorded = []; modelsStatus = 200; refuseConnections = false; lock.unlock() }
 }
 
 final class MemoryEndpointWire: URLProtocol, @unchecked Sendable {
@@ -96,6 +98,10 @@ final class MemoryEndpointWire: URLProtocol, @unchecked Sendable {
             status = Self.state.modelsStatus
             body = ["object": "list", "data": [["id": "qwen3-embedding"], ["id": "qwen3-reranker"]]]
         } else if url.path.hasSuffix("/embeddings") {
+            if Self.state.refuseConnections {
+                client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+                return
+            }
             body = ["data": [["embedding": [0.5, 0.5]]]]
         } else {
             body = ["error": ["message": "unexpected"]]
@@ -175,14 +181,32 @@ extension SelfTest {
               config.nativeMemoryService?.configuration.apiKey == "tower-key" else {
             fail("config store migration")
         }
-        guard let firstWrite = written.configs.first,
+        guard written.configs.isEmpty else { fail("startup must not persist the migration before the credential copy") }
+        let relaunched = ConfigStore(credentialStore: credentials, readConfiguration: { chatCoupled }, writeConfiguration: { _ in })
+        guard relaunched.memoryEndpointAPIKey == "tower-key", relaunched.memoryEndpointResolved?.baseURL.host == "tower.example" else {
+            fail("migration must repeat on relaunch until saved")
+        }
+        do { try config.save() } catch { fail("save \(error)") }
+        guard credentials.values[ConfigStore.memoryCredentialID] == "tower-key",
+              let firstWrite = written.configs.first,
               let writtenChat = firstWrite["native_chat"] as? [String: Any],
               let writtenEndpoint = writtenChat["memoryEndpoint"] as? [String: Any],
               writtenEndpoint["baseURL"] as? String == "http://tower.example:11434/v1" else {
-            fail("migrated endpoint persisted at startup")
+            fail("credential copied to the memory id and endpoint persisted on save")
         }
-        do { try config.save() } catch { fail("save \(error)") }
-        guard credentials.values[ConfigStore.memoryCredentialID] == "tower-key" else { fail("credential copied to the memory id") }
+        let legacyRaw: [String: Any] = ["model_api_key": "legacy-key", "native_chat": [
+            "version": 3,
+            "profiles": [["id": "old", "name": "Old", "baseURL": "http://old.example/v1", "discoveredModels": ["emb"], "selectedModel": "emb"]],
+            "activeProfileID": "old",
+            "memory": ["enabled": true, "embeddingsModel": "emb", "extractionModel": "", "bankScope": "all", "searchPastChats": false, "generateFromChats": false],
+        ]]
+        let legacyCredentials = NativeCredentialFixtureStore()
+        let legacyConfig = ConfigStore(credentialStore: legacyCredentials, readConfiguration: { legacyRaw }, writeConfiguration: { _ in })
+        guard legacyConfig.memoryEndpointAPIKey == "legacy-key" else { fail("legacy model_api_key did not reach the memory credential") }
+        do { try legacyConfig.save() } catch { fail("legacy save \(error)") }
+        guard legacyCredentials.values["old"] == "legacy-key", legacyCredentials.values[ConfigStore.memoryCredentialID] == "legacy-key" else {
+            fail("legacy key copies")
+        }
         for configuration in written.configs {
             let text = String(decoding: try! JSONSerialization.data(withJSONObject: configuration), as: UTF8.self)
             if text.contains("tower-key") { fail("key leaked into config.json") }
@@ -195,6 +219,13 @@ extension SelfTest {
         }
         config.nativeSettings.memoryEndpoint.baseURL = ""
         guard config.nativeMemoryService == nil, config.memoryEndpointLocation == nil else { fail("unset endpoint still resolves") }
+        do { try config.save() } catch { fail("save unset \(error)") }
+        let restored = ConfigStore(credentialStore: credentials, readConfiguration: { written.configs.last! }, writeConfiguration: { _ in })
+        guard restored.memoryEndpointAPIKey.isEmpty else { fail("deferred read loaded a key with no endpoint") }
+        restored.memoryEndpointBinding(\.baseURL).wrappedValue = "http://tower.example:11434/v1"
+        guard restored.memoryEndpointAPIKey == "tower-key", restored.nativeMemoryService?.configuration.apiKey == "tower-key" else {
+            fail("existing key not loaded when the endpoint was restored")
+        }
         config.nativeSettings.memoryEndpoint.baseURL = "https://memory.example/v1"
         config.memoryEndpointAPIKey = "memory-key"
         do { try config.save() } catch { fail("save after key change \(error)") }
@@ -233,6 +264,14 @@ extension SelfTest {
                 fail("probe accepted a 503")
             } catch let error as NativeMemoryServiceError {
                 guard error.isEndpointOutage else { fail("probe outage classification") }
+            }
+            MemoryEndpointWire.state.reset()
+            MemoryEndpointWire.state.refuseConnections = true
+            do {
+                _ = try await wired.embed("coffee")
+                fail("embed succeeded against a refused connection")
+            } catch let error as NativeMemoryServiceError {
+                guard error.isEndpointOutage else { fail("refused connection was not an outage: \(error)") }
             }
         } catch {
             fail("wire \(error)")
@@ -278,6 +317,14 @@ extension SelfTest {
                 fail("drain \(recovered) \(store.queuedMemoryTurns.count) \(outage.extractionCalls) \(store.memoryProposals.count)")
             }
             guard store.memoryRecallDescription.contains("semantic") else { fail("recall description \(store.memoryRecallDescription)") }
+            var envOnly = settings
+            envOnly.embeddingsModel = ""
+            store.updateNativeMemory(settings: envOnly, service: outage)
+            let before = outage.embedCalls
+            _ = await store.selectApprovedMemory("tea", settings: envOnly, service: outage)
+            guard outage.embedCalls == before + 1, store.memoryRecallDescription.contains("semantic") else {
+                fail("effective embeddings model from the service was ignored")
+            }
             store.updateNativeMemory(settings: settings, service: nil)
             guard store.memoryRecallDescription.contains("local search only") else { fail("recall description without endpoint") }
         } catch {

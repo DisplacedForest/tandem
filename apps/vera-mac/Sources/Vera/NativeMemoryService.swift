@@ -292,6 +292,7 @@ struct NativeMemoryRerankScore: Equatable, Sendable {
 }
 
 protocol NativeMemoryServing: Sendable {
+    var supportsSemanticRecall: Bool { get }
     func embed(_ text: String) async throws -> [Double]
     func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore]
     func probe() async throws -> [String]
@@ -377,6 +378,7 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
 }
 
 extension NativeMemoryServing {
+    var supportsSemanticRecall: Bool { false }
     func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore] { [] }
     func probe() async throws -> [String] { [] }
 }
@@ -385,6 +387,8 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
     let configuration: NativeMemoryServiceConfiguration
     var session: URLSession = .shared
     var admission: NativeInferenceAdmission? = nil
+
+    var supportsSemanticRecall: Bool { !configuration.embeddingsModel.isEmpty }
 
     func probe() async throws -> [String] {
         var request = URLRequest(url: configuration.modelsURL)
@@ -430,6 +434,8 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
             return scores.sorted { $0.score > $1.score }
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
+        } catch let error as URLError {
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
         }
     }
 
@@ -455,6 +461,8 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
             return values.map(\.doubleValue)
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
+        } catch let error as URLError {
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
         }
     }
 
@@ -584,6 +592,8 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
                 domainEntries: domain.candidates, skippedDomainEntries: domain.skipped)
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
+        } catch let error as URLError {
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
         }
     }
 
