@@ -193,7 +193,7 @@ private struct ChatPane: View {
                                 .padding(.top, 2)
                             Color.clear.frame(height: 1).id("bottom")
                         }
-                        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 26)
+                        .padding(.horizontal, 28).padding(.top, 44).padding(.bottom, 26)
                         .frame(maxWidth: 760, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
@@ -350,8 +350,16 @@ struct MessageRow: View {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
-                        NativeToolActivityChip(activity: activity,
-                            onCancel: nativeActions && activity.isCancelableRun ? { store.cancelToolRun(message.id) } : nil)
+                        switch NativeToolActivityPresentation.forActivity(activity) {
+                        case .chip:
+                            NativeToolActivityChip(activity: activity,
+                                onCancel: nativeActions && activity.isCancelableRun ? { store.cancelToolRun(message.id) } : nil)
+                        case .imagePlaceholder:
+                            ImageGenerationPlaceholder(activity: activity,
+                                onCancel: nativeActions ? { store.cancelToolRun(message.id) } : nil)
+                        case .hidden:
+                            EmptyView()
+                        }
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,

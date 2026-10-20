@@ -24,6 +24,8 @@ enum Shot {
             size = CGSize(width: 2048, height: 1100)
         } else if view.hasPrefix("settings-advanced") {
             size = CGSize(width: 1180, height: 1500)
+        } else if view == "image-placeholder" {
+            size = CGSize(width: 1600, height: 620)
         } else {
             size = CGSize(width: 1180, height: 760)
         }
@@ -89,6 +91,24 @@ enum Shot {
                     MessageRow(message: Message(role: .assistant, text: demo, sources: demoSources))
                 }
                 .padding(24).frame(width: size.width, height: size.height, alignment: .top)
+                .background(Theme.bg).environmentObject(store)
+            )
+        } else if view == "image-placeholder" {
+            let request = "{\"prompt\":\"a cabin in the snow\",\"size\":\"1024x1024\"}"
+            func activity(_ id: String, _ step: Int) -> NativeToolActivity {
+                NativeToolActivity(
+                    id: id, toolID: NativeImageTools.toolID, name: NativeImageTools.toolName,
+                    title: NativeImageTools.title, round: 1, request: request,
+                    result: nil, state: .pending, confirmationRequired: false,
+                    progress: NativeToolProgress(completed: step, total: 40, label: "Step \(step) of 40"))
+            }
+            content = AnyView(
+                HStack(alignment: .top, spacing: 24) {
+                    ImageGenerationPlaceholder(activity: activity("dots", 10), onCancel: {}, effectOverride: .dots, frozenTime: 1.3)
+                    ImageGenerationPlaceholder(activity: activity("raster", 22), onCancel: {}, effectOverride: .raster, frozenTime: 2.1)
+                    ImageGenerationPlaceholder(activity: activity("mosaic", 31), onCancel: {}, effectOverride: .mosaic, frozenTime: 0.7)
+                }
+                .padding(28).frame(width: size.width, height: size.height, alignment: .topLeading)
                 .background(Theme.bg).environmentObject(store)
             )
         } else if view == "tool-activity" {
