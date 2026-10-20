@@ -32,12 +32,17 @@ if [ -d /Applications/Vera.app ]; then
   mv /Applications/Vera.app "$(dirname "$RECEIPT")/Vera.app"
   printf '%s\n' '    moved the previous Vera.app beside the rollback receipt'
 fi
-if [ "$(osascript -e 'application id "app.vera.mac" is running' 2>/dev/null)" = true ]; then
+app_running() { osascript -e 'application id "app.vera.mac" is running' 2>/dev/null; }
+if [ "$(app_running)" = true ]; then
   osascript -e 'tell application id "app.vera.mac" to quit' >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ "$(osascript -e 'application id "app.vera.mac" is running' 2>/dev/null)" = true ] || break
+    [ "$(app_running)" = true ] || break
     sleep 1
   done
+  if [ "$(app_running)" != false ]; then
+    printf '%s\n' '    installed, but the running app did not quit; quit it and open /Applications/Tandem.app' >&2
+    exit 1
+  fi
   open /Applications/Tandem.app
   printf '%s\n' '    relaunched Tandem from /Applications/Tandem.app'
 fi
