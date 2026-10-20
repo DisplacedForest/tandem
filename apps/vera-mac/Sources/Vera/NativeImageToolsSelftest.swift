@@ -21,6 +21,7 @@ final class SelfTestComfyTransport: @unchecked Sendable {
     private var historyResponses: [(String, Int)] = []
     private var promptID: String?
     var echoPromptID = false
+    var holdPrompt = false
 
     var lastPromptID: String? {
         lock.lock()
@@ -74,6 +75,17 @@ final class SelfTestComfyTransport: @unchecked Sendable {
         historyResponses = []
         promptID = nil
         echoPromptID = false
+        holdPrompt = false
+    }
+
+    private func shouldHold(_ url: URL, _ method: String, _ body: Data?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard holdPrompt, method == "POST", url.path.hasSuffix("/prompt") else { return false }
+        if let object = body.flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) {
+            promptID = object["prompt_id"] as? String
+        }
+        return true
     }
 
     private func handle(_ url: URL, _ method: String, _ body: Data?) throws -> (Data, Int) {
@@ -105,7 +117,10 @@ final class SelfTestComfyTransport: @unchecked Sendable {
 
     var transport: ComfyUITransport {
         ComfyUITransport(
-            request: { [self] url, method, body, _ in try handle(url, method, body) },
+            request: { [self] url, method, body, _ in
+                if shouldHold(url, method, body) { try await Task.sleep(for: .seconds(30)) }
+                return try handle(url, method, body)
+            },
             events: { [self] _ in
                 lock.lock()
                 let events = scriptedEvents
@@ -342,7 +357,9 @@ extension SelfTest {
             case .success(let result): completedAfterCancel = result.0?.activities.first?.state == .succeeded
             case .failure(let error): completedAfterCancel = !(error is CancellationError)
             }
+            let interruptBody = transport.requests.first(where: { $0.method == "POST" && $0.path == "interrupt" })?.body
             guard !completedAfterCancel,
+                  interruptBody?["prompt_id"] as? String == transport.lastPromptID,
                   transport.requests.contains(where: { $0.method == "POST" && $0.path == "interrupt" }),
                   !transport.requests.contains(where: { $0.path == "view" }) else {
                 print("SELFTEST ERROR: image cancel interrupt \(transport.requests.map(\.path))"); exit(1)
@@ -352,7 +369,9 @@ extension SelfTest {
             transport.echoPromptID = true
             transport.respondHistory(status: 200, json: "{}")
             transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[[2,\"{{id}}\",{},{}]]}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[]}")
             transport.respond("POST", "queue", status: 200, json: "{}")
+            transport.respondHistory(status: 200, json: "{\"{{id}}\":{\"status\":{\"status_str\":\"success\",\"completed\":true},\"outputs\":{}}}")
             let pendingRunner = Task { try await run("Never.") }
             let pendingStart = ContinuousClock.now
             while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }), pendingStart.duration(to: .now) < .seconds(5) {
@@ -361,7 +380,7 @@ extension SelfTest {
             pendingRunner.cancel()
             _ = await pendingRunner.result
             let deleteStart = ContinuousClock.now
-            while !transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }),
+            while transport.requests.filter({ $0.method == "GET" && $0.path == "queue" }).count < 2,
                   deleteStart.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
@@ -395,6 +414,49 @@ extension SelfTest {
             guard transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }),
                   transport.requests.contains(where: { $0.method == "POST" && $0.path == "interrupt" }) else {
                 print("SELFTEST ERROR: image cancel after promotion \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            transport.reset()
+            transport.holdPrompt = true
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[[2,\"{{id}}\",{},{}]]}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[]}")
+            transport.respond("POST", "queue", status: 200, json: "{}")
+            transport.respondHistory(status: 200, json: "{\"{{id}}\":{\"status\":{\"status_str\":\"success\",\"completed\":true},\"outputs\":{}}}")
+            let heldRunner = Task { try await run("Never.") }
+            let heldStart = ContinuousClock.now
+            while transport.lastPromptID == nil, heldStart.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            heldRunner.cancel()
+            _ = await heldRunner.result
+            let heldWait = ContinuousClock.now
+            while !transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }),
+                  heldWait.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard let heldDelete = transport.requests.first(where: { $0.method == "POST" && $0.path == "queue" }),
+                  (heldDelete.body?["delete"] as? [String]) == [transport.lastPromptID ?? ""],
+                  !transport.requests.contains(where: { $0.path == "interrupt" }) else {
+                print("SELFTEST ERROR: image cancel during submission \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            transport.reset()
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: "{}")
+            transport.respondHistory(status: 200, json: "{\"{{id}}\":{\"status\":{\"status_str\":\"success\",\"completed\":true},\"outputs\":{}}}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[[1,\"other\",{},{}]],\"queue_pending\":[]}")
+            let finishedRunner = Task { try await run("Never.") }
+            let finishedStart = ContinuousClock.now
+            while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }), finishedStart.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            finishedRunner.cancel()
+            _ = await finishedRunner.result
+            try await Task.sleep(for: .milliseconds(300))
+            guard transport.requests.contains(where: { $0.method == "GET" && $0.path == "queue" }),
+                  !transport.requests.contains(where: { $0.path == "interrupt" }),
+                  !transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }) else {
+                print("SELFTEST ERROR: image cancel touched another job \(transport.requests.map(\.path))"); exit(1)
             }
 
             for hostile in ["18446744073709551616", "1e300", "-1", "2.5", "\"abc\""] {

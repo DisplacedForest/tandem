@@ -75,8 +75,18 @@ struct ComfyUIClient: Sendable {
     ) async throws -> ComfyUIOutput {
         let eventStream = transport.events(socketURL())
         let promptID = UUID().uuidString.lowercased()
+        let submission = ComfyUISubmission()
         return try await withTaskCancellationHandler {
-            try await queue(graph, promptID: promptID)
+            do {
+                try await queue(graph, promptID: promptID)
+                await submission.settle(.accepted)
+            } catch let error as NativeToolError {
+                await submission.settle(.rejected)
+                throw error
+            } catch {
+                await submission.settle(.unknown)
+                throw error
+            }
             let signal = ComfyUISignal()
             let listener = Task {
                 guard let eventStream else { return }
@@ -117,7 +127,10 @@ struct ComfyUIClient: Sendable {
                 try await Task.sleep(for: pollInterval)
             }
         } onCancel: {
-            Task.detached { await cancel(promptID) }
+            Task.detached {
+                guard await submission.outcome(within: .seconds(35)) != .rejected else { return }
+                await cancel(promptID)
+            }
         }
     }
 
@@ -268,28 +281,47 @@ struct ComfyUIClient: Sendable {
         return ComfyUIOutput(data: data, fileName: file.filename)
     }
 
+    static let cancelReconcileAttempts = 6
+
     private func cancel(_ promptID: String) async {
-        if await isRunning(promptID) {
-            await interrupt()
-            return
-        }
-        if let body = try? JSONSerialization.data(withJSONObject: ["delete": [promptID]]) {
-            _ = try? await transport.request(endpoint("queue"), "POST", body, 10)
-        }
-        if await isRunning(promptID) {
-            await interrupt()
+        for attempt in 0..<Self.cancelReconcileAttempts {
+            switch await queuePosition(promptID) {
+            case .running:
+                await interrupt(promptID)
+                return
+            case .pending:
+                if let body = try? JSONSerialization.data(withJSONObject: ["delete": [promptID]]) {
+                    _ = try? await transport.request(endpoint("queue"), "POST", body, 10)
+                }
+            case .absent:
+                if (try? await history(promptID)) != nil { return }
+            }
+            if attempt + 1 < Self.cancelReconcileAttempts {
+                try? await Task.sleep(for: pollInterval)
+            }
         }
     }
 
-    private func isRunning(_ promptID: String) async -> Bool {
-        let running = (try? await transport.request(endpoint("queue"), "GET", nil, 10)).flatMap { data, _ in
-            (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["queue_running"] as? [[Any]]
-        } ?? []
-        return running.contains { entry in entry.count > 1 && entry[1] as? String == promptID }
+    private enum QueuePosition {
+        case running
+        case pending
+        case absent
     }
 
-    private func interrupt() async {
-        _ = try? await transport.request(endpoint("interrupt"), "POST", Data("{}".utf8), 10)
+    private func queuePosition(_ promptID: String) async -> QueuePosition {
+        guard let (data, _) = try? await transport.request(endpoint("queue"), "GET", nil, 10),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .absent }
+        func contains(_ key: String) -> Bool {
+            (object[key] as? [[Any]] ?? []).contains { entry in entry.count > 1 && entry[1] as? String == promptID }
+        }
+        if contains("queue_running") { return .running }
+        if contains("queue_pending") { return .pending }
+        return .absent
+    }
+
+    private func interrupt(_ promptID: String) async {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["prompt_id": promptID]) else { return }
+        _ = try? await transport.request(endpoint("interrupt"), "POST", body, 10)
     }
 
     private func endpoint(_ path: String) -> URL {
@@ -304,6 +336,40 @@ struct ComfyUIClient: Sendable {
         components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + "/ws"
         components.queryItems = [URLQueryItem(name: "clientId", value: Self.clientID)]
         return components.url ?? base
+    }
+}
+
+private actor ComfyUISubmission {
+    enum Outcome: Equatable {
+        case accepted
+        case rejected
+        case unknown
+    }
+
+    private var settled: Outcome?
+    private var waiters: [CheckedContinuation<Outcome, Never>] = []
+
+    func settle(_ outcome: Outcome) {
+        guard settled == nil else { return }
+        settled = outcome
+        for waiter in waiters { waiter.resume(returning: outcome) }
+        waiters = []
+    }
+
+    func outcome(within limit: Duration) async -> Outcome {
+        if let settled { return settled }
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: limit)
+            await self?.settle(.unknown)
+        }
+        defer { timer.cancel() }
+        return await withCheckedContinuation { continuation in
+            if let settled {
+                continuation.resume(returning: settled)
+            } else {
+                waiters.append(continuation)
+            }
+        }
     }
 }
 

@@ -57,15 +57,22 @@ struct GeneratedImageView: View {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         guard destination.resolvingSymlinksInPath() != source.resolvingSymlinksInPath() else { return }
+        var stagingDirectory: URL?
         do {
-            let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
-            try FileManager.default.copyItem(at: source, to: staging)
-            if FileManager.default.fileExists(atPath: destination.path) {
-                _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
+            let manager = FileManager.default
+            let directory = try manager.url(
+                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
+            stagingDirectory = directory
+            let staged = directory.appendingPathComponent(UUID().uuidString + ".png")
+            try manager.copyItem(at: source, to: staged)
+            if manager.fileExists(atPath: destination.path) {
+                _ = try manager.replaceItemAt(destination, withItemAt: staged)
             } else {
-                try FileManager.default.moveItem(at: staging, to: destination)
+                try manager.moveItem(at: staged, to: destination)
             }
+            try? manager.removeItem(at: directory)
         } catch {
+            if let stagingDirectory { try? FileManager.default.removeItem(at: stagingDirectory) }
             let alert = NSAlert()
             alert.messageText = "The image couldn't be saved"
             alert.informativeText = error.localizedDescription
