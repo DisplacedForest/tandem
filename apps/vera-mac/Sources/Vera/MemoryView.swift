@@ -113,6 +113,12 @@ struct MemoryView: View {
                 if !statusDetail.isEmpty {
                     Text(statusDetail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
+                if !store.memoryRecallDescription.isEmpty {
+                    Text(store.memoryRecallDescription).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                if let progress = store.memoryIndexingProgress {
+                    Text(progress.label).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
                 if let outcome = store.memoryGroomOutcome {
                     Text(outcome.label).font(.system(size: 11))
                         .foregroundStyle(outcome.error == nil ? Theme.textSecondary : .red)
@@ -125,6 +131,7 @@ struct MemoryView: View {
         }
         .padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline))
+        .task { await store.probeMemoryEndpoint() }
     }
 
     private var statusIcon: String {

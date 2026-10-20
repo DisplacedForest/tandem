@@ -80,6 +80,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     var onboardingState: NativeOnboardingState
     var onboardingStep: Int
     var memory: NativeMemorySettings
+    var memoryEndpoint: NativeMemoryEndpointSettings
     var capabilityOverrides: [String: ModelCapabilityProfile]
     var visionBridge: VisionBridgeSettings
     var parameterOverrides: [String: [String: ModelParameterOverrides]]
@@ -95,9 +96,18 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             onboardingState: .notStarted,
             onboardingStep: 0,
             memory: .fresh,
+            memoryEndpoint: .fresh,
             capabilityOverrides: [:],
             visionBridge: .fresh,
             parameterOverrides: [:])
+    }
+
+    static func needsMemoryEndpointMigration(_ raw: [String: Any]) -> Bool {
+        guard let object = raw["native_chat"] as? [String: Any], object["memoryEndpoint"] == nil,
+              let memory = object["memory"] as? [String: Any], memory["enabled"] as? Bool == true else { return false }
+        let embeddings = (memory["embeddingsModel"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let extraction = (memory["extractionModel"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        return !embeddings.isEmpty || !extraction.isEmpty
     }
 
     var activeProfile: NativeEndpointProfile? {
@@ -122,6 +132,11 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
            (1...3).contains(decoded.version) {
             decoded.version = 3
             if decoded.activeProfile == nil { decoded.activeProfileID = decoded.profiles.first?.id }
+            if needsMemoryEndpointMigration(raw), let profile = decoded.activeProfile {
+                decoded.memoryEndpoint = NativeMemoryEndpointSettings(
+                    baseURL: profile.baseURL, rerankModel: "",
+                    discoveredModels: profile.discoveredModels, lastDiscoveryAt: profile.lastDiscoveryAt)
+            }
             if decoded.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 decoded.systemPrompt = defaultSystemPrompt
             }
@@ -147,7 +162,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case version, profiles, activeProfileID, systemPrompt, activePersonaID, enabledToolIDs
-        case onboardingState, onboardingStep, memory, capabilityOverrides, visionBridge
+        case onboardingState, onboardingStep, memory, memoryEndpoint, capabilityOverrides, visionBridge
         case parameterOverrides
     }
 
@@ -156,6 +171,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         systemPrompt: String, activePersonaID: String? = nil,
         enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
         onboardingStep: Int, memory: NativeMemorySettings,
+        memoryEndpoint: NativeMemoryEndpointSettings = .fresh,
         capabilityOverrides: [String: ModelCapabilityProfile] = [:],
         visionBridge: VisionBridgeSettings = .fresh,
         parameterOverrides: [String: [String: ModelParameterOverrides]] = [:]
@@ -169,6 +185,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         self.onboardingState = onboardingState
         self.onboardingStep = onboardingStep
         self.memory = memory
+        self.memoryEndpoint = memoryEndpoint
         self.capabilityOverrides = capabilityOverrides
         self.visionBridge = visionBridge
         self.parameterOverrides = parameterOverrides
@@ -185,6 +202,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         onboardingState = try values.decodeIfPresent(NativeOnboardingState.self, forKey: .onboardingState) ?? .notStarted
         onboardingStep = try values.decodeIfPresent(Int.self, forKey: .onboardingStep) ?? 0
         memory = try values.decodeIfPresent(NativeMemorySettings.self, forKey: .memory) ?? .fresh
+        memoryEndpoint = (try? values.decodeIfPresent(NativeMemoryEndpointSettings.self, forKey: .memoryEndpoint)) ?? .fresh
         capabilityOverrides = try values.decodeIfPresent(
             [String: ModelCapabilityProfile].self, forKey: .capabilityOverrides) ?? [:]
         visionBridge = try values.decodeIfPresent(

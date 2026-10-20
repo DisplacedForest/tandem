@@ -182,6 +182,65 @@ struct NativeMemorySettings: Codable, Equatable, Sendable {
     }
 }
 
+struct NativeMemoryEndpointSettings: Codable, Equatable, Sendable {
+    var baseURL: String
+    var rerankModel: String
+    var discoveredModels: [String]
+    var lastDiscoveryAt: Date?
+
+    init(baseURL: String = "", rerankModel: String = "", discoveredModels: [String] = [], lastDiscoveryAt: Date? = nil) {
+        self.baseURL = baseURL
+        self.rerankModel = rerankModel
+        self.discoveredModels = discoveredModels
+        self.lastDiscoveryAt = lastDiscoveryAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = (try? values.decodeIfPresent(String.self, forKey: .baseURL)) ?? ""
+        rerankModel = (try? values.decodeIfPresent(String.self, forKey: .rerankModel)) ?? ""
+        discoveredModels = (try? values.decodeIfPresent([String].self, forKey: .discoveredModels)) ?? []
+        lastDiscoveryAt = try? values.decodeIfPresent(Date.self, forKey: .lastDiscoveryAt)
+    }
+
+    static var fresh: NativeMemoryEndpointSettings { NativeMemoryEndpointSettings() }
+
+    var isConfigured: Bool { Self.validBaseURL(baseURL) != nil }
+
+    static func validBaseURL(_ raw: String?) -> URL? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
+              let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", url.host != nil, url.lastPathComponent == "v1" else { return nil }
+        return url
+    }
+}
+
+struct NativeMemoryEndpointConfig: Equatable, Sendable {
+    let baseURL: URL
+    let apiKey: String?
+    let embeddingsModel: String
+    let extractionModel: String
+    let rerankModel: String
+
+    static func resolve(
+        endpoint: NativeMemoryEndpointSettings, memory: NativeMemorySettings, apiKey: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> NativeMemoryEndpointConfig? {
+        func env(_ name: String) -> String? {
+            let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return value.isEmpty ? nil : value
+        }
+        guard let base = NativeMemoryEndpointSettings.validBaseURL(env("VERA_MEMORY_BASE") ?? endpoint.baseURL) else { return nil }
+        let key = env("VERA_MEMORY_API_KEY") ?? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NativeMemoryEndpointConfig(
+            baseURL: base,
+            apiKey: key.isEmpty ? nil : key,
+            embeddingsModel: env("VERA_MEMORY_EMBEDDINGS_MODEL") ?? memory.embeddingsModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            extractionModel: env("VERA_MEMORY_EXTRACTION_MODEL") ?? memory.extractionModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            rerankModel: env("VERA_MEMORY_RERANK_MODEL") ?? endpoint.rerankModel.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 struct NativeMemoryRecord: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var title: String

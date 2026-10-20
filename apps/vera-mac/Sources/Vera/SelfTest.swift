@@ -447,6 +447,7 @@ enum SelfTest {
         }
         catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
+        await runNativeMemoryEndpoint()
         await runNativeMemoryGroom()
         await runShell()
         await runPromptLibrary()
