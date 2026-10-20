@@ -319,6 +319,10 @@ extension ChatStore {
         conversationTurns.contains { $0.assistantMessageID == messageID && ($0.state == .pending || $0.state == .running) }
     }
 
+    func stoppableAnswer(in conversationID: String) -> UUID? {
+        conversationTurns.first { $0.conversationID == conversationID && ($0.state == .pending || $0.state == .running) }?.assistantMessageID
+    }
+
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
         return await withTaskCancellationHandler {
