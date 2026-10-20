@@ -419,6 +419,10 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask)
                     }
+                    if nativeActions && store.isQueuedAnswer(message.id) {
+                        NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
+                                             onStop: { store.stopAnswer(message.id, reason: "Canceled.") })
+                    }
                     if nativeActions && message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -726,13 +730,11 @@ struct ComposerField: View {
                     .buttonStyle(.plain)
                     .disabled(true)
                     .help("Voice is not available in native chat yet")
-                if store.selected?.messages.last?.state == .streaming {
-                    let stoppable = store.selected.flatMap { store.stoppableAnswer(in: $0.id) }
-                    Button { if let stoppable { store.stopAnswer(stoppable) } } label: {
-                        ComposerControlGlyph(kind: .stop(enabled: stoppable != nil))
+                if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
+                    Button { store.stopAnswer(stoppable) } label: {
+                        ComposerControlGlyph(kind: .stop(enabled: true))
                     }
                     .buttonStyle(.plain)
-                    .disabled(stoppable == nil)
                     .help("Stop answer")
                     .accessibilityLabel("Stop answer")
                 } else {

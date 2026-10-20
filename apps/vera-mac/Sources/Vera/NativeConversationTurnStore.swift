@@ -320,7 +320,12 @@ extension ChatStore {
     }
 
     func stoppableAnswer(in conversationID: String) -> UUID? {
-        conversationTurns.first { $0.conversationID == conversationID && ($0.state == .pending || $0.state == .running) }?.assistantMessageID
+        let unfinished = conversationTurns.filter { $0.conversationID == conversationID && ($0.state == .pending || $0.state == .running) }
+        return (unfinished.first { $0.state == .running } ?? unfinished.first)?.assistantMessageID
+    }
+
+    func isQueuedAnswer(_ messageID: UUID) -> Bool {
+        conversationTurns.contains { $0.assistantMessageID == messageID && $0.state == .pending }
     }
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
