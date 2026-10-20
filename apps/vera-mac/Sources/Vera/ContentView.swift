@@ -422,6 +422,8 @@ struct MessageRow: View {
                     if nativeActions && store.isQueuedAnswer(message.id) {
                         NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
                                              onStop: { store.stopAnswer(message.id, reason: "Canceled.") })
+                    } else if nativeActions, let note = store.answerNote(message.id) {
+                        Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")

@@ -234,13 +234,13 @@ extension ChatStore {
                 case .superseded:
                     break
                 case .unconfirmed:
-                    turnStatuses[execution.record.assistantMessageID] = "Waiting to save this answer."
+                    turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
                     continue
                 }
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
             } catch {
-                turnStatuses[execution.record.assistantMessageID] = "Waiting to save this answer."
+                turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
             }
         }
     }
@@ -322,6 +322,12 @@ extension ChatStore {
     func stoppableAnswer(in conversationID: String) -> UUID? {
         let unfinished = conversationTurns.filter { $0.conversationID == conversationID && ($0.state == .pending || $0.state == .running) }
         return (unfinished.first { $0.state == .running } ?? unfinished.first)?.assistantMessageID
+    }
+
+    static let savePendingStatus = "Waiting to save this answer."
+
+    func answerNote(_ messageID: UUID) -> String? {
+        turnStatuses[messageID] == Self.savePendingStatus ? Self.savePendingStatus : nil
     }
 
     func isQueuedAnswer(_ messageID: UUID) -> Bool {
