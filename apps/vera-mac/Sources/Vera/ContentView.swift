@@ -351,7 +351,7 @@ struct MessageRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
                         NativeToolActivityChip(activity: activity,
-                            onCancel: nativeActions && activity.progress != nil ? { store.cancelToolRun(message.id) } : nil)
+                            onCancel: nativeActions && activity.isCancelableRun ? { store.cancelToolRun(message.id) } : nil)
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
@@ -517,12 +517,12 @@ struct NativeToolActivityChip: View {
                         .progressViewStyle(.linear)
                         .frame(width: 120)
                         .accessibilityLabel(progress.label)
-                    if let onCancel {
-                        Button("Cancel", action: onCancel)
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 11))
-                            .accessibilityLabel("Cancel \(activity.title)")
-                    }
+                }
+                if activity.state == .pending, let onCancel {
+                    Button("Cancel", action: onCancel)
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11))
+                        .accessibilityLabel("Cancel \(activity.title)")
                 }
             }
             .foregroundStyle(Theme.textPrimary)

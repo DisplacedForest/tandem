@@ -18,6 +18,21 @@ final class SelfTestComfyTransport: @unchecked Sendable {
     private var scriptedEvents: [ComfyUIEvent]? = nil
     private var holdEvents = false
     private var failure: Error?
+    private var historyResponses: [(String, Int)] = []
+    private var promptID: String?
+    var echoPromptID = false
+
+    var lastPromptID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return promptID
+    }
+
+    func respondHistory(status: Int, json: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        historyResponses.append((json, status))
+    }
 
     var requests: [SelfTestComfyRequest] {
         lock.lock()
@@ -56,6 +71,9 @@ final class SelfTestComfyTransport: @unchecked Sendable {
         scriptedEvents = nil
         holdEvents = false
         failure = nil
+        historyResponses = []
+        promptID = nil
+        echoPromptID = false
     }
 
     private func handle(_ url: URL, _ method: String, _ body: Data?) throws -> (Data, Int) {
@@ -66,11 +84,23 @@ final class SelfTestComfyTransport: @unchecked Sendable {
         path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         recorded.append(SelfTestComfyRequest(method: method, path: path, bodyData: body))
         if let failure { throw failure }
+        if echoPromptID, method == "POST", path == "prompt",
+           let object = body.flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }),
+           let id = object["prompt_id"] as? String {
+            promptID = id
+            return (Data("{\"prompt_id\":\"\(id)\",\"number\":3,\"node_errors\":{}}".utf8), 200)
+        }
+        if method == "GET", path.hasPrefix("history/"), !historyResponses.isEmpty {
+            let response = historyResponses.count == 1 ? historyResponses[0] : historyResponses.removeFirst()
+            let filled = response.0.replacingOccurrences(of: "{{id}}", with: promptID ?? "")
+            return (Data(filled.utf8), response.1)
+        }
         let key = "\(method) \(path)"
         guard var queue = responses[key], !queue.isEmpty else { throw URLError(.unsupportedURL) }
         let response = queue.count == 1 ? queue[0] : queue.removeFirst()
         responses[key] = queue
-        return response
+        let filled = String(decoding: response.0, as: UTF8.self).replacingOccurrences(of: "{{id}}", with: promptID ?? "")
+        return (filled.contains("{{id}}") || path == "view" ? response.0 : Data(filled.utf8), response.1)
     }
 
     var transport: ComfyUITransport {
@@ -221,16 +251,16 @@ extension SelfTest {
                 return (final, seen)
             }
 
-            transport.respond("POST", "prompt", status: 200, json: "{\"prompt_id\":\"p1\",\"number\":3,\"node_errors\":{}}")
-            transport.respond("GET", "history/p1", status: 200, json: "{}")
-            transport.respond("GET", "history/p1", status: 200, json: """
-            {"p1":{"status":{"status_str":"success","completed":true},"outputs":{"save":{"images":[{"filename":"tandem_00001_.png","subfolder":"","type":"output"}]}}}}
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: "{}")
+            transport.respondHistory(status: 200, json: """
+            {"{{id}}":{"status":{"status_str":"success","completed":true},"outputs":{"save":{"images":[{"filename":"tandem_00001_.png","subfolder":"","type":"output"}]}}}}
             """)
             transport.respond("GET", "view", status: 200, data: pngData)
             transport.events([
-                .progress(completed: 10, total: 40, promptID: "p1"),
-                .progress(completed: 40, total: 40, promptID: "p1"),
-                .finished(promptID: "p1"),
+                .progress(completed: 10, total: 40, promptID: nil),
+                .progress(completed: 40, total: 40, promptID: nil),
+                .finished(promptID: nil),
             ])
             let (success, progress) = try await run("Here is the door.")
             guard let activity = success?.activities.first, activity.state == .succeeded, activity.progress == nil,
@@ -249,6 +279,7 @@ extension SelfTest {
             let seed = ((prompt?["sampler"] as? [String: Any])?["inputs"] as? [String: Any])?["seed"] as? Int
             guard promptText == "a red door", width == 1024, seed == 7,
                   queued?.body?["client_id"] as? String == ComfyUIClient.clientID,
+                  (queued?.body?["prompt_id"] as? String)?.isEmpty == false,
                   transport.requests.contains(where: { $0.method == "GET" && $0.path == "view" }) else {
                 print("SELFTEST ERROR: image queue request shape"); exit(1)
             }
@@ -266,9 +297,9 @@ extension SelfTest {
             }
 
             transport.reset()
-            transport.respond("POST", "prompt", status: 200, json: "{\"prompt_id\":\"p2\"}")
-            transport.respond("GET", "history/p2", status: 200, json: """
-            {"p2":{"status":{"status_str":"error","completed":false,"messages":[["execution_start",{"prompt_id":"p2"}],["execution_error",{"prompt_id":"p2","node_type":"KSampler","exception_message":"CUDA out of memory"}]]},"outputs":{}}}
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: """
+            {"{{id}}":{"status":{"status_str":"error","completed":false,"messages":[["execution_start",{"prompt_id":"{{id}}"}],["execution_error",{"prompt_id":"{{id}}","node_type":"KSampler","exception_message":"CUDA out of memory"}]]},"outputs":{}}}
             """)
             transport.events(nil)
             let (errored, _) = try await run("It failed.")
@@ -287,16 +318,16 @@ extension SelfTest {
             }
 
             transport.reset()
-            transport.respond("POST", "prompt", status: 200, json: "{\"prompt_id\":\"p3\"}")
-            transport.respond("GET", "history/p3", status: 200, json: "{}")
-            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[[1,\"p3\",{},{}]],\"queue_pending\":[]}")
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: "{}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[[1,\"{{id}}\",{},{}]],\"queue_pending\":[]}")
             transport.respond("POST", "interrupt", status: 200, json: "{}")
-            transport.events([.progress(completed: 2, total: 40, promptID: "p3")], hold: true)
+            transport.events([.progress(completed: 2, total: 40, promptID: nil)], hold: true)
             let runner = Task {
                 try await run("Never.")
             }
             let started = ContinuousClock.now
-            while !transport.requests.contains(where: { $0.path == "history/p3" }), started.duration(to: .now) < .seconds(5) {
+            while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }), started.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
             runner.cancel()
@@ -318,13 +349,13 @@ extension SelfTest {
             }
 
             transport.reset()
-            transport.respond("POST", "prompt", status: 200, json: "{\"prompt_id\":\"p4\"}")
-            transport.respond("GET", "history/p4", status: 200, json: "{}")
-            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[[2,\"p4\",{},{}]]}")
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: "{}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[[2,\"{{id}}\",{},{}]]}")
             transport.respond("POST", "queue", status: 200, json: "{}")
             let pendingRunner = Task { try await run("Never.") }
             let pendingStart = ContinuousClock.now
-            while !transport.requests.contains(where: { $0.path == "history/p4" }), pendingStart.duration(to: .now) < .seconds(5) {
+            while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }), pendingStart.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
             pendingRunner.cancel()
@@ -335,9 +366,55 @@ extension SelfTest {
                 try await Task.sleep(for: .milliseconds(10))
             }
             guard let deletion = transport.requests.first(where: { $0.method == "POST" && $0.path == "queue" }),
-                  (deletion.body?["delete"] as? [String]) == ["p4"],
-                  !transport.requests.contains(where: { $0.path == "interrupt" }) else {
+                  let deletedIDs = deletion.body?["delete"] as? [String], deletedIDs.count == 1,
+                  deletedIDs[0] == transport.lastPromptID,
+                  !transport.requests.contains(where: { $0.path == "interrupt" }),
+                  transport.requests.filter({ $0.method == "GET" && $0.path == "queue" }).count == 2 else {
                 print("SELFTEST ERROR: image cancel pending delete \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            transport.reset()
+            transport.echoPromptID = true
+            transport.respondHistory(status: 200, json: "{}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[],\"queue_pending\":[[2,\"{{id}}\",{},{}]]}")
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[[2,\"{{id}}\",{},{}]],\"queue_pending\":[]}")
+            transport.respond("POST", "queue", status: 200, json: "{}")
+            transport.respond("POST", "interrupt", status: 200, json: "{}")
+            let promotedRunner = Task { try await run("Never.") }
+            let promotedStart = ContinuousClock.now
+            while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }), promotedStart.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            promotedRunner.cancel()
+            _ = await promotedRunner.result
+            let promotedWait = ContinuousClock.now
+            while !transport.requests.contains(where: { $0.method == "POST" && $0.path == "interrupt" }),
+                  promotedWait.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }),
+                  transport.requests.contains(where: { $0.method == "POST" && $0.path == "interrupt" }) else {
+                print("SELFTEST ERROR: image cancel after promotion \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            for hostile in ["18446744073709551616", "1e300", "-1", "2.5", "\"abc\""] {
+                let hostileCall = NativeChatToolCall(id: "image-seed", name: NativeImageTools.toolName,
+                                                     arguments: "{\"prompt\":\"a door\",\"seed\":\(hostile)}")
+                var hostileFinal: NativeToolTurnSnapshot?
+                for try await snapshot in NativeToolLoop(transport: ScriptedNativeToolTransport(rounds: [
+                    [NativeChatStreamSnapshot(content: "", toolCalls: [hostileCall], finishReason: "tool_calls")],
+                    [NativeChatStreamSnapshot(content: "Bad seed.", toolCalls: [], finishReason: "stop")],
+                ]), registry: registry).stream(messages: [NativeChatMessage(role: "user", content: "Image")],
+                                               model: "local-model", enabledToolIDs: [NativeImageTools.toolID]) {
+                    hostileFinal = snapshot
+                }
+                guard hostileFinal?.activities.first?.state == .failed,
+                      hostileFinal?.activities.first?.result?.contains("Seed must be") == true else {
+                    print("SELFTEST ERROR: image hostile seed \(hostile)"); exit(1)
+                }
+            }
+            guard !transport.requests.contains(where: { $0.path == "prompt" && $0.body?["prompt"] != nil && (($0.body?["prompt"] as? [String: Any])?["sampler"] as? [String: Any]).flatMap({ ($0["inputs"] as? [String: Any])?["seed"] as? Double }).map({ $0 > Double(NativeImageTools.maximumSeed) }) == true }) else {
+                print("SELFTEST ERROR: image hostile seed reached the server"); exit(1)
             }
 
             guard ComfyUIClient.parseEvent("{\"type\":\"progress\",\"data\":{\"value\":3,\"max\":40,\"prompt_id\":\"x\"}}")

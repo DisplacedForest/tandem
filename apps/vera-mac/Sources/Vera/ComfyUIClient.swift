@@ -74,8 +74,9 @@ struct ComfyUIClient: Sendable {
         onProgress: @escaping @Sendable (Int, Int) -> Void
     ) async throws -> ComfyUIOutput {
         let eventStream = transport.events(socketURL())
-        let promptID = try await queue(graph)
+        let promptID = UUID().uuidString.lowercased()
         return try await withTaskCancellationHandler {
+            try await queue(graph, promptID: promptID)
             let signal = ComfyUISignal()
             let listener = Task {
                 guard let eventStream else { return }
@@ -167,9 +168,9 @@ struct ComfyUIClient: Sendable {
         let type: String
     }
 
-    private func queue(_ graph: [String: Any]) async throws -> String {
+    private func queue(_ graph: [String: Any], promptID: String) async throws {
         let body = try JSONSerialization.data(
-            withJSONObject: ["prompt": graph, "client_id": Self.clientID], options: [.sortedKeys])
+            withJSONObject: ["prompt": graph, "client_id": Self.clientID, "prompt_id": promptID], options: [.sortedKeys])
         let data: Data
         let status: Int
         do {
@@ -185,10 +186,9 @@ struct ComfyUIClient: Sendable {
         guard (200..<300).contains(status) else {
             throw NativeToolError.failed(Self.queueError(object, status: status))
         }
-        guard let promptID = object["prompt_id"] as? String, !promptID.isEmpty else {
-            throw NativeToolError.failed("ComfyUI accepted the request without a prompt id")
+        guard object["prompt_id"] as? String == promptID else {
+            throw NativeToolError.failed("ComfyUI accepted the request under a different id")
         }
-        return promptID
     }
 
     static func queueError(_ object: [String: Any], status: Int) -> String {
@@ -269,15 +269,27 @@ struct ComfyUIClient: Sendable {
     }
 
     private func cancel(_ promptID: String) async {
+        if await isRunning(promptID) {
+            await interrupt()
+            return
+        }
+        if let body = try? JSONSerialization.data(withJSONObject: ["delete": [promptID]]) {
+            _ = try? await transport.request(endpoint("queue"), "POST", body, 10)
+        }
+        if await isRunning(promptID) {
+            await interrupt()
+        }
+    }
+
+    private func isRunning(_ promptID: String) async -> Bool {
         let running = (try? await transport.request(endpoint("queue"), "GET", nil, 10)).flatMap { data, _ in
             (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["queue_running"] as? [[Any]]
         } ?? []
-        let isRunning = running.contains { entry in entry.count > 1 && entry[1] as? String == promptID }
-        if isRunning {
-            _ = try? await transport.request(endpoint("interrupt"), "POST", Data("{}".utf8), 10)
-        } else if let body = try? JSONSerialization.data(withJSONObject: ["delete": [promptID]]) {
-            _ = try? await transport.request(endpoint("queue"), "POST", body, 10)
-        }
+        return running.contains { entry in entry.count > 1 && entry[1] as? String == promptID }
+    }
+
+    private func interrupt() async {
+        _ = try? await transport.request(endpoint("interrupt"), "POST", Data("{}".utf8), 10)
     }
 
     private func endpoint(_ path: String) -> URL {

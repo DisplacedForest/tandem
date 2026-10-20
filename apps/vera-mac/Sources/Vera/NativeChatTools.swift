@@ -88,6 +88,24 @@ enum NativeToolProgressReporter {
     }
 }
 
+final class NativeToolProgressGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var closed = false
+
+    func deliver(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return }
+        body()
+    }
+
+    func close() {
+        lock.lock()
+        closed = true
+        lock.unlock()
+    }
+}
+
 struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable {
     let id: String
     let toolID: String
@@ -99,6 +117,10 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     var state: NativeToolActivityState
     let confirmationRequired: Bool
     var progress: NativeToolProgress? = nil
+
+    var isCancelableRun: Bool {
+        state == .pending && (progress != nil || name == NativeImageTools.toolName)
+    }
 }
 
 struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendable {
@@ -671,12 +693,16 @@ struct NativeToolLoop: Sendable {
                                     }
                                     let progressActivities = activities
                                     let progressContent = content
+                                    let gate = NativeToolProgressGate()
                                     let report: @Sendable (NativeToolProgress) -> Void = { progress in
-                                        var patched = progressActivities
-                                        guard let index = patched.firstIndex(where: { $0.id == call.id }) else { return }
-                                        patched[index].progress = progress
-                                        continuation.yield(NativeToolTurnSnapshot(content: progressContent, activities: patched))
+                                        gate.deliver {
+                                            var patched = progressActivities
+                                            guard let index = patched.firstIndex(where: { $0.id == call.id }) else { return }
+                                            patched[index].progress = progress
+                                            continuation.yield(NativeToolTurnSnapshot(content: progressContent, activities: patched))
+                                        }
                                     }
+                                    defer { gate.close() }
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
                                         try await Self.execute(
                                             definition, arguments: arguments, activity: activity,

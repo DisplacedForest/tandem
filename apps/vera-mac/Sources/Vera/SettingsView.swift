@@ -543,13 +543,13 @@ private struct ImageTab: View {
     }
 
     private func save() {
-        do { try config.save() } catch {
-            status = "Save failed: \(error.localizedDescription)"
-            return
-        }
         let configured = NativeImageTools.base(from: config[NativeImageTools.configKey]) != nil
         if configured, !config.nativeSettings.enabledToolIDs.contains(NativeImageTools.toolID) {
             config.setNativeTool(NativeImageTools.toolID, enabled: true)
+        }
+        do { try config.save() } catch {
+            status = "Save failed: \(error.localizedDescription)"
+            return
         }
         store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
         status = configured ? "Saved. Ask for an image in any chat." : "Saved. Image generation is off."

@@ -261,8 +261,9 @@ extension ChatStore {
             message.failure = "Stopped. An action already sent may have completed; check it before trying again."
         }
         for index in message.toolActivities.indices where message.toolActivities[index].state == .pending {
-            message.toolActivities[index].state = toolCanceled ? .canceled : .failed
-            message.toolActivities[index].result = toolCanceled
+            let canceled = toolCanceled || message.toolActivities[index].isCancelableRun
+            message.toolActivities[index].state = canceled ? .canceled : .failed
+            message.toolActivities[index].result = canceled
                 ? "{\"error\":\"Canceled by the user\"}"
                 : "{\"error\":\"Stopped before a result was confirmed\"}"
             message.toolActivities[index].progress = nil

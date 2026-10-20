@@ -103,6 +103,7 @@ enum NativeImageTools {
     static let timeout = Duration.seconds(280)
     static let configKey = "comfyui_base"
     static let envName = "VERA_COMFYUI_BASE"
+    static let maximumSeed: UInt64 = 1 << 53
     static let unavailableNote = "Image generation is not set up. If asked to make, draw or generate an image, say that plainly and point to the Image tab in Settings. Do not describe an image as if it had been made."
 
     static func resolvedBase() -> URL? {
@@ -145,7 +146,7 @@ enum NativeImageTools {
                         throw NativeToolError.invalidArguments("A prompt is required")
                     }
                     let size = try NativeImageSize.parse(arguments.imageString("size"))
-                    let seed = try arguments.imageSeed("seed") ?? UInt64.random(in: 0...(1 << 53))
+                    let seed = try arguments.imageSeed("seed") ?? UInt64.random(in: 0...NativeImageTools.maximumSeed)
                     guard let base = base() else { throw NativeToolError.unavailable }
                     let template = try graph()
                     var client = ComfyUIClient(base: base, transport: transport)
@@ -220,14 +221,18 @@ private extension Dictionary where Key == String, Value == NativeJSONValue {
 
     func imageSeed(_ key: String) throws -> UInt64? {
         guard let value = self[key], value != .null else { return nil }
+        let parsed: UInt64?
         switch value {
-        case .number(let number) where number.isFinite && number >= 0 && number == number.rounded():
-            return UInt64(number)
+        case .number(let number):
+            parsed = UInt64(exactly: number)
         case .string(let text):
-            if let parsed = UInt64(text.trimmingCharacters(in: .whitespaces)) { return parsed }
-            throw NativeToolError.invalidArguments("Seed must be a whole number")
+            parsed = UInt64(text.trimmingCharacters(in: .whitespaces))
         default:
-            throw NativeToolError.invalidArguments("Seed must be a whole number")
+            parsed = nil
         }
+        guard let parsed, parsed <= NativeImageTools.maximumSeed else {
+            throw NativeToolError.invalidArguments("Seed must be a whole number up to \(NativeImageTools.maximumSeed)")
+        }
+        return parsed
     }
 }
