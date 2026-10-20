@@ -83,7 +83,11 @@ final class ConfigStore: ObservableObject {
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
         var unavailable: Set<String> = []
-        for id in Set(settings.profiles.map(\.id) + [Self.visionBridgeCredentialID, Self.memoryCredentialID]) {
+        let memoryEndpointWanted = settings.memoryEndpoint.isConfigured
+            || ProcessInfo.processInfo.environment["VERA_MEMORY_BASE"]?.isEmpty == false
+        let startupCredentialIDs = settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]
+            + (memoryEndpointWanted ? [Self.memoryCredentialID] : [])
+        for id in Set(startupCredentialIDs) {
             do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
