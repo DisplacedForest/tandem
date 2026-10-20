@@ -78,7 +78,7 @@ class ReplacementTests(unittest.TestCase):
         result = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = Path(result.stdout.strip())
-        previous = receipt.parent / "Vera.app"
+        previous = receipt.parent / self.target.name
         self.assertEqual(self.output(), "new")
         self.assertEqual(self.output(previous), "old")
         self.assertEqual(get_xattr(self.target, "org.vera.test"), b"new")
@@ -157,7 +157,7 @@ class ReplacementTests(unittest.TestCase):
                         self.assertEqual(len(receipts), 1)
                         self.assertEqual(self.receipt_state(receipts[0]), "installed" if phase == "installed" else "prepared")
                     if phase == "installed":
-                        self.assertEqual(self.output(receipts[0].parent / "Vera.app"), "old")
+                        self.assertEqual(self.output(receipts[0].parent / self.target.name), "old")
                 finally:
                     if process.poll() is None:
                         process.kill()
@@ -184,7 +184,7 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(self.receipt_state(receipt), "changed")
         executable.write_bytes(original)
         self.assertEqual(self.receipt_state(receipt), "installed")
-        (receipt.parent / "Vera.app/Contents/MacOS/Vera").write_text("different prior code")
+        (receipt.parent / self.target.name / "Contents/MacOS/Vera").write_text("different prior code")
         self.assertEqual(self.receipt_state(receipt), "changed")
         rollback = subprocess.run([str(self.runner), "rollback", str(receipt)], capture_output=True, text=True)
         self.assertNotEqual(rollback.returncode, 0)
@@ -195,9 +195,9 @@ class ReplacementTests(unittest.TestCase):
         outside = self.root / "escape"
         outside.write_text("untouched")
         destination = self.root / "expanded"
-        for name in ("../escape", "/tmp/escape", "Vera.app/../../escape", "Vera.app/./file", "Vera.app//file",
-                     "__MACOSX/._..", "__MACOSX/._outside", "__MACOSX/Vera.app/._..",
-                     "__MACOSX/Vera.app/._missing", "Vera.app/._..", "Vera.app/._file"):
+        for name in ("../escape", "/tmp/escape", "Tandem.app/../../escape", "Tandem.app/./file", "Tandem.app//file",
+                     "__MACOSX/._..", "__MACOSX/._outside", "__MACOSX/Tandem.app/._..",
+                     "__MACOSX/Tandem.app/._missing", "Tandem.app/._..", "Tandem.app/._file"):
             with self.subTest(name=name):
                 with zipfile.ZipFile(archive, "w") as output:
                     output.writestr(name, "bad")
@@ -206,21 +206,21 @@ class ReplacementTests(unittest.TestCase):
                 self.assertFalse(destination.exists())
                 self.assertEqual(outside.read_text(), "untouched")
         with zipfile.ZipFile(archive, "w") as output:
-            link = zipfile.ZipInfo("Vera.app/link")
+            link = zipfile.ZipInfo("Tandem.app/link")
             link.create_system = 3
             link.external_attr = 0o120777 << 16
             output.writestr(link, "../../escape")
-            output.writestr("Vera.app/link/file", "bad")
+            output.writestr("Tandem.app/link/file", "bad")
         self.assertNotEqual(subprocess.run([str(self.runner), "archive", str(archive)], capture_output=True).returncode, 0)
         with zipfile.ZipFile(archive, "w") as output:
-            entry = zipfile.ZipInfo("Vera.app/file")
+            entry = zipfile.ZipInfo("Tandem.app/file")
             entry.extra = struct.pack("<HH", 0x7075, 3) + b"bad"
             output.writestr(entry, "data")
         self.assertNotEqual(subprocess.run([str(self.runner), "archive", str(archive)], capture_output=True).returncode, 0)
 
     def test_archive_preflight_accepts_release_zip_and_rejects_header_mismatch(self) -> None:
         archive = self.root / "update.zip"
-        release = self.root / "Vera.app"
+        release = self.root / "Tandem.app"
         shutil.copytree(self.source, release)
         subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(release), str(archive)], check=True)
         result = subprocess.run([str(self.runner), "archive", str(archive)], capture_output=True, text=True)
@@ -228,9 +228,9 @@ class ReplacementTests(unittest.TestCase):
         destination = self.root / "expanded"
         result = subprocess.run([str(self.runner), "extract", str(archive), str(destination)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.output(destination / "Vera.app"), "new")
+        self.assertEqual(self.output(destination / "Tandem.app"), "new")
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
-            output.writestr("Vera.app/file", "content")
+            output.writestr("Tandem.app/file", "content")
         result = subprocess.run([str(self.runner), "archive", str(archive)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         raw = bytearray(archive.read_bytes())
@@ -241,8 +241,8 @@ class ReplacementTests(unittest.TestCase):
     def test_archive_preflight_rejects_unlisted_local_record(self) -> None:
         archive = self.root / "update.zip"
         with zipfile.ZipFile(archive, "w") as output:
-            output.writestr("Vera.app/hidden", "hidden")
-            output.writestr("Vera.app/listed", "listed")
+            output.writestr("Tandem.app/hidden", "hidden")
+            output.writestr("Tandem.app/listed", "listed")
         raw = bytearray(archive.read_bytes())
         end = raw.rfind(b"PK\x05\x06")
         central = struct.unpack_from("<I", raw, end + 16)[0]
@@ -287,7 +287,7 @@ class ReplacementTests(unittest.TestCase):
         rollback = subprocess.run([str(self.runner), "rollback", str(receipt)], capture_output=True, text=True)
         self.assertEqual(rollback.returncode, 0, rollback.stderr)
         self.assertEqual(get_xattr(self.target, "org.vera.test"), b"previous")
-        self.assertEqual(get_xattr(Path(rollback.stdout.strip()).parent / "Vera.app", "org.vera.test"), b"candidate")
+        self.assertEqual(get_xattr(Path(rollback.stdout.strip()).parent / self.target.name, "org.vera.test"), b"candidate")
         self.assertEqual(self.receipt_state(receipt), "changed")
         again = subprocess.run([str(self.runner), "rollback", str(receipt)], capture_output=True, text=True)
         self.assertNotEqual(again.returncode, 0)

@@ -44,7 +44,7 @@ jobs:
           sh scripts/leak-gate.sh
 
   app:
-    name: build Vera.app.zip
+    name: build Tandem.app.zip
     needs: verify
     runs-on: macos-15
     steps:
@@ -60,17 +60,17 @@ jobs:
         working-directory: apps/vera-mac
         run: |
           if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]; then
-            build/Vera.app/Contents/MacOS/Vera --selftest
+            build/Tandem.app/Contents/MacOS/Vera --selftest
           else
             echo "runner macOS $(sw_vers -productVersion) is below the app's macOS 26 floor; the build is the check here and the selftest runs on deployments"
           fi
       - name: Zip
         working-directory: apps/vera-mac/build
-        run: ditto -c -k --keepParent Vera.app Vera.app.zip
+        run: ditto -c -k --keepParent Tandem.app Tandem.app.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: Vera.app.zip
-          path: apps/vera-mac/build/Vera.app.zip
+          name: Tandem.app.zip
+          path: apps/vera-mac/build/Tandem.app.zip
           if-no-files-found: error
 
   image:
@@ -160,7 +160,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Vera.app.zip
+          name: Tandem.app.zip
       - uses: actions/download-artifact@v4
         with:
           name: vera-api-macos-arm64
@@ -170,6 +170,6 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            Vera.app.zip
+            Tandem.app.zip
             vera-api-macos-arm64.zip
             vera-api-macos-arm64.zip.sha256

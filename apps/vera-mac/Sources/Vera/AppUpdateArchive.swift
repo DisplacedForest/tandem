@@ -62,12 +62,12 @@ enum AppUpdateArchive {
             }
             let normalized = name.hasSuffix("/") ? String(name.dropLast()) : name
             let components = normalized.split(separator: "/", omittingEmptySubsequences: false)
-            guard components.first == "Vera.app" || components.first == "__MACOSX",
+            guard components.first == "Tandem.app" || components.first == "__MACOSX",
                   !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
                   names.insert(normalized).inserted else {
                 throw AppReplacementError("Update archive contains an unsafe path")
             }
-            if components.first == "Vera.app", components.contains(where: { $0.hasPrefix("._") }) {
+            if components.first == "Tandem.app", components.contains(where: { $0.hasPrefix("._") }) {
                 throw AppReplacementError("Update archive contains misplaced metadata")
             }
             if !name.hasSuffix("/") { files.insert(normalized) }
@@ -122,7 +122,7 @@ enum AppUpdateArchive {
                         }
                         counterpart[counterpart.count - 1] = String(leaf.dropFirst(2))
                     }
-                    guard counterpart.first == "Vera.app",
+                    guard counterpart.first == "Tandem.app",
                           !counterpart.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.hasPrefix("._") }),
                           names.contains(counterpart.joined(separator: "/")),
                           files.contains(name) || !files.contains(counterpart.joined(separator: "/")) else {

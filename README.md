@@ -30,11 +30,11 @@ Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
 - **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
-- **Vera.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
+- **Tandem.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
 flowchart LR
-    APP["Vera.app<br/>native macOS client"]
+    APP["Tandem.app<br/>native macOS client"]
     LLM["any OpenAI-compatible<br/>LLM server"]
     API["vera-api<br/>one container, every capability"]
     SEARX["SearXNG"]
@@ -187,7 +187,7 @@ docker compose logs vera-api | head -60    # the config report: what's wired, wh
 
 Local source builds can reuse a Keychain-owned signing certificate; see [local signing setup](docs/SETUP.md#stable-signing-for-local-builds).
 
-**App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
+**App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
 
 **Backend without Docker** (macOS arm64): each release also ships `vera-api-macos-arm64.zip`, a self-contained engine binary: verify the checksum, unzip, run; data lands in `~/.vera/data` (see `docs/SETUP.md`).
 
@@ -197,7 +197,7 @@ Building either from source instead:
 
 ```sh
 docker compose up -d --build        # backend (uncomment `build:` in docker-compose.yml)
-cd apps/vera-mac && scripts/deploy.sh   # app: packages Vera.app and installs it to /Applications
+cd apps/vera-mac && scripts/deploy.sh   # app: packages Tandem.app and installs it to /Applications
 ```
 
 Onboarding has four steps: Endpoint (a friendly name, an OpenAI-compatible URL ending in `/v1`, and an optional key saved in the Mac keychain), Model (explicit discovery and selection), Memory (optional local memory, can be skipped) and Pulse (an optional vera-api service URL, can be skipped). Persona and tools live in Settings. The guide is skippable and can be resumed from Settings, Endpoints without touching chat history. vera-api remains optional and independently powers Pulse and the other ambient surfaces.

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Output: apps/vera-mac/build/Vera.app
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,10 +6,11 @@ cd "$APP_ROOT"
 
 NAME="Vera"
 DISPLAY_NAME="Tandem"
+BUNDLE_NAME="Tandem"
 BUNDLE_ID="app.vera.mac"
 LOGO="Sources/Vera/Resources/vera-icon.png"
 BUILD_DIR="build"
-APP="$BUILD_DIR/$NAME.app"
+APP="$BUILD_DIR/$BUNDLE_NAME.app"
 # Single repo-wide version: prefer the root VERSION file, fall back to the app-local one.
 VERSION="$(cat "$APP_ROOT/../../VERSION" 2>/dev/null || cat VERSION 2>/dev/null || echo 0.0.0)"
 BUILD_NUM="$(git rev-parse --short HEAD 2>/dev/null || echo 0)"

@@ -58,7 +58,7 @@ final class PiCheckpointCredentials: NativeCredentialStore {
 enum NativePiCheckpoint {
     static func identity(_ certificate: String) throws {
         try piCheck(certificate.count == 40 && certificate.allSatisfy { "0123456789abcdefABCDEF".contains($0) }, .unauthorized)
-        try piCheck(Bundle.main.bundleIdentifier == "app.vera.mac" && Bundle.main.bundleURL.path == "/Applications/Vera.app", .unauthorized)
+        try piCheck(Bundle.main.bundleIdentifier == "app.vera.mac" && Bundle.main.bundleURL.path == "/Applications/Tandem.app", .unauthorized)
         var own: SecCode?, requirement: SecRequirement?
         let text = "identifier \"app.vera.mac\" and certificate leaf = H\"\(certificate)\""
         try piCheck(SecCodeCopySelf([], &own) == errSecSuccess && SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, .unauthorized)

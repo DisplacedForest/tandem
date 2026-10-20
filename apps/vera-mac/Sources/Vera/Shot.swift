@@ -1256,7 +1256,7 @@ struct UpdateShotView: View {
             tag_name: "v0.2.0",
             html_url: "https://github.com/DisplacedForest/vera/releases/latest",
             body: nil,
-            assets: [.init(name: "Vera.app.zip", browser_download_url: "https://example.invalid/Vera.app.zip")])
+            assets: [.init(name: "Tandem.app.zip", browser_download_url: "https://example.invalid/Tandem.app.zip")])
         checker = c
     }
 

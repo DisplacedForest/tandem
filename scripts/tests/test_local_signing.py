@@ -18,7 +18,7 @@ class SigningTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        self.app = self.root / "Vera.app"
+        self.app = self.root / "Tandem.app"
         self.app.mkdir()
         self.config = self.root / "vera/signing.json"
         self.config.parent.mkdir()

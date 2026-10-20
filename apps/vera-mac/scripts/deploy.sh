@@ -7,15 +7,45 @@ cd "$APP_ROOT"
 "$APP_ROOT/../../scripts/check-copy.sh"
 "$APP_ROOT/scripts/package.sh"
 
-APP="$APP_ROOT/build/Vera.app"
+APP="$APP_ROOT/build/Tandem.app"
 VERSION="$(cat "$APP_ROOT/../../VERSION" | tr -d '[:space:]')"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/vera-deploy.XXXXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" "$APP_ROOT/Sources/Vera/SafeAppReplacement.swift" \
   "$APP_ROOT/scripts/app-replacement/main.swift" -o "$WORK/app-replacement"
 
+MIGRATED=0
+if [ -d /Applications/Vera.app ] && [ ! -d /Applications/Tandem.app ]; then
+  mv /Applications/Vera.app /Applications/Tandem.app
+  MIGRATED=1
+fi
 printf '%s\n' '==> Install to /Applications; retaining rollback bundle'
-"$WORK/app-replacement" "$APP" /Applications/Vera.app "$VERSION" --first-install
+if ! RECEIPT="$("$WORK/app-replacement" "$APP" /Applications/Tandem.app "$VERSION" --first-install)"; then
+  if [ "$MIGRATED" = 1 ] && [ ! -d /Applications/Vera.app ]; then
+    mv /Applications/Tandem.app /Applications/Vera.app
+    printf '%s\n' '    install failed; restored /Applications/Vera.app' >&2
+  fi
+  exit 1
+fi
+printf '%s\n' "$RECEIPT"
+if [ -d /Applications/Vera.app ]; then
+  mv /Applications/Vera.app "$(dirname "$RECEIPT")/Vera.app"
+  printf '%s\n' '    moved the previous Vera.app beside the rollback receipt'
+fi
+app_running() { osascript -e 'application id "app.vera.mac" is running' 2>/dev/null; }
+if [ "$(app_running)" = true ]; then
+  osascript -e 'tell application id "app.vera.mac" to quit' >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(app_running)" = true ] || break
+    sleep 1
+  done
+  if [ "$(app_running)" != false ]; then
+    printf '%s\n' '    installed, but the running app did not quit; quit it and open /Applications/Tandem.app' >&2
+    exit 1
+  fi
+  open /Applications/Tandem.app
+  printf '%s\n' '    relaunched Tandem from /Applications/Tandem.app'
+fi
 
 HOST="${VERA_STUDIO_HOST:-}"
 if [ -z "$HOST" ]; then
@@ -27,20 +57,34 @@ if ! ssh -o ConnectTimeout=5 -o BatchMode=yes -- "$HOST" true 2>/dev/null; then
   exit 0
 fi
 
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORK/Vera.app.zip"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORK/Tandem.app.zip"
 REMOTE="$(ssh -- "$HOST" '/usr/bin/mktemp -d /tmp/vera-deploy.XXXXXXXX')"
 if [[ ! "$REMOTE" =~ ^/tmp/vera-deploy\.[a-zA-Z0-9]+$ ]]; then
   printf '%s\n' 'Remote staging directory is invalid' >&2
   exit 1
 fi
-scp -q -- "$WORK/Vera.app.zip" "$WORK/app-replacement" "$HOST:$REMOTE/"
+scp -q -- "$WORK/Tandem.app.zip" "$WORK/app-replacement" "$HOST:$REMOTE/"
 ssh -- "$HOST" /bin/sh -s -- "$REMOTE" "$VERSION" <<'REMOTE_SCRIPT'
 set -eu
 work="$1"
 version="$2"
 trap 'rm -rf "$work"' EXIT
-/usr/bin/ditto -x -k "$work/Vera.app.zip" "$work"
+/usr/bin/ditto -x -k "$work/Tandem.app.zip" "$work"
 /bin/chmod 700 "$work/app-replacement"
-"$work/app-replacement" "$work/Vera.app" /Applications/Vera.app "$version" --first-install
+migrated=0
+if [ -d /Applications/Vera.app ] && [ ! -d /Applications/Tandem.app ]; then
+  /bin/mv /Applications/Vera.app /Applications/Tandem.app
+  migrated=1
+fi
+if ! receipt="$("$work/app-replacement" "$work/Tandem.app" /Applications/Tandem.app "$version" --first-install)"; then
+  if [ "$migrated" = 1 ] && [ ! -d /Applications/Vera.app ]; then
+    /bin/mv /Applications/Tandem.app /Applications/Vera.app
+  fi
+  exit 1
+fi
+printf '%s\n' "$receipt"
+if [ -d /Applications/Vera.app ]; then
+  /bin/mv /Applications/Vera.app "$(dirname "$receipt")/Vera.app"
+fi
 REMOTE_SCRIPT
-printf '    deployed to %s:/Applications/Vera.app\n' "$HOST"
+printf '    deployed to %s:/Applications/Tandem.app\n' "$HOST"

@@ -118,7 +118,7 @@ enum SelectedCredentialAuthorization {
     }
 
     static func verifyIdentity(_ request: Request) throws {
-        guard Bundle.main.bundleURL.path == "/Applications/Vera.app",
+        guard Bundle.main.bundleURL.path == "/Applications/Tandem.app",
               Bundle.main.bundleIdentifier == "app.vera.mac" else { throw Failure.invalid }
         let text = "identifier \"app.vera.mac\" and certificate leaf = H\"\(request.certificate)\" and cdhash H\"\(request.codeHash)\""
         var code: SecCode?, requirement: SecRequirement?
