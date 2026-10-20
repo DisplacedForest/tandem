@@ -34,6 +34,7 @@ final class ChatStore: ObservableObject {
     @Published var memoryIndexingProgress: NativeMemoryIndexingProgress?
     @Published private(set) var queuedMemoryTurns: [NativeMemoryQueuedTurn] = []
     private var drainingMemoryQueue = false
+    private var memoryQueueStatusMessage: String?
     static let queuedMemoryTurnLimit = 20
     @Published var pendingHighlightMessageID: UUID?
     @Published var memoryGroomOutcome: NativeMemoryGroomOutcome?
@@ -775,8 +776,9 @@ final class ChatStore: ObservableObject {
             queuedMemoryTurns.removeFirst(queuedMemoryTurns.count - Self.queuedMemoryTurnLimit)
         }
         let count = queuedMemoryTurns.count
-        memoryServiceState = .retrievalUnavailable(
-            "The memory endpoint could not be reached. \(count) suggestion\(count == 1 ? "" : "s") waiting to be reviewed when it returns.")
+        let message = "The memory endpoint could not be reached. \(count) suggestion\(count == 1 ? "" : "s") waiting to be reviewed when it returns."
+        memoryQueueStatusMessage = message
+        memoryServiceState = .retrievalUnavailable(message)
     }
 
     func drainQueuedMemoryTurns() async {
@@ -799,7 +801,10 @@ final class ChatStore: ObservableObject {
                 return
             }
         }
-        if queuedMemoryTurns.isEmpty, case .retrievalUnavailable = memoryServiceState { reloadNativeMemory() }
+        if queuedMemoryTurns.isEmpty, case .retrievalUnavailable(let detail) = memoryServiceState, detail == memoryQueueStatusMessage {
+            memoryQueueStatusMessage = nil
+            reloadNativeMemory()
+        }
     }
 
     private func queuedTurnStillAllowed(_ turn: NativeMemoryQueuedTurn) -> Bool {

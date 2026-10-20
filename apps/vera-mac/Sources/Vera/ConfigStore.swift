@@ -63,6 +63,12 @@ final class ConfigStore: ObservableObject {
     private var memoryCredentialLoaded = false
     private var memoryCredentialReadFailed = false
     private var memoryMigrationAwaitingCredential = false
+    private var migratedMemoryEndpointSnapshot: NativeMemoryEndpointSettings?
+    nonisolated(unsafe) static var memoryEnvironmentOverride: [String: String]?
+
+    static var memoryEnvironment: [String: String] {
+        memoryEnvironmentOverride ?? ProcessInfo.processInfo.environment
+    }
     @Published var memoryEndpointAPIKey: String {
         didSet {
             if oldValue != memoryEndpointAPIKey { queueCredential(memoryEndpointAPIKey, for: Self.memoryCredentialID) }
@@ -87,7 +93,7 @@ final class ConfigStore: ObservableObject {
         var keys: [String: String] = [:]
         var unavailable: Set<String> = []
         let memoryEndpointWanted = settings.memoryEndpoint.isConfigured
-            || ProcessInfo.processInfo.environment["VERA_MEMORY_BASE"]?.isEmpty == false
+            || Self.memoryEnvironment["VERA_MEMORY_BASE"]?.isEmpty == false
         let startupCredentialIDs = settings.profiles.map(\.id) + [Self.visionBridgeCredentialID]
             + (memoryEndpointWanted ? [Self.memoryCredentialID] : [])
         for id in Set(startupCredentialIDs) {
@@ -133,6 +139,7 @@ final class ConfigStore: ObservableObject {
                 memoryEndpointAPIKey = chatKey
             } else if let profile = settings.activeProfile, unavailable.contains(profile.id) || unavailable.contains(Self.memoryCredentialID) {
                 memoryMigrationAwaitingCredential = true
+                migratedMemoryEndpointSnapshot = settings.memoryEndpoint
             }
         }
         memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
@@ -204,13 +211,15 @@ final class ConfigStore: ObservableObject {
             throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
         var merged = nativeSettings.merging(into: raw)
-        if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil {
+        if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil,
+           nativeSettings.memoryEndpoint == migratedMemoryEndpointSnapshot {
             if var nativeChat = merged["native_chat"] as? [String: Any] {
                 nativeChat.removeValue(forKey: "memoryEndpoint")
                 merged["native_chat"] = nativeChat
             }
         } else {
             memoryMigrationAwaitingCredential = false
+            migratedMemoryEndpointSnapshot = nil
         }
         var revisions = raw["pi_profile_revisions"] as? [String: String] ?? [:]
         for profile in nativeSettings.profiles {
@@ -429,7 +438,12 @@ final class ConfigStore: ObservableObject {
         loadMemoryCredentialIfNeeded()
         return NativeMemoryEndpointConfig.resolve(
             endpoint: nativeSettings.memoryEndpoint, memory: nativeSettings.memory,
-            apiKey: memoryEndpointAPIKey, environment: ProcessInfo.processInfo.environment)
+            apiKey: memoryEndpointAPIKey, environment: Self.memoryEnvironment)
+    }
+
+    private var memoryEndpointEffectivelyConfigured: Bool {
+        nativeSettings.memoryEndpoint.isConfigured
+            || NativeMemoryEndpointSettings.validBaseURL(Self.memoryEnvironment["VERA_MEMORY_BASE"]) != nil
     }
 
     var nativeMemoryService: NativeMemoryService? {
@@ -451,7 +465,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func loadMemoryCredentialIfNeeded(retry: Bool = false) {
-        guard !memoryCredentialLoaded, nativeSettings.memoryEndpoint.isConfigured,
+        guard !memoryCredentialLoaded, memoryEndpointEffectivelyConfigured,
               pendingCredentials[Self.memoryCredentialID] == nil, memoryEndpointAPIKey.isEmpty,
               retry || !memoryCredentialReadFailed else { return }
         do {
@@ -479,8 +493,7 @@ final class ConfigStore: ObservableObject {
     }
 
     var memoryEndpointEnvironmentOverride: String? {
-        let env = ProcessInfo.processInfo.environment
-        return (env["VERA_MEMORY_BASE"]?.isEmpty == false) ? "VERA_MEMORY_BASE" : nil
+        (Self.memoryEnvironment["VERA_MEMORY_BASE"]?.isEmpty == false) ? "VERA_MEMORY_BASE" : nil
     }
 
     func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {

@@ -5,7 +5,14 @@ final class SelfTestOutageMemoryService: NativeMemoryServing, @unchecked Sendabl
     fileprivate var embeds = 0
     fileprivate var extracts = 0
     var failing = true
+    var malformedExtraction = false
     var supportsSemanticRecall: Bool { true }
+
+    private var shouldMalform: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return malformedExtraction
+    }
 
     var embedCalls: Int { lock.lock(); defer { lock.unlock() }; return embeds }
     var extractionCalls: Int { lock.lock(); defer { lock.unlock() }; return extracts }
@@ -42,6 +49,7 @@ final class SelfTestOutageMemoryService: NativeMemoryServing, @unchecked Sendabl
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
         if count(\.extracts) { throw outage() }
+        if shouldMalform { throw NativeMemoryServiceError.malformed }
         return [NativeMemoryProposal(
             id: UUID().uuidString, kind: .create, title: "Queued preference",
             summary: "Prefers tea", details: ["The user prefers tea"],
@@ -211,6 +219,26 @@ extension SelfTest {
         guard allowedAgain.memoryEndpointAPIKey == "tower-key", allowedAgain.memoryEndpointResolved?.baseURL.host == "tower.example" else {
             fail("migration did not resume once the chat key became readable")
         }
+        deniedCredentials.denied = ["tower"]
+        let editedWritten = Written()
+        let edited = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { chatCoupled },
+                                 writeConfiguration: { editedWritten.configs.append($0) })
+        edited.memoryEndpointBinding(\.baseURL).wrappedValue = "http://keyless.example:11434/v1"
+        do { try edited.save() } catch { fail("edited save \(error)") }
+        guard let editedChat = editedWritten.configs.last?["native_chat"] as? [String: Any],
+              let editedEndpoint = editedChat["memoryEndpoint"] as? [String: Any],
+              editedEndpoint["baseURL"] as? String == "http://keyless.example:11434/v1" else {
+            fail("a manual endpoint edit must be saved even while the migration waits for a key")
+        }
+        let cleared = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { chatCoupled },
+                                  writeConfiguration: { editedWritten.configs.append($0) })
+        cleared.memoryEndpointBinding(\.baseURL).wrappedValue = ""
+        do { try cleared.save() } catch { fail("cleared save \(error)") }
+        guard let clearedChat = editedWritten.configs.last?["native_chat"] as? [String: Any],
+              let clearedEndpoint = clearedChat["memoryEndpoint"] as? [String: Any],
+              (clearedEndpoint["baseURL"] as? String ?? "").isEmpty else {
+            fail("an explicitly cleared endpoint must be saved as cleared")
+        }
 
         let legacyRaw: [String: Any] = ["model_api_key": "legacy-key", "native_chat": [
             "version": 3,
@@ -260,6 +288,22 @@ extension SelfTest {
         guard locked.memoryEndpointAPIKey == "tower-key", locked.credentialError == nil, !locked.memoryCredentialNeedsRetry else {
             fail("explicit retry did not load the key")
         }
+        let envCredentials = NativeCredentialFixtureStore()
+        envCredentials.values[ConfigStore.memoryCredentialID] = "env-key"
+        envCredentials.denied = [ConfigStore.memoryCredentialID]
+        ConfigStore.memoryEnvironmentOverride = ["VERA_MEMORY_BASE": "http://env.example:11434/v1"]
+        defer { ConfigStore.memoryEnvironmentOverride = nil }
+        let envOnly = ConfigStore(credentialStore: envCredentials, readConfiguration: { written.configs.last! }, writeConfiguration: { _ in })
+        guard envOnly.memoryEndpointAPIKey.isEmpty, envOnly.memoryCredentialNeedsRetry,
+              envOnly.memoryEndpointResolved?.baseURL.host == "env.example" else {
+            fail("environment-only endpoint with a denied read should resolve without a key and need a retry")
+        }
+        envCredentials.denied = []
+        envOnly.loadMemoryCredentialIfNeeded(retry: true)
+        guard envOnly.memoryEndpointAPIKey == "env-key", envOnly.memoryEndpointResolved?.apiKey == "env-key" else {
+            fail("explicit retry must load the key for an environment-only endpoint")
+        }
+        ConfigStore.memoryEnvironmentOverride = nil
         config.nativeSettings.memoryEndpoint.baseURL = "https://memory.example/v1"
         config.memoryEndpointAPIKey = "memory-key"
         do { try config.save() } catch { fail("save after key change \(error)") }
@@ -366,6 +410,21 @@ extension SelfTest {
                 fail("drain \(recovered) \(store.queuedMemoryTurns.count) \(outage.extractionCalls) \(store.memoryProposals.count)")
             }
             guard store.memoryRecallDescription.contains("semantic") else { fail("recall description \(store.memoryRecallDescription)") }
+            outage.failing = true
+            await store.learnFromCompletedTurn(
+                user: "I take my coffee black", assistant: Message(role: .assistant, text: "Black coffee, noted."),
+                source: NativeMemoryTurnSource(conversationID: liveConversation, messageID: "m3", date: Date()),
+                turnKey: liveConversation + "|m3", conversationExcluded: false)
+            guard store.queuedMemoryTurns.count == 1 else { fail("malformed case setup \(store.queuedMemoryTurns.count)") }
+            outage.failing = false
+            outage.malformedExtraction = true
+            _ = await store.probeMemoryEndpoint()
+            guard store.queuedMemoryTurns.isEmpty,
+                  case .retrievalUnavailable(let malformedDetail) = store.memoryServiceState,
+                  !malformedDetail.contains("waiting to be reviewed") else {
+                fail("a fresh extraction failure during the drain must stay visible: \(store.memoryServiceState)")
+            }
+            outage.malformedExtraction = false
             var envOnly = settings
             envOnly.embeddingsModel = ""
             store.updateNativeMemory(settings: envOnly, service: outage)
