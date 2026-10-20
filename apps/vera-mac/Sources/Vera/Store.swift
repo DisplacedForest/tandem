@@ -181,7 +181,7 @@ final class ChatStore: ObservableObject {
         self.capabilityDeclarations = capabilityDeclarations
         self.nativeMCP = nativeMCP
         self.nativeToolRegistry = nativeToolRegistry
-            ?? ChatStore.buildToolRegistry(capabilityDeclarations)
+            ?? ChatStore.buildToolRegistry(capabilityDeclarations, attachments: attachmentStore)
         usesInjectedToolRegistry = nativeToolRegistry != nil
         self.repository = repository
         self.repositoryInitializationError = repositoryError
@@ -263,11 +263,16 @@ final class ChatStore: ObservableObject {
             nativeMemorySettings: .fresh)
     }
 
-    static func buildToolRegistry(_ declarations: [NativeToolDeclaration]) -> NativeToolRegistry {
+    static func buildToolRegistry(
+        _ declarations: [NativeToolDeclaration],
+        attachments: NativeAttachmentStore = NativeAttachmentStore()
+    ) -> NativeToolRegistry {
         let base: @Sendable () -> URL? = { VeraAPIClient.resolvedBase() }
+        let imageBase: @Sendable () -> URL? = { NativeImageTools.resolvedBase() }
         return NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
                 + NativeWebTools.definitions(base: base)
+                + NativeImageTools.definitions(base: imageBase, attachments: attachments)
                 + NativeCapabilityTools.definitions(declarations, base: base))
     }
 
@@ -278,7 +283,7 @@ final class ChatStore: ObservableObject {
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
         capabilityDeclarations = declarations
         guard !usesInjectedToolRegistry else { return }
-        nativeToolRegistry = ChatStore.buildToolRegistry(declarations)
+        nativeToolRegistry = ChatStore.buildToolRegistry(declarations, attachments: attachmentStore)
     }
 
     func awaitToolConfirmation(_ activity: NativeToolActivity) async -> Bool {
@@ -2043,7 +2048,8 @@ final class ChatStore: ObservableObject {
                     ownerName: ownerName, assistantName: assistantName, memories: selectedMemories,
                     knowledgeGrounding: groundingAssembly?.block ?? "",
                     capabilities: capabilityProfile, tools: activeTools,
-                    contracts: contracts))
+                    contracts: contracts,
+                    unavailableNotes: NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : []))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
@@ -2064,6 +2070,11 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].ask = ask
                     conversations[i].messages[replyIndex].artifacts = arts
                     conversations[i].messages[replyIndex].toolActivities = snapshot.activities
+                    for activity in snapshot.activities {
+                        guard let image = NativeImageTools.attachment(from: activity),
+                              !conversations[i].messages[replyIndex].attachments.contains(where: { $0.fileName == image.fileName }) else { continue }
+                        conversations[i].messages[replyIndex].attachments.append(image)
+                    }
                     let lifted = NativeResearchSources.lift(snapshot.activities)
                     if !lifted.isEmpty {
                         conversations[i].messages[replyIndex].sources =

@@ -12,6 +12,7 @@ struct SettingsView: View {
             NativeMemorySettingsTab().tabItem { Label("Memory", systemImage: "tray.full") }.tag(SettingsTab.memory)
             KnowledgeView().tabItem { Label("Knowledge", systemImage: "books.vertical") }.tag(SettingsTab.knowledge)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
+            ImageTab().tabItem { Label("Image", systemImage: "photo") }.tag(SettingsTab.image)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
             PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)
             IdentityTab().tabItem { Label("Identity", systemImage: "person") }.tag(SettingsTab.identity)
@@ -365,6 +366,7 @@ struct NativeToolEditor: View {
     private var catalog: [NativeChatToolDescriptor] {
         NativeChatToolCatalog.tools(
             veraAPIConfigured: config.veraAPIBase != nil,
+            imageConfigured: config.imageBase != nil,
             declarations: config.capabilityTools.declarations)
     }
     private var available: [NativeChatToolDescriptor] { catalog.filter(\.available) }
@@ -508,6 +510,49 @@ struct NativeMemorySettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct ImageTab: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
+    @State private var status: String?
+
+    var body: some View {
+        Form {
+            Section("Image generation") {
+                ConfigField(label: "ComfyUI URL", key: NativeImageTools.configKey, placeholder: "http://my-comfyui-host:8188",
+                            tip: "The ComfyUI server that renders images. Leave it empty to turn image generation off.")
+                InlineTest(title: "Test ComfyUI") {
+                    try await ConnectionTest.http(base: config[NativeImageTools.configKey], path: "system_stats", label: "ComfyUI")
+                }
+                Text("Images render with the Qwen Image 2.1 graph that ships with the app. The server needs that model's diffusion, text encoder and VAE files installed.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            Section {
+                HStack(spacing: 10) {
+                    if let status {
+                        Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                    Button("Save") { save() }.keyboardShortcut("s", modifiers: .command)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func save() {
+        do { try config.save() } catch {
+            status = "Save failed: \(error.localizedDescription)"
+            return
+        }
+        let configured = NativeImageTools.base(from: config[NativeImageTools.configKey]) != nil
+        if configured, !config.nativeSettings.enabledToolIDs.contains(NativeImageTools.toolID) {
+            config.setNativeTool(NativeImageTools.toolID, enabled: true)
+        }
+        store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
+        status = configured ? "Saved. Ask for an image in any chat." : "Saved. Image generation is off."
     }
 }
 

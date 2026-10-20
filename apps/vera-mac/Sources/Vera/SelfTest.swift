@@ -357,6 +357,11 @@ enum SelfTest {
             do { try await NativeTaskTransportFixture.run(raw); exit(0) }
             catch { print("TASK TRANSPORT FIXTURE FAILED"); exit(1) }
         }
+        if let raw = ProcessInfo.processInfo.environment["VERA_IMAGE_LIVE_BASE"] {
+            do { try await runNativeImageLive(raw); exit(0) } catch {
+                print("SELFTEST ERROR: live image \(error)"); exit(1)
+            }
+        }
         if ProcessInfo.processInfo.environment["VERA_SHELL_SELFTEST"] == "1" {
             await runShell()
             exit(0)
@@ -432,6 +437,7 @@ enum SelfTest {
         runNativeContext()
         await runNativeTools()
         await runNativeWebTools()
+        await runNativeImageTools()
         await runNativeCapabilityTools()
         do {
             try NativeDomainStateSelftest.run()

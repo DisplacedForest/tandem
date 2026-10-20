@@ -88,6 +88,7 @@ struct NativeContextInput: Sendable {
     var capabilities: ModelCapabilityProfile
     var tools: [NativeToolDefinition]
     var contracts: Set<NativePresentationContract>
+    var unavailableNotes: [String]
 
     init(
         persona: String, userScope: String = "", conversationInstructions: String = "",
@@ -95,7 +96,8 @@ struct NativeContextInput: Sendable {
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
         knowledgeGrounding: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
-        contracts: Set<NativePresentationContract> = NativePresentationContract.chatDefaults
+        contracts: Set<NativePresentationContract> = NativePresentationContract.chatDefaults,
+        unavailableNotes: [String] = []
     ) {
         self.persona = persona
         self.userScope = userScope
@@ -110,6 +112,7 @@ struct NativeContextInput: Sendable {
         self.capabilities = capabilities
         self.tools = tools
         self.contracts = contracts
+        self.unavailableNotes = unavailableNotes
     }
 }
 
@@ -145,12 +148,13 @@ enum NativeContextAssembler {
         static let world = 4_800
         static let knowledge = 6_000
         static let tools = 6_000
+        static let unavailable = 800
         static let contract = 3_200
     }
 
     static var totalBudget: Int {
         Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.session
-            + Caps.memory + Caps.world + Caps.knowledge + Caps.tools
+            + Caps.memory + Caps.world + Caps.knowledge + Caps.tools + Caps.unavailable
             + NativePresentationContract.allCases.count * Caps.contract
     }
 
@@ -175,6 +179,7 @@ enum NativeContextAssembler {
         if input.capabilities.supportsTools, !input.tools.isEmpty {
             add("tools", toolsSection(input.tools), cap: Caps.tools)
         }
+        add("unavailable", unavailableSection(input.unavailableNotes), cap: Caps.unavailable)
         for contract in NativePresentationContract.allCases where input.contracts.contains(contract) {
             add("format:\(contract.rawValue)", contract.contract.text, cap: Caps.contract)
         }
@@ -216,6 +221,12 @@ enum NativeContextAssembler {
             lines.append("You are speaking with \(owner).")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func unavailableSection(_ notes: [String]) -> String {
+        let trimmed = notes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !trimmed.isEmpty else { return "" }
+        return (["NOT AVAILABLE"] + trimmed.map { "- " + $0 }).joined(separator: "\n")
     }
 
     private static func toolsSection(_ tools: [NativeToolDefinition]) -> String {

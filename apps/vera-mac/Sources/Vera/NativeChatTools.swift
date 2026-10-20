@@ -66,6 +66,26 @@ enum NativeToolActivityState: String, Codable, Equatable, Hashable, Sendable {
     case pending
     case succeeded
     case failed
+    case canceled
+}
+
+struct NativeToolProgress: Codable, Equatable, Hashable, Sendable {
+    var completed: Int
+    var total: Int
+    var label: String
+
+    var fraction: Double {
+        guard total > 0 else { return 0 }
+        return min(max(Double(completed) / Double(total), 0), 1)
+    }
+}
+
+enum NativeToolProgressReporter {
+    @TaskLocal static var report: (@Sendable (NativeToolProgress) -> Void)?
+
+    static func post(_ progress: NativeToolProgress) {
+        report?(progress)
+    }
 }
 
 struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable {
@@ -78,6 +98,7 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     var result: String?
     var state: NativeToolActivityState
     let confirmationRequired: Bool
+    var progress: NativeToolProgress? = nil
 }
 
 struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendable {
@@ -648,9 +669,19 @@ struct NativeToolLoop: Sendable {
                                     guard let activity = activities.first(where: { $0.id == call.id }) else {
                                         throw NativeToolError.failed("The tool call could not be matched to its request")
                                     }
-                                    value = try await Self.execute(
-                                        definition, arguments: arguments, activity: activity,
-                                        timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                    let progressActivities = activities
+                                    let progressContent = content
+                                    let report: @Sendable (NativeToolProgress) -> Void = { progress in
+                                        var patched = progressActivities
+                                        guard let index = patched.firstIndex(where: { $0.id == call.id }) else { return }
+                                        patched[index].progress = progress
+                                        continuation.yield(NativeToolTurnSnapshot(content: progressContent, activities: patched))
+                                    }
+                                    value = try await NativeToolProgressReporter.$report.withValue(report) {
+                                        try await Self.execute(
+                                            definition, arguments: arguments, activity: activity,
+                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                    }
                                     if let cacheKey, !Self.resultFailed(value, toolName: call.name) {
                                         searchResults[cacheKey] = value
                                     }
@@ -668,6 +699,7 @@ struct NativeToolLoop: Sendable {
                             if let index = activities.firstIndex(where: { $0.id == call.id }) {
                                 activities[index].result = result
                                 activities[index].state = state
+                                activities[index].progress = nil
                             }
                             try Task.checkCancellation()
                             history.append(NativeChatMessage(role: "tool", content: result, toolCallID: call.id))

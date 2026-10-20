@@ -419,7 +419,7 @@ These are **documented HTTP contracts** with reference implementations in this r
 
 | Slot | Contract | Reference |
 |---|---|---|
-| Image gen | OpenAI Images API: `POST {base}/v1/images/generations` | `services/vera-image` — serves the standard contract out of the box; `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
+| Image gen | The Mac app talks to ComfyUI directly (see [Image generation](#image-generation)); the server stack uses the OpenAI Images API `POST {base}/v1/images/generations` | ComfyUI with the Qwen Image 2.1 weights for the app; `services/vera-image` serves the OpenAI contract for vera-api, `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
