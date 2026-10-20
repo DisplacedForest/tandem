@@ -230,6 +230,20 @@ extension SelfTest {
               editedEndpoint["baseURL"] as? String == "http://keyless.example:11434/v1" else {
             fail("a manual endpoint edit must be saved even while the migration waits for a key")
         }
+        let discoveredWritten = Written()
+        let discovered = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { chatCoupled },
+                                     writeConfiguration: { discoveredWritten.configs.append($0) })
+        discovered.cacheMemoryModels(["qwen3-embedding", "qwen3-reranker"])
+        do { try discovered.save() } catch { fail("discovery save \(error)") }
+        guard let discoveredChat = discoveredWritten.configs.last?["native_chat"] as? [String: Any], discoveredChat["memoryEndpoint"] == nil else {
+            fail("discovery alone must not finish a migration that still waits for its key")
+        }
+        deniedCredentials.denied = []
+        let afterDiscovery = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { discoveredWritten.configs.last! }, writeConfiguration: { _ in })
+        guard afterDiscovery.memoryEndpointAPIKey == "tower-key", afterDiscovery.memoryEndpointResolved?.baseURL.host == "tower.example" else {
+            fail("migration did not resume after discovery once the chat key became readable")
+        }
+        deniedCredentials.denied = ["tower"]
         let cleared = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { chatCoupled },
                                   writeConfiguration: { editedWritten.configs.append($0) })
         cleared.memoryEndpointBinding(\.baseURL).wrappedValue = ""

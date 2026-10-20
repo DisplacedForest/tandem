@@ -212,7 +212,9 @@ final class ConfigStore: ObservableObject {
         }
         var merged = nativeSettings.merging(into: raw)
         if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil,
-           nativeSettings.memoryEndpoint == migratedMemoryEndpointSnapshot {
+           let snapshot = migratedMemoryEndpointSnapshot,
+           nativeSettings.memoryEndpoint.baseURL == snapshot.baseURL,
+           nativeSettings.memoryEndpoint.rerankModel == snapshot.rerankModel {
             if var nativeChat = merged["native_chat"] as? [String: Any] {
                 nativeChat.removeValue(forKey: "memoryEndpoint")
                 merged["native_chat"] = nativeChat
