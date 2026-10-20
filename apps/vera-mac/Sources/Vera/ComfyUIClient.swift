@@ -80,9 +80,12 @@ struct ComfyUIClient: Sendable {
             do {
                 try await queue(graph, promptID: promptID)
                 await submission.settle(.accepted)
-            } catch let error as NativeToolError {
+            } catch ComfyUIQueueError.rejected(let message) {
                 await submission.settle(.rejected)
-                throw error
+                throw NativeToolError.failed(message)
+            } catch ComfyUIQueueError.transport(let message) {
+                await submission.settle(.unknown)
+                throw NativeToolError.failed(message)
             } catch {
                 await submission.settle(.unknown)
                 throw error
@@ -188,19 +191,17 @@ struct ComfyUIClient: Sendable {
         let status: Int
         do {
             (data, status) = try await transport.request(endpoint("prompt"), "POST", body, 30)
-        } catch let error as NativeToolError {
-            throw error
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw NativeToolError.failed("ComfyUI is unreachable: \(error.localizedDescription)")
+            throw ComfyUIQueueError.transport("ComfyUI is unreachable: \(error.localizedDescription)")
         }
         let object = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         guard (200..<300).contains(status) else {
-            throw NativeToolError.failed(Self.queueError(object, status: status))
+            throw ComfyUIQueueError.rejected(Self.queueError(object, status: status))
         }
         guard object["prompt_id"] as? String == promptID else {
-            throw NativeToolError.failed("ComfyUI accepted the request under a different id")
+            throw ComfyUIQueueError.transport("ComfyUI accepted the request under a different id")
         }
     }
 
@@ -337,6 +338,11 @@ struct ComfyUIClient: Sendable {
         components.queryItems = [URLQueryItem(name: "clientId", value: Self.clientID)]
         return components.url ?? base
     }
+}
+
+enum ComfyUIQueueError: Error, Equatable {
+    case rejected(String)
+    case transport(String)
 }
 
 private actor ComfyUISubmission {

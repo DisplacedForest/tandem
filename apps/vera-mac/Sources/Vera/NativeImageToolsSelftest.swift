@@ -22,6 +22,7 @@ final class SelfTestComfyTransport: @unchecked Sendable {
     private var promptID: String?
     var echoPromptID = false
     var holdPrompt = false
+    var cancelPrompt = false
 
     var lastPromptID: String? {
         lock.lock()
@@ -76,6 +77,7 @@ final class SelfTestComfyTransport: @unchecked Sendable {
         promptID = nil
         echoPromptID = false
         holdPrompt = false
+        cancelPrompt = false
     }
 
     private func shouldHold(_ url: URL, _ method: String, _ body: Data?) -> Bool {
@@ -86,6 +88,12 @@ final class SelfTestComfyTransport: @unchecked Sendable {
             promptID = object["prompt_id"] as? String
         }
         return true
+    }
+
+    private var surfacesCancellationAsURLError: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelPrompt
     }
 
     private func handle(_ url: URL, _ method: String, _ body: Data?) throws -> (Data, Int) {
@@ -118,7 +126,14 @@ final class SelfTestComfyTransport: @unchecked Sendable {
     var transport: ComfyUITransport {
         ComfyUITransport(
             request: { [self] url, method, body, _ in
-                if shouldHold(url, method, body) { try await Task.sleep(for: .seconds(30)) }
+                if shouldHold(url, method, body) {
+                    do {
+                        try await Task.sleep(for: .seconds(30))
+                    } catch {
+                        if surfacesCancellationAsURLError { throw URLError(.cancelled) }
+                        throw error
+                    }
+                }
                 return try handle(url, method, body)
             },
             events: { [self] _ in
@@ -430,7 +445,7 @@ extension SelfTest {
             heldRunner.cancel()
             _ = await heldRunner.result
             let heldWait = ContinuousClock.now
-            while !transport.requests.contains(where: { $0.method == "POST" && $0.path == "queue" }),
+            while !transport.requests.contains(where: { $0.path.hasPrefix("history/") }),
                   heldWait.duration(to: .now) < .seconds(5) {
                 try await Task.sleep(for: .milliseconds(10))
             }
@@ -438,6 +453,44 @@ extension SelfTest {
                   (heldDelete.body?["delete"] as? [String]) == [transport.lastPromptID ?? ""],
                   !transport.requests.contains(where: { $0.path == "interrupt" }) else {
                 print("SELFTEST ERROR: image cancel during submission \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            transport.reset()
+            transport.holdPrompt = true
+            transport.cancelPrompt = true
+            transport.respond("GET", "queue", status: 200, json: "{\"queue_running\":[[1,\"{{id}}\",{},{}]],\"queue_pending\":[]}")
+            transport.respond("POST", "interrupt", status: 200, json: "{}")
+            let lostRunner = Task { try await run("Lost.") }
+            let lostStart = ContinuousClock.now
+            while transport.lastPromptID == nil, lostStart.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            lostRunner.cancel()
+            let lostOutcome = await lostRunner.result
+            let lostWait = ContinuousClock.now
+            while !transport.requests.contains(where: { $0.method == "POST" && $0.path == "interrupt" }),
+                  lostWait.duration(to: .now) < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let lostSucceeded: Bool
+            switch lostOutcome {
+            case .success(let result): lostSucceeded = result.0?.activities.first?.state == .succeeded
+            case .failure: lostSucceeded = false
+            }
+            guard !lostSucceeded,
+                  let lostInterrupt = transport.requests.first(where: { $0.method == "POST" && $0.path == "interrupt" }),
+                  lostInterrupt.body?["prompt_id"] as? String == transport.lastPromptID else {
+                print("SELFTEST ERROR: image cancelled submission cleanup \(transport.requests.map(\.path))"); exit(1)
+            }
+
+            transport.reset()
+            transport.respond("POST", "prompt", status: 503, json: "{\"error\":\"Server busy\"}")
+            let (busy, _) = try await run("Busy.")
+            try await Task.sleep(for: .milliseconds(200))
+            guard busy?.activities.first?.state == .failed,
+                  busy?.activities.first?.result?.contains("Server busy") == true,
+                  transport.requests.map(\.path) == ["prompt"] else {
+                print("SELFTEST ERROR: image rejection skips cleanup \(transport.requests.map(\.path))"); exit(1)
             }
 
             transport.reset()
@@ -500,7 +553,7 @@ extension SelfTest {
             guard decodedActivity == activity, decodedLegacy.progress == nil, decodedLegacy.state == .pending else {
                 print("SELFTEST ERROR: image activity progress coding"); exit(1)
             }
-            print("  native image tools OK (graph slots, sizes, gating, progress, artifact, rejection, run error, server down, cancel interrupt, pending delete, events)")
+            print("  native image tools OK (graph slots, sizes, gating, progress, artifact, rejection, run error, server down, cancel interrupt, pending delete, submission races, hostile seeds, events)")
         } catch {
             print("SELFTEST ERROR: native image tools \(error)"); exit(1)
         }
