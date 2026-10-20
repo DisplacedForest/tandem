@@ -337,7 +337,7 @@ struct StarterChipLabel: View {
 }
 
 enum ComposerControlKind {
-    case plus, voice, send(active: Bool, generating: Bool)
+    case plus, voice, send(active: Bool, generating: Bool), stop(enabled: Bool)
 }
 
 struct ComposerControlGlyph: View {
@@ -349,6 +349,7 @@ struct ComposerControlGlyph: View {
         case .plus: .clear
         case .voice: Theme.surfaceHover
         case .send(let active, let generating): generating ? Theme.accentGlow : (active ? Theme.accent : Theme.surfaceHover)
+        case .stop(let enabled): enabled ? Theme.accent : Theme.surfaceHover
         }
     }
 
@@ -356,6 +357,7 @@ struct ComposerControlGlyph: View {
         switch kind {
         case .plus, .voice: Theme.textSecondary
         case .send(let active, let generating): active || generating ? Theme.onAccent : Theme.textSecondary
+        case .stop(let enabled): enabled ? Theme.onAccent : Theme.textSecondary
         }
     }
 
@@ -364,12 +366,13 @@ struct ComposerControlGlyph: View {
         case .plus: "plus"
         case .voice: "waveform"
         case .send: "arrow.up"
+        case .stop: "stop.fill"
         }
     }
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15, weight: .medium))
+            .font(.system(size: { if case .stop = kind { 12 } else { 15 } }(), weight: .medium))
             .foregroundStyle(tint)
             .frame(width: Self.size, height: Self.size)
             .background(Circle().fill(fill))
@@ -416,9 +419,11 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask)
                     }
-                    if nativeActions, let status = store.answerStatus(message.id) {
-                        NativeAnswerControls(status: status, canStop: store.canStopAnswer(message.id),
-                                             onStop: { store.stopAnswer(message.id) })
+                    if nativeActions && store.isQueuedAnswer(message.id) {
+                        NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
+                                             onStop: { store.stopAnswer(message.id, reason: "Canceled.") })
+                    } else if nativeActions, let note = store.answerNote(message.id) {
+                        Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
@@ -727,12 +732,21 @@ struct ComposerField: View {
                     .buttonStyle(.plain)
                     .disabled(true)
                     .help("Voice is not available in native chat yet")
-                Button(action: submit) {
-                    ComposerControlGlyph(kind: .send(active: canSend, generating: store.generating))
+                if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
+                    Button { store.stopAnswer(stoppable) } label: {
+                        ComposerControlGlyph(kind: .stop(enabled: true))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop answer")
+                    .accessibilityLabel("Stop answer")
+                } else {
+                    Button(action: submit) {
+                        ComposerControlGlyph(kind: .send(active: canSend, generating: false))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
             }
             Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)

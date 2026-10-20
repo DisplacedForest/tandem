@@ -7,6 +7,7 @@ struct ShotView: View {
     var section: AppSection = .chat
     var emptyChat: Bool = false
     var attachDemo: Bool = false
+    var streaming: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
 
@@ -458,7 +459,11 @@ struct ShotView: View {
                     ComposerControlGlyph(kind: .plus)
                     Spacer()
                     ComposerControlGlyph(kind: .voice)
-                    ComposerControlGlyph(kind: .send(active: false, generating: false))
+                    if streaming {
+                        ComposerControlGlyph(kind: .stop(enabled: true))
+                    } else {
+                        ComposerControlGlyph(kind: .send(active: false, generating: false))
+                    }
                 }
             }
             .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
