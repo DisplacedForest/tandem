@@ -128,7 +128,7 @@ struct NativeTaskCardShotSurface: View {
                 Text("Compare insulation options for the workshop. I need costs and tradeoffs.")
                     .font(.system(size: 14))
                     .padding(14)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
                     .background(Theme.userBubble)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
@@ -144,7 +144,7 @@ struct NativeTaskCardShotSurface: View {
                 Text("While that's running, help me plan the measurements.")
                     .font(.system(size: 14))
                     .padding(14)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
                     .background(Theme.userBubble)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }

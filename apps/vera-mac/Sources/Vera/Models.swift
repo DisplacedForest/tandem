@@ -56,4 +56,9 @@ struct Conversation: Identifiable, Hashable {
     var instructions: String? = nil
     var grounding: [String] = []
     var mode: NativeSessionMode = .chat
+    var titleSource: ConversationTitleSource = .fallback
+}
+
+enum ConversationTitleSource: String, Codable, Sendable {
+    case fallback, generated, user
 }

@@ -357,8 +357,9 @@ enum Shot {
             }
             content = AnyView(
                 ShotView(store: store, section: section,
-                         emptyChat: view == "empty" || view == "attach",
-                         attachDemo: view == "attach")
+                         emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",
+                         attachDemo: view == "attach",
+                         collapsedSidebar: view == "sidebar-collapsed")
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)

@@ -158,10 +158,10 @@ struct Skeleton: View {
     @State private var phase: CGFloat = -1
     var body: some View {
         RoundedRectangle(cornerRadius: 6)
-            .fill(Color.primary.opacity(0.08))
+            .fill(Theme.surfaceHover)
             .overlay(
                 GeometryReader { geo in
-                    LinearGradient(colors: [.clear, Color.white.opacity(0.12), .clear],
+                    LinearGradient(colors: [.clear, Theme.textPrimary.opacity(0.12), .clear],
                                    startPoint: .leading, endPoint: .trailing)
                         .frame(width: geo.size.width * 0.6)
                         .offset(x: phase * geo.size.width)

@@ -8,6 +8,7 @@ struct ShotView: View {
     var emptyChat: Bool = false
     var attachDemo: Bool = false
     var chrome: ShotChrome = .window
+    var collapsedSidebar: Bool = false
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
     enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab) }
@@ -315,23 +316,19 @@ struct ShotView: View {
                     }
                     Text(attachDemo ? "What do you make of these?" : "Message Vera…")
                         .font(.system(size: 14)).foregroundStyle(attachDemo ? Theme.textPrimary : Theme.textSecondary)
-                    HStack(spacing: 10) {
-                        Image(systemName: "plus").font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                            .frame(width: 28, height: 28).background(Theme.surfaceHover).clipShape(Circle())
+                    HStack(spacing: 8) {
+                        ComposerControlGlyph(kind: .plus)
                         Spacer()
-                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 26))
-                            .foregroundStyle(attachDemo ? Theme.accent : Theme.textSecondary)
+                        ComposerControlGlyph(kind: .voice)
+                        ComposerControlGlyph(kind: .send(active: attachDemo, generating: false))
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 11)
-                .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.hairline, lineWidth: 1))
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
                 HStack(spacing: 8) {
                     ForEach(["What's on today?", "Check the kitchen", "What's the weather?", "Research a topic for me"], id: \.self) { s in
-                        Text(s).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(Theme.surface).clipShape(Capsule())
-                            .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                        StarterChipLabel(title: s)
                     }
                 }
             }
@@ -368,21 +365,25 @@ struct ShotView: View {
 
     private var shellChrome: some View {
         HStack(spacing: 0) {
-            sidebarMirror.frame(width: VeraSidebar.expandedWidth).frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
+            sidebarMirror
+                .frame(width: collapsedSidebar ? VeraSidebar.collapsedWidth : VeraSidebar.expandedWidth)
+                .frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
             Rectangle().fill(Theme.hairline).frame(width: 1)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     private var sidebarMirror: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
             HStack {
-                Spacer()
-                Image(systemName: "sidebar.left").font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary).frame(width: 32, height: 32)
+                if !collapsedSidebar { Spacer() }
+                Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
+                if collapsedSidebar { Spacer() }
             }
             .padding(.top, VeraSidebar.topInset).padding(.bottom, 6)
-            shotNavMark("Vera", active: section == .vera)
+            shotRow(SidebarRowLabel(icon: VeraMark(size: 18), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false), selected: section == .vera)
             shotNav("New chat", "square.and.pencil", active: false)
             shotNav("Projects", AppSection.projects.icon, active: section == .projects)
             shotNav("Artifacts", AppSection.artifacts.icon, active: section == .artifacts)
@@ -393,78 +394,54 @@ struct ShotView: View {
             shotNav("Workflows", "point.3.connected.trianglepath.dotted", active: section == .agentic)
             shotNav("Activity", "bolt", active: false)
             shotNav("Memory", AppSection.memory.icon, active: section == .memory)
-            shotDivider
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Text("Search chats").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-            .padding(.bottom, 4)
-            VStack(alignment: .leading, spacing: 1) {
-                shotSection("Pinned")
-                shotChatRow("Greenhouse irrigation plan", selected: false, pinned: true)
-                shotSection("Today")
-                shotChatRow("Weather watch", selected: section == .chat && !emptyChat, pinned: false)
-                shotChatRow("Local LLM + AMD GPU news", selected: false, pinned: false)
-                shotSection("Previous 7 Days")
-                shotChatRow("Sourdough starter notes", selected: false, pinned: false)
-                shotChatRow("Server rebuild plan", selected: false, pinned: false)
+            if !collapsedSidebar {
+                shotDivider
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Text("Search chats").font(.system(size: SidebarMetrics.labelSize)).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                }
+                .modifier(SidebarFieldChrome())
+                .padding(.bottom, 2)
+                VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
+                    SidebarSectionHeader(title: "Pinned")
+                    shotChatRow("Greenhouse irrigation plan", selected: false, hovering: false, pinned: true)
+                    SidebarSectionHeader(title: "Today")
+                    shotChatRow("Weather watch", selected: section == .chat && !emptyChat, hovering: false, pinned: false)
+                    shotChatRow("Local LLM and AMD GPU news", selected: false, hovering: section == .chat && !emptyChat, pinned: false)
+                    SidebarSectionHeader(title: "Previous 7 days")
+                    shotChatRow("Sourdough starter notes", selected: false, hovering: false, pinned: false)
+                    shotChatRow("Server rebuild plan", selected: false, hovering: false, pinned: false)
+                }
             }
             Spacer(minLength: 0)
             shotNav("Settings", "gearshape", active: false).padding(.bottom, 10)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, SidebarMetrics.inset)
     }
 
     private var shotDivider: some View {
-        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
+        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
     }
 
-    private func shotNavMark(_ title: String, active: Bool) -> some View {
-        HStack(spacing: 10) {
-            VeraMark(size: 20).frame(width: 22, height: 22)
-            Text(title).font(.system(size: 13, weight: active ? .semibold : .regular))
-            Spacer()
-        }
-        .foregroundStyle(active ? Theme.accent : Theme.textPrimary)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(active ? Theme.surfaceHover : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+    private func shotRow<Label: View>(_ label: Label, selected: Bool, hovering: Bool = false) -> some View {
+        label
+            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+                .fill(SidebarRowStyle.fill(selected: selected, hovering: hovering, pressed: false)))
     }
 
     private func shotNav(_ title: String, _ icon: String, active: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 15, weight: .medium)).frame(width: 22, height: 22)
-            Text(title).font(.system(size: 13, weight: active ? .semibold : .regular))
-            Spacer()
-        }
-        .foregroundStyle(active ? Theme.accent : Theme.textPrimary)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(active ? Theme.surfaceHover : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        shotRow(SidebarRowLabel(icon: Image(systemName: icon), title: title, selected: active, collapsed: collapsedSidebar), selected: active)
     }
 
-    private func shotSection(_ t: String) -> some View {
-        Text(t.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.5)
-            .foregroundStyle(Theme.textSecondary.opacity(0.75))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 4)
-    }
-
-    private func shotChatRow(_ title: String, selected: Bool, pinned: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 13)).lineLimit(1).foregroundStyle(Theme.textPrimary)
-            Spacer(minLength: 0)
-            if pinned {
-                Image(systemName: "pin.fill").font(.system(size: 9))
-                    .foregroundStyle(Theme.textSecondary).rotationEffect(.degrees(45))
+    private func shotChatRow(_ title: String, selected: Bool, hovering: Bool, pinned: Bool) -> some View {
+        shotRow(SidebarChatRowLabel(title: title, selected: selected) {
+            if hovering {
+                Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            } else if pinned {
+                Image(systemName: "pin").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textSecondary)
             }
-        }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(selected ? Theme.surfaceHover : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        }, selected: selected, hovering: hovering)
     }
 
     private var chat: some View {
@@ -476,14 +453,18 @@ struct ShotView: View {
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .clipped()
-            HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Message Vera…").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Image(systemName: "arrow.up.circle.fill").font(.system(size: 26)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    ComposerControlGlyph(kind: .plus)
+                    Spacer()
+                    ComposerControlGlyph(kind: .voice)
+                    ComposerControlGlyph(kind: .send(active: false, generating: false))
+                }
             }
-            .padding(.horizontal, 14).padding(.vertical, 11)
-            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.hairline, lineWidth: 1))
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
             .frame(maxWidth: 760)
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
         }

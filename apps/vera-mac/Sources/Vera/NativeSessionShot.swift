@@ -33,11 +33,11 @@ struct NativeSessionShotSurface: View {
             Text("A conversation with Vera").font(.system(size: 20, weight: .medium)).foregroundStyle(Theme.textPrimary)
             Text("Can you check the match report?")
                 .padding(12).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
-                .foregroundStyle(.white).frame(maxWidth: .infinity, alignment: .trailing)
+                .foregroundStyle(Theme.textPrimary).frame(maxWidth: .infinity, alignment: .trailing)
             NativeAnswerControls(status: "Checking the match report", canStop: true, onStop: {})
             Text("What can I make from the food in my fridge?")
                 .padding(12).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
-                .foregroundStyle(.white).frame(maxWidth: .infinity, alignment: .trailing)
+                .foregroundStyle(Theme.textPrimary).frame(maxWidth: .infinity, alignment: .trailing)
             if mode == .chat {
                 NativeAnswerControls(status: "Waiting to answer", canStop: true, onStop: {})
             } else {
