@@ -786,10 +786,11 @@ final class ChatStore: ObservableObject {
         let pending = queuedMemoryTurns
         queuedMemoryTurns = []
         for (offset, turn) in pending.enumerated() {
-            guard nativeMemorySettings.enabled, nativeMemorySettings.generateFromChats else {
+            guard nativeMemorySettings.enabled, nativeMemorySettings.generateFromChats, nativeMemoryService != nil else {
                 for rest in pending[offset...] { enqueueMemoryTurn(rest) }
                 return
             }
+            guard queuedTurnStillAllowed(turn) else { continue }
             await learnFromCompletedTurn(
                 user: turn.user, assistant: turn.assistant, source: turn.source,
                 turnKey: turn.turnKey, conversationExcluded: turn.conversationExcluded)
@@ -798,6 +799,13 @@ final class ChatStore: ObservableObject {
                 return
             }
         }
+        if queuedMemoryTurns.isEmpty, case .retrievalUnavailable = memoryServiceState { reloadNativeMemory() }
+    }
+
+    private func queuedTurnStillAllowed(_ turn: NativeMemoryQueuedTurn) -> Bool {
+        guard let source = turn.source else { return !turn.conversationExcluded }
+        guard let conversation = conversations.first(where: { $0.id == source.conversationID }) else { return false }
+        return !conversation.memoryExcluded
     }
 
     func requestMemoryChange(_ request: String) {

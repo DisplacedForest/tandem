@@ -194,6 +194,24 @@ extension SelfTest {
               writtenEndpoint["baseURL"] as? String == "http://tower.example:11434/v1" else {
             fail("credential copied to the memory id and endpoint persisted on save")
         }
+        let deniedCredentials = NativeCredentialFixtureStore()
+        deniedCredentials.values["tower"] = "tower-key"
+        deniedCredentials.denied = ["tower"]
+        let deniedWritten = Written()
+        let deniedConfig = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { chatCoupled },
+                                       writeConfiguration: { deniedWritten.configs.append($0) })
+        deniedConfig["appearance"] = "dark"
+        do { try deniedConfig.save() } catch { fail("denied save \(error)") }
+        guard let deniedChat = deniedWritten.configs.last?["native_chat"] as? [String: Any], deniedChat["memoryEndpoint"] == nil,
+              deniedCredentials.values[ConfigStore.memoryCredentialID] == nil else {
+            fail("a denied chat key must keep the migration pending instead of persisting an endpoint without a key")
+        }
+        deniedCredentials.denied = []
+        let allowedAgain = ConfigStore(credentialStore: deniedCredentials, readConfiguration: { deniedWritten.configs.last! }, writeConfiguration: { _ in })
+        guard allowedAgain.memoryEndpointAPIKey == "tower-key", allowedAgain.memoryEndpointResolved?.baseURL.host == "tower.example" else {
+            fail("migration did not resume once the chat key became readable")
+        }
+
         let legacyRaw: [String: Any] = ["model_api_key": "legacy-key", "native_chat": [
             "version": 3,
             "profiles": [["id": "old", "name": "Old", "baseURL": "http://old.example/v1", "discoveredModels": ["emb"], "selectedModel": "emb"]],
@@ -225,6 +243,22 @@ extension SelfTest {
         restored.memoryEndpointBinding(\.baseURL).wrappedValue = "http://tower.example:11434/v1"
         guard restored.memoryEndpointAPIKey == "tower-key", restored.nativeMemoryService?.configuration.apiKey == "tower-key" else {
             fail("existing key not loaded when the endpoint was restored")
+        }
+        let lockedCredentials = NativeCredentialFixtureStore()
+        lockedCredentials.values = credentials.values
+        lockedCredentials.denied = [ConfigStore.memoryCredentialID]
+        let locked = ConfigStore(credentialStore: lockedCredentials, readConfiguration: { written.configs.last! }, writeConfiguration: { _ in })
+        locked.memoryEndpointBinding(\.baseURL).wrappedValue = "http://tower.example:11434/v1"
+        let deniedReads = lockedCredentials.reads.filter { $0 == ConfigStore.memoryCredentialID }.count
+        _ = locked.memoryEndpointResolved
+        guard locked.memoryEndpointAPIKey.isEmpty, locked.credentialError != nil, locked.memoryCredentialNeedsRetry,
+              lockedCredentials.reads.filter({ $0 == ConfigStore.memoryCredentialID }).count == deniedReads else {
+            fail("a denied deferred read must surface and must not retry on every resolution")
+        }
+        lockedCredentials.denied = []
+        locked.loadMemoryCredentialIfNeeded(retry: true)
+        guard locked.memoryEndpointAPIKey == "tower-key", locked.credentialError == nil, !locked.memoryCredentialNeedsRetry else {
+            fail("explicit retry did not load the key")
         }
         config.nativeSettings.memoryEndpoint.baseURL = "https://memory.example/v1"
         config.memoryEndpointAPIKey = "memory-key"
@@ -298,22 +332,37 @@ extension SelfTest {
                 fail("lexical fallback \(store.memoryServiceState)")
             }
             let reply = Message(role: .assistant, text: "Noted, you prefer tea in the morning.")
+            store.newConversation()
+            guard let liveConversation = store.selectedID else { fail("no conversation for the queue") }
+            let doomedConversation = UUID().uuidString.lowercased()
+            store.conversations.append(Conversation(id: doomedConversation, title: "Doomed", messages: [], updatedAt: Date()))
             await store.learnFromCompletedTurn(
                 user: "I prefer tea over coffee in the mornings", assistant: reply,
-                source: NativeMemoryTurnSource(conversationID: "c1", messageID: "m1", date: Date()),
-                turnKey: "c1|m1", conversationExcluded: false)
+                source: NativeMemoryTurnSource(conversationID: liveConversation, messageID: "m1", date: Date()),
+                turnKey: liveConversation + "|m1", conversationExcluded: false)
             await store.learnFromCompletedTurn(
                 user: "I prefer tea over coffee in the mornings", assistant: reply,
-                source: NativeMemoryTurnSource(conversationID: "c1", messageID: "m1", date: Date()),
-                turnKey: "c1|m1", conversationExcluded: false)
-            guard store.queuedMemoryTurns.count == 1, outage.extractionCalls == 2,
-                  case .retrievalUnavailable(let waiting) = store.memoryServiceState, waiting.contains("1 suggestion waiting") else {
+                source: NativeMemoryTurnSource(conversationID: liveConversation, messageID: "m1", date: Date()),
+                turnKey: liveConversation + "|m1", conversationExcluded: false)
+            await store.learnFromCompletedTurn(
+                user: "My cat is named Juniper", assistant: Message(role: .assistant, text: "Juniper, noted."),
+                source: NativeMemoryTurnSource(conversationID: doomedConversation, messageID: "m2", date: Date()),
+                turnKey: doomedConversation + "|m2", conversationExcluded: false)
+            guard store.queuedMemoryTurns.count == 2 else { fail("two distinct turns should queue, got \(store.queuedMemoryTurns.count)") }
+            store.toggleMemoryExclusion(doomedConversation)
+            await store.learnFromCompletedTurn(
+                user: "I prefer tea over coffee in the mornings", assistant: reply,
+                source: NativeMemoryTurnSource(conversationID: liveConversation, messageID: "m1", date: Date()),
+                turnKey: liveConversation + "|m1", conversationExcluded: false)
+            guard store.queuedMemoryTurns.count == 2, outage.extractionCalls == 4,
+                  case .retrievalUnavailable(let waiting) = store.memoryServiceState, waiting.contains("2 suggestions waiting") else {
                 fail("queue \(store.queuedMemoryTurns.count) \(store.memoryServiceState)")
             }
             outage.failing = false
             let recovered = await store.probeMemoryEndpoint()
-            guard recovered == .connected(models: 2), store.queuedMemoryTurns.isEmpty, outage.extractionCalls == 3,
-                  !store.memoryProposals.isEmpty else {
+            guard recovered == .connected(models: 2), store.queuedMemoryTurns.isEmpty, outage.extractionCalls == 5,
+                  !store.memoryProposals.isEmpty,
+                  !store.memoryProposals.contains(where: { $0.sourceConversationID == doomedConversation }) else {
                 fail("drain \(recovered) \(store.queuedMemoryTurns.count) \(outage.extractionCalls) \(store.memoryProposals.count)")
             }
             guard store.memoryRecallDescription.contains("semantic") else { fail("recall description \(store.memoryRecallDescription)") }

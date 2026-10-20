@@ -483,6 +483,7 @@ struct MemoryEndpointEditor: View {
         testResult = nil
         Task {
             defer { testing = false }
+            config.loadMemoryCredentialIfNeeded(retry: true)
             guard let resolved = config.memoryEndpointResolved else {
                 testResult = "Enter an HTTP or HTTPS memory endpoint ending in /v1."
                 return

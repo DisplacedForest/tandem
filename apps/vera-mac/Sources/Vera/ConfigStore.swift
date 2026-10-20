@@ -61,6 +61,8 @@ final class ConfigStore: ObservableObject {
     static let visionBridgeCredentialID = "vision-bridge"
     static let memoryCredentialID = "memory-endpoint"
     private var memoryCredentialLoaded = false
+    private var memoryCredentialReadFailed = false
+    private var memoryMigrationAwaitingCredential = false
     @Published var memoryEndpointAPIKey: String {
         didSet {
             if oldValue != memoryEndpointAPIKey { queueCredential(memoryEndpointAPIKey, for: Self.memoryCredentialID) }
@@ -123,14 +125,18 @@ final class ConfigStore: ObservableObject {
                 legacyCredentials[profile.id] = legacy
             }
         }
-        if migratedMemoryEndpoint, keys[Self.memoryCredentialID] == nil,
-           let profile = settings.activeProfile, let chatKey = nativeAPIKeys[profile.id], !chatKey.isEmpty,
-           !unavailable.contains(Self.memoryCredentialID) {
-            nativeAPIKeys[Self.memoryCredentialID] = chatKey
-            legacyCredentials[Self.memoryCredentialID] = chatKey
-            memoryEndpointAPIKey = chatKey
+        if migratedMemoryEndpoint, keys[Self.memoryCredentialID] == nil {
+            if let profile = settings.activeProfile, let chatKey = nativeAPIKeys[profile.id], !chatKey.isEmpty,
+               !unavailable.contains(Self.memoryCredentialID) {
+                nativeAPIKeys[Self.memoryCredentialID] = chatKey
+                legacyCredentials[Self.memoryCredentialID] = chatKey
+                memoryEndpointAPIKey = chatKey
+            } else if let profile = settings.activeProfile, unavailable.contains(profile.id) || unavailable.contains(Self.memoryCredentialID) {
+                memoryMigrationAwaitingCredential = true
+            }
         }
-        memoryCredentialLoaded = memoryEndpointWanted
+        memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
+        memoryCredentialReadFailed = memoryEndpointWanted && unavailable.contains(Self.memoryCredentialID)
     }
 
     subscript(_ key: String) -> String {
@@ -198,6 +204,14 @@ final class ConfigStore: ObservableObject {
             throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
         var merged = nativeSettings.merging(into: raw)
+        if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil {
+            if var nativeChat = merged["native_chat"] as? [String: Any] {
+                nativeChat.removeValue(forKey: "memoryEndpoint")
+                merged["native_chat"] = nativeChat
+            }
+        } else {
+            memoryMigrationAwaitingCredential = false
+        }
         var revisions = raw["pi_profile_revisions"] as? [String: String] ?? [:]
         for profile in nativeSettings.profiles {
             let previous = piCommittedSettings.profiles.first { $0.id == profile.id }
@@ -436,15 +450,28 @@ final class ConfigStore: ObservableObject {
             })
     }
 
-    func loadMemoryCredentialIfNeeded() {
+    func loadMemoryCredentialIfNeeded(retry: Bool = false) {
         guard !memoryCredentialLoaded, nativeSettings.memoryEndpoint.isConfigured,
-              pendingCredentials[Self.memoryCredentialID] == nil, memoryEndpointAPIKey.isEmpty else { return }
-        memoryCredentialLoaded = true
-        guard let stored = try? credentialStore.read(for: Self.memoryCredentialID), !stored.isEmpty else { return }
-        nativeAPIKeys[Self.memoryCredentialID] = stored
-        savedCredentials[Self.memoryCredentialID] = stored
-        memoryEndpointAPIKey = stored
+              pendingCredentials[Self.memoryCredentialID] == nil, memoryEndpointAPIKey.isEmpty,
+              retry || !memoryCredentialReadFailed else { return }
+        do {
+            let stored = try credentialStore.read(for: Self.memoryCredentialID)
+            memoryCredentialLoaded = true
+            memoryCredentialReadFailed = false
+            unavailableCredentials.remove(Self.memoryCredentialID)
+            credentialError = unavailableCredentials.isEmpty ? nil : NativeCredentialError.read.localizedDescription
+            guard let stored, !stored.isEmpty else { return }
+            nativeAPIKeys[Self.memoryCredentialID] = stored
+            savedCredentials[Self.memoryCredentialID] = stored
+            memoryEndpointAPIKey = stored
+        } catch {
+            memoryCredentialReadFailed = true
+            unavailableCredentials.insert(Self.memoryCredentialID)
+            credentialError = NativeCredentialError.read.localizedDescription
+        }
     }
+
+    var memoryCredentialNeedsRetry: Bool { memoryCredentialReadFailed && !memoryCredentialLoaded }
 
     func cacheMemoryModels(_ models: [String]) {
         nativeSettings.memoryEndpoint.discoveredModels = Array(Set(models)).sorted()
