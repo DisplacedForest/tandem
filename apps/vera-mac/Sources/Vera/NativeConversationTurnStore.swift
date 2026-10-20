@@ -245,7 +245,11 @@ extension ChatStore {
         }
     }
 
-    func stopAnswer(_ messageID: UUID, reason: String = "Stopped.") {
+    func cancelToolRun(_ messageID: UUID) {
+        stopAnswer(messageID, reason: "Canceled.", toolCanceled: true)
+    }
+
+    func stopAnswer(_ messageID: UUID, reason: String = "Stopped.", toolCanceled: Bool = false) {
         reloadConversationTurns()
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               turn.state == .running || turn.state == .pending,
@@ -257,8 +261,12 @@ extension ChatStore {
             message.failure = "Stopped. An action already sent may have completed; check it before trying again."
         }
         for index in message.toolActivities.indices where message.toolActivities[index].state == .pending {
-            message.toolActivities[index].state = .failed
-            message.toolActivities[index].result = "{\"error\":\"Stopped before a result was confirmed\"}"
+            let canceled = toolCanceled || message.toolActivities[index].isCancelableRun
+            message.toolActivities[index].state = canceled ? .canceled : .failed
+            message.toolActivities[index].result = canceled
+                ? "{\"error\":\"Canceled by the user\"}"
+                : "{\"error\":\"Stopped before a result was confirmed\"}"
+            message.toolActivities[index].progress = nil
         }
         do {
             try turnRepository.finishTurn(turn.id, attempt: turn.attempt, state: .stopped, message: message, ordinal: location.reply)

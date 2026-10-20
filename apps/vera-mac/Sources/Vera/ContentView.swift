@@ -350,7 +350,8 @@ struct MessageRow: View {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
-                        NativeToolActivityChip(activity: activity)
+                        NativeToolActivityChip(activity: activity,
+                            onCancel: nativeActions && activity.isCancelableRun ? { store.cancelToolRun(message.id) } : nil)
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
@@ -358,6 +359,9 @@ struct MessageRow: View {
                         }
                     }
                     AssistantBody(message: message, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    ForEach(message.attachments.filter(\.isImage)) { attachment in
+                        GeneratedImageView(attachment: attachment, store: attachmentStore)
+                    }
                     if nativeActions && !message.displayBlocks.isEmpty {
                         NativeDisplayBlocksView(blocks: message.displayBlocks,
                             connectedTaskIDs: store.connectedNativeTaskIDs,
@@ -458,6 +462,7 @@ struct AttachmentRouteBadge: View {
 
 struct NativeToolActivityChip: View {
     let activity: NativeToolActivity
+    var onCancel: (() -> Void)? = nil
     @State private var expanded = false
 
     private var icon: String {
@@ -465,14 +470,24 @@ struct NativeToolActivityChip: View {
         case .pending: return "clock"
         case .succeeded: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
+        case .canceled: return "slash.circle"
         }
     }
 
     private var status: String {
         switch activity.state {
-        case .pending: return "Working"
+        case .pending: return activity.progress?.label ?? "Working"
         case .succeeded: return "Done"
         case .failed: return "Failed"
+        case .canceled: return "Canceled"
+        }
+    }
+
+    private var iconColor: Color {
+        switch activity.state {
+        case .failed: return Color.orange
+        case .canceled: return Theme.textSecondary
+        default: return Theme.accent
         }
     }
 
@@ -488,8 +503,7 @@ struct NativeToolActivityChip: View {
                 if activity.state == .pending {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Image(systemName: icon)
-                        .foregroundStyle(activity.state == .failed ? Color.orange : Theme.accent)
+                    Image(systemName: icon).foregroundStyle(iconColor)
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -497,6 +511,18 @@ struct NativeToolActivityChip: View {
                     Text("Confirmation required")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.orange)
+                }
+                if activity.state == .pending, let progress = activity.progress {
+                    ProgressView(value: progress.fraction)
+                        .progressViewStyle(.linear)
+                        .frame(width: 120)
+                        .accessibilityLabel(progress.label)
+                }
+                if activity.state == .pending, let onCancel {
+                    Button("Cancel", action: onCancel)
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11))
+                        .accessibilityLabel("Cancel \(activity.title)")
                 }
             }
             .foregroundStyle(Theme.textPrimary)

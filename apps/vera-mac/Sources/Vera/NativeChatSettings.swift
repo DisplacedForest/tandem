@@ -315,17 +315,18 @@ struct NativeChatToolDescriptor: Identifiable, Equatable, Sendable {
 
 enum NativeChatToolCatalog {
     static var tools: [NativeChatToolDescriptor] {
-        tools(veraAPIConfigured: VeraAPIClient.resolvedBase() != nil)
+        tools(veraAPIConfigured: VeraAPIClient.resolvedBase() != nil,
+              imageConfigured: NativeImageTools.resolvedBase() != nil)
     }
 
     static func tools(
-        veraAPIConfigured: Bool, declarations: [NativeToolDeclaration] = []
+        veraAPIConfigured: Bool, imageConfigured: Bool = false, declarations: [NativeToolDeclaration] = []
     ) -> [NativeChatToolDescriptor] {
-        builtIn(veraAPIConfigured: veraAPIConfigured)
+        builtIn(veraAPIConfigured: veraAPIConfigured, imageConfigured: imageConfigured)
             + NativeCapabilityTools.descriptors(declarations, veraAPIConfigured: veraAPIConfigured)
     }
 
-    private static func builtIn(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
+    private static func builtIn(veraAPIConfigured: Bool, imageConfigured: Bool) -> [NativeChatToolDescriptor] {
         [
             NativeChatToolDescriptor(
                 id: "apple-reminders",
@@ -345,6 +346,7 @@ enum NativeChatToolCatalog {
                 summary: "Runs a multi-step research pass through your vera-api and cites its sources.",
                 available: veraAPIConfigured,
                 setup: "Set the vera-api base URL in the Connection tab to enable deep research."),
+            NativeImageTools.descriptor(configured: imageConfigured),
         ]
     }
 

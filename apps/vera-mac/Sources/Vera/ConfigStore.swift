@@ -66,6 +66,7 @@ final class ConfigStore: ObservableObject {
         "voice_base": "VERA_VOICE_BASE", "vera_api_base": "VERA_API_BASE",
         "owner_name": "VERA_OWNER_NAME", "assistant_name": "VERA_ASSISTANT_NAME",
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
+        NativeImageTools.configKey: NativeImageTools.envName,
     ]
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
@@ -623,6 +624,10 @@ final class ConfigStore: ObservableObject {
 
     var veraAPIBase: URL? {
         VeraAPIClient.resolvedBase()
+    }
+
+    var imageBase: URL? {
+        NativeImageTools.resolvedBase()
     }
 
     var voiceBase: URL? {
