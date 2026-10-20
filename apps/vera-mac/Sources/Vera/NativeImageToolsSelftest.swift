@@ -544,6 +544,24 @@ extension SelfTest {
                 print("SELFTEST ERROR: image websocket event parsing"); exit(1)
             }
 
+            let presentations = ["pending": NativeToolActivityState.pending, "succeeded": .succeeded, "failed": .failed, "canceled": .canceled]
+                .mapValues { state in
+                    NativeToolActivityPresentation.forActivity(NativeToolActivity(
+                        id: "p", toolID: NativeImageTools.toolID, name: NativeImageTools.toolName, title: NativeImageTools.title,
+                        round: 1, request: "{}", result: nil, state: state, confirmationRequired: false))
+                }
+            let otherPending = NativeToolActivityPresentation.forActivity(NativeToolActivity(
+                id: "w", toolID: "web-search", name: "web_search", title: "Search the web",
+                round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false))
+            guard presentations["pending"] == .imagePlaceholder, presentations["succeeded"] == .hidden,
+                  presentations["failed"] == .chip, presentations["canceled"] == .chip, otherPending == .chip else {
+                print("SELFTEST ERROR: image activity presentation \(presentations)"); exit(1)
+            }
+            let variants = Set((0..<60).map { ImagePlaceholderEffect.variant(for: "call-\($0)") })
+            guard variants.count == ImagePlaceholderEffect.allCases.count,
+                  ImagePlaceholderEffect.variant(for: "stable") == ImagePlaceholderEffect.variant(for: "stable") else {
+                print("SELFTEST ERROR: image placeholder variants \(variants)"); exit(1)
+            }
             var canceledMessage = Message(role: .assistant, text: "")
             canceledMessage.toolActivities = [activity]
             let encodedActivity = try JSONEncoder().encode(activity)
