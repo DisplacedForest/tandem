@@ -39,6 +39,7 @@ struct ImageGenerationPlaceholder: View {
 
     static let maxWidth: CGFloat = 480
     static let maxHeight: CGFloat = 480
+    static let controlsInsideMinimumWidth: CGFloat = 240
 
     private var effect: ImagePlaceholderEffect {
         effectOverride ?? ImagePlaceholderEffect.variant(for: activity.id)
@@ -70,35 +71,42 @@ struct ImageGenerationPlaceholder: View {
             Text("Creating image")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
+            let inside = boxSize.width >= Self.controlsInsideMinimumWidth
             ZStack(alignment: .bottom) {
                 effectCanvas
-                HStack {
-                    if let onCancel {
-                        Button("Cancel", action: onCancel)
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.textSecondary)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(Capsule().fill(Theme.surface.opacity(0.9)))
-                            .accessibilityLabel("Cancel image generation")
-                    }
-                    Spacer()
-                    Text("\(Int((fraction * 100).rounded()))%")
-                        .font(.system(size: 13, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 14).padding(.vertical, 7)
-                        .background(Capsule().fill(Theme.surface.opacity(0.9)))
-                        .accessibilityLabel(activity.progress?.label ?? "Starting")
-                }
-                .padding(12)
+                if inside { controls.padding(12) }
             }
             .frame(width: boxSize.width, height: boxSize.height)
             .background(Theme.surface.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+            if !inside {
+                controls.frame(width: Self.controlsInsideMinimumWidth)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Creating image, \(Int((fraction * 100).rounded())) percent")
+    }
+
+    private var controls: some View {
+        HStack {
+            if let onCancel {
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(Theme.surface.opacity(0.9)))
+                    .accessibilityLabel("Cancel image generation")
+            }
+            Spacer()
+            Text("\(Int((fraction * 100).rounded()))%")
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(Capsule().fill(Theme.surface.opacity(0.9)))
+                .accessibilityLabel(activity.progress?.label ?? "Starting")
+        }
     }
 
     @ViewBuilder private var effectCanvas: some View {

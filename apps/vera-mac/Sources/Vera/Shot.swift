@@ -25,7 +25,7 @@ enum Shot {
         } else if view.hasPrefix("settings-advanced") {
             size = CGSize(width: 1180, height: 1500)
         } else if view == "image-placeholder" {
-            size = CGSize(width: 1600, height: 620)
+            size = CGSize(width: 1800, height: 640)
         } else {
             size = CGSize(width: 1180, height: 760)
         }
@@ -94,11 +94,10 @@ enum Shot {
                 .background(Theme.bg).environmentObject(store)
             )
         } else if view == "image-placeholder" {
-            let request = "{\"prompt\":\"a cabin in the snow\",\"size\":\"1024x1024\"}"
-            func activity(_ id: String, _ step: Int) -> NativeToolActivity {
+            func activity(_ id: String, _ step: Int, size: String = "1024x1024") -> NativeToolActivity {
                 NativeToolActivity(
                     id: id, toolID: NativeImageTools.toolID, name: NativeImageTools.toolName,
-                    title: NativeImageTools.title, round: 1, request: request,
+                    title: NativeImageTools.title, round: 1, request: "{\"prompt\":\"a cabin in the snow\",\"size\":\"\(size)\"}",
                     result: nil, state: .pending, confirmationRequired: false,
                     progress: NativeToolProgress(completed: step, total: 40, label: "Step \(step) of 40"))
             }
@@ -107,6 +106,7 @@ enum Shot {
                     ImageGenerationPlaceholder(activity: activity("dots", 10), onCancel: {}, effectOverride: .dots, frozenTime: 1.3)
                     ImageGenerationPlaceholder(activity: activity("raster", 22), onCancel: {}, effectOverride: .raster, frozenTime: 2.1)
                     ImageGenerationPlaceholder(activity: activity("mosaic", 31), onCancel: {}, effectOverride: .mosaic, frozenTime: 0.7)
+                    ImageGenerationPlaceholder(activity: activity("tall", 4, size: "256x2048"), onCancel: {}, effectOverride: .dots, frozenTime: 0.2)
                 }
                 .padding(28).frame(width: size.width, height: size.height, alignment: .topLeading)
                 .background(Theme.bg).environmentObject(store)
