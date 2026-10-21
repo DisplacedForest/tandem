@@ -10,7 +10,8 @@ extension SelfTest {
                ComposerMentionCatalog.plugin(name: "Slack", serverID: "b", connected: false, toolIDs: [], allowedIDs: []),
                ComposerMentionCatalog.plugin(name: "Home", serverID: "c", connected: true, toolIDs: ["mcp-9"], allowedIDs: ["mcp-9"]),
                ComposerMentionCatalog.plugin(name: "Zoom", serverID: "d", connected: true, toolIDs: ["mcp-5"], allowedIDs: []),
-               ComposerMentionCatalog.plugin(name: "search THE web", serverID: "e", connected: true, toolIDs: ["mcp-7"], allowedIDs: ["mcp-7"])])
+               ComposerMentionCatalog.plugin(name: "search THE web", serverID: "e", connected: true, toolIDs: ["mcp-7"], allowedIDs: ["mcp-7"]),
+               ComposerMentionCatalog.plugin(name: "Search the web archive", serverID: "f", connected: true, toolIDs: ["mcp-8"], allowedIDs: [])])
 
         try require(ComposerMentions.query(in: "@") == ComposerMentionQuery(range: "@".startIndex..<"@".endIndex, text: ""), "A bare @ opens the picker")
         try require(ComposerMentions.query(in: "find @sea")?.text == "sea", "Text after @ is the filter")
@@ -48,6 +49,12 @@ extension SelfTest {
         try require(ComposerMentions.resolve("``@Deep research`` tea", catalog: catalog).isEmpty, "Double backtick spans are ignored")
         try require(ComposerMentions.resolve("`word`@Deep research tea", catalog: catalog).isEmpty, "An @ glued to a code span is not a mention")
         try require(ComposerMentions.resolve("\"@Deep research\" tea", catalog: catalog).isEmpty, "Quoted text is ignored")
+        try require(ComposerMentions.resolve("Explain: `` @Search the web ``", catalog: catalog).isEmpty, "Padded double backtick spans are ignored")
+        try require(ComposerMentions.resolve("``\n@Search the web\n``", catalog: catalog).isEmpty, "Multiline double backtick spans are ignored")
+        try require(ComposerMentions.resolve("``` @Search the web ```", catalog: catalog).isEmpty, "Inline triple backtick spans are ignored")
+        try require(ComposerMentions.resolve("`x` @Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A mention after a closed code span counts")
+        try require(ComposerMentions.resolve("@Search the web archive now", catalog: catalog).isEmpty, "A disabled longer name consumes the match instead of falling back to a shorter one")
+        try require(ComposerMentions.resolve("@Add photos and files here", catalog: catalog).isEmpty, "The files item grants nothing")
         try require(ComposerMentions.resolve("ok\n@Deep research tea", catalog: catalog) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A mention on its own line counts")
 
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ConversationTitleStubTransport(.reply("x")),

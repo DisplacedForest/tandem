@@ -112,8 +112,7 @@ enum ComposerMentions {
         let masked = Array(NativeTurnToolAuthority.literalMask(text).lowercased())
         let original = Array(text)
         guard masked.count == original.count else { return [] }
-        let names = catalog.items.filter { !$0.toolIDs.isEmpty }
-            .map { (Array($0.name.lowercased()), $0.toolIDs) }
+        let names = catalog.items.map { (Array($0.name.lowercased()), $0.toolIDs) }
             .sorted { $0.0.count > $1.0.count }
         var ids: Set<String> = []
         var index = 0

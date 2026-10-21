@@ -25,7 +25,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    static let literalPatterns = [#"(?s)```.*?(?:```|$)"#, #"(?s)~~~.*?(?:~~~|$)"#, #"`[^`\n]*(?:`|$)"#,
+    static let literalPatterns = [#"(?s)```.*?(?:```|$)"#, #"(?s)~~~.*?(?:~~~|$)"#, #"(?s)(`+).*?\1"#, #"`[^`\n]*(?:`|$)"#,
                                   #"(?m)^\s*>.*$"#, #""(?:\\.|[^"\\])*(?:"|$)"#, #"“[^”\n]*(?:”|$)"#,
                                   #"(?<![\p{L}\p{N}])'[^'\n]*'(?![\p{L}\p{N}])"#]
 
