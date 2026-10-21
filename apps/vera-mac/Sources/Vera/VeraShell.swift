@@ -112,6 +112,8 @@ struct VeraSidebar: View {
     @Binding var search: String
     @ObservedObject var workflowEditor: WorkflowEditorStore
     let onSelect: (AppSection) -> Void
+    @StateObject private var pins = SidebarPins()
+    @State private var showingMore = false
     static let expandedWidth: CGFloat = 256
     static let collapsedWidth: CGFloat = 84
     static let topInset: CGFloat = 40
@@ -143,39 +145,36 @@ struct VeraSidebar: View {
 
     private var column: some View {
         VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-            HStack {
-                if !collapsed { Spacer(minLength: 0) }
-                Button { withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() } } label: {
-                    Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
-                }
-                .buttonStyle(SidebarRowStyle())
-                .help(collapsed ? "Expand sidebar" : "Collapse sidebar")
-                .accessibilityLabel(collapsed ? "Expand sidebar" : "Collapse sidebar")
-                if collapsed { Spacer(minLength: 0) }
+            Button { withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() } } label: {
+                Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
             }
+            .buttonStyle(SidebarRowStyle())
+            .help(collapsed ? "Expand sidebar" : "Collapse sidebar")
+            .accessibilityLabel(collapsed ? "Expand sidebar" : "Collapse sidebar")
+            .frame(maxWidth: .infinity, alignment: collapsed ? .center : .trailing)
             .padding(.top, Self.topInset)
             .padding(.bottom, 6)
 
-            navRow(.vera)
             actionRow(icon: "square.and.pencil", title: "New chat") { store.newConversation() }
-            navRow(.projects)
-            navRow(.artifacts)
-            navRow(.scheduled)
-            navRow(.integrations)
+            if collapsed {
+                actionRow(icon: "magnifyingglass", title: "Search chats") {
+                    withAnimation(.easeInOut(duration: 0.22)) { collapsed = false }
+                }
+            } else {
+                searchField.padding(.vertical, 2)
+            }
+            navRow(.vera)
             divider
-            navRow(.pulse)
-            agenticRow(icon: "point.3.connected.trianglepath.dotted", title: "Workflows", pane: .canvas)
-            agenticRow(icon: "bolt", title: "Activity", pane: .activity)
-            navRow(.memory)
+            ForEach(pins.pinned) { destinationRow($0) }
+            moreRow
 
             if collapsed {
                 Spacer(minLength: 0)
             } else {
                 Group {
                     divider
-                    searchField
                     history
                 }
                 .transition(.opacity)
@@ -195,6 +194,50 @@ struct VeraSidebar: View {
 
     private var divider: some View {
         Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
+    }
+
+    private var moreRow: some View {
+        Button { showingMore.toggle() } label: {
+            SidebarRowLabel(icon: Image(systemName: "ellipsis"), title: "More", collapsed: collapsed)
+        }
+        .buttonStyle(SidebarRowStyle(selected: showingMore))
+        .help("More")
+        .accessibilityLabel("More sections")
+        .popover(isPresented: $showingMore, arrowEdge: .trailing) {
+            SidebarMoreMenu(pins: pins,
+                            isSelected: { $0.isSelected(section: store.section, pane: store.agenticPane) },
+                            go: { destination in showingMore = false; go(destination) })
+        }
+    }
+
+    private func destinationRow(_ destination: SidebarDestination) -> some View {
+        let selected = destination.isSelected(section: store.section, pane: store.agenticPane)
+        return Button { go(destination) } label: {
+            SidebarRowLabel(icon: Image(systemName: destination.icon), title: destination.title, selected: selected, collapsed: collapsed)
+        }
+        .buttonStyle(SidebarRowStyle(selected: selected))
+        .help(destination.title)
+        .accessibilityLabel(destination.title)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private func go(_ destination: SidebarDestination) {
+        switch destination {
+        case .workflows: openAgentic(.canvas)
+        case .activity: openAgentic(.activity)
+        case .projects: onSelect(.projects)
+        case .artifacts: onSelect(.artifacts)
+        case .scheduled: onSelect(.scheduled)
+        case .integrations: onSelect(.integrations)
+        case .pulse: onSelect(.pulse)
+        case .memory: onSelect(.memory)
+        }
+    }
+
+    private func openAgentic(_ pane: AgenticPane) {
+        store.section = .agentic
+        store.agenticPane = pane
+        store.agenticFlowID = nil
     }
 
     private var searchField: some View {
@@ -249,21 +292,6 @@ struct VeraSidebar: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    private func agenticRow(icon: String, title: String, pane: AgenticPane) -> some View {
-        let selected = store.section == .agentic && store.agenticPane == pane
-        return Button {
-            store.section = .agentic
-            store.agenticPane = pane
-            store.agenticFlowID = nil
-        } label: {
-            SidebarRowLabel(icon: Image(systemName: icon), title: title, selected: selected, collapsed: collapsed)
-        }
-        .buttonStyle(SidebarRowStyle(selected: selected))
-        .help(title)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
     private func actionRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             SidebarRowLabel(icon: Image(systemName: icon), title: title, collapsed: collapsed)
@@ -271,6 +299,59 @@ struct VeraSidebar: View {
         .buttonStyle(SidebarRowStyle())
         .help(title)
         .accessibilityLabel(title)
+    }
+}
+
+struct SidebarMoreMenu: View {
+    @ObservedObject var pins: SidebarPins
+    let isSelected: (SidebarDestination) -> Bool
+    let go: (SidebarDestination) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
+            ForEach(SidebarDestination.allCases) { destination in
+                SidebarMoreRow(destination: destination,
+                               selected: isSelected(destination),
+                               pinned: pins.isPinned(destination),
+                               go: { go(destination) },
+                               togglePin: { pins.toggle(destination) })
+            }
+        }
+        .padding(6)
+        .frame(width: 232)
+    }
+}
+
+private struct SidebarMoreRow: View {
+    let destination: SidebarDestination
+    let selected: Bool
+    let pinned: Bool
+    let go: () -> Void
+    let togglePin: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: go) {
+            SidebarRowLabel(icon: Image(systemName: destination.icon), title: destination.title, selected: selected)
+                .padding(.trailing, SidebarMetrics.rowHeight - SidebarMetrics.inset)
+        }
+        .buttonStyle(SidebarRowStyle(selected: selected))
+        .accessibilityLabel(destination.title)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .overlay(alignment: .trailing) {
+            Button(action: togglePin) {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(pinned ? Theme.textPrimary : Theme.textSecondary)
+                    .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(pinned || hovering ? 1 : 0)
+            .help(pinned ? "Unpin from sidebar" : "Pin to sidebar")
+            .accessibilityLabel(pinned ? "Unpin \(destination.title)" : "Pin \(destination.title)")
+        }
+        .onHover { hovering = $0 }
     }
 }
 
