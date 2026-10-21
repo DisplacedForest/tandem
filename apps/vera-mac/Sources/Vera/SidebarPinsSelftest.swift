@@ -57,6 +57,8 @@ extension SelfTest {
         try require(!windowA.accept(dropped: ["pulse"], before: .pulse), "Dropping a section on itself is refused")
         try require(!windowA.accept(dropped: ["bogus"], before: nil), "Unknown payloads are refused")
         try require(!windowA.accept(dropped: [], before: nil), "Empty payloads are refused")
+        try require(!windowA.accept(dropped: ["memory"], before: .pulse), "Dropping a section where it already sits is refused")
+        try require(!windowA.accept(dropped: ["artifacts"], before: nil), "Dropping the last section on More is refused")
         try require(windowA.accept(dropped: ["memory"], before: nil), "Dropping a pinned section on More is accepted")
         try require(windowA.pinned == [.pulse, .projects, .artifacts, .memory], "Refused drops left the order alone and the last drop moved Memory to the end")
         try require(SidebarPins.shared === SidebarPins.shared, "The app shares one pin model across windows")

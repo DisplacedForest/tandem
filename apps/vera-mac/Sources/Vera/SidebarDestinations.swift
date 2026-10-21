@@ -70,7 +70,7 @@ final class SidebarPins: ObservableObject {
     func toggle(_ destination: SidebarDestination) {
         var next = Self.stored(in: defaults)
         if let index = next.firstIndex(of: destination) { next.remove(at: index) } else { next.append(destination) }
-        save(next)
+        _ = save(next)
     }
 
     @discardableResult
@@ -80,8 +80,7 @@ final class SidebarPins: ObservableObject {
         next.removeAll { $0 == destination }
         guard let index = next.firstIndex(of: target) else { return false }
         next.insert(destination, at: index)
-        save(next)
-        return true
+        return save(next)
     }
 
     @discardableResult
@@ -90,8 +89,7 @@ final class SidebarPins: ObservableObject {
         guard next.contains(destination) else { return false }
         next.removeAll { $0 == destination }
         next.append(destination)
-        save(next)
-        return true
+        return save(next)
     }
 
     func accept(dropped items: [String], before target: SidebarDestination?) -> Bool {
@@ -100,9 +98,11 @@ final class SidebarPins: ObservableObject {
         return moveToEnd(dragged)
     }
 
-    private func save(_ next: [SidebarDestination]) {
+    private func save(_ next: [SidebarDestination]) -> Bool {
+        guard next != Self.stored(in: defaults) else { return false }
         pinned = next
         defaults.set(next.map(\.rawValue), forKey: Self.key)
+        return true
     }
 
     func refresh() {
