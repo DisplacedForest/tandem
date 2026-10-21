@@ -60,6 +60,8 @@ final class NativeTaskEngineLock: @unchecked Sendable {
     }
 
     var isHeld: Bool { lock.withLock { registered } }
+
+    deinit { release() }
 }
 
 private actor NativeTaskEngineOwnership {
@@ -232,8 +234,11 @@ final class NativeTaskLocalEngine: Sendable {
         let relay = NativeTaskRetirementRelay()
         let dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds,
                                               graceSeconds: graceSeconds, onRetire: { relay.fire() })
-        relay.handler = { [weak ownership, weak dispatcher] in
-            guard let ownership, let dispatcher else { return }
+        relay.handler = { [weak ownership, weak dispatcher, lock] in
+            guard let ownership, let dispatcher else {
+                lock.release()
+                return
+            }
             Task { await ownership.retired(dispatcher) }
         }
         self.store = store

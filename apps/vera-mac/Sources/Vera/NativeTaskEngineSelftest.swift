@@ -318,6 +318,29 @@ extension SelfTest {
             await racing.stop()
         }
 
+        let droppedRepository = try LocalChatRepository(inMemory: true)
+        do {
+            let dropped = NativeTaskLocalEngine(database: droppedRepository.database, admission: { nil }, pollSeconds: 0.02, graceSeconds: 0.1, workers: { _ in
+                ["resistant": NativeTaskWorker(timeoutSeconds: 0.1) { _ in
+                    let until = ContinuousClock.now.advanced(by: .seconds(1))
+                    while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+                    return NativeTaskStepResult()
+                }]
+            })
+            let abandonedTask = try dropped.store.create(workerType: "resistant", payload: payload, idempotencyKey: "dropped")
+            try await dropped.start()
+            try require(try await poll(seconds: 2) { try dropped.store.get(abandonedTask.id).state == .failed }, "The dropped engine's step times out")
+            await dropped.stop()
+            try require(dropped.lock.isHeld, "The dropped engine is still retiring when it is released")
+        }
+        let successor = NativeTaskLocalEngine(database: droppedRepository.database, admission: { nil }, pollSeconds: 0.02)
+        var successorStarted = false
+        for _ in 0..<60 where !successorStarted {
+            do { try await successor.start(); successorStarted = true } catch { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        try require(successorStarted, "An engine dropped during retirement releases its lock once the step exits")
+        await successor.stop()
+
         weak var disposedDispatcher: NativeTaskDispatcher?
         weak var disposedStore: NativeTaskStore?
         do {
