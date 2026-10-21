@@ -51,16 +51,15 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 @MainActor
 final class SidebarPins: ObservableObject {
     static let key = "sidebarPinnedSections"
+    static let shared = SidebarPins()
     @Published private(set) var pinned: [SidebarDestination]
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let stored = defaults.array(forKey: Self.key) as? [String] {
-            let set = Set(stored)
-            pinned = SidebarDestination.allCases.filter { set.contains($0.rawValue) }
-        } else {
-            pinned = SidebarDestination.defaultPins
+        pinned = Self.stored(in: defaults)
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
         }
     }
 
@@ -69,9 +68,21 @@ final class SidebarPins: ObservableObject {
     }
 
     func toggle(_ destination: SidebarDestination) {
-        var set = Set(pinned)
+        var set = Set(Self.stored(in: defaults))
         if set.contains(destination) { set.remove(destination) } else { set.insert(destination) }
-        pinned = SidebarDestination.allCases.filter { set.contains($0) }
-        defaults.set(pinned.map(\.rawValue), forKey: Self.key)
+        let next = SidebarDestination.allCases.filter { set.contains($0) }
+        pinned = next
+        defaults.set(next.map(\.rawValue), forKey: Self.key)
+    }
+
+    func refresh() {
+        let current = Self.stored(in: defaults)
+        if current != pinned { pinned = current }
+    }
+
+    private static func stored(in defaults: UserDefaults) -> [SidebarDestination] {
+        guard let stored = defaults.array(forKey: key) as? [String] else { return SidebarDestination.defaultPins }
+        let set = Set(stored)
+        return SidebarDestination.allCases.filter { set.contains($0.rawValue) }
     }
 }

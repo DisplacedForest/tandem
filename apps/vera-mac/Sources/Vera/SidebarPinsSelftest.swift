@@ -26,5 +26,14 @@ extension SelfTest {
 
         defaults.set(["memory", "bogus", "projects"], forKey: SidebarPins.key)
         try require(SidebarPins(defaults: defaults).pinned == [.projects, .memory], "Unknown stored names are dropped and order is normalized")
+
+        defaults.set(["projects", "pulse"], forKey: SidebarPins.key)
+        let windowA = SidebarPins(defaults: defaults)
+        let windowB = SidebarPins(defaults: defaults)
+        windowA.toggle(.memory)
+        windowB.toggle(.artifacts)
+        try require(SidebarPins(defaults: defaults).pinned == [.projects, .artifacts, .pulse, .memory], "Two windows toggling in turn keep both pins on disk")
+        try require(windowA.pinned == windowB.pinned && windowA.pinned == [.projects, .artifacts, .pulse, .memory], "Both windows show the merged pin set")
+        try require(SidebarPins.shared === SidebarPins.shared, "The app shares one pin model across windows")
     }
 }

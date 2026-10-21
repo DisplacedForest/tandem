@@ -112,7 +112,7 @@ struct VeraSidebar: View {
     @Binding var search: String
     @ObservedObject var workflowEditor: WorkflowEditorStore
     let onSelect: (AppSection) -> Void
-    @StateObject private var pins = SidebarPins()
+    @ObservedObject private var pins = SidebarPins.shared
     @State private var showingMore = false
     static let expandedWidth: CGFloat = 256
     static let collapsedWidth: CGFloat = 84
