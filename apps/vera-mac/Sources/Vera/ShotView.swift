@@ -375,34 +375,31 @@ struct ShotView: View {
 
     private var sidebarMirror: some View {
         VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-            HStack {
-                if !collapsedSidebar { Spacer() }
-                Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
-                if collapsedSidebar { Spacer() }
-            }
-            .padding(.top, VeraSidebar.topInset).padding(.bottom, 6)
-            shotRow(SidebarRowLabel(icon: VeraMark(size: 18), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false), selected: section == .vera)
+            Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
+                .frame(maxWidth: .infinity, alignment: collapsedSidebar ? .center : .trailing)
+                .padding(.top, VeraSidebar.topInset).padding(.bottom, 6)
             shotNav("New chat", "square.and.pencil", active: false)
-            shotNav("Projects", AppSection.projects.icon, active: section == .projects)
-            shotNav("Artifacts", AppSection.artifacts.icon, active: section == .artifacts)
-            shotNav("Scheduled", AppSection.scheduled.icon, active: section == .scheduled)
-            shotNav("Integrations", AppSection.integrations.icon, active: section == .integrations)
-            shotDivider
-            shotNav("Pulse", AppSection.pulse.icon, active: section == .pulse)
-            shotNav("Workflows", "point.3.connected.trianglepath.dotted", active: section == .agentic)
-            shotNav("Activity", "bolt", active: false)
-            shotNav("Memory", AppSection.memory.icon, active: section == .memory)
-            if !collapsedSidebar {
-                shotDivider
+            if collapsedSidebar {
+                shotNav("Search chats", "magnifyingglass", active: false)
+            } else {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     Text("Search chats").font(.system(size: SidebarMetrics.labelSize)).foregroundStyle(Theme.textSecondary)
                     Spacer()
                 }
                 .modifier(SidebarFieldChrome())
-                .padding(.bottom, 2)
+                .padding(.vertical, 2)
+            }
+            shotRow(SidebarRowLabel(icon: VeraMark(size: 18), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false), selected: section == .vera)
+            shotDivider
+            ForEach(SidebarDestination.defaultPins) { pin in
+                shotNav(pin.title, pin.icon, active: pin.isSelected(section: section, pane: .canvas))
+            }
+            shotNav("More", "ellipsis", active: false)
+            if !collapsedSidebar {
+                shotDivider
                 VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
                     SidebarSectionHeader(title: "Pinned")
                     shotChatRow("Greenhouse irrigation plan", selected: false, hovering: false, pinned: true)

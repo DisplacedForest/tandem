@@ -454,6 +454,8 @@ enum SelfTest {
         await runNativeStore()
         do { try await runConversationTitles() }
         catch { print("SELFTEST ERROR: conversation titles \(error)"); exit(1) }
+        do { try runSidebarPins() }
+        catch { print("SELFTEST ERROR: sidebar pins \(error)"); exit(1) }
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()
