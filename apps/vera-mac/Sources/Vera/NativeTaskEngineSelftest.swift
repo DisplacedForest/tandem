@@ -259,7 +259,7 @@ extension SelfTest {
 
         let stubborn = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02, graceSeconds: 0.2, workers: { _ in
             ["resistant": NativeTaskWorker(timeoutSeconds: 0.2) { _ in
-                let until = ContinuousClock.now.advanced(by: .seconds(1))
+                let until = ContinuousClock.now.advanced(by: .seconds(2.5))
                 while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(20)) }
                 return NativeTaskStepResult()
             }]
@@ -274,7 +274,47 @@ extension SelfTest {
         try require(await stubborn.dispatcher.failure != nil, "The dispatcher pauses while the step lingers")
         await stubborn.stop()
         try require(stubborn.lock.isHeld, "Ownership is retained until the lingering step exits")
-        try require(try await poll(seconds: 2) { !stubborn.lock.isHeld }, "Ownership is released once the step exits")
+        do { try await stubborn.start(); throw NativeTaskFixture.Failure.assertion("A restart during retirement must be refused") }
+        catch NativeTaskStoreError.conflict {}
+        let rival = NativeTaskLocalEngine(database: stubborn.store.database, admission: { nil })
+        do { try await rival.start(); throw NativeTaskFixture.Failure.assertion("A rival cannot start while a step lingers") }
+        catch NativeTaskStoreError.conflict {}
+        try require(try await poll(seconds: 5) { !stubborn.lock.isHeld }, "Ownership is released once the step exits")
+        try await stubborn.start()
+        try require(await stubborn.isRunning, "The engine restarts after retirement")
+        await stubborn.stop()
+
+        let relaunching = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02, graceSeconds: 0.2, workers: { _ in
+            ["resistant": NativeTaskWorker(timeoutSeconds: 0.2) { _ in
+                let until = ContinuousClock.now.advanced(by: .seconds(0.8))
+                while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(20)) }
+                return NativeTaskStepResult()
+            }, "quick": NativeTaskWorker(timeoutSeconds: 5) { _ in NativeTaskStepResult(state: .completed, event: "completed") }]
+        })
+        let lingering = try relaunching.store.create(workerType: "resistant", payload: payload, idempotencyKey: "lingering")
+        try await relaunching.start()
+        try require(try await poll(seconds: 2) { try relaunching.store.get(lingering.id).state == .failed }, "The lingering step times out")
+        let quick = try relaunching.store.create(workerType: "quick", payload: payload, idempotencyKey: "quick")
+        try require(try await poll(seconds: 4) { try relaunching.store.get(quick.id).state == .completed }, "Dispatch resumes on its own once the lingering step exits")
+        try require(relaunching.lock.isHeld, "The engine keeps ownership across an automatic relaunch")
+        await relaunching.stop()
+        try require(!relaunching.lock.isHeld, "Stop releases ownership after the relaunch")
+
+        let contended = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02)
+        for _ in 0..<5 {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for _ in 0..<3 { group.addTask { try await contended.start() } }
+                group.addTask { await contended.stop() }
+                group.addTask { try await contended.start() }
+                try await group.waitForAll()
+            }
+            await contended.stop()
+            try require(!contended.lock.isHeld, "Overlapping starts and stops settle to a clean stop")
+            try require(await !contended.dispatcher.isRunning, "The dispatcher is stopped after overlapping calls")
+        }
+        try await contended.start()
+        try require(await contended.isRunning && contended.lock.isHeld, "The engine starts cleanly after contention")
+        await contended.stop()
     }
 
     private static func poll(seconds: Double, _ condition: () throws -> Bool) async throws -> Bool {

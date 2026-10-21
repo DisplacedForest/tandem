@@ -63,12 +63,49 @@ final class NativeTaskEngineLock: @unchecked Sendable {
 }
 
 private actor NativeTaskEngineOwnership {
-    private(set) var owned = false
+    private enum State {
+        case idle
+        case starting(Task<Void, Error>)
+        case running
+        case stopping(Task<Void, Never>)
+        case retiring
+    }
 
-    func start(lock: NativeTaskEngineLock, store: NativeTaskStore, dispatcher: NativeTaskDispatcher) async throws {
-        guard !owned else { return }
-        try lock.acquire()
+    private let lock: NativeTaskEngineLock
+    private let store: NativeTaskStore
+    private var state: State = .idle
+
+    init(lock: NativeTaskEngineLock, store: NativeTaskStore) {
+        self.lock = lock
+        self.store = store
+    }
+
+    var isRunning: Bool { if case .running = state { return true } else { return false } }
+
+    func start(_ dispatcher: NativeTaskDispatcher) async throws {
+        while true {
+            switch state {
+            case .running:
+                return
+            case .starting(let task):
+                try await task.value
+                return
+            case .stopping(let task):
+                await task.value
+            case .retiring:
+                throw NativeTaskStoreError.conflict("A previous step still owns the task storage")
+            case .idle:
+                let task = Task { try await self.bringUp(dispatcher) }
+                state = .starting(task)
+                try await task.value
+                return
+            }
+        }
+    }
+
+    private func bringUp(_ dispatcher: NativeTaskDispatcher) async throws {
         do {
+            try lock.acquire()
             try await store.database.write { db in
                 try db.execute(sql: """
                     UPDATE native_task_generations SET state = 'failed', failure = 'previous_request_uncertain', response = NULL
@@ -76,25 +113,78 @@ private actor NativeTaskEngineOwnership {
                     """)
             }
             try await dispatcher.start()
-            owned = true
+            state = .running
         } catch {
             lock.release()
+            state = .idle
             throw error
         }
     }
 
-    func stop(lock: NativeTaskEngineLock, dispatcher: NativeTaskDispatcher) async {
-        guard owned else { return }
-        owned = false
-        if await dispatcher.stop() { lock.release() }
+    func stop(_ dispatcher: NativeTaskDispatcher) async {
+        while true {
+            switch state {
+            case .idle, .retiring:
+                return
+            case .starting(let task):
+                _ = try? await task.value
+            case .stopping(let task):
+                await task.value
+                return
+            case .running:
+                let task = Task { await self.tearDown(dispatcher) }
+                state = .stopping(task)
+                await task.value
+                return
+            }
+        }
     }
 
-    func abandon(lock: NativeTaskEngineLock, dispatcher: NativeTaskDispatcher) async {
-        guard owned else { return }
-        owned = false
+    private func tearDown(_ dispatcher: NativeTaskDispatcher) async {
+        if await dispatcher.stop() {
+            lock.release()
+            state = .idle
+        } else {
+            state = .retiring
+        }
+    }
+
+    func retired(_ dispatcher: NativeTaskDispatcher) async {
+        switch state {
+        case .retiring:
+            lock.release()
+            state = .idle
+        case .running:
+            do { try await dispatcher.start() } catch {
+                lock.release()
+                state = .idle
+            }
+        default:
+            break
+        }
+    }
+
+    func abandon(_ dispatcher: NativeTaskDispatcher) async {
+        switch state {
+        case .idle: return
+        case .starting(let task): _ = try? await task.value
+        case .stopping(let task): await task.value
+        default: break
+        }
         await dispatcher.abandon()
         lock.release()
+        state = .idle
     }
+}
+
+final class NativeTaskRetirementRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: (@Sendable () -> Void)?
+    var handler: (@Sendable () -> Void)? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+    func fire() { handler?() }
 }
 
 final class NativeTaskLocalEngine: Sendable {
@@ -105,19 +195,21 @@ final class NativeTaskLocalEngine: Sendable {
     let exchange: NativeTaskGenerationExchange
     let dispatcher: NativeTaskDispatcher
     let lock: NativeTaskEngineLock
-    private let ownership = NativeTaskEngineOwnership()
+    private let ownership: NativeTaskEngineOwnership
 
     func start() async throws {
-        try await ownership.start(lock: lock, store: store, dispatcher: dispatcher)
+        try await ownership.start(dispatcher)
     }
 
     func stop() async {
-        await ownership.stop(lock: lock, dispatcher: dispatcher)
+        await ownership.stop(dispatcher)
     }
 
     func abandon() async {
-        await ownership.abandon(lock: lock, dispatcher: dispatcher)
+        await ownership.abandon(dispatcher)
     }
+
+    var isRunning: Bool { get async { await ownership.isRunning } }
 
     init(database: DatabaseQueue, admission: @escaping @Sendable () -> NativeInferenceAdmission? = { .configured() },
          pollSeconds: Double = 0.1, graceSeconds: Double = 1,
@@ -125,11 +217,16 @@ final class NativeTaskLocalEngine: Sendable {
         let store = NativeTaskStore(database: database)
         let exchange = NativeTaskGenerationExchange(store: store, admission: admission)
         let lock = NativeTaskEngineLock(database: database)
+        let ownership = NativeTaskEngineOwnership(lock: lock, store: store)
+        let relay = NativeTaskRetirementRelay()
+        let dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds,
+                                              graceSeconds: graceSeconds, onRetire: { relay.fire() })
+        relay.handler = { Task { await ownership.retired(dispatcher) } }
         self.store = store
         self.exchange = exchange
         self.lock = lock
-        dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds,
-                                          graceSeconds: graceSeconds, onRetire: { lock.release() })
+        self.ownership = ownership
+        self.dispatcher = dispatcher
     }
 
     static func research(database: DatabaseQueue, search: NativeResearchSearch,

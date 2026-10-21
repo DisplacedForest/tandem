@@ -142,6 +142,7 @@ actor NativeTaskDispatcher {
     }
 
     private func dispatch() async {
+        defer { if !shuttingDown { loop = nil } }
         while !Task.isCancelled && failure == nil {
             let claimed: NativeTaskRecord?
             do { claimed = try store.claim(workerTypes: Set(workers.keys)) }
