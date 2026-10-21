@@ -300,6 +300,36 @@ extension SelfTest {
         await relaunching.stop()
         try require(!relaunching.lock.isHeld, "Stop releases ownership after the relaunch")
 
+        for _ in 0..<4 {
+            let racing = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02, graceSeconds: 0.15, workers: { _ in
+                ["resistant": NativeTaskWorker(timeoutSeconds: 0.1) { _ in
+                    let until = ContinuousClock.now.advanced(by: .seconds(0.3))
+                    while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(10)) }
+                    return NativeTaskStepResult()
+                }]
+            })
+            _ = try racing.store.create(workerType: "resistant", payload: payload, idempotencyKey: "racing")
+            try await racing.start()
+            try await Task.sleep(for: .milliseconds(120))
+            await racing.stop()
+            try require(try await poll(seconds: 3) { !racing.lock.isHeld }, "A retirement that lands during stop still releases the lock")
+            try await racing.start()
+            try require(await racing.isRunning, "The engine restarts after a retirement that raced its stop")
+            await racing.stop()
+        }
+
+        weak var disposedDispatcher: NativeTaskDispatcher?
+        weak var disposedStore: NativeTaskStore?
+        do {
+            let disposable = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02)
+            disposedDispatcher = disposable.dispatcher
+            disposedStore = disposable.store
+            try await disposable.start()
+            await disposable.stop()
+        }
+        for _ in 0..<20 where disposedDispatcher != nil { try await Task.sleep(for: .milliseconds(20)) }
+        try require(disposedDispatcher == nil && disposedStore == nil, "A stopped engine is released with its dispatcher and store")
+
         let contended = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02)
         for _ in 0..<5 {
             try await withThrowingTaskGroup(of: Void.self) { group in

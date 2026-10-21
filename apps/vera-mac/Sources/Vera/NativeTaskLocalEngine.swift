@@ -74,6 +74,7 @@ private actor NativeTaskEngineOwnership {
     private let lock: NativeTaskEngineLock
     private let store: NativeTaskStore
     private var state: State = .idle
+    private var retiredWhileStopping = false
 
     init(lock: NativeTaskEngineLock, store: NativeTaskStore) {
         self.lock = lock
@@ -141,12 +142,20 @@ private actor NativeTaskEngineOwnership {
     }
 
     private func tearDown(_ dispatcher: NativeTaskDispatcher) async {
+        retiredWhileStopping = false
         if await dispatcher.stop() {
+            lock.release()
+            state = .idle
+            return
+        }
+        let stillRetiring = await dispatcher.isRetiring
+        if retiredWhileStopping || !stillRetiring {
             lock.release()
             state = .idle
         } else {
             state = .retiring
         }
+        retiredWhileStopping = false
     }
 
     func retired(_ dispatcher: NativeTaskDispatcher) async {
@@ -154,6 +163,8 @@ private actor NativeTaskEngineOwnership {
         case .retiring:
             lock.release()
             state = .idle
+        case .stopping:
+            retiredWhileStopping = true
         case .running:
             do { try await dispatcher.start() } catch {
                 lock.release()
@@ -221,7 +232,10 @@ final class NativeTaskLocalEngine: Sendable {
         let relay = NativeTaskRetirementRelay()
         let dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds,
                                               graceSeconds: graceSeconds, onRetire: { relay.fire() })
-        relay.handler = { Task { await ownership.retired(dispatcher) } }
+        relay.handler = { [weak ownership, weak dispatcher] in
+            guard let ownership, let dispatcher else { return }
+            Task { await ownership.retired(dispatcher) }
+        }
         self.store = store
         self.exchange = exchange
         self.lock = lock

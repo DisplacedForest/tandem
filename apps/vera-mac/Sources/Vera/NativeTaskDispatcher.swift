@@ -70,6 +70,7 @@ actor NativeTaskDispatcher {
     }
 
     var isRunning: Bool { loop != nil }
+    var isRetiring: Bool { retirement != nil }
 
     func start() throws {
         guard loop == nil else { return }
