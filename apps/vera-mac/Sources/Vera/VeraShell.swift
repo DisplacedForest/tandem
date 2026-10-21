@@ -203,6 +203,7 @@ struct VeraSidebar: View {
         .buttonStyle(SidebarRowStyle(selected: showingMore))
         .help("More")
         .accessibilityLabel("More sections")
+        .dropDestination(for: String.self) { items, _ in pins.accept(dropped: items, before: nil) }
         .popover(isPresented: $showingMore, arrowEdge: .trailing) {
             SidebarMoreMenu(pins: pins,
                             isSelected: { $0.isSelected(section: store.section, pane: store.agenticPane) },
@@ -219,6 +220,8 @@ struct VeraSidebar: View {
         .help(destination.title)
         .accessibilityLabel(destination.title)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .draggable(destination.rawValue)
+        .dropDestination(for: String.self) { items, _ in pins.accept(dropped: items, before: destination) }
     }
 
     private func go(_ destination: SidebarDestination) {
