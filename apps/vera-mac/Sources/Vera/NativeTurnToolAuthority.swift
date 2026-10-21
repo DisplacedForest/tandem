@@ -4,7 +4,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
     let allowsTools: Bool
     let allowsResearch: Bool
 
-    init(_ request: String) {
+    init(_ request: String, mentions: Set<String> = []) {
         let text = Self.instructions(request)
         let noTools = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:use|call|run|invoke)\s+(?:(?:any|external)\s+)?(?:tools?|functions?)\b|\b(?:no|without)\s+(?:(?:using|calling|invoking)\s+)?(?:(?:any|external)\s+)?(?:tools?|functions?)\b"#)
         let noResearch = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:(?:start|run|do|perform|conduct)\s+)?(?:(?:new|background|deep)\s+)*(?:research|investigat\w*)\b|\bno\s+(?:new\s+)?(?:(?:background|deep)\s+)?(?:research|investigation)\b"#)
@@ -13,7 +13,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         let explicit = Self.matches(text, start + #"(?:please|can\s+you|could\s+you|would\s+you|i\s+want\s+you\s+to|i\s+would\s+like\s+you\s+to)\s+"# + action)
             || Self.matches(text, start + action + #"\s+(?!(?:is|was|means|can|should|does|has|had)\b)"#)
         allowsTools = !noTools
-        allowsResearch = !noTools && !noResearch && explicit
+        allowsResearch = !noTools && !noResearch && (explicit || mentions.contains(NativeWebTools.researchToolID))
     }
 
     func filter(_ ids: Set<String>) -> Set<String> {

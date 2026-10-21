@@ -503,62 +503,47 @@ struct PromptPreviewPane: View {
     }
 }
 
-struct ConversationInstructionsChip: View {
+struct ConversationInstructionsEditor: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
     let conversation: Conversation
-    @State private var showing = false
     @State private var text = ""
     @State private var error: String?
 
-    private var hasInstructions: Bool {
-        !(conversation.instructions ?? "").isEmpty
-    }
-
     var body: some View {
-        Button {
-            text = conversation.instructions ?? ""
-            error = nil
-            showing = true
-        } label: {
-            Label("Instructions", systemImage: hasInstructions ? "text.badge.checkmark" : "text.badge.plus")
-                .font(.system(size: 11))
-                .foregroundStyle(hasInstructions ? Theme.accent : Theme.textSecondary)
-        }
-        .buttonStyle(.plain)
-        .help("Instructions that apply to this conversation only")
-        .popover(isPresented: $showing, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Conversation instructions").font(.system(size: 12, weight: .semibold))
-                Text("Sent with every request in this conversation, after your persona and user context.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                TextEditor(text: $text)
-                    .font(.system(size: 12)).frame(width: 320, height: 120)
-                    .padding(4).background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 6))
-                if let error {
-                    Text(error).font(.system(size: 11)).foregroundStyle(.orange)
-                }
-                HStack {
-                    Button("Clear") {
-                        store.setConversationInstructions(conversation.id, "")
-                        showing = false
-                    }
-                    Spacer()
-                    Button("Save") {
-                        do {
-                            try NativePromptValidation.validateInstructions(text)
-                        } catch let validation {
-                            error = validation.localizedDescription
-                            return
-                        }
-                        store.setConversationInstructions(conversation.id, text)
-                        showing = false
-                    }
-                    .keyboardShortcut(.defaultAction)
-                }
-                .controlSize(.small)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Conversation instructions").font(.system(size: 13, weight: .semibold))
+            Text("Sent with every request in this conversation, after your persona and user context.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            TextEditor(text: $text)
+                .font(.system(size: 12)).frame(width: 380, height: 140)
+                .padding(4).background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 6))
+            if let error {
+                Text(error).font(.system(size: 11)).foregroundStyle(.orange)
             }
-            .padding(12)
+            HStack {
+                Button("Clear") {
+                    store.setConversationInstructions(conversation.id, "")
+                    dismiss()
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    do {
+                        try NativePromptValidation.validateInstructions(text)
+                    } catch let validation {
+                        error = validation.localizedDescription
+                        return
+                    }
+                    store.setConversationInstructions(conversation.id, text)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.small)
         }
+        .padding(16)
+        .onAppear { text = conversation.instructions ?? "" }
     }
 }
 

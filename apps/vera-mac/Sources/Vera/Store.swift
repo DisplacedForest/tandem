@@ -85,7 +85,7 @@ final class ChatStore: ObservableObject {
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
     private let usesInjectedToolRegistry: Bool
-    private var capabilityDeclarations: [NativeToolDeclaration]
+    private(set) var capabilityDeclarations: [NativeToolDeclaration]
     private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
     let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
@@ -1885,7 +1885,7 @@ final class ChatStore: ObservableObject {
         let scopes = resolvePromptScopes(conversationID: id)
         let turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
-            profile: turnProfile(for: user.routeNote), enabledToolIDs: NativeTurnToolAuthority(text).filter(nativeEnabledToolIDs),
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: turnToolIDs(for: text),
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
@@ -1950,10 +1950,37 @@ final class ChatStore: ObservableObject {
         nativeEnabledToolIDs = enabled
     }
 
+    var mentionCatalog: ComposerMentionCatalog {
+        let webAvailable = VeraAPIClient.resolvedBase() != nil
+        var items = [ComposerMentionCatalog.filesItem]
+            + ComposerMentionCatalog.builtIns(webAvailable: webAvailable, imageAvailable: NativeImageTools.resolvedBase() != nil)
+            + capabilityDeclarations.map { ComposerMentionCatalog.capability($0, webAvailable: webAvailable) }
+        for server in nativeMCP?.servers ?? [] {
+            items.append(ComposerMentionCatalog.plugin(name: server.configuration.name, serverID: server.id,
+                connected: server.connected, toolIDs: server.tools.map(\.id)))
+        }
+        return ComposerMentionCatalog(items: items)
+    }
+
+    func mentionedToolIDs(in text: String) -> Set<String> {
+        ComposerMentions.resolve(text, catalog: mentionCatalog)
+    }
+
+    func turnToolIDs(for text: String) -> Set<String> {
+        let mentions = mentionedToolIDs(in: text)
+        return NativeTurnToolAuthority(text, mentions: mentions).filter(nativeEnabledToolIDs.union(mentions))
+    }
+
+    func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
+        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
+        let mentions = mentionedToolIDs(in: text)
+        return (NativeTurnToolAuthority(text, mentions: mentions), nativeEnabledToolIDs.union(mentions))
+    }
+
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
-        let authority = NativeTurnToolAuthority(turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "")
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(nativeEnabledToolIDs)),
+        let (authority, consented) = turnToolAuthority(for: turn)
+        var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)),
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
@@ -2062,9 +2089,9 @@ final class ChatStore: ObservableObject {
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
-        let authority = NativeTurnToolAuthority(turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "")
+        let (authority, consented) = turnToolAuthority(for: turn)
         var enabledToolIDs = capabilityProfile.supportsTools
-            ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(nativeEnabledToolIDs)), hasEngine: nativeTaskEngine.base != nil,
+            ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)), hasEngine: nativeTaskEngine.base != nil,
                                          hasRepository: nativeTaskRepository != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
