@@ -480,8 +480,8 @@ struct ShotView: View {
     private var shotMentionCatalog: ComposerMentionCatalog {
         ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem]
             + ComposerMentionCatalog.builtIns(webAvailable: true, imageAvailable: true)
-            + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "ha", connected: true, toolIDs: ["a", "b", "c"]),
-               ComposerMentionCatalog.plugin(name: "Calendar", serverID: "cal", connected: false, toolIDs: [])])
+            + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "ha", connected: true, toolIDs: ["a", "b", "c"], allowedIDs: ["a", "b", "c"]),
+               ComposerMentionCatalog.plugin(name: "Calendar", serverID: "cal", connected: false, toolIDs: [], allowedIDs: [])])
     }
 
     private var pulse: some View {

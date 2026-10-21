@@ -402,7 +402,7 @@ struct ComposerMentionList: View {
     }
 }
 
-private extension Array {
+extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
@@ -732,7 +732,8 @@ struct ComposerField: View {
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
     @State private var pasteMonitor: Any?
-    @State private var mentionSelection = 0
+    @State private var mentionSelectionID: String?
+    @State private var dismissedDraft: String?
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
@@ -740,16 +741,23 @@ struct ComposerField: View {
     }
     private func submit() { route.send() }
     private var canSend: Bool { route.canSend }
-    private var mentionQuery: ComposerMentionQuery? { ComposerMentions.query(in: route.draft) }
+    private var mentionQuery: ComposerMentionQuery? {
+        guard route.draft != dismissedDraft else { return nil }
+        return ComposerMentions.query(in: route.draft)
+    }
     private var mentionSections: [(ComposerMentionSection, [ComposerMentionItem])] {
         mentionQuery.map { store.mentionCatalog.sections($0.text) } ?? []
     }
     private var mentionRows: [ComposerMentionItem] { mentionSections.flatMap(\.1) }
+    private var mentionIndex: Int { mentionRows.firstIndex { $0.id == mentionSelectionID } ?? 0 }
+    private var pickerVisible: Bool { !mentionRows.isEmpty }
 
     private func pickMention(_ item: ComposerMentionItem) {
         guard let query = mentionQuery else { return }
-        route.draft = ComposerMentions.insert(item, into: route.draft, replacing: query)
-        mentionSelection = 0
+        let next = ComposerMentions.insert(item, into: route.draft, replacing: query)
+        route.draft = next
+        dismissedDraft = next
+        mentionSelectionID = nil
         if case .files = item.kind { pickFiles() }
         focused = true
     }
@@ -757,7 +765,7 @@ struct ComposerField: View {
     private func moveMentionSelection(_ delta: Int) -> KeyPress.Result {
         let rows = mentionRows
         guard !rows.isEmpty else { return .ignored }
-        mentionSelection = (mentionSelection + delta + rows.count) % rows.count
+        mentionSelectionID = rows[(mentionIndex + delta + rows.count) % rows.count].id
         return .handled
     }
 
@@ -780,9 +788,9 @@ struct ComposerField: View {
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }
-            if mentionQuery != nil, !mentionRows.isEmpty {
-                ComposerMentionList(sections: mentionSections, selection: mentionSelection,
-                                    onHover: { mentionSelection = $0 }, onPick: pickMention)
+            if pickerVisible {
+                ComposerMentionList(sections: mentionSections, selection: mentionIndex,
+                                    onHover: { mentionSelectionID = mentionRows[safe: $0]?.id }, onPick: pickMention)
                 Rectangle().fill(Theme.hairline).frame(height: 1)
             }
             TextField("Message \(store.assistantName)…", text: draft, axis: .vertical)
@@ -790,12 +798,12 @@ struct ComposerField: View {
                 .font(.system(size: 14))
                 .lineLimit(1...8)
                 .focused($focused)
-                .onChange(of: route.draft) { _, _ in mentionSelection = 0 }
+                .onChange(of: route.draft) { _, _ in mentionSelectionID = nil }
                 .onKeyPress(.upArrow) { moveMentionSelection(-1) }
                 .onKeyPress(.downArrow) { moveMentionSelection(1) }
                 .onKeyPress(.escape) {
-                    guard let query = mentionQuery else { return .ignored }
-                    route.draft = String(route.draft[..<query.range.lowerBound])
+                    guard pickerVisible else { return .ignored }
+                    dismissedDraft = route.draft
                     return .handled
                 }
                 .onKeyPress(.return, phases: .down) { press in
@@ -803,8 +811,8 @@ struct ComposerField: View {
                         draft.wrappedValue += "\n"
                         return .handled
                     }
-                    if mentionQuery != nil, mentionRows.indices.contains(mentionSelection) {
-                        pickMention(mentionRows[mentionSelection])
+                    if pickerVisible {
+                        pickMention(mentionRows[mentionIndex])
                         return .handled
                     }
                     submit()

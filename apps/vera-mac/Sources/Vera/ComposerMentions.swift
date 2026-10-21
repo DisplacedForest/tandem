@@ -25,6 +25,11 @@ struct ComposerMentionItem: Identifiable, Equatable, Sendable {
 struct ComposerMentionCatalog: Equatable, Sendable {
     let items: [ComposerMentionItem]
 
+    init(items: [ComposerMentionItem]) {
+        var names: Set<String> = []
+        self.items = items.filter { names.insert($0.name.lowercased()).inserted }
+    }
+
     static let filesItem = ComposerMentionItem(id: "add-files", section: .add, name: "Add photos and files",
         detail: "", icon: "paperclip", available: true, kind: .files)
 
@@ -47,18 +52,19 @@ struct ComposerMentionCatalog: Equatable, Sendable {
 
     static func capability(_ declaration: NativeToolDeclaration, webAvailable: Bool) -> ComposerMentionItem {
         ComposerMentionItem(id: declaration.id, section: .tools, name: declaration.title,
-            detail: declaration.description, icon: "wrench.and.screwdriver",
+            detail: "", icon: "wrench.and.screwdriver",
             available: declaration.enabled && (!declaration.needsAPIBase || webAvailable),
             kind: .tools([declaration.id]))
     }
 
-    static func plugin(name: String, serverID: String, connected: Bool, toolIDs: [String]) -> ComposerMentionItem {
+    static func plugin(name: String, serverID: String, connected: Bool, toolIDs: [String], allowedIDs: [String]) -> ComposerMentionItem {
         let detail: String
         if !connected { detail = "Not connected" }
         else if toolIDs.isEmpty { detail = "Connected" }
-        else { detail = toolIDs.count == 1 ? "1 tool" : "\(toolIDs.count) tools" }
+        else if allowedIDs.isEmpty { detail = "Turned off in Settings" }
+        else { detail = allowedIDs.count == 1 ? "1 tool" : "\(allowedIDs.count) tools" }
         return ComposerMentionItem(id: "plugin-" + serverID, section: .plugins, name: name, detail: detail,
-            icon: "puzzlepiece.extension", available: connected && !toolIDs.isEmpty, kind: .tools(Set(toolIDs)))
+            icon: "puzzlepiece.extension", available: connected && !allowedIDs.isEmpty, kind: .tools(Set(allowedIDs)))
     }
 
     func matching(_ query: String) -> [ComposerMentionItem] {
@@ -103,23 +109,27 @@ enum ComposerMentions {
     }
 
     static func resolve(_ text: String, catalog: ComposerMentionCatalog) -> Set<String> {
-        var stripped = text
-        for pattern in [#"(?s)```.*?(?:```|$)"#, #"`[^`\n]*(?:`|$)"#] {
-            stripped = stripped.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
-        }
-        let lowered = stripped.lowercased()
+        let masked = Array(NativeTurnToolAuthority.literalMask(text).lowercased())
+        let original = Array(text)
+        guard masked.count == original.count else { return [] }
+        let names = catalog.items.filter { !$0.toolIDs.isEmpty }
+            .map { (Array($0.name.lowercased()), $0.toolIDs) }
+            .sorted { $0.0.count > $1.0.count }
         var ids: Set<String> = []
-        for item in catalog.items.sorted(by: { $0.name.count > $1.name.count }) where !item.toolIDs.isEmpty {
-            let needle = "@" + item.name.lowercased()
-            var search = lowered.startIndex
-            while let range = lowered.range(of: needle, range: search..<lowered.endIndex) {
-                let startsClean = range.lowerBound == lowered.startIndex
-                    || lowered[lowered.index(before: range.lowerBound)].isWhitespace
-                let endsClean = range.upperBound == lowered.endIndex
-                    || !(lowered[range.upperBound].isLetter || lowered[range.upperBound].isNumber)
-                if startsClean && endsClean { ids.formUnion(item.toolIDs); break }
-                search = range.upperBound
+        var index = 0
+        while index < masked.count {
+            guard masked[index] == "@", index == 0 || original[index - 1].isWhitespace else { index += 1; continue }
+            let start = index + 1
+            var consumed = 0
+            for (name, toolIDs) in names {
+                let end = start + name.count
+                guard end <= masked.count, Array(masked[start..<end]) == name else { continue }
+                if end < masked.count, masked[end].isLetter || masked[end].isNumber { continue }
+                ids.formUnion(toolIDs)
+                consumed = name.count
+                break
             }
+            index = start + max(consumed, 0)
         }
         return ids
     }

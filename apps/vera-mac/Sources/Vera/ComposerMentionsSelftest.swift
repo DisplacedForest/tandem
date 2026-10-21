@@ -6,8 +6,11 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let catalog = ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem]
             + ComposerMentionCatalog.builtIns(webAvailable: true, imageAvailable: false)
-            + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "a", connected: true, toolIDs: ["mcp-1", "mcp-2"]),
-               ComposerMentionCatalog.plugin(name: "Slack", serverID: "b", connected: false, toolIDs: [])])
+            + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "a", connected: true, toolIDs: ["mcp-1", "mcp-2"], allowedIDs: ["mcp-1", "mcp-2"]),
+               ComposerMentionCatalog.plugin(name: "Slack", serverID: "b", connected: false, toolIDs: [], allowedIDs: []),
+               ComposerMentionCatalog.plugin(name: "Home", serverID: "c", connected: true, toolIDs: ["mcp-9"], allowedIDs: ["mcp-9"]),
+               ComposerMentionCatalog.plugin(name: "Zoom", serverID: "d", connected: true, toolIDs: ["mcp-5"], allowedIDs: []),
+               ComposerMentionCatalog.plugin(name: "search THE web", serverID: "e", connected: true, toolIDs: ["mcp-7"], allowedIDs: ["mcp-7"])])
 
         try require(ComposerMentions.query(in: "@") == ComposerMentionQuery(range: "@".startIndex..<"@".endIndex, text: ""), "A bare @ opens the picker")
         try require(ComposerMentions.query(in: "find @sea")?.text == "sea", "Text after @ is the filter")
@@ -35,6 +38,24 @@ extension SelfTest {
         try require(ComposerMentions.resolve("email@Search the web", catalog: catalog).isEmpty, "An @ glued to a word is not a mention")
         try require(ComposerMentions.resolve("@Search the webs", catalog: catalog).isEmpty, "A longer word does not match a shorter name")
         try require(ComposerMentions.resolve("@Search the web, now", catalog: catalog) == [NativeWebTools.searchToolID], "Punctuation after a mention is fine")
+        try require(ComposerMentions.resolve("@Home Assistant lights", catalog: catalog) == ["mcp-1", "mcp-2"], "The longest name wins and shorter names do not also match")
+        try require(ComposerMentions.resolve("@Home lights", catalog: catalog) == ["mcp-9"], "A shorter name still matches on its own")
+        try require(catalog.items.contains { $0.id == "plugin-e" } == false, "A later item with a duplicate name is dropped")
+        try require(catalog.items.first { $0.id == "plugin-d" }?.available == false && catalog.items.first { $0.id == "plugin-d" }?.detail == "Turned off in Settings", "A plugin with its tools off in settings is dimmed and says so")
+        try require(ComposerMentions.resolve("@Zoom meeting", catalog: catalog).isEmpty, "A plugin with its tools off grants nothing")
+        try require(ComposerMentions.resolve("Explain this:\n> @Deep research tea", catalog: catalog).isEmpty, "Blockquotes are ignored")
+        try require(ComposerMentions.resolve("~~~\n@Deep research tea\n~~~", catalog: catalog).isEmpty, "Tilde fences are ignored")
+        try require(ComposerMentions.resolve("``@Deep research`` tea", catalog: catalog).isEmpty, "Double backtick spans are ignored")
+        try require(ComposerMentions.resolve("`word`@Deep research tea", catalog: catalog).isEmpty, "An @ glued to a code span is not a mention")
+        try require(ComposerMentions.resolve("\"@Deep research\" tea", catalog: catalog).isEmpty, "Quoted text is ignored")
+        try require(ComposerMentions.resolve("ok\n@Deep research tea", catalog: catalog) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A mention on its own line counts")
+
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ConversationTitleStubTransport(.reply("x")),
+            repository: try LocalChatRepository(inMemory: true), artifactPersistenceEnabled: false)
+        try require(store.turnToolIDs(for: "what is new in Swift").isEmpty, "Without consent or mentions a turn has no tools")
+        try require(store.turnToolIDs(for: "@Search the web what is new in Swift") == [NativeWebTools.searchToolID], "A mention adds its tool to the turn even when it is off in settings")
+        try require(store.turnToolIDs(for: "@Deep research Swift") == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A research mention authorizes research for the turn")
+        try require(store.turnToolIDs(for: "no tools please @Search the web Swift").isEmpty, "A no-tools instruction still wins over a mention")
 
         let plain = NativeTurnToolAuthority("tell me about tea")
         try require(!plain.allowsResearch, "Plain text does not authorize research")

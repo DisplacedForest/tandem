@@ -1956,8 +1956,9 @@ final class ChatStore: ObservableObject {
             + ComposerMentionCatalog.builtIns(webAvailable: webAvailable, imageAvailable: NativeImageTools.resolvedBase() != nil)
             + capabilityDeclarations.map { ComposerMentionCatalog.capability($0, webAvailable: webAvailable) }
         for server in nativeMCP?.servers ?? [] {
+            let allowed = server.tools.filter { nativeMCP?.authority.access.allowed($0, scope: "focused") == true }
             items.append(ComposerMentionCatalog.plugin(name: server.configuration.name, serverID: server.id,
-                connected: server.connected, toolIDs: server.tools.map(\.id)))
+                connected: server.connected, toolIDs: server.tools.map(\.id), allowedIDs: allowed.map(\.id)))
         }
         return ComposerMentionCatalog(items: items)
     }

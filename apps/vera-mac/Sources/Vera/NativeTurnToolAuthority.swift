@@ -25,13 +25,23 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    private static func instructions(_ raw: String) -> String {
+    static let literalPatterns = [#"(?s)```.*?(?:```|$)"#, #"(?s)~~~.*?(?:~~~|$)"#, #"`[^`\n]*(?:`|$)"#,
+                                  #"(?m)^\s*>.*$"#, #""(?:\\.|[^"\\])*(?:"|$)"#, #"“[^”\n]*(?:”|$)"#,
+                                  #"(?<![\p{L}\p{N}])'[^'\n]*'(?![\p{L}\p{N}])"#]
+
+    static func literalMask(_ raw: String) -> String {
         var text = raw.replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
-        for pattern in [#"(?s)```.*?(?:```|$)"#, #"(?s)~~~.*?(?:~~~|$)"#, #"`[^`\n]*(?:`|$)"#,
-                        #"(?m)^\s*>.*$"#, #""(?:\\.|[^"\\])*(?:"|$)"#, #"“[^”\n]*(?:”|$)"#,
-                        #"(?<![\p{L}\p{N}])'[^'\n]*'(?![\p{L}\p{N}])"#] {
-            text = text.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        for pattern in literalPatterns {
+            while let range = text.range(of: pattern, options: .regularExpression) {
+                let length = text.distance(from: range.lowerBound, to: range.upperBound)
+                guard length > 0 else { break }
+                text.replaceSubrange(range, with: String(repeating: " ", count: length))
+            }
         }
         return text
+    }
+
+    private static func instructions(_ raw: String) -> String {
+        literalMask(raw)
     }
 }
