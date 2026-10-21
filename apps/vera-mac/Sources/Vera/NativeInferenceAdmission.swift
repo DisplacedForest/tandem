@@ -50,9 +50,12 @@ struct NativeInferenceAdmission: Sendable {
     let baseURL: URL
     var session: URLSession = .shared
     var observe: (@Sendable (String, Double) -> Void)? = nil
+    var arbiter: NativeInferenceArbiter? = nil
 
-    static func configured() -> NativeInferenceAdmission? {
-        VeraAPIClient.resolvedBase().map { NativeInferenceAdmission(baseURL: $0) }
+    static func configured() -> NativeInferenceAdmission? { local() }
+
+    static func local(_ arbiter: NativeInferenceArbiter = .shared) -> NativeInferenceAdmission {
+        NativeInferenceAdmission(baseURL: NativeTaskLocalEngine.identity.base, arbiter: arbiter)
     }
 
     static func resource(for base: URL) throws -> String {
@@ -86,6 +89,10 @@ struct NativeInferenceAdmission: Sendable {
         endpoint: URL, priority: Priority, requestedSeconds: Double,
         operation: @escaping @Sendable (NativeInferenceBudget) async throws -> T
     ) async throws -> T {
+        if let arbiter {
+            return try await performLocally(arbiter, endpoint: endpoint, priority: priority,
+                                            requestedSeconds: requestedSeconds, operation: operation)
+        }
         let requestID = UUID().uuidString.lowercased()
         let body = Body(request_id: requestID, resource: try Self.resource(for: endpoint),
                         priority: priority, requested_seconds: requestedSeconds)
@@ -134,6 +141,41 @@ struct NativeInferenceAdmission: Sendable {
             }
         } catch {
             if !operationStarted { await releaseBestEffort(requestID) }
+            throw error
+        }
+    }
+
+    private func performLocally<T: Sendable>(
+        _ arbiter: NativeInferenceArbiter, endpoint: URL, priority: Priority, requestedSeconds: Double,
+        operation: @escaping @Sendable (NativeInferenceBudget) async throws -> T
+    ) async throws -> T {
+        guard requestedSeconds.isFinite, requestedSeconds > 0 else { throw AdmissionError.deadline }
+        let resource = try Self.resource(for: endpoint)
+        let queueStart = ContinuousClock.now
+        let lease = try await arbiter.acquire(resource: resource, priority: priority, queueSeconds: requestedSeconds)
+        let waited = Self.seconds(queueStart.duration(to: .now))
+        observe?("admission_seconds", waited)
+        observe?("queue_wait_seconds", waited)
+        let remaining = requestedSeconds - waited
+        guard remaining > 0 else {
+            await arbiter.release(lease)
+            throw AdmissionError.expired
+        }
+        let budget = NativeInferenceBudget(deadline: .now.advanced(by: .seconds(remaining)), seconds: remaining)
+        let cleanup = NativeInferenceCleanup { await arbiter.release(lease) }
+        do {
+            let value = try await NativeInferenceDeadline.run(seconds: remaining, onNotStarted: { await cleanup.release() }) {
+                let generationStarted = ContinuousClock.now
+                defer { observe?("generation_seconds", Self.seconds(generationStarted.duration(to: .now))) }
+                try budget.check()
+                let value = try await operation(budget)
+                try budget.check()
+                return value
+            }
+            await cleanup.release()
+            return value
+        } catch {
+            await cleanup.release()
             throw error
         }
     }

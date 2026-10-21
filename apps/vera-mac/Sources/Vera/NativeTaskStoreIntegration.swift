@@ -11,9 +11,13 @@ extension ChatStore {
            let service = nativeTaskService {
             let engine = nativeTaskEngine
             nativeTaskTracker = NativeTaskTracker(repository: repository, client: nativeTaskTrackingClient,
-                service: service, configuredBase: { engine.base }, onUpdate: { [weak self] updates in
+                service: service, transport: nativeTaskLocalEngine?.transport ?? .live,
+                configuredBase: { engine.base }, onUpdate: { [weak self] updates in
                     self?.applyNativeTaskUpdates(updates)
                 })
+        }
+        if let engine = nativeTaskLocalEngine {
+            Task { try? await engine.start() }
         }
         if nativeTaskTrackingLoop == nil, let tracker = nativeTaskTracker {
             nativeTaskTrackingLoop = Task { [weak self] in
@@ -72,6 +76,7 @@ extension ChatStore {
     }
 
     func stopNativeTaskRecovery() {
+        if let engine = nativeTaskLocalEngine { Task { await engine.stop() } }
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
         nativeTaskTrackingLoop?.cancel()

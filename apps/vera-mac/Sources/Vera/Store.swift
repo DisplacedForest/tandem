@@ -93,6 +93,7 @@ final class ChatStore: ObservableObject {
     let nativeTaskService: NativeTaskHandoffService?
     let nativeTaskBroker: NativeTaskGenerationBroker?
     let nativeTaskEngine: NativeTaskEngineSelection
+    let nativeTaskLocalEngine: NativeTaskLocalEngine?
     let nativeTaskConfiguration: NativeTaskConfiguration?
     let nativeTaskEnrollment: NativeTaskProfileBinding?
     var nativeTaskRecoveryLoop: Task<Void, Never>?
@@ -146,12 +147,22 @@ final class ChatStore: ObservableObject {
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
          sweepOrphanedAttachments: Bool = false,
          nativeTaskConfiguration: NativeTaskConfiguration? = nil,
-         nativeTaskClient: NativeTaskClient = .live,
+         nativeTaskClient: NativeTaskClient? = nil,
          nativeResearchOptions: NativeTaskResearchOptions = .standard,
          nativeTaskEnrollment: NativeTaskProfileBinding? = nil,
          artifactPersistenceEnabled: Bool = true) {
         self.artifactPersistenceEnabled = artifactPersistenceEnabled
-        let taskEngine = NativeTaskEngineSelection(veraAPI?.base)
+        let localEngine: NativeTaskLocalEngine?
+        if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
+            let owner = nativeOwnerName
+            localEngine = NativeTaskLocalEngine.research(database: local.database,
+                search: .live(base: { VeraAPIClient.resolvedBase() }), ownerName: { owner })
+        } else {
+            localEngine = nil
+        }
+        nativeTaskLocalEngine = localEngine
+        let nativeTaskClient = nativeTaskClient ?? localEngine?.client ?? .live
+        let taskEngine = NativeTaskEngineSelection(localEngine != nil ? NativeTaskLocalEngine.identity.base : veraAPI?.base)
         self.nativeTaskEngine = taskEngine
         self.nativeTaskTrackingClient = nativeTaskClient
         self.nativeTaskConfiguration = nativeTaskConfiguration
@@ -258,6 +269,7 @@ final class ChatStore: ObservableObject {
         nativeTaskGenerationLoop?.cancel()
         nativeTaskTrackingLoop?.cancel()
         if let nativeTaskTracker { Task { await nativeTaskTracker.stop() } }
+        if let engine = nativeTaskLocalEngine { Task { await engine.stop() } }
     }
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
@@ -351,7 +363,7 @@ final class ChatStore: ObservableObject {
         nativeMemoryService = memoryService
         if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
         client = VeraAPIClient.resolved(model: cfg.model)
-        nativeTaskEngine.set(client?.base)
+        if nativeTaskLocalEngine == nil { nativeTaskEngine.set(client?.base) }
         chatConfigurationError = nil
         Task { await connect() }
     }

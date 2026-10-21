@@ -253,6 +253,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(sql: "ALTER TABLE conversations ADD COLUMN title_source TEXT NOT NULL DEFAULT 'fallback'")
             try db.execute(sql: "UPDATE conversations SET title_source = 'kept'")
         }
+        migrator.registerMigration("nativeTaskEngineV19") { db in try NativeTaskStore.migrate(db) }
         try migrator.migrate(database)
     }
 
