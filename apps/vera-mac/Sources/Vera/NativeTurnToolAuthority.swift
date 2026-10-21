@@ -51,9 +51,9 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
             } else if length >= 3 {
                 end = characters.count
             } else {
-                end = characters[runEnd...].firstIndex(of: "\n") ?? characters.count
+                end = characters[runEnd...].firstIndex(where: \.isNewline) ?? characters.count
             }
-            for position in index..<end where characters[position] != "\n" { characters[position] = " " }
+            for position in index..<end where !characters[position].isNewline { characters[position] = " " }
             index = end
         }
         return String(characters)

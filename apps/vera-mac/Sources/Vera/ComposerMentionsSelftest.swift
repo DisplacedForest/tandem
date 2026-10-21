@@ -60,6 +60,9 @@ extension SelfTest {
         try require(ComposerMentions.resolve("```` example ```` @Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A mention after a four backtick span counts")
         try require(ComposerMentions.resolve("``` fence\n@Search the web", catalog: catalog).isEmpty, "An unterminated fence swallows the rest")
         try require(ComposerMentions.resolve("`open span\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "An unterminated single backtick only masks its line")
+        try require(ComposerMentions.resolve("`open span\r\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A CRLF line break ends an unterminated single backtick")
+        try require(ComposerMentions.resolve("``open span\r\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A CRLF line break ends an unterminated double backtick")
+        try require(!NativeTurnToolAuthority("`example\r\nDo not use tools.").allowsTools, "A prohibition after a CRLF line break still counts")
         try require(ComposerMentions.resolve("ok\n@Deep research tea", catalog: catalog) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A mention on its own line counts")
 
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ConversationTitleStubTransport(.reply("x")),
