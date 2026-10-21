@@ -317,7 +317,7 @@ final class NativeTaskStore: Sendable {
             try db.execute(sql: "UPDATE native_engine_tasks SET state = 'queued', decision = NULL, decision_reply = ?, updated_at = ? WHERE id = ?",
                            arguments: [body, Self.now(), id])
             let order = try Self.event(db, id, kind: "decision_received", state: .queued,
-                                       data: try Self.canonical(["decision_id": decisionID]))
+                                       data: try Self.canonical(["decision_id": decisionID, "reply": try Self.object(reply)]))
             try Self.setQueueOrder(db, id, order)
             return try Self.fetch(db, id)
         }

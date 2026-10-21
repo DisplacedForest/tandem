@@ -174,16 +174,22 @@ enum NativeResearchWorker {
         return questions.isEmpty ? nil : Array(questions.prefix(cap))
     }
 
-    static func citations(in report: String) -> Set<Int> {
+    static func citations(in report: String) -> (numbers: Set<Int>, valid: Bool) {
         var numbers: Set<Int> = []
+        var valid = true
         var index = report.startIndex
         while let open = report[index...].firstIndex(of: "[") {
             guard let close = report[open...].firstIndex(of: "]") else { break }
             let inner = report[report.index(after: open)..<close]
-            if !inner.isEmpty, inner.allSatisfy(\.isNumber), let number = Int(inner) { numbers.insert(number) }
+            if !inner.isEmpty, inner.allSatisfy({ $0.isASCII && $0.isNumber }) {
+                let digits = inner.drop { $0 == "0" }
+                if digits.isEmpty { numbers.insert(0) }
+                else if digits.count <= 9, let number = Int(digits) { numbers.insert(number) }
+                else { valid = false }
+            }
             index = report.index(after: open)
         }
-        return numbers
+        return (numbers, valid)
     }
 
     private static func run(_ task: NativeTaskRecord, payload: NativeResearchTaskPayload, checkpoint: inout NativeResearchCheckpoint,
@@ -254,7 +260,7 @@ enum NativeResearchWorker {
                 return try pause(&checkpoint, "Research did not produce a usable report.")
             }
             let cited = citations(in: report)
-            guard !cited.isEmpty, cited.isSubset(of: Set(checkpoint.sources.map(\.n))) else {
+            guard cited.valid, !cited.numbers.isEmpty, cited.numbers.isSubset(of: Set(checkpoint.sources.map(\.n))) else {
                 return try pause(&checkpoint, "The report did not cite the gathered sources correctly.")
             }
             let result = try NativeTaskStore.canonical([

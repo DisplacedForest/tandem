@@ -362,6 +362,10 @@ enum SelfTest {
                 print("SELFTEST ERROR: live image \(error)"); exit(1)
             }
         }
+        if ProcessInfo.processInfo.environment["VERA_TASK_ENGINE_SELFTEST"] == "1" {
+            do { try await runTaskEngine(); print("NATIVE TASK ENGINE SELFTEST OK"); exit(0) }
+            catch { print("NATIVE TASK ENGINE SELFTEST FAILED: \(error)"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_SHELL_SELFTEST"] == "1" {
             await runShell()
             exit(0)

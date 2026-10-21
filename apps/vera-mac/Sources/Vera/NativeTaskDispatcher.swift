@@ -5,21 +5,58 @@ struct NativeTaskWorker: Sendable {
     let step: @Sendable (NativeTaskRecord) async throws -> NativeTaskStepResult
 }
 
+struct NativeTaskDispatcherTimeout: Error {}
+
+private actor NativeTaskStepSignal {
+    private var outcome: Result<NativeTaskStepResult, Error>?
+    private var waiters: [UUID: CheckedContinuation<Result<NativeTaskStepResult, Error>, Error>] = [:]
+
+    func settle(_ result: Result<NativeTaskStepResult, Error>) {
+        guard outcome == nil else { return }
+        outcome = result
+        for waiter in waiters.values { waiter.resume(returning: result) }
+        waiters = [:]
+    }
+
+    var isSettled: Bool { outcome != nil }
+
+    func wait() async throws -> Result<NativeTaskStepResult, Error> {
+        if let outcome { return outcome }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if let outcome { continuation.resume(returning: outcome) } else { waiters[id] = continuation }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+}
+
 actor NativeTaskDispatcher {
     let store: NativeTaskStore
     let pollSeconds: Double
     let graceSeconds: Double
     private(set) var workers: [String: NativeTaskWorker] = [:]
     private(set) var failure: String?
+    private(set) var owned = false
     private var loop: Task<Void, Never>?
-    private var active: Task<NativeTaskStepResult, Error>?
+    private var active: (task: Task<Void, Never>, signal: NativeTaskStepSignal)?
+    private var retirement: Task<Void, Never>?
     private var shuttingDown = false
+    private let onRetire: @Sendable () -> Void
 
-    init(store: NativeTaskStore, workers: [String: NativeTaskWorker] = [:], pollSeconds: Double = 0.1, graceSeconds: Double = 1) {
+    init(store: NativeTaskStore, workers: [String: NativeTaskWorker] = [:], pollSeconds: Double = 0.1,
+         graceSeconds: Double = 1, onRetire: @escaping @Sendable () -> Void = {}) {
         self.store = store
         self.workers = workers
         self.pollSeconds = pollSeconds
         self.graceSeconds = graceSeconds
+        self.onRetire = onRetire
     }
 
     func register(_ workerType: String, _ worker: NativeTaskWorker) throws {
@@ -36,31 +73,72 @@ actor NativeTaskDispatcher {
 
     func start() throws {
         guard loop == nil else { return }
+        guard active == nil, retirement == nil else {
+            throw NativeTaskStoreError.conflict("A previous step still owns the task storage")
+        }
         try store.recover()
+        owned = true
         shuttingDown = false
         failure = nil
         loop = Task { [weak self] in await self?.dispatch() }
     }
 
-    func stop() async {
+    @discardableResult
+    func stop() async -> Bool {
         shuttingDown = true
         loop?.cancel()
         if let loop { await loop.value }
         loop = nil
         if let active {
-            active.cancel()
-            let grace = graceSeconds
-            let finished = await withTaskGroup(of: Bool.self) { group in
-                group.addTask { _ = try? await active.value; return true }
-                group.addTask { try? await Task.sleep(for: .seconds(grace)); return false }
-                let first = await group.next() ?? false
-                group.cancelAll()
-                return first
+            active.task.cancel()
+            let settled = await settledWithinGrace(active.signal)
+            if !settled {
+                failure = "Background work is paused until the running step exits."
+                if retirement == nil { retirement = Task { [weak self] in await self?.retire(active) } }
+                return false
             }
-            if !finished { failure = "Background work is paused until the running step exits." }
             self.active = nil
         }
-        try? store.recover()
+        if let retirement {
+            await retirement.value
+            self.retirement = nil
+        }
+        if owned {
+            try? store.recover()
+            owned = false
+        }
+        return true
+    }
+
+    func abandon() {
+        shuttingDown = true
+        loop?.cancel()
+        loop = nil
+        active?.task.cancel()
+        active = nil
+        owned = false
+    }
+
+    private func settledWithinGrace(_ signal: NativeTaskStepSignal) async -> Bool {
+        let grace = graceSeconds
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask { (try? await signal.wait()) != nil }
+            group.addTask { try? await Task.sleep(for: .seconds(grace)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private func retire(_ entry: (task: Task<Void, Never>, signal: NativeTaskStepSignal)) async {
+        _ = try? await entry.signal.wait()
+        if active?.signal === entry.signal { active = nil }
+        if owned {
+            try? store.recover()
+            owned = false
+        }
+        retirement = nil
+        onRetire()
     }
 
     private func dispatch() async {
@@ -85,32 +163,51 @@ actor NativeTaskDispatcher {
             await persist(task, .failed(checkpoint: task.checkpoint, reason: "worker_missing"))
             return
         }
-        let step = Task { try await worker.step(task) }
-        active = step
-        defer { if active == step { active = nil } }
+        let signal = NativeTaskStepSignal()
+        let step = Task {
+            do { await signal.settle(.success(try await worker.step(task))) }
+            catch { await signal.settle(.failure(error)) }
+        }
+        active = (step, signal)
         let timeout = worker.timeoutSeconds
         let outcome: NativeTaskStepResult
+        var settled = true
         do {
-            outcome = try await withThrowingTaskGroup(of: NativeTaskStepResult?.self) { group in
-                group.addTask { try await withTaskCancellationHandler { try await step.value } onCancel: { step.cancel() } }
+            let result = try await withThrowingTaskGroup(of: Result<NativeTaskStepResult, Error>?.self) { group in
+                group.addTask { try await signal.wait() }
                 group.addTask { try await Task.sleep(for: .seconds(timeout)); return nil }
                 defer { group.cancelAll() }
                 guard let first = try await group.next() else { throw CancellationError() }
                 guard let result = first else { throw NativeTaskDispatcherTimeout() }
                 return result
             }
+            switch result {
+            case .success(let value): outcome = value
+            case .failure(let error) where error is CancellationError:
+                if shuttingDown { return }
+                outcome = .failed(checkpoint: task.checkpoint, reason: "step_canceled")
+            case .failure: outcome = .failed(checkpoint: task.checkpoint, reason: "worker_error")
+            }
         } catch is NativeTaskDispatcherTimeout {
             step.cancel()
+            settled = false
             outcome = .failed(checkpoint: task.checkpoint, reason: "step_timeout")
-        } catch is CancellationError {
-            step.cancel()
-            if shuttingDown { return }
-            outcome = .failed(checkpoint: task.checkpoint, reason: "step_canceled")
         } catch {
-            outcome = .failed(checkpoint: task.checkpoint, reason: "worker_error")
+            step.cancel()
+            return
         }
         guard !shuttingDown else { return }
         await persist(task, outcome)
+        if !settled {
+            if await settledWithinGrace(signal) {
+                active = nil
+            } else {
+                failure = "Background work is paused until the running step exits."
+                if retirement == nil { retirement = Task { [weak self] in await self?.retire((step, signal)) } }
+            }
+            return
+        }
+        active = nil
     }
 
     private func persist(_ task: NativeTaskRecord, _ outcome: NativeTaskStepResult) async {
@@ -131,5 +228,3 @@ actor NativeTaskDispatcher {
         }
     }
 }
-
-struct NativeTaskDispatcherTimeout: Error {}

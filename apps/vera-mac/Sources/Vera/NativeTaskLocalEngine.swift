@@ -7,35 +7,93 @@ struct NativeTaskLocalStatus: Error, Sendable {
 }
 
 final class NativeTaskEngineLock: @unchecked Sendable {
+    private static let registry = NSLock()
+    nonisolated(unsafe) private static var owners: Set<String> = []
     private let lock = NSLock()
     private var descriptor: Int32 = -1
+    private var registered = false
+    let key: String
     let path: String?
 
-    init(databasePath: String) {
-        path = databasePath.isEmpty || databasePath == ":memory:" || databasePath.hasPrefix("file::memory:") ? nil : databasePath + ".engine.lock"
+    init(database: DatabaseQueue) {
+        let databasePath = database.path
+        let inMemory = databasePath.isEmpty || databasePath == ":memory:" || databasePath.hasPrefix("file::memory:")
+        path = inMemory ? nil : databasePath + ".engine.lock"
+        key = inMemory ? "memory:\(ObjectIdentifier(database).hashValue)" : "file:" + databasePath
     }
 
     func acquire() throws {
-        guard let path else { return }
         lock.lock()
         defer { lock.unlock() }
-        guard descriptor < 0 else { return }
-        let handle = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard handle >= 0 else { throw NativeTaskStoreError.invalid("The task engine lock could not be created") }
-        guard flock(handle, LOCK_EX | LOCK_NB) == 0 else {
-            close(handle)
-            throw NativeTaskStoreError.conflict("Another process already runs the task engine for this database")
+        guard !registered else { return }
+        Self.registry.lock()
+        let inserted = Self.owners.insert(key).inserted
+        Self.registry.unlock()
+        guard inserted else { throw NativeTaskStoreError.conflict("Another engine already runs for this database") }
+        if let path {
+            let handle = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+            guard handle >= 0, flock(handle, LOCK_EX | LOCK_NB) == 0 else {
+                if handle >= 0 { close(handle) }
+                Self.registry.lock()
+                Self.owners.remove(key)
+                Self.registry.unlock()
+                throw NativeTaskStoreError.conflict("Another process already runs the task engine for this database")
+            }
+            descriptor = handle
         }
-        descriptor = handle
+        registered = true
     }
 
     func release() {
         lock.lock()
         defer { lock.unlock() }
-        guard descriptor >= 0 else { return }
-        flock(descriptor, LOCK_UN)
-        close(descriptor)
-        descriptor = -1
+        guard registered else { return }
+        if descriptor >= 0 {
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+            descriptor = -1
+        }
+        Self.registry.lock()
+        Self.owners.remove(key)
+        Self.registry.unlock()
+        registered = false
+    }
+
+    var isHeld: Bool { lock.withLock { registered } }
+}
+
+private actor NativeTaskEngineOwnership {
+    private(set) var owned = false
+
+    func start(lock: NativeTaskEngineLock, store: NativeTaskStore, dispatcher: NativeTaskDispatcher) async throws {
+        guard !owned else { return }
+        try lock.acquire()
+        do {
+            try await store.database.write { db in
+                try db.execute(sql: """
+                    UPDATE native_task_generations SET state = 'failed', failure = 'previous_request_uncertain', response = NULL
+                    WHERE state = 'reserved'
+                    """)
+            }
+            try await dispatcher.start()
+            owned = true
+        } catch {
+            lock.release()
+            throw error
+        }
+    }
+
+    func stop(lock: NativeTaskEngineLock, dispatcher: NativeTaskDispatcher) async {
+        guard owned else { return }
+        owned = false
+        if await dispatcher.stop() { lock.release() }
+    }
+
+    func abandon(lock: NativeTaskEngineLock, dispatcher: NativeTaskDispatcher) async {
+        guard owned else { return }
+        owned = false
+        await dispatcher.abandon()
+        lock.release()
     }
 }
 
@@ -47,37 +105,31 @@ final class NativeTaskLocalEngine: Sendable {
     let exchange: NativeTaskGenerationExchange
     let dispatcher: NativeTaskDispatcher
     let lock: NativeTaskEngineLock
+    private let ownership = NativeTaskEngineOwnership()
 
     func start() async throws {
-        try lock.acquire()
-        do {
-            try await store.database.write { db in
-                try db.execute(sql: """
-                    UPDATE native_task_generations SET state = 'failed', failure = 'previous_request_uncertain', response = NULL
-                    WHERE state = 'reserved'
-                    """)
-            }
-            try await dispatcher.start()
-        } catch {
-            lock.release()
-            throw error
-        }
+        try await ownership.start(lock: lock, store: store, dispatcher: dispatcher)
     }
 
     func stop() async {
-        await dispatcher.stop()
-        lock.release()
+        await ownership.stop(lock: lock, dispatcher: dispatcher)
+    }
+
+    func abandon() async {
+        await ownership.abandon(lock: lock, dispatcher: dispatcher)
     }
 
     init(database: DatabaseQueue, admission: @escaping @Sendable () -> NativeInferenceAdmission? = { .configured() },
-         pollSeconds: Double = 0.1,
+         pollSeconds: Double = 0.1, graceSeconds: Double = 1,
          workers: (NativeTaskGenerationExchange) -> [String: NativeTaskWorker] = { _ in [:] }) {
         let store = NativeTaskStore(database: database)
         let exchange = NativeTaskGenerationExchange(store: store, admission: admission)
+        let lock = NativeTaskEngineLock(database: database)
         self.store = store
         self.exchange = exchange
-        dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds)
-        lock = NativeTaskEngineLock(databasePath: database.path)
+        self.lock = lock
+        dispatcher = NativeTaskDispatcher(store: store, workers: workers(exchange), pollSeconds: pollSeconds,
+                                          graceSeconds: graceSeconds, onRetire: { lock.release() })
     }
 
     static func research(database: DatabaseQueue, search: NativeResearchSearch,

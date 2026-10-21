@@ -163,21 +163,19 @@ struct NativeInferenceAdmission: Sendable {
         }
         let budget = NativeInferenceBudget(deadline: .now.advanced(by: .seconds(remaining)), seconds: remaining)
         let cleanup = NativeInferenceCleanup { await arbiter.release(lease) }
-        do {
-            let value = try await NativeInferenceDeadline.run(seconds: remaining, onNotStarted: { await cleanup.release() }) {
-                let generationStarted = ContinuousClock.now
-                defer { observe?("generation_seconds", Self.seconds(generationStarted.duration(to: .now))) }
-                try budget.check()
-                let value = try await operation(budget)
-                try budget.check()
-                return value
+        let value = try await NativeInferenceDeadline.run(seconds: remaining, onNotStarted: { await cleanup.release() }) {
+            let generationStarted = ContinuousClock.now
+            defer {
+                observe?("generation_seconds", Self.seconds(generationStarted.duration(to: .now)))
+                Task { await cleanup.release() }
             }
-            await cleanup.release()
+            try budget.check()
+            let value = try await operation(budget)
+            try budget.check()
             return value
-        } catch {
-            await cleanup.release()
-            throw error
         }
+        await cleanup.release()
+        return value
     }
 
     private func acquire(_ body: Body) async throws -> Reply {

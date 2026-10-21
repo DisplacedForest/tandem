@@ -66,6 +66,12 @@ private struct NativeTaskEngineHarness {
         await engine.stop()
     }
 
+    func crash() async {
+        loops.tasks.forEach { $0.cancel() }
+        loops.tasks = []
+        await engine.abandon()
+    }
+
     func submit(_ objective: String) async throws -> NativeTaskReference {
         let origin = try NativeTaskFixture.origin(repository)
         let request = try NativeResearchTaskRequest(objective: objective, deliverables: ["A cited answer"])
@@ -177,6 +183,8 @@ extension SelfTest {
             throw NativeTaskFixture.Failure.assertion("A different reply key must conflict")
         } catch NativeTaskStoreError.conflict {}
         try require(try store.events(taskID: third.id).map(\.kind) == ["created", "started", "progress", "decision_received"], "The decision is in the event log")
+        let answer = try NativeTaskStore.object(try store.events(taskID: third.id).last!.data)
+        try require(answer["decision_id"] as? String == decisionID && (answer["reply"] as? [String: Any])?["action"] as? String == "retry", "The answer itself is recorded in the event log")
 
         do { _ = try store.resume(third.id); throw NativeTaskFixture.Failure.assertion("Only blocked tasks resume") }
         catch NativeTaskStoreError.conflict {}
@@ -248,6 +256,25 @@ extension SelfTest {
         try require(try await poll(seconds: 5) { try store.get(effect.id).state == .completed }, "A relaunch resumes the task")
         try require(try NativeTaskStore.object(try store.get(effect.id).result!)["effects"] as? Int == 2, "The resumed task counts only its own completed steps")
         await dispatcher.stop()
+
+        let stubborn = NativeTaskLocalEngine(database: try LocalChatRepository(inMemory: true).database, admission: { nil }, pollSeconds: 0.02, graceSeconds: 0.2, workers: { _ in
+            ["resistant": NativeTaskWorker(timeoutSeconds: 0.2) { _ in
+                let until = ContinuousClock.now.advanced(by: .seconds(1))
+                while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(20)) }
+                return NativeTaskStepResult()
+            }]
+        })
+        let stuck = try stubborn.store.create(workerType: "resistant", payload: payload, idempotencyKey: "stuck")
+        try await stubborn.start()
+        let timedOut = ContinuousClock.now
+        try require(try await poll(seconds: 2) { try stubborn.store.get(stuck.id).state == .failed }, "A step that ignores cancellation still times out")
+        try require(nativeTaskSeconds(timedOut.duration(to: .now)) < 0.9, "The timeout is recorded before the step exits")
+        try require(try NativeTaskStore.object(try stubborn.store.events(taskID: stuck.id).last!.data)["reason"] as? String == "step_timeout", "The reason is step_timeout")
+        try await Task.sleep(for: .milliseconds(300))
+        try require(await stubborn.dispatcher.failure != nil, "The dispatcher pauses while the step lingers")
+        await stubborn.stop()
+        try require(stubborn.lock.isHeld, "Ownership is retained until the lingering step exits")
+        try require(try await poll(seconds: 2) { !stubborn.lock.isHeld }, "Ownership is released once the step exits")
     }
 
     private static func poll(seconds: Double, _ condition: () throws -> Bool) async throws -> Bool {
@@ -396,10 +423,11 @@ extension SelfTest {
         try require(try retryHarness.engine.store.events(taskID: engineTask.id).map(\.kind).contains("decision_received"), "The answer is in the event log")
         await retryHarness.stop()
 
-        let relaunchRepository = try LocalChatRepository(inMemory: true)
+        let relaunchDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let relaunchURL = relaunchDirectory.appendingPathComponent("chat.sqlite")
         let relaunchCounter = NativeTaskEngineCounter()
         let gate = NativeTaskEngineCounter()
-        let firstRun = try NativeTaskEngineHarness.make(repository: relaunchRepository, counter: relaunchCounter) { job in
+        let firstRun = try NativeTaskEngineHarness.make(repository: try LocalChatRepository(url: relaunchURL), counter: relaunchCounter) { job in
             if job.phase == "synthesize" { await gate.bump("synthesize-seen"); try await Task.sleep(for: .seconds(30)) }
             return "{\"subquestions\": [\"Q\"]}"
         }
@@ -407,9 +435,10 @@ extension SelfTest {
         let survivor = try await firstRun.submit("Relaunch research")
         let reached = try await firstRun.waitAsync { await gate.count("synthesize-seen") >= 1 }
         try require(reached, "The first run reaches synthesis")
-        await firstRun.stop()
+        await firstRun.crash()
         let interrupted = try firstRun.engine.store.get(survivor.remoteTaskID!)
-        try require(interrupted.state == .queued, "Stopping leaves the task queued at its last saved step")
+        try require(interrupted.state == .running, "A crash leaves the task running in storage")
+        let relaunchRepository = try LocalChatRepository(url: relaunchURL)
         let secondRun = try NativeTaskEngineHarness.make(repository: relaunchRepository, counter: relaunchCounter) { job in
             job.phase == "plan" ? "{\"subquestions\": [\"unexpected\"]}" : "Blue [1].\n\nSources\n[1] guide"
         }
@@ -423,22 +452,61 @@ extension SelfTest {
         let relaunchSearches = await relaunchCounter.count("search")
         try require(relaunchPlans == 1 && relaunchSearches == 1, "Finished steps are not repeated after a relaunch")
         await secondRun.stop()
+        try? FileManager.default.removeItem(at: relaunchDirectory)
 
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let fileRepository = try LocalChatRepository(url: directory.appendingPathComponent("chat.sqlite"))
-        let owner = NativeTaskLocalEngine(database: fileRepository.database, admission: { nil })
-        let rival = NativeTaskLocalEngine(database: fileRepository.database, admission: { nil })
-        try await owner.start()
-        do { try await rival.start(); throw NativeTaskFixture.Failure.assertion("A second engine on the same database must be refused") }
-        catch NativeTaskStoreError.conflict {}
-        await owner.stop()
-        try await rival.start()
-        await rival.stop()
-        try? FileManager.default.removeItem(at: directory)
+        for inMemory in [true, false] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let shared = inMemory ? try LocalChatRepository(inMemory: true) : try LocalChatRepository(url: directory.appendingPathComponent("chat.sqlite"))
+            let owner = NativeTaskLocalEngine(database: shared.database, admission: { nil }, workers: { _ in
+                ["research": NativeTaskWorker(timeoutSeconds: 5) { _ in try await Task.sleep(for: .seconds(5)); return NativeTaskStepResult() }]
+            })
+            let rival = NativeTaskLocalEngine(database: shared.database, admission: { nil })
+            try await owner.start()
+            try await owner.start()
+            let busy = try owner.store.create(workerType: "research", payload: try researchPayload(), idempotencyKey: "busy")
+            try require(try await poll(seconds: 2) { try owner.store.get(busy.id).state == .running }, "The owner runs the task")
+            do { try await rival.start(); throw NativeTaskFixture.Failure.assertion("A second engine on the same database must be refused") }
+            catch NativeTaskStoreError.conflict {}
+            await rival.stop()
+            let afterRivalStop = try owner.store.get(busy.id)
+            try require(afterRivalStop.state == .running && afterRivalStop.generation == 1, "A refused engine never recovers the owner's running task")
+            await owner.stop()
+            try require(try owner.store.get(busy.id).state == .queued, "The owner's stop recovers its own task")
+            try await rival.start()
+            await rival.stop()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let reservationRepository = try LocalChatRepository(inMemory: true)
+        let reservationEngine = NativeTaskLocalEngine(database: reservationRepository.database, admission: { nil })
+        let origin = try NativeTaskFixture.origin(reservationRepository)
+        let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
+            provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
+            savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits(maximumRequests: 2))
+        let reserved = try reservationRepository.prepareTaskReference(origin: origin, engine: NativeTaskLocalEngine.identity,
+            request: try NativeResearchTaskRequest(objective: "Reservation", deliverables: ["Report"]), profile: profile, options: .standard)
+        let remote = UUID().uuidString.lowercased()
+        _ = try reservationRepository.acknowledgeTaskReference(id: reserved.id, snapshot: try JSONDecoder().decode(NativeTaskSnapshot.self, from: try NativeTaskFixture.snapshot(reserved, id: remote)))
+        let binding = reserved.createRequest.payload.nativeBinding!
+        let messages = [NativeTaskGenerationMessage(role: "user", content: "Reservation")]
+        let job = NativeTaskGenerationJob(id: UUID().uuidString, taskID: remote, bindingID: binding.id,
+            enrollmentDigest: binding.enrollmentDigest, admissionBase: binding.admissionBase, phase: "plan", attempt: "initial-0",
+            messages: messages, messagesDigest: NativeTaskGenerationJob.digest(messages), deadlineSeconds: 60, generation: 1)
+        try await reservationEngine.start()
+        try require(try reservationRepository.reserveTaskGeneration(referenceID: reserved.id, job: job) == .execute, "A live reservation is taken")
+        try await reservationEngine.start()
+        try require(try reservationRepository.reserveTaskGeneration(referenceID: reserved.id, job: job) == .pending, "A repeated start leaves a live reservation alone")
+        await reservationEngine.stop()
+        try await reservationEngine.start()
+        try require(try reservationRepository.reserveTaskGeneration(referenceID: reserved.id, job: job) == .unavailable("previous_request_uncertain"), "A fresh start marks the old reservation uncertain")
+        await reservationEngine.stop()
     }
 
     private static func taskArbiterContract() async throws {
         let require = NativeTaskFixture.require
+        try require(NativeResearchWorker.citations(in: "A [1] and [01] and [12]").numbers == [1, 12], "Citations normalize leading zeros")
+        try require(!NativeResearchWorker.citations(in: "A [1] and [999999999999999999999999999999]").valid, "An overflowing citation is invalid rather than ignored")
+        try require(NativeResearchWorker.citations(in: "No [x] citations [ ]").numbers.isEmpty, "Non-numeric brackets are not citations")
         let arbiter = NativeInferenceArbiter(cooldown: 0.2, pollSeconds: 0.01)
         let resource = "endpoint"
         let foreground = try await arbiter.acquire(resource: resource, priority: .foreground, queueSeconds: 1)
@@ -472,5 +540,29 @@ extension SelfTest {
             }
             throw NativeTaskFixture.Failure.assertion("A background operation past its window must fail")
         } catch NativeInferenceAdmission.AdmissionError.deadline {}
+        let endpointResource = try NativeInferenceAdmission.resource(for: endpoint)
+        var releasedAfterCancel = false
+        for _ in 0..<50 where !releasedAfterCancel {
+            releasedAfterCancel = !(await arbiter.activeCounts(resource: endpointResource)).background
+            if !releasedAfterCancel { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        try require(releasedAfterCancel, "A canceled operation releases its lease once it stops")
+
+        let holder = Task {
+            let _: String = try await admission.perform(endpoint: endpoint, priority: .background, requestedSeconds: 5) { _ in
+                let until = ContinuousClock.now.advanced(by: .seconds(0.6))
+                while ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(20)) }
+                return "held"
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let chatStarted = ContinuousClock.now
+        let chat: String = try await admission.perform(endpoint: endpoint, priority: .foreground, requestedSeconds: 2) { _ in "answer" }
+        try require(chat == "answer" && nativeTaskSeconds(chatStarted.duration(to: .now)) < 0.3, "A chat turn is answered while a background call holds the endpoint")
+        let heldWhileRunning = await arbiter.activeCounts(resource: endpointResource)
+        try require(heldWhileRunning.background, "The background lease stays held while its operation runs")
+        _ = try? await holder.value
+        let afterHolder = await arbiter.activeCounts(resource: endpointResource)
+        try require(!afterHolder.background, "The lease is released when the operation ends")
     }
 }
