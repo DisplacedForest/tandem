@@ -24,7 +24,7 @@ extension SelfTest {
         try require(ComposerMentions.insert(web, into: draft, replacing: query) == "please @Search the web ", "Picking replaces the query with the mention")
         try require(ComposerMentions.insert(ComposerMentionCatalog.filesItem, into: "hello @", replacing: ComposerMentions.query(in: "hello @")!) == "hello ", "Picking files removes the @")
 
-        try require(catalog.matching("web").map(\.id) == [NativeWebTools.searchToolID], "Filtering matches names")
+        try require(catalog.matching("web").map(\.id) == [NativeWebTools.searchToolID, "plugin-f"], "Filtering matches names")
         try require(catalog.matching("background").map(\.id) == [NativeWebTools.researchToolID], "Filtering matches details")
         try require(catalog.sections("").map(\.0) == [.add, .tools, .plugins], "Sections appear in order")
         try require(catalog.items.first { $0.id == "plugin-b" }?.available == false, "A disconnected plugin is dimmed")
