@@ -362,6 +362,10 @@ enum SelfTest {
                 print("SELFTEST ERROR: live image \(error)"); exit(1)
             }
         }
+        if ProcessInfo.processInfo.environment["VERA_TASK_ENGINE_SELFTEST"] == "1" {
+            do { try await runTaskEngine(); print("NATIVE TASK ENGINE SELFTEST OK"); exit(0) }
+            catch { print("NATIVE TASK ENGINE SELFTEST FAILED: \(error)"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_SHELL_SELFTEST"] == "1" {
             await runShell()
             exit(0)
@@ -404,27 +408,6 @@ enum SelfTest {
             }
             return
         }
-        if let raw = ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] {
-            do {
-                try await NativeTaskAPIPathFixture.run(raw)
-                exit(0)
-            } catch NativeTaskFixture.Failure.assertion(let message) {
-                print("TASK_FIXTURE assertion=\(message)")
-                exit(1)
-            } catch {
-                print("TASK_FIXTURE failure_type=\(String(reflecting: type(of: error)))")
-                exit(1)
-            }
-        }
-        if let raw = ProcessInfo.processInfo.environment["VERA_ADMISSION_SELFTEST_CONFIG"] {
-            do {
-                try await NativeInferenceAdmissionFixture.run(raw)
-                exit(0)
-            } catch {
-                print("ADMISSION_FIXTURE failed to initialize")
-                exit(1)
-            }
-        }
         do { try await NativeSessionFixture.run() }
         catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
@@ -458,6 +441,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: sidebar pins \(error)"); exit(1) }
         do { try runComposerMentions() }
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
+        do { try await runTaskEngine() }
+        catch { print("SELFTEST ERROR: task engine \(error)"); exit(1) }
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()
