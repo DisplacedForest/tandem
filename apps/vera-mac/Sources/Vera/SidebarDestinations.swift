@@ -73,21 +73,31 @@ final class SidebarPins: ObservableObject {
         save(next)
     }
 
-    func move(_ destination: SidebarDestination, before target: SidebarDestination) {
+    @discardableResult
+    func move(_ destination: SidebarDestination, before target: SidebarDestination) -> Bool {
         var next = Self.stored(in: defaults)
-        guard destination != target, next.contains(destination), next.contains(target) else { return }
+        guard destination != target, next.contains(destination), next.contains(target) else { return false }
         next.removeAll { $0 == destination }
-        guard let index = next.firstIndex(of: target) else { return }
+        guard let index = next.firstIndex(of: target) else { return false }
         next.insert(destination, at: index)
         save(next)
+        return true
     }
 
-    func moveToEnd(_ destination: SidebarDestination) {
+    @discardableResult
+    func moveToEnd(_ destination: SidebarDestination) -> Bool {
         var next = Self.stored(in: defaults)
-        guard next.contains(destination) else { return }
+        guard next.contains(destination) else { return false }
         next.removeAll { $0 == destination }
         next.append(destination)
         save(next)
+        return true
+    }
+
+    func accept(dropped items: [String], before target: SidebarDestination?) -> Bool {
+        guard let dragged = items.first.flatMap(SidebarDestination.init(rawValue:)) else { return false }
+        if let target { return move(dragged, before: target) }
+        return moveToEnd(dragged)
     }
 
     private func save(_ next: [SidebarDestination]) {

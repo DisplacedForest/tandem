@@ -49,6 +49,16 @@ extension SelfTest {
         try require(windowA.pinned == [.pulse, .projects, .memory, .artifacts], "Moves onto self or with an unpinned section change nothing")
         try require(SidebarPins(defaults: defaults).pinned == [.pulse, .projects, .memory, .artifacts], "The arranged order survives a relaunch")
         try require(windowB.pinned == windowA.pinned, "The other window follows the arranged order")
+
+        try require(windowA.accept(dropped: ["memory"], before: .pulse), "Dropping a pinned section on another is accepted")
+        try require(windowA.pinned == [.memory, .pulse, .projects, .artifacts], "The accepted drop moved the section")
+        try require(!windowA.accept(dropped: ["scheduled"], before: .pulse), "Dropping an unpinned section is refused")
+        try require(!windowA.accept(dropped: ["scheduled"], before: nil), "Dropping an unpinned section on More is refused")
+        try require(!windowA.accept(dropped: ["pulse"], before: .pulse), "Dropping a section on itself is refused")
+        try require(!windowA.accept(dropped: ["bogus"], before: nil), "Unknown payloads are refused")
+        try require(!windowA.accept(dropped: [], before: nil), "Empty payloads are refused")
+        try require(windowA.accept(dropped: ["memory"], before: nil), "Dropping a pinned section on More is accepted")
+        try require(windowA.pinned == [.pulse, .projects, .artifacts, .memory], "Refused drops left the order alone and the last drop moved Memory to the end")
         try require(SidebarPins.shared === SidebarPins.shared, "The app shares one pin model across windows")
     }
 }
