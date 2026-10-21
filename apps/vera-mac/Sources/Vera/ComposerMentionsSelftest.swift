@@ -55,6 +55,11 @@ extension SelfTest {
         try require(ComposerMentions.resolve("`x` @Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A mention after a closed code span counts")
         try require(ComposerMentions.resolve("@Search the web archive now", catalog: catalog).isEmpty, "A disabled longer name consumes the match instead of falling back to a shorter one")
         try require(ComposerMentions.resolve("@Add photos and files here", catalog: catalog).isEmpty, "The files item grants nothing")
+        try require(ComposerMentions.resolve("`` @Deep research ``` x ``", catalog: catalog).isEmpty, "A longer backtick run inside a span does not close it")
+        try require(ComposerMentions.resolve("`` some ``` ticks `` @Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A mention after a span with a longer run inside counts")
+        try require(ComposerMentions.resolve("```` example ```` @Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A mention after a four backtick span counts")
+        try require(ComposerMentions.resolve("``` fence\n@Search the web", catalog: catalog).isEmpty, "An unterminated fence swallows the rest")
+        try require(ComposerMentions.resolve("`open span\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "An unterminated single backtick only masks its line")
         try require(ComposerMentions.resolve("ok\n@Deep research tea", catalog: catalog) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A mention on its own line counts")
 
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ConversationTitleStubTransport(.reply("x")),
