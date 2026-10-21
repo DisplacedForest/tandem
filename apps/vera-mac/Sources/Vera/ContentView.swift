@@ -79,6 +79,7 @@ struct SidebarRow: View {
     @State private var hovering = false
     @State private var renaming = false
     @State private var renameText = ""
+    @State private var editingInstructions = false
 
     private func beginRename() {
         renameText = convo.title
@@ -88,6 +89,7 @@ struct SidebarRow: View {
     @ViewBuilder private var menuItems: some View {
         Button("Rename", action: beginRename)
         Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
+        Button("Instructions…") { editingInstructions = true }
         Button(
             convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
             action: onMemoryExclusion)
@@ -113,6 +115,9 @@ struct SidebarRow: View {
             TextField("Title", text: $renameText)
             Button("Rename") { onRename(renameText) }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $editingInstructions) {
+            ConversationInstructionsEditor(conversation: convo)
         }
     }
 }
@@ -215,12 +220,9 @@ private struct ChatPane: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28).padding(.bottom, 2)
                 }
-                if convo.isPersisted {
+                if convo.isPersisted, store.isPulseConfigured {
                     HStack(spacing: 12) {
-                        ConversationInstructionsChip(conversation: convo)
-                        if store.isPulseConfigured {
-                            KnowledgeGroundingChip(conversation: convo)
-                        }
+                        KnowledgeGroundingChip(conversation: convo)
                         Spacer()
                     }
                     .frame(maxWidth: 760)
@@ -338,6 +340,70 @@ struct StarterChipLabel: View {
 
 enum ComposerControlKind {
     case plus, voice, send(active: Bool, generating: Bool), stop(enabled: Bool)
+}
+
+struct ComposerMentionList: View {
+    let sections: [(ComposerMentionSection, [ComposerMentionItem])]
+    let selection: Int
+    let onHover: (Int) -> Void
+    let onPick: (ComposerMentionItem) -> Void
+
+    private var rows: [ComposerMentionItem] { sections.flatMap(\.1) }
+
+    var body: some View {
+        if rows.count > 8 {
+            ScrollViewReader { proxy in
+                ScrollView { list }
+                    .frame(maxHeight: 300)
+                    .onChange(of: selection) { _, index in
+                        if let item = rows[safe: index] { proxy.scrollTo(item.id) }
+                    }
+            }
+        } else {
+            list
+        }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(sections.enumerated()), id: \.offset) { sectionIndex, section in
+                Text(section.0.rawValue).font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, SidebarMetrics.inset).padding(.top, sectionIndex == 0 ? 2 : 10).padding(.bottom, 4)
+                ForEach(section.1) { item in
+                    let index = rows.firstIndex(of: item) ?? 0
+                    Button { onPick(item) } label: {
+                        HStack(spacing: SidebarMetrics.inset) {
+                            Image(systemName: item.icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(width: SidebarMetrics.iconSlot, height: SidebarMetrics.iconSlot)
+                            Text(item.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                            if !item.detail.isEmpty {
+                                Text(item.detail).font(.system(size: 13)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, SidebarMetrics.inset)
+                        .frame(height: SidebarMetrics.rowHeight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+                            .fill(index == selection ? Theme.surfaceHover : .clear))
+                        .contentShape(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(item.available ? 1 : 0.45)
+                    .onHover { if $0 { onHover(index) } }
+                    .id(item.id)
+                    .accessibilityLabel(item.detail.isEmpty ? item.name : item.name + ", " + item.detail)
+                }
+            }
+        }
+        .padding(.bottom, 6)
+    }
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 struct ComposerControlGlyph: View {
@@ -666,6 +732,8 @@ struct ComposerField: View {
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
     @State private var pasteMonitor: Any?
+    @State private var mentionSelectionID: String?
+    @State private var dismissedDraft: String?
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
@@ -673,6 +741,33 @@ struct ComposerField: View {
     }
     private func submit() { route.send() }
     private var canSend: Bool { route.canSend }
+    private var mentionQuery: ComposerMentionQuery? {
+        guard route.draft != dismissedDraft else { return nil }
+        return ComposerMentions.query(in: route.draft)
+    }
+    private var mentionSections: [(ComposerMentionSection, [ComposerMentionItem])] {
+        mentionQuery.map { store.mentionCatalog.sections($0.text) } ?? []
+    }
+    private var mentionRows: [ComposerMentionItem] { mentionSections.flatMap(\.1) }
+    private var mentionIndex: Int { mentionRows.firstIndex { $0.id == mentionSelectionID } ?? 0 }
+    private var pickerVisible: Bool { !mentionRows.isEmpty }
+
+    private func pickMention(_ item: ComposerMentionItem) {
+        guard let query = mentionQuery else { return }
+        let next = ComposerMentions.insert(item, into: route.draft, replacing: query)
+        route.draft = next
+        dismissedDraft = next
+        mentionSelectionID = nil
+        if case .files = item.kind { pickFiles() }
+        focused = true
+    }
+
+    private func moveMentionSelection(_ delta: Int) -> KeyPress.Result {
+        let rows = mentionRows
+        guard !rows.isEmpty else { return .ignored }
+        mentionSelectionID = rows[(mentionIndex + delta + rows.count) % rows.count].id
+        return .handled
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -693,17 +788,31 @@ struct ComposerField: View {
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }
+            if pickerVisible {
+                ComposerMentionList(sections: mentionSections, selection: mentionIndex,
+                                    onHover: { mentionSelectionID = mentionRows[safe: $0]?.id }, onPick: pickMention)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+            }
             TextField("Message \(store.assistantName)…", text: draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .lineLimit(1...8)
                 .focused($focused)
+                .onChange(of: route.draft) { _, _ in mentionSelectionID = nil }
+                .onKeyPress(.upArrow) { moveMentionSelection(-1) }
+                .onKeyPress(.downArrow) { moveMentionSelection(1) }
+                .onKeyPress(.escape) {
+                    guard pickerVisible else { return .ignored }
+                    dismissedDraft = route.draft
+                    return .handled
+                }
                 .onKeyPress(.return, phases: .down) { press in
-                    // Shift+Return inserts a line break; plain Return sends.
-                    // We must insert the newline ourselves and return .handled —
-                    // the field editor maps any Return to submit, so .ignored sends.
                     if press.modifiers.contains(.shift) {
                         draft.wrappedValue += "\n"
+                        return .handled
+                    }
+                    if pickerVisible {
+                        pickMention(mentionRows[mentionIndex])
                         return .handled
                     }
                     submit()

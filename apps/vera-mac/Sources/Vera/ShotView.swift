@@ -10,6 +10,7 @@ struct ShotView: View {
     var streaming: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
+    var mentions: Bool = false
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
     enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab) }
@@ -451,7 +452,12 @@ struct ShotView: View {
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Message Vera…").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                if mentions {
+                    ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                }
+                Text(mentions ? "@" : "Message Vera…").font(.system(size: 14))
+                    .foregroundStyle(mentions ? Theme.textPrimary : Theme.textSecondary)
                 HStack(spacing: 8) {
                     ComposerControlGlyph(kind: .plus)
                     Spacer()
@@ -469,6 +475,13 @@ struct ShotView: View {
             .frame(maxWidth: 760)
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
         }
+    }
+
+    private var shotMentionCatalog: ComposerMentionCatalog {
+        ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem]
+            + ComposerMentionCatalog.builtIns(webAvailable: true, imageAvailable: true)
+            + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "ha", connected: true, toolIDs: ["a", "b", "c"], allowedIDs: ["a", "b", "c"]),
+               ComposerMentionCatalog.plugin(name: "Calendar", serverID: "cal", connected: false, toolIDs: [], allowedIDs: [])])
     }
 
     private var pulse: some View {

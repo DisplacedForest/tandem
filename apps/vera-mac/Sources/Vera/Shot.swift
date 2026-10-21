@@ -347,7 +347,7 @@ enum Shot {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
             case "vera": section = .vera
-            case "chats", "chats-streaming": section = .chat
+            case "chats", "chats-streaming", "chats-mentions": section = .chat
             case "projects": section = .projects
             case "artifacts": section = .artifacts
             case "scheduled": section = .scheduled
@@ -360,7 +360,8 @@ enum Shot {
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",
                          attachDemo: view == "attach",
                          streaming: view == "chats-streaming",
-                         collapsedSidebar: view == "sidebar-collapsed")
+                         collapsedSidebar: view == "sidebar-collapsed",
+                         mentions: view == "chats-mentions")
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
