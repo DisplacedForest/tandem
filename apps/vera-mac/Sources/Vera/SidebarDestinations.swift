@@ -68,9 +68,29 @@ final class SidebarPins: ObservableObject {
     }
 
     func toggle(_ destination: SidebarDestination) {
-        var set = Set(Self.stored(in: defaults))
-        if set.contains(destination) { set.remove(destination) } else { set.insert(destination) }
-        let next = SidebarDestination.allCases.filter { set.contains($0) }
+        var next = Self.stored(in: defaults)
+        if let index = next.firstIndex(of: destination) { next.remove(at: index) } else { next.append(destination) }
+        save(next)
+    }
+
+    func move(_ destination: SidebarDestination, before target: SidebarDestination) {
+        var next = Self.stored(in: defaults)
+        guard destination != target, next.contains(destination), next.contains(target) else { return }
+        next.removeAll { $0 == destination }
+        guard let index = next.firstIndex(of: target) else { return }
+        next.insert(destination, at: index)
+        save(next)
+    }
+
+    func moveToEnd(_ destination: SidebarDestination) {
+        var next = Self.stored(in: defaults)
+        guard next.contains(destination) else { return }
+        next.removeAll { $0 == destination }
+        next.append(destination)
+        save(next)
+    }
+
+    private func save(_ next: [SidebarDestination]) {
         pinned = next
         defaults.set(next.map(\.rawValue), forKey: Self.key)
     }
@@ -82,7 +102,7 @@ final class SidebarPins: ObservableObject {
 
     private static func stored(in defaults: UserDefaults) -> [SidebarDestination] {
         guard let stored = defaults.array(forKey: key) as? [String] else { return SidebarDestination.defaultPins }
-        let set = Set(stored)
-        return SidebarDestination.allCases.filter { set.contains($0.rawValue) }
+        var seen = Set<SidebarDestination>()
+        return stored.compactMap(SidebarDestination.init(rawValue:)).filter { seen.insert($0).inserted }
     }
 }
