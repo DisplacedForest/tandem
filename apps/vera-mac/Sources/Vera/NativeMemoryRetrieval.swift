@@ -150,8 +150,11 @@ enum NativeMemoryRetrieval {
 
     static func query(current: String, history: [NativeTurnHistoryMessage]) -> NativeMemoryQuery {
         let window = history.filter { !$0.text.isEmpty }.suffix(NativeMemoryRetrievalLimits.contextWindowMessages)
-        let context = window.map { String(stripCitations($0.text).prefix(NativeMemoryRetrievalLimits.contextWindowCharacters)) }
-        return NativeMemoryQuery(current: stripCitations(current), context: context)
+        let context = window.map { message in
+            let text = message.role == "assistant" ? stripCitations(message.text) : message.text
+            return String(text.prefix(NativeMemoryRetrievalLimits.contextWindowCharacters))
+        }
+        return NativeMemoryQuery(current: current, context: context)
     }
 
     static func queryText(current: String, history: [NativeTurnHistoryMessage]) -> String {

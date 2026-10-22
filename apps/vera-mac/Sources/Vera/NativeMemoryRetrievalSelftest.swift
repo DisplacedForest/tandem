@@ -176,6 +176,14 @@ extension SelfTest {
         let citedResult = await store.retrieveApprovedMemory("where is the zymurgy club", history: cited, settings: settings, service: service)
         try require(citedResult.trace?.mode == .fused && !citedResult.trace!.lexical.isEmpty && !citedResult.trace!.query.contains("[10001]"),
                     "Citation markers in earlier answers do not poison the query: \(citedResult.trace?.summary ?? "")")
+        let userBrackets = NativeMemoryRetrieval.query(current: "item [42]", history: [NativeTurnHistoryMessage(Message(role: .user, text: "see item [43]")),
+                                                                                       NativeTurnHistoryMessage(Message(role: .assistant, text: "Noted [10001]"))])
+        try require(userBrackets.current == "item [42]" && userBrackets.context == ["see item [43]", "Noted "], "Only assistant citations are stripped; user-authored numbers stay")
+        try repository.saveMemory(memoryFixtureRecord("late", title: "Late fact", details: ["A fact added after the backfill finished"], now: now), decision: .accepted, note: "fixture")
+        let lateTurn = await store.retrieveApprovedMemory("late fact", settings: settings)
+        try require(lateTurn.trace?.notes.contains(where: { $0.contains("waiting for vectors") }) == true, "A newly eligible record makes readiness incomplete for that turn")
+        try require(try await waitFor(seconds: 10) { store.memoryIndexingProgress == nil && (store.memoryVectorStatus?.complete ?? false) },
+                    "That turn schedules the backfill so later turns are semantic again: \(String(describing: store.memoryVectorStatus))")
         let noisy = [NativeTurnHistoryMessage(Message(role: .user, text: Array(repeating: "earlier", count: 60).joined(separator: " ")))]
         let noisyResult = await store.retrieveApprovedMemory("zymurgy", history: noisy, settings: settings, service: service)
         try require(noisyResult.selected.contains { $0.record.id == "exact" }, "The current request's terms come before history in lexical search")
@@ -201,7 +209,7 @@ extension SelfTest {
         try repository.saveMemory(consented, decision: .accepted, note: "fixture")
         let neverStore = try repository.memoryVectorStatus(model: "fixture-embed", now: now, sensitive: .neverStore)
         let reviewOnly = try repository.memoryVectorStatus(model: "fixture-embed", now: now, sensitive: .reviewOnly)
-        try require(neverStore.total == 6 && reviewOnly.total == 7, "Readiness counts follow the sensitive setting like the backfill does")
+        try require(neverStore.total == 7 && reviewOnly.total == 8, "Readiness counts follow the sensitive setting like the backfill does: \(neverStore) \(reviewOnly)")
 
         service.setModel("fixture-embed-v2")
         settings.embeddingsModel = "fixture-embed-v2"
@@ -214,7 +222,7 @@ extension SelfTest {
         let waiting = await store.retrieveApprovedMemory("where do I get my coffee", settings: settings, service: slow)
         try require(waiting.trace?.mode == .lexical && waiting.trace?.notes.contains(where: { $0.contains("waiting for vectors") }) == true && slow.embeds == 0,
                     "Until the backfill for a new model finishes, recall stays lexical and the endpoint is not queried: \(waiting.trace?.summary ?? "")")
-        try require(try repository.memoryVectorStatus(model: "fixture-embed-v3", now: now).label.contains("Preparing 0 of 6"), "Settings can show the backfill status")
+        try require(try repository.memoryVectorStatus(model: "fixture-embed-v3", now: now).label.contains("Preparing 0 of 7"), "Settings can show the backfill status")
         print("  native memory retrieval OK (packing, backfill, lexical and semantic sources, fusion, budgets, scope, rerank, rerank fallback, typed precedence, query window, citations stripped, current terms first, byte budget, deadline, sensitive readiness, model change, lexical until ready)")
     }
 
