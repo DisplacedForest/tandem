@@ -241,7 +241,16 @@ enum NativeLineDiff {
         return result
     }
 
+    struct Rendering: Equatable, Sendable {
+        let hunks: [Hunk]
+        let omittedLines: Int
+    }
+
     static func hunks(before: String, after: String, context: Int = 2) -> [Hunk] {
+        render(before: before, after: after, context: context).hunks
+    }
+
+    static func render(before: String, after: String, context: Int = 2) -> Rendering {
         let all = lines(before: before, after: after)
         var keep = Array(repeating: false, count: all.count)
         for (index, line) in all.enumerated() {
@@ -251,18 +260,21 @@ enum NativeLineDiff {
         var hunks: [Hunk] = []
         var current: [Line] = []
         var emitted = 0
-        for (index, line) in all.enumerated() {
-            if keep[index] {
-                current.append(line)
-                emitted += 1
-                if emitted >= maximumLines { break }
-            } else if !current.isEmpty {
+        var omitted = 0
+        for (index, line) in all.enumerated() where keep[index] {
+            if emitted >= maximumLines {
+                omitted += 1
+                continue
+            }
+            if index > 0, !keep[index - 1], !current.isEmpty {
                 hunks.append(Hunk(id: hunks.count, lines: current))
                 current = []
             }
+            current.append(line)
+            emitted += 1
         }
         if !current.isEmpty { hunks.append(Hunk(id: hunks.count, lines: current)) }
-        return hunks
+        return Rendering(hunks: hunks, omittedLines: omitted)
     }
 
     static func summary(before: String?, after: String?) -> String {

@@ -79,13 +79,15 @@ struct NativeFileChangeCard: View {
         _expanded = State(initialValue: (change.kind == .edited || change.kind == .created) && lines > 0 && lines <= 30)
     }
 
-    private var hunks: [NativeLineDiff.Hunk] {
+    private var rendering: NativeLineDiff.Rendering {
         switch change.kind {
-        case .edited: return NativeLineDiff.hunks(before: change.before ?? "", after: change.after ?? "")
-        case .created: return NativeLineDiff.hunks(before: "", after: change.after ?? "")
-        case .moved, .directory: return []
+        case .edited: return NativeLineDiff.render(before: change.before ?? "", after: change.after ?? "")
+        case .created: return NativeLineDiff.render(before: "", after: change.after ?? "")
+        case .moved, .directory: return NativeLineDiff.Rendering(hunks: [], omittedLines: 0)
         }
     }
+
+    private var hunks: [NativeLineDiff.Hunk] { rendering.hunks }
 
     private var summary: String {
         if change.truncated { return "Too large to show here. Open the file to see it." }
@@ -142,8 +144,9 @@ struct NativeFileChangeCard: View {
                                 NativeDiffLine(line: line)
                             }
                         }
-                        if change.truncated {
-                            Text("The file was too large to show in full.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        if rendering.omittedLines > 0 {
+                            Text("\(rendering.omittedLines) more changed \(rendering.omittedLines == 1 ? "line is" : "lines are") not shown here. Open the file to see everything.")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                                 .padding(12)
                         }
                     }

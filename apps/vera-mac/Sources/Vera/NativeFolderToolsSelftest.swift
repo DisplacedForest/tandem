@@ -308,6 +308,8 @@ extension SelfTest {
         let hunks = NativeLineDiff.hunks(before: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n", after: "one\ntwo\nthree\nFOUR\nfive\nsix\nseven\n", context: 1)
         try require(hunks.count == 1 && hunks[0].lines == [.same("three"), .removed("four"), .added("FOUR"), .same("five")], "Diff hunks show changed lines with context: \(hunks)")
         try require(NativeLineDiff.summary(before: "a\nb", after: "a\nc\nd") == "+2 -1" && NativeLineDiff.summary(before: "x", after: "x") == "No line changes", "Diff summaries count lines")
+        let wide = NativeLineDiff.render(before: (1...250).map { "old \($0)" }.joined(separator: "\n"), after: (1...250).map { "new \($0)" }.joined(separator: "\n"))
+        try require(wide.hunks.reduce(0) { $0 + $1.lines.count } == NativeLineDiff.maximumLines && wide.omittedLines == 100, "A long diff says how many changed lines were left out: \(wide.omittedLines)")
         let capped2 = NativeFileChange(path: "/tmp/big", kind: .created, after: String(repeating: "x", count: NativeFileChange.contentCap + 10))
         try require(capped2.truncated && capped2.after == nil && capped2.before == nil, "Oversized content is marked too large instead of diffing a prefix")
         try require(NativeFolderTools.grantNote([grant])?.contains(grant.path) == true && NativeFolderTools.grantNote([]) == nil, "The prompt note lists granted paths")
