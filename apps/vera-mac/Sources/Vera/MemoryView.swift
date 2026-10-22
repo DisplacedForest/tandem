@@ -766,6 +766,7 @@ struct MemoryDetailView: View {
     @Environment(\.dismiss) var dismiss
     let memory: NativeMemoryRecord
     let citedRevision: Int?
+    var trace: NativeMemoryRetrievalTrace? = nil
     @State private var title: String
     @State private var summary: String
     @State private var details: String
@@ -776,9 +777,10 @@ struct MemoryDetailView: View {
     @State private var upcoming: [NativeDomainEntry] = []
     @State private var correcting = false
 
-    init(memory: NativeMemoryRecord, citedRevision: Int? = nil) {
+    init(memory: NativeMemoryRecord, citedRevision: Int? = nil, trace: NativeMemoryRetrievalTrace? = nil) {
         self.memory = memory
         self.citedRevision = citedRevision
+        self.trace = trace
         _title = State(initialValue: memory.title)
         _summary = State(initialValue: memory.summary)
         _details = State(initialValue: memory.details.joined(separator: "\n"))
@@ -814,6 +816,9 @@ struct MemoryDetailView: View {
             if memory.sensitiveConsent == true {
                 Label("Contains sensitive text", systemImage: "lock")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            if let trace, !trace.entry(for: memory.id).isEmpty {
+                MemoryRecallTraceView(trace: trace, memoryID: memory.id)
             }
             TextField("Name", text: $title).textFieldStyle(.roundedBorder).disabled(memory.domainEntityID != nil)
                 .accessibilityLabel("Name")
@@ -1112,6 +1117,32 @@ struct NativeMemoryShotSurface: View {
                 HStack { Spacer(); Text("Cancel"); Text("Clear approved memory").foregroundStyle(.red) }
             }.padding(22).frame(width: 500).background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
         default: EmptyView()
+        }
+    }
+}
+
+struct MemoryRecallTraceView: View {
+    let trace: NativeMemoryRetrievalTrace
+    let memoryID: String
+    @State private var expanded = false
+
+    private var lines: [String] {
+        trace.entry(for: memoryID).map { entry in
+            "\(entry.source): rank \(entry.rank), score \(String(format: "%.3f", entry.score))"
+        } + [trace.rerankNote]
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Label("Why it was recalled", systemImage: "magnifyingglass")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
         }
     }
 }

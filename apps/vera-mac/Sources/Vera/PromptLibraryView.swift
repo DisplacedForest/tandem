@@ -30,6 +30,7 @@ enum PromptLibrarySelection: Equatable {
 }
 
 struct PromptLibraryArea: View {
+    @EnvironmentObject var store: ChatStore
     let repository: any NativePromptLibraryRepository
     let activePersonaID: String?
     let onSelectActive: (String) -> Void
@@ -178,7 +179,8 @@ struct PromptLibraryArea: View {
         let assembled = NativeContextAssembler.assemble(NativeContextInput(
             persona: composed.persona, userScope: composed.userScope,
             timestamp: previewTimestamp, timeZone: .current, contracts: []))
-        return PromptPreviewPane(sections: assembled.sections, onDone: { showPreview = false })
+        return PromptPreviewPane(sections: assembled.sections, onDone: { showPreview = false },
+                                 memoryTrace: store.selectedID.flatMap { store.memoryRetrievalTraces[$0] })
             .frame(width: 560, height: 520)
     }
 
@@ -444,6 +446,7 @@ struct PromptPreviewPane: View {
     let sections: [NativeContextSection]
     var onDone: (() -> Void)?
     var scrolls: Bool = true
+    var memoryTrace: NativeMemoryRetrievalTrace? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -484,6 +487,20 @@ struct PromptPreviewPane: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                         .background(section.name == "policy" ? Theme.bg.opacity(0.6) : Theme.bg)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            if let memoryTrace {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Memory retrieval (last turn, not sent)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(memoryTrace.summary)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Theme.bg)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }

@@ -51,7 +51,7 @@ struct ContentView: View {
             }
         }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
-        .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision) }
+        .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
         .animation(.easeInOut(duration: 0.2), value: voice.isActive)
         .sheet(isPresented: $config.showOnboarding) { OnboardingSheet() }
     }

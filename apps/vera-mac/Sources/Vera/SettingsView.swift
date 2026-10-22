@@ -555,6 +555,10 @@ struct NativeMemorySettingsTab: View {
                                       selection: config.memoryStringBinding(\.embeddingsModel))
                 Text("Leave embeddings unset to search approved memory locally. An embeddings model on the memory endpoint enables semantic recall. Model-suggested changes still require an extraction model and your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let status = store.memoryVectorStatus {
+                    Label(status.label, systemImage: status.complete ? "checkmark.circle" : "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
                 DiscoveredModelPicker(title: "Extraction model",
                                       models: config.nativeSettings.memoryEndpoint.discoveredModels,
                                       selection: config.memoryStringBinding(\.extractionModel))
@@ -574,7 +578,7 @@ struct NativeMemorySettingsTab: View {
                     Text("Family").tag("family")
                     Text("Projects").tag("projects")
                 }
-                Text("Vera selects at most 8 relevant items and about 700 tokens. Expired, suppressed, deleted, pending, and unrelated items are excluded.")
+                Text("Vera gathers up to \(NativeMemoryRetrievalLimits.lexicalCandidates) matches by words and \(NativeMemoryRetrievalLimits.semanticCandidates) by meaning, merges them, reranks the top \(NativeMemoryRetrievalLimits.rerankCount) when a rerank model is set, and keeps at most \(NativeMemoryRetrievalLimits.itemLimit) items within about \(NativeMemoryRetrievalLimits.tokenBudget) tokens. Expired, suppressed, deleted, pending, and unrelated items are excluded.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Section {

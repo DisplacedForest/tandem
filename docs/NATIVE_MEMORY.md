@@ -19,18 +19,26 @@ Each record also has an internal category and bank. Banks scope recall without r
 
 ## Chat behavior
 
-With embeddings unset, native chat searches approved memory locally using SQLite FTS5. It selects at most eight records within a 2,800-byte evidence budget, ranked by lexical relevance with stable ties. No embedding or extraction call is needed for this recall. Selected bank scope, approval, expiry, and source availability are checked again after model admission, before each native HTTP request. A changed memory context stops the turn visibly instead of sending a stale snapshot. Lexical retrieval can miss paraphrases that share no terms.
+Recall runs on every turn and combines two searches over the same scope: a lexical one and, when an embeddings model is set on the memory endpoint, a semantic one. Scope is approved, unexpired memory in the selected bank (with `all` as the inclusive scope) that isn't suppressed or deleted, whose source is still available, and which passes the sensitive-information setting. Scope, approval, expiry and source availability are checked again after model admission, before each native HTTP request. A changed memory context stops the turn visibly instead of sending a stale snapshot.
 
-An explicitly configured embeddings model on the memory endpoint retains semantic recall. Its limits are:
+The search query is the current message plus the last four completed messages of the conversation. Each of those is trimmed to 400 characters and the whole query to 2,000. From it, Vera gathers up to 24 lexical matches from SQLite FTS5 ranked by BM25, and up to 24 semantic matches by cosine similarity over stored vectors, with a minimum similarity of 0.2. The two lists are merged by reciprocal rank fusion with a constant of 60. Each candidate scores the sum of 1 divided by (60 plus its rank) across the lists it appears in, so a fact found by both searches rises. Typed evidence-backed records win over free-text facts about the same subject.
 
-* 8 selected records per turn
-* about 700 memory-context tokens per turn
-* cosine similarity of at least 0.2
+If a rerank model is set, the top 16 merged candidates are sent to the memory endpoint's rerank route along with the query and each candidate's title and details, and the rerank scores decide the order. With no rerank model, or if the rerank call fails or times out, the merged order stands. Injection stops at 8 facts or about 700 estimated tokens, whichever comes first, and every injected fact carries its citation number. The whole path is expected to finish within 1,500 ms.
+
+Other limits:
+
 * semantic duplicate comparison at 0.9 similarity
 * reviewable consolidation suggestions at 0.94 similarity within a bank
 * deterministic ties by newest update and then stable record identifier
-* selected bank scope, with `all` as the inclusive scope
 * 1,000 approved records before a capacity-review proposal appears
+
+Without an embeddings model, recall is lexical only, and it can miss paraphrases that share no terms with the query. If the memory endpoint can't be reached, that turn uses local search and the status says so. A query that looks sensitive is never sent to the endpoint.
+
+Vectors live in their own table, one row per memory revision, holding the embeddings model name, the dimension and the vector as packed little-endian 32-bit floats. An approved fact's vector is the one for its latest revision. Vectors saved by earlier versions had no model name, so they're discarded on upgrade and made again in the background.
+
+With an embeddings model set, approved, unexpired facts that have no vector for that model are embedded in the background. That happens at launch, after memory settings are saved, after a successful endpoint test and after an edit. Changing the embeddings model drops every vector the old model made and starts over. Until every eligible fact has a vector for the current model, recall uses local search only. Settings, Memory shows where that stands, for example "Preparing 12 of 140 memories for the model. Recall uses local search until this finishes." and then "Semantic recall ready: 140 memories prepared for the model." A turn that starts while this is still running waits up to one second for it, then uses local search for that turn.
+
+Each turn keeps a retrieval trace for troubleshooting: which candidates came from which search with their ranks and scores, the merged order, the rerank scores or the reason no rerank ran, what was injected, the vector status and the time taken against the budget. It shows in the request preview (Prompts, Preview) in a block labelled "Memory retrieval (last turn, not sent)", and in a memory's detail view, opened from a citation, under a "Why it was recalled" disclosure. The chat itself shows only citations.
 
 The saved system prompt stays first. A clearly delimited block of approved, unexpired, unsuppressed memory follows it, then completed local conversation history. The block says that memory is untrusted background context, not instructions. Pending, deleted, dismissed, suppressed, expired, irrelevant, malformed, and failed-retrieval records are excluded.
 
@@ -52,7 +60,7 @@ Native memory covers these capabilities:
 |---|---|
 | User-specific facts | Concise records with readable details and safe source references |
 | Categories and banks | Typed categories and internal bank scope |
-| Semantic recall | OpenAI-compatible embeddings with deterministic local ranking |
+| Hybrid recall | Lexical and embeddings search merged by rank fusion, with optional reranking |
 | Text and semantic duplicate handling | Exact proposals are skipped, similar content becomes an update proposal, and extracted creates reconcile to updates |
 | Correction and deletion | User edits are immediate, model suggestions wait for review, and deletion immediately prevents later recall |
 | Durable and episodic facts | Episodic records require an absolute expiry date and are excluded after it |
@@ -70,7 +78,7 @@ The design deliberately holds these boundaries:
 
 ## Review and maintenance
 
-The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are immediately available to lexical recall. Embeddings are prepared only when a model is explicitly configured; approved records that still lack one are embedded at launch, after memory settings are saved and after a successful endpoint test, with progress shown in Settings, Memory. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
+The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are immediately available to lexical recall. Embeddings are prepared only when a model is explicitly configured. Approved records that lack a vector for the current model are embedded in the background at launch, after memory settings are saved, after a successful endpoint test and after an edit, with progress shown in Settings, Memory. Changing the embeddings model discards the old model's vectors and prepares them again. Accepted updates and merges replace only the records named in the visible proposal. User edits reindex the approved text and prepare a fresh embedding. Delete and suppress decisions remove the record from recall immediately.
 
 Maintenance never performs network work when memory is off or the optional memory service is unavailable. Records expiring today and capacity pressure create proposals; they do not delete or prune records on their own.
 

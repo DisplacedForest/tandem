@@ -258,6 +258,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("conversationFolderGrantsV21") { db in
             try db.execute(sql: "ALTER TABLE conversations ADD COLUMN grants_json TEXT")
         }
+        migrator.registerMigration("nativeMemoryVectorsV22") { db in try Self.migrateMemoryVectors(db) }
         try migrator.migrate(database)
     }
 

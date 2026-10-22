@@ -304,6 +304,11 @@ enum SelfTest {
             do { try await NativeTaskTransportFixture.run(raw); exit(0) }
             catch { print("TASK TRANSPORT FIXTURE FAILED"); exit(1) }
         }
+        if let raw = ProcessInfo.processInfo.environment["VERA_MEMORY_LIVE_BASE"] {
+            do { try await runNativeMemoryLive(base: raw); exit(0) } catch {
+                print("SELFTEST ERROR: live memory \(error)"); exit(1)
+            }
+        }
         if let raw = ProcessInfo.processInfo.environment["VERA_IMAGE_LIVE_BASE"] {
             do { try await runNativeImageLive(raw); exit(0) } catch {
                 print("SELFTEST ERROR: live image \(error)"); exit(1)
@@ -369,6 +374,7 @@ enum SelfTest {
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
+        do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
         do {
@@ -1467,12 +1473,12 @@ enum SelfTest {
             for _ in 0..<100 where memoryService.extractionCalls == 0 {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
-            guard memoryService.embedCalls == 2, memoryService.extractionCalls == 1,
+            guard memoryService.embedCalls == 4, memoryService.extractionCalls == 1,
                   chatTransport.histories.first?.map(\.role) == ["system", "user"],
                   chatTransport.histories.first?[0].content.contains("USER-APPROVED MEMORY CONTEXT") == true,
                   chatTransport.histories.first?[0].content.contains("Favorite drink") == true,
                   try repository.pendingProposals().contains(where: { $0.title == "Meeting preference" }) else {
-                print("SELFTEST ERROR: native memory recall or review-only extraction integration"); exit(1)
+                print("SELFTEST ERROR: native memory recall or review-only extraction integration (embeds \(memoryService.embedCalls), extractions \(memoryService.extractionCalls), roles \(chatTransport.histories.first?.map(\.role) ?? []), memory block \(chatTransport.histories.first?[0].content.contains("USER-APPROVED MEMORY CONTEXT") == true), drink \(chatTransport.histories.first?[0].content.contains("Favorite drink") == true), vectors \(String(describing: store.memoryVectorStatus)), trace \(store.memoryRetrievalTraces.values.first?.summary ?? "none"))"); exit(1)
             }
             var scanSettings = memorySettings
             scanSettings.searchPastChats = true
