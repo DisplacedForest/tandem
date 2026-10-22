@@ -270,6 +270,36 @@ enum NativeWebToolsSelftest {
         do { _ = try await researchOff.perform("rain", 1); throw NativeToolError.failed("unconfigured research search ran") }
         catch NativeToolError.unavailable {}
 
+        let plainResponse = Data("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 11\r\n\r\n<p>hello</p>extra".utf8)
+        let parsedPlain = try NativePageTransport.parse(plainResponse, closed: true, maximumBytes: 1000, finalURL: URL(string: "https://a.example/")!)
+        try require(parsedPlain.status == 200 && String(decoding: parsedPlain.body, as: UTF8.self) == "<p>hello</p" && parsedPlain.contentType == "text/html; charset=utf-8" && parsedPlain.truncated == false, "content-length parse")
+        let chunkedResponse = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\n\r\n".utf8)
+        let parsedChunked = try NativePageTransport.parse(chunkedResponse, closed: true, maximumBytes: 1000, finalURL: URL(string: "https://a.example/")!)
+        try require(String(decoding: parsedChunked.body, as: UTF8.self) == "hello world" && !parsedChunked.truncated, "chunked parse")
+        let cutChunked = Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n9\r\nwor".utf8)
+        let parsedCut = try NativePageTransport.parse(cutChunked, closed: false, maximumBytes: 1000, finalURL: URL(string: "https://a.example/")!)
+        try require(String(decoding: parsedCut.body, as: UTF8.self) == "hellowor" && parsedCut.truncated, "cut chunked body is flagged")
+        let redirect = try NativePageTransport.parse(Data("HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n".utf8), closed: true, maximumBytes: 10, finalURL: URL(string: "https://a.example/")!)
+        try require(redirect.status == 302 && redirect.location == "/next", "redirect parse")
+        let capped = try NativePageTransport.parse(Data(("HTTP/1.1 200 OK\r\n\r\n" + String(repeating: "x", count: 50)).utf8), closed: false, maximumBytes: 20, finalURL: URL(string: "https://a.example/")!)
+        try require(capped.body.count == 20 && capped.truncated, "byte cap on close-delimited body")
+        do {
+            _ = try NativePageTransport.parse(Data("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\nxx".utf8), closed: true, maximumBytes: 10, finalURL: URL(string: "https://a.example/")!)
+            throw NativeToolError.failed("compressed body accepted")
+        } catch let error as NativeToolError where error.localizedDescription.contains("compressed") {}
+        do {
+            _ = try NativePageTransport.parse(Data("not http".utf8), closed: true, maximumBytes: 10, finalURL: URL(string: "https://a.example/")!)
+            throw NativeToolError.failed("garbage accepted")
+        } catch let error as NativeToolError where error.localizedDescription.contains("HTTP response") {}
+        for host in ["127.1", "localhost", "10.0.0.1"] {
+            do { _ = try await NativePageTransport.pinnedAddress(host); throw NativeToolError.failed("pinned a private host \(host)") }
+            catch let error as NativeToolError where error.localizedDescription.contains("private network") {}
+        }
+        if let live = ProcessInfo.processInfo.environment["VERA_PAGE_FETCH_LIVE_URL"], !live.isEmpty {
+            let page = try await NativePageFetch.fetch(live, characters: 600)
+            print("  live page fetch: \(page.title) (\(page.text.count) chars, truncated \(page.truncated), \(page.url))")
+        }
+
         try await timeoutCases()
         print("  native web tools OK (schemas, gating, search parse and numbering, caps, failures, page extraction, host guard, injection, research search, per-tool timeout)")
     }

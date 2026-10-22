@@ -19,73 +19,7 @@ struct NativePageFetchClient: Sendable {
     let get: @Sendable (URL, Int, TimeInterval) async throws -> NativePageResponse
 
     static let live = NativePageFetchClient { url, maximumBytes, timeout in
-        guard let host = url.host, !(await Task.detached { NativePageFetch.hostResolvesPrivate(host) }.value) else {
-            throw NativeToolError.failed("The page address resolves to a private network and cannot be read")
-        }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        configuration.httpMaximumConnectionsPerHost = 1
-        let guardian = NativePageRedirectGuard()
-        let session = URLSession(configuration: configuration, delegate: guardian, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        var request = URLRequest(url: url)
-        request.setValue("text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.1", forHTTPHeaderField: "Accept")
-        request.setValue("en", forHTTPHeaderField: "Accept-Language")
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, let finalURL = http.url else {
-            throw NativeToolError.failed("The page did not return an HTTP response")
-        }
-        var body = Data()
-        body.reserveCapacity(min(maximumBytes, 262_144))
-        var truncated = false
-        for try await byte in bytes {
-            if body.count >= maximumBytes { truncated = true; break }
-            body.append(byte)
-        }
-        guard !guardian.reachedPrivateAddress else {
-            throw NativeToolError.failed("The page address resolves to a private network and cannot be read")
-        }
-        return NativePageResponse(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"),
-                                  body: body, truncated: truncated, finalURL: finalURL)
-    }
-}
-
-final class NativePageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let lock = NSLock()
-    private var hops = 0
-    private var privateHit = false
-
-    var reachedPrivateAddress: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return privateHit
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        lock.lock()
-        hops += 1
-        let count = hops
-        lock.unlock()
-        guard count <= NativePageFetch.maximumRedirects, let target = request.url, let host = target.host,
-              NativePageFetch.allowed(target.absoluteString) != nil, !NativePageFetch.hostResolvesPrivate(host) else {
-            completionHandler(nil)
-            return
-        }
-        var next = request
-        next.httpMethod = "GET"
-        next.httpBody = nil
-        completionHandler(next)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollectingMetrics metrics: URLSessionTaskMetrics) {
-        let remotes = metrics.transactionMetrics.compactMap(\.remoteAddress)
-        guard remotes.contains(where: NativePageFetch.hostIsPrivate) else { return }
-        lock.lock()
-        privateHit = true
-        lock.unlock()
-        task.cancel()
+        try await NativePageTransport.get(url, maximumBytes: maximumBytes, timeout: timeout)
     }
 }
 

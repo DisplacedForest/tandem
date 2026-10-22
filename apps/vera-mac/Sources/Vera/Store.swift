@@ -2087,9 +2087,11 @@ final class ChatStore: ObservableObject {
                 userMessageID: turn.userMessageID, assistantMessageID: turn.assistantMessageID)
             let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
             if nativeTaskConfiguration == nil || profile != nil {
+                let workerTypes = turnToolAuthority(for: turn).0.allowedWorkerTypes
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
-                        searchAvailable: nativeSearchAvailable, didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
+                        searchAvailable: nativeSearchAvailable, allowedWorkerTypes: { workerTypes },
+                        didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }
         }

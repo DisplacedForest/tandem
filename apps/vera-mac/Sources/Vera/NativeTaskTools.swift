@@ -14,6 +14,7 @@ enum NativeTaskTools {
     static func definition(service: NativeTaskHandoffService, origin: NativeTaskOrigin,
                            profile: NativeTaskProfileBinding?,
                            searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
+                           allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.workerTypes },
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         NativeToolDefinition(id: toolID, name: toolName, title: "Start background work",
             description: "Start one background task only when the current user message explicitly asks for research or for a written document to be produced in the background. Earlier conversation requests do not authorize another task. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for documents. Then acknowledge briefly. Progress and the result appear on the task card. Do not repeat task status on unrelated turns, expose internal identifiers, wait for the result, or claim completion.",
@@ -46,6 +47,11 @@ enum NativeTaskTools {
                         throw NativeToolError.invalidArguments("Each deliverable must be text.")
                     }
                     return text
+                }
+                guard allowedWorkerTypes().contains(workerType) else {
+                    throw NativeToolError.failed(workerType == "document"
+                        ? "The current message did not ask for a document to be written, so no document task was started."
+                        : "The current message did not ask for research, so no research task was started.")
                 }
                 if workerType == "research", !searchAvailable() {
                     throw NativeToolError.failed(searchUnavailable)
