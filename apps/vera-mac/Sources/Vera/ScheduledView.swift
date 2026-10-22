@@ -388,13 +388,14 @@ struct ScheduleEditor: View {
 
 struct ShotSafeScroll<Content: View>: View {
     let renderSafe: Bool
+    var axis: Axis.Set = .vertical
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         if renderSafe {
-            VStack(spacing: 0) { content() }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            VStack(spacing: 0) { content() }.frame(maxWidth: .infinity, maxHeight: axis == .vertical ? .infinity : nil, alignment: .topLeading)
         } else {
-            ScrollView { content() }
+            ScrollView(axis, showsIndicators: axis.contains(.horizontal)) { content() }
         }
     }
 }

@@ -255,6 +255,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
         migrator.registerMigration("nativeTaskEngineV19") { db in try NativeTaskStore.migrate(db) }
         migrator.registerMigration("nativeSchedulesV20") { db in try NativeScheduleStore.migrate(db) }
+        migrator.registerMigration("conversationFolderGrantsV21") { db in
+            try db.execute(sql: "ALTER TABLE conversations ADD COLUMN grants_json TEXT")
+        }
         try migrator.migrate(database)
     }
 
@@ -294,7 +297,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func listConversations() throws -> [Conversation] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source, grants_json
                 FROM conversations
                 ORDER BY pinned DESC, updated_at DESC
                 """).map(Self.decodeConversation)
@@ -304,7 +307,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in
             try Row.fetchOne(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source, grants_json
                 FROM conversations
                 WHERE origin_type = ? AND origin_id = ?
                 """, arguments: [originType, originID]).map(Self.decodeConversation)
@@ -399,8 +402,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     static func saveConversation(_ conversation: Conversation, db: Database) throws {
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json, session_mode, title_source, grants_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     title_source = excluded.title_source,
@@ -409,7 +412,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     memory_excluded = excluded.memory_excluded,
                     instructions = excluded.instructions,
                     grounding_json = excluded.grounding_json,
-                    session_mode = excluded.session_mode
+                    session_mode = excluded.session_mode,
+                    grants_json = excluded.grants_json
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -423,12 +427,24 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     KnowledgeGrounding.encodeSelection(conversation.grounding),
                     conversation.mode.rawValue,
                     conversation.titleSource.rawValue,
+                    FolderGrant.encode(conversation.grants),
                 ])
     }
 
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
         try database.write { db in
             try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)
+        }
+    }
+
+    func appendDisplayBlock(_ block: NativeDisplayBlock, messageID: UUID) throws -> [NativeDisplayBlock]? {
+        try database.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT display_blocks_json FROM messages WHERE id = ?", arguments: [messageID.uuidString]) else { return nil }
+            let bytes: Data? = row["display_blocks_json"]
+            var blocks = try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? []
+            if !blocks.contains(where: { $0.id == block.id }) { blocks.append(block) }
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [try nativeTaskEncoded(blocks), messageID.uuidString])
+            return blocks
         }
     }
 
@@ -975,7 +991,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             instructions: row["instructions"],
             grounding: KnowledgeGrounding.decodeSelection(row["grounding_json"]),
             mode: NativeSessionMode(rawValue: row["session_mode"] ?? "chat") ?? .chat,
-            titleSource: ConversationTitleSource(rawValue: row["title_source"] ?? "fallback") ?? .fallback)
+            titleSource: ConversationTitleSource(rawValue: row["title_source"] ?? "fallback") ?? .fallback,
+            grants: FolderGrant.decode(row["grants_json"]))
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

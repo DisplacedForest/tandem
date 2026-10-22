@@ -367,6 +367,12 @@ enum NativeChatToolCatalog {
                 available: true,
                 setup: "Enable this tool to let answers read pages you or a search point to."),
             NativeChatToolDescriptor(
+                id: NativeFolderTools.toolID,
+                name: "Files in granted folders",
+                summary: "Reads, searches, writes, edits and moves files inside folders you grant to a chat. Nothing is deleted.",
+                available: true,
+                setup: "Grant a folder from the composer to turn these on for that chat."),
+            NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Background work",
                 summary: "Hands research and document writing to a background task that reports on a card in the chat.",

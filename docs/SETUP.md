@@ -294,6 +294,30 @@ Once a schedule exists, Tandem keeps running in the menu bar after you close the
 
 This is separate from the server scheduler in [section 6](#6-the-scheduler), which drives Pulse and veins on vera-api. In-app schedules only drive research and document runs in the app.
 
+### Working in folders
+
+Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.
+
+While a chat has at least one grant and the model supports tool calling, the model gets seven file tools. They share one consent entry, **Files in granted folders**, in Settings, Tools.
+
+- List a folder.
+- Read a text file. A call returns 64 KB by default and 256 KB at most. Continue a longer file with a start line. Binary files are refused.
+- Search a grant for a literal, case-insensitive text fragment. It returns up to 100 matches, walks a bounded number of files, and skips hidden files and symlinks.
+- Write a file.
+- Edit a file by exact replacement. The old text has to appear exactly once unless replace_all is set.
+- Move or rename a file or folder. It never overwrites and never deletes.
+- Create a folder.
+
+There is no delete tool. Writes and edits inside a grant don't ask per file. Revoking a grant mid-conversation makes the next call into that folder fail, and when no grants remain the tools are no longer offered.
+
+Every path goes through one guard. It's made absolute (a relative path resolves against the grant when there is exactly one), the deepest existing ancestor is resolved through symlinks, and the real path must sit inside a granted folder. Anything else is refused with the path named, including a symlink that points outside the grant and any path starting with ~. The model receives the refusal as the tool result. File names and contents the tools return are treated as untrusted data.
+
+Each changed file shows on the turn as a card: Created, Edited, Moved to, or Created folder. It has a line summary (+added -removed), a before and after diff, and Open and Reveal buttons. Small diffs open automatically and larger ones sit behind **Show changes**. Diff content is capped at 64 KB per side. The cards are saved with the message, so the diffs are still there after a relaunch.
+
+If the current model can't call tools, the chat gets no file tools. The folder control explains that instead of opening the picker, and the chips show the same note.
+
+Not included: running commands, moving files to the Trash, project-level grants, indexing file contents, and App Sandbox entitlements.
+
 ### Migrating Open WebUI knowledge collections
 
 If you are moving off an existing Open WebUI instance, its knowledge collections can be

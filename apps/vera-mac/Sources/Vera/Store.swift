@@ -104,6 +104,9 @@ final class ChatStore: ObservableObject {
     var nativeTaskTracker: NativeTaskTracker?
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
+    @Published var grantError: String?
+    @Published var grantConsentTick = 0
+    let nativeGrantSource = NativeFolderGrantSource()
     @Published var schedules: [NativeSchedule] = []
     @Published var scheduleRuns: [String: [NativeScheduleRun]] = [:]
     @Published var scheduleError: String?
@@ -313,7 +316,7 @@ final class ChatStore: ObservableObject {
     }
 
     static var builtInToolNames: Set<String> {
-        Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName])
+        Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName]).union(NativeFolderTools.toolNames)
     }
 
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
@@ -402,6 +405,7 @@ final class ChatStore: ObservableObject {
             conversations.insert(convo, at: 0)
         }
         ensureVeraThread()
+        syncGrantSource()
         if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
             select(previousSelected)
             section = previousSection
@@ -1739,6 +1743,11 @@ final class ChatStore: ObservableObject {
     func addFiles(_ urls: [URL]) {
         attachmentError = nil
         for url in urls {
+            var directory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
+                grantFolder(url)
+                continue
+            }
             do {
                 let record = try attachmentStore.save(url: url)
                 attachments.append(pendingAttachment(for: record, sourceURL: url))
@@ -1979,7 +1988,7 @@ final class ChatStore: ObservableObject {
 
     var mentionCatalog: ComposerMentionCatalog {
         let webAvailable = VeraAPIClient.resolvedBase() != nil
-        var items = [ComposerMentionCatalog.filesItem]
+        var items = [ComposerMentionCatalog.filesItem, ComposerMentionCatalog.folderItem]
             + ComposerMentionCatalog.builtIns(webAvailable: nativeSearchAvailable(), imageAvailable: NativeImageTools.resolvedBase() != nil)
             + capabilityDeclarations.map { ComposerMentionCatalog.capability($0, webAvailable: webAvailable) }
         for server in nativeMCP?.servers ?? [] {
@@ -2012,9 +2021,12 @@ final class ChatStore: ObservableObject {
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
+        let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
+        if !(supportsTools && authority.allowsTools && turn.mode != .continuous) { allowed.remove(NativeFolderTools.toolID) }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
-        let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? [])))
+        let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
+            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2103,6 +2115,11 @@ final class ChatStore: ObservableObject {
                 ])
             }
         }
+        let turnGrants = grants(for: id)
+        let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
+        if !turnGrants.isEmpty && folderConsented {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id, ledger: fileChangeLedger(for: turn), alwaysAvailable: true))
+        }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2125,6 +2142,10 @@ final class ChatStore: ObservableObject {
                                          hasRepository: nativeTaskRepository != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
+        if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
+            enabledToolIDs.remove(NativeFolderTools.toolID)
+        }
+        let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) ? NativeFolderTools.grantNote(turnGrants) : nil
         let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
         var memorySettings = turn.memorySettings
@@ -2256,7 +2277,7 @@ final class ChatStore: ObservableObject {
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])))
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" +
+                    messages: turnMessages, systemPrompt: assembled.prompt + (grantNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)

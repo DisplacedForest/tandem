@@ -7,7 +7,7 @@ enum ComposerMentionSection: String, CaseIterable, Sendable {
 }
 
 struct ComposerMentionItem: Identifiable, Equatable, Sendable {
-    enum Kind: Equatable, Sendable { case files, tools(Set<String>) }
+    enum Kind: Equatable, Sendable { case files, folder, tools(Set<String>) }
     let id: String
     let section: ComposerMentionSection
     let name: String
@@ -32,6 +32,9 @@ struct ComposerMentionCatalog: Equatable, Sendable {
 
     static let filesItem = ComposerMentionItem(id: "add-files", section: .add, name: "Add photos and files",
         detail: "", icon: "paperclip", available: true, kind: .files)
+
+    static let folderItem = ComposerMentionItem(id: "grant-folder", section: .add, name: "Work in a folder",
+        detail: "Let this chat read and change files in a folder", icon: "folder", available: true, kind: .folder)
 
     static func builtIns(webAvailable: Bool, imageAvailable: Bool) -> [ComposerMentionItem] {
         [
@@ -105,7 +108,7 @@ enum ComposerMentions {
     static func insert(_ item: ComposerMentionItem, into draft: String, replacing query: ComposerMentionQuery) -> String {
         var next = draft
         switch item.kind {
-        case .files: next.replaceSubrange(query.range, with: "")
+        case .files, .folder: next.replaceSubrange(query.range, with: "")
         case .tools: next.replaceSubrange(query.range, with: "@" + item.name + " ")
         }
         return next
