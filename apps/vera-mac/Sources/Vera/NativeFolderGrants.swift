@@ -5,12 +5,14 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     var path: String
     var name: String
     var bookmark: Data?
+    var identity: NativeFolderIdentity?
 
-    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil) {
+    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil, identity: NativeFolderIdentity? = nil) {
         self.id = id
         self.path = path
         self.name = name ?? URL(fileURLWithPath: path).lastPathComponent
         self.bookmark = bookmark
+        self.identity = identity
     }
 
     static func make(url: URL) throws -> FolderGrant {
@@ -20,20 +22,21 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
             throw NativeFolderAccessError.notADirectory(standardized.path)
         }
         let real = standardized.resolvingSymlinksInPath().path
+        guard let identity = NativeFolderIdentity.of(path: real) else { throw NativeFolderAccessError.notADirectory(real) }
         let bookmark = try? standardized.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-        return FolderGrant(path: real, name: standardized.lastPathComponent, bookmark: bookmark)
+        return FolderGrant(path: real, name: standardized.lastPathComponent, bookmark: bookmark, identity: identity)
     }
 
-    func currentRealPath() -> String? {
-        var directory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue {
-            return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        }
+    func current() -> FolderGrant? {
+        if let found = NativeFolderIdentity.of(path: path), identity == nil || found == identity { return self }
         guard let bookmark else { return nil }
         var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale),
-              FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue else { return nil }
-        return url.resolvingSymlinksInPath().path
+        guard let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+        let real = url.resolvingSymlinksInPath().path
+        guard let found = NativeFolderIdentity.of(path: real), identity == nil || found == identity else { return nil }
+        var moved = self
+        moved.path = real
+        return moved
     }
 
     static func encode(_ grants: [FolderGrant]) -> String? {
@@ -52,6 +55,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     case noGrants
     case relativeWithoutAnchor(String)
     case outsideGrants(String)
+    case symlink(String)
     case notFound(String)
     case exists(String)
     case binary(String)
@@ -64,62 +68,51 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
         case .noGrants: return "No folder has been granted to this chat."
         case .relativeWithoutAnchor(let path): return "\(path) is a relative path and this chat has more than one granted folder. Use a full path."
         case .outsideGrants(let path): return "\(path) is outside every folder granted to this chat."
+        case .symlink(let path): return "\(path) goes through a symbolic link, which the file tools do not follow."
         case .notFound(let path): return "\(path) does not exist."
         case .exists(let path): return "\(path) already exists."
         case .binary(let path): return "\(path) is not a text file."
-        case .tooLarge(let path, let limit): return "\(path) is larger than the \(limit / 1024) KB read limit. Read a smaller range."
+        case .tooLarge(let path, let limit): return "\(path) is larger than the \(limit / 1024) KB limit."
         case .invalidPath(let path): return "\(path) is not a valid path."
         }
     }
 }
 
 struct NativeFolderAccess: Sendable {
-    let roots: [String]
+    let roots: [FolderGrant]
 
     init(grants: [FolderGrant]) {
-        roots = grants.compactMap { $0.currentRealPath() }
+        roots = grants.compactMap { $0.current() }
     }
 
     static func contains(root: String, path: String) -> Bool {
         path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
-    func resolve(_ requested: String, mustExist: Bool = true) throws -> String {
-        let trimmed = requested.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.contains("\0"), trimmed.utf8.count <= 4096 else { throw NativeFolderAccessError.invalidPath(requested) }
+    func locate(_ requested: String) throws -> NativeFolderLocation {
+        guard !requested.isEmpty, !requested.contains("\0"), !requested.contains("\n"), !requested.contains("\r"), requested.utf8.count <= 4096 else {
+            throw NativeFolderAccessError.invalidPath(requested)
+        }
         guard !roots.isEmpty else { throw NativeFolderAccessError.noGrants }
-        var absolute: String
-        if trimmed.hasPrefix("/") {
-            absolute = trimmed
-        } else if trimmed.hasPrefix("~") {
-            throw NativeFolderAccessError.outsideGrants(trimmed)
+        let absolute: String
+        if requested.hasPrefix("/") {
+            absolute = requested
+        } else if requested.hasPrefix("~") {
+            throw NativeFolderAccessError.outsideGrants(requested)
         } else {
-            guard roots.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(trimmed) }
-            absolute = roots[0] + "/" + trimmed
+            guard roots.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(requested) }
+            absolute = roots[0].path + "/" + requested
         }
-        absolute = URL(fileURLWithPath: absolute).standardizedFileURL.path
-        let real = try Self.realPath(absolute)
-        guard roots.contains(where: { Self.contains(root: $0, path: real) }) else {
-            throw NativeFolderAccessError.outsideGrants(trimmed)
+        let candidates = [URL(fileURLWithPath: absolute).standardizedFileURL.path,
+                          URL(fileURLWithPath: absolute).standardizedFileURL.resolvingSymlinksInPath().path]
+        for candidate in candidates {
+            for root in roots where Self.contains(root: root.path, path: candidate) {
+                let relative = String(candidate.dropFirst(root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+                guard !relative.contains(where: { $0 == "." || $0 == ".." }) else { throw NativeFolderAccessError.invalidPath(requested) }
+                return NativeFolderLocation(root: root, components: relative)
+            }
         }
-        if mustExist, !FileManager.default.fileExists(atPath: real) { throw NativeFolderAccessError.notFound(trimmed) }
-        return real
-    }
-
-    static func realPath(_ absolute: String) throws -> String {
-        var existing = absolute
-        var remainder: [String] = []
-        let manager = FileManager.default
-        while !manager.fileExists(atPath: existing) {
-            let url = URL(fileURLWithPath: existing)
-            remainder.insert(url.lastPathComponent, at: 0)
-            let parent = url.deletingLastPathComponent().path
-            guard parent != existing, !parent.isEmpty else { throw NativeFolderAccessError.invalidPath(absolute) }
-            existing = parent
-        }
-        let resolved = URL(fileURLWithPath: existing).resolvingSymlinksInPath().path
-        guard !remainder.contains(where: { $0 == ".." || $0 == "." }) else { throw NativeFolderAccessError.invalidPath(absolute) }
-        return remainder.isEmpty ? resolved : resolved + "/" + remainder.joined(separator: "/")
+        throw NativeFolderAccessError.outsideGrants(requested)
     }
 }
 
@@ -149,23 +142,16 @@ struct NativeFileChange: Codable, Equatable, Hashable, Identifiable, Sendable {
         }
     }
 
-    static func capped(_ text: String?) -> (String?, Bool) {
-        guard let text else { return (nil, false) }
-        guard text.utf8.count > contentCap else { return (text, false) }
-        return (String(decoding: Array(text.utf8.prefix(contentCap)), as: UTF8.self), true)
-    }
-
     init(id: String = UUID().uuidString.lowercased(), path: String, kind: NativeFileChangeKind,
          before: String? = nil, after: String? = nil, movedFrom: String? = nil) {
         self.id = id
         self.path = path
         self.kind = kind
-        let (beforeText, beforeCut) = Self.capped(before)
-        let (afterText, afterCut) = Self.capped(after)
-        self.before = beforeText
-        self.after = afterText
         self.movedFrom = movedFrom
-        truncated = beforeCut || afterCut
+        let tooLarge = (before?.utf8.count ?? 0) > Self.contentCap || (after?.utf8.count ?? 0) > Self.contentCap
+        truncated = tooLarge
+        self.before = tooLarge ? nil : before
+        self.after = tooLarge ? nil : after
     }
 }
 
@@ -173,20 +159,35 @@ enum NativeToolCallContext {
     @TaskLocal static var activityID: String?
 }
 
-actor NativeFileChangeLedger {
-    private var changes: [String: [NativeFileChange]] = [:]
+final class NativeFileChangeLedger: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sink: (@Sendable (String, NativeFileChange) -> Void)?
+    private var held: [(String, NativeFileChange)] = []
+
+    func attach(_ sink: @escaping @Sendable (String, NativeFileChange) -> Void) {
+        lock.lock()
+        self.sink = sink
+        let pending = held
+        held = []
+        lock.unlock()
+        for (activity, change) in pending { sink(activity, change) }
+    }
 
     func record(_ change: NativeFileChange) {
-        guard let id = NativeToolCallContext.activityID else { return }
-        changes[id, default: []].append(change)
+        let activity = NativeToolCallContext.activityID ?? ""
+        lock.lock()
+        guard let sink else {
+            held.append((activity, change))
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        sink(activity, change)
     }
 
-    func take(_ activityID: String) -> [NativeFileChange] {
-        changes.removeValue(forKey: activityID) ?? []
-    }
-
-    func peek(_ activityID: String) -> [NativeFileChange] {
-        changes[activityID] ?? []
+    func recorded() -> [NativeFileChange] {
+        lock.lock(); defer { lock.unlock() }
+        return held.map(\.1)
     }
 }
 

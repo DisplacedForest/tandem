@@ -105,7 +105,7 @@ final class ChatStore: ObservableObject {
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
     @Published var grantError: String?
-    let nativeFileChangeLedger = NativeFileChangeLedger()
+    @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
     @Published var schedules: [NativeSchedule] = []
     @Published var scheduleRuns: [String: [NativeScheduleRun]] = [:]
@@ -2021,17 +2021,12 @@ final class ChatStore: ObservableObject {
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
-        let dispatchGrants = grants(for: turn.conversationID)
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
-        if supportsTools && authority.allowsTools && !dispatchGrants.isEmpty && turn.mode != .continuous {
-            allowed.insert(NativeFolderTools.toolID)
-        } else {
-            allowed.remove(NativeFolderTools.toolID)
-        }
+        if !(supportsTools && authority.allowsTools && turn.mode != .continuous) { allowed.remove(NativeFolderTools.toolID) }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
         let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
-            + (dispatchGrants.isEmpty ? [] : folderToolDefinitions(for: turn.conversationID)))
+            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2121,8 +2116,9 @@ final class ChatStore: ObservableObject {
             }
         }
         let turnGrants = grants(for: id)
-        if !turnGrants.isEmpty {
-            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id))
+        let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
+        if !turnGrants.isEmpty && folderConsented {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id, ledger: fileChangeLedger(for: turn)))
         }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
@@ -2146,9 +2142,7 @@ final class ChatStore: ObservableObject {
                                          hasRepository: nativeTaskRepository != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
-        if capabilityProfile.supportsTools && authority.allowsTools && !turnGrants.isEmpty && turn.mode != .continuous {
-            enabledToolIDs.insert(NativeFolderTools.toolID)
-        } else {
+        if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeFolderTools.toolID)
         }
         let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) ? NativeFolderTools.grantNote(turnGrants) : nil
@@ -2302,7 +2296,6 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].ask = ask
                     conversations[i].messages[replyIndex].artifacts = arts
                     conversations[i].messages[replyIndex].toolActivities = snapshot.activities
-                    await liftFileChanges(snapshot.activities, conversation: i, reply: replyIndex)
                     for activity in snapshot.activities {
                         guard let image = NativeImageTools.attachment(from: activity),
                               !conversations[i].messages[replyIndex].attachments.contains(where: { $0.fileName == image.fileName }) else { continue }

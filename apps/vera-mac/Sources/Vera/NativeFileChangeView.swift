@@ -88,6 +88,7 @@ struct NativeFileChangeCard: View {
     }
 
     private var summary: String {
+        if change.truncated { return "Too large to show here. Open the file to see it." }
         switch change.kind {
         case .created, .edited: return NativeLineDiff.summary(before: change.before, after: change.after)
         case .moved: return "from \(change.movedFrom.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path } ?? "")"

@@ -36,13 +36,34 @@ extension ChatStore {
         conversations.first(where: { $0.id == conversationID })?.grants ?? nativeGrantSource.grants(for: conversationID)
     }
 
-    func folderToolDefinitions(for conversationID: String) -> [NativeToolDefinition] {
+    func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger, alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
-        return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: nativeFileChangeLedger)
+        return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger, alwaysAvailable: alwaysAvailable)
+    }
+
+    func fileChangeLedger(for turn: NativeConversationTurn) -> NativeFileChangeLedger {
+        let ledger = NativeFileChangeLedger()
+        ledger.attach { [weak self] _, change in
+            Task { @MainActor [weak self] in self?.attachFileChange(change, turn: turn) }
+        }
+        return ledger
+    }
+
+    func attachFileChange(_ change: NativeFileChange, turn: NativeConversationTurn) {
+        guard let conversation = conversations.firstIndex(where: { $0.id == turn.conversationID }),
+              let reply = conversations[conversation].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) else { return }
+        let id = "file:" + change.id
+        guard !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == id }) else { return }
+        conversations[conversation].messages[reply].displayBlocks.append(.fileChange(change))
+        try? turnRepository?.checkpointTurn(turn, message: conversations[conversation].messages[reply], ordinal: reply)
     }
 
     func grantFolder(_ url: URL) {
-        guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        if selectedID == nil || !conversations.contains(where: { $0.id == selectedID }) { newConversation() }
+        guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else {
+            grantError = "Open a chat first, then grant the folder."
+            return
+        }
         grantError = nil
         let grant: FolderGrant
         do { grant = try FolderGrant.make(url: url) } catch {
@@ -57,6 +78,7 @@ extension ChatStore {
         conversations[index].grants.removeAll { NativeFolderAccess.contains(root: grant.path, path: $0.path) }
         conversations[index].grants.append(grant)
         persistGrants(index)
+        grantConsentTick &+= 1
     }
 
     func revokeGrant(_ grantID: String) {
@@ -81,13 +103,4 @@ extension ChatStore {
         nativeGrantSource.replaceAll(conversations)
     }
 
-    func liftFileChanges(_ activities: [NativeToolActivity], conversation: Int, reply: Int) async {
-        for activity in activities where activity.toolID == NativeFolderTools.toolID && activity.state != .pending {
-            let changes = await nativeFileChangeLedger.take(activity.id)
-            guard !changes.isEmpty, conversation < conversations.count, reply < conversations[conversation].messages.count else { continue }
-            for change in changes where !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == "file:" + change.id }) {
-                conversations[conversation].messages[reply].displayBlocks.append(.fileChange(change))
-            }
-        }
-    }
 }

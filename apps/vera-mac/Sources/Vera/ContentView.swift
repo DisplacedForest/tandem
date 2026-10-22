@@ -889,6 +889,11 @@ struct ComposerField: View {
         }
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
+        .onChange(of: store.grantConsentTick) { _, _ in
+            guard !config.nativeSettings.enabledToolIDs.contains(NativeFolderTools.toolID) else { return }
+            config.setNativeTool(NativeFolderTools.toolID, enabled: true)
+            try? config.save()
+        }
         .confirmationDialog(
             store.pendingSendDecision?.imageLimit == nil
                 ? "This model can't take images" : "Too many images for this model",
