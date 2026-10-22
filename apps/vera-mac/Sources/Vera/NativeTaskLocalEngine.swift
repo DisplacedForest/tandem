@@ -248,10 +248,11 @@ final class NativeTaskLocalEngine: Sendable {
         self.dispatcher = dispatcher
     }
 
-    static func research(database: DatabaseQueue, search: NativeResearchSearch,
-                         ownerName: @escaping @Sendable () -> String?) -> NativeTaskLocalEngine {
+    static func workers(database: DatabaseQueue, search: NativeResearchSearch,
+                        identity: @escaping @Sendable () -> NativeWorkerIdentity) -> NativeTaskLocalEngine {
         NativeTaskLocalEngine(database: database, workers: { exchange in
-            ["research": NativeResearchWorker.make(exchange: exchange, search: search, ownerName: ownerName)]
+            ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
+             "document": NativeDocumentWorker.make(exchange: exchange, identity: identity)]
         })
     }
 
@@ -353,10 +354,11 @@ final class NativeTaskLocalEngine: Sendable {
             throw NativeTaskLocalStatus(code: 503, detail: "This task worker is not configured")
         }
         let payloadData = try NativeTaskStore.canonical(payload)
-        if workerType == "research" {
-            guard (try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData)) != nil else {
-                throw NativeTaskLocalStatus(code: 422, detail: "The research request is not valid")
-            }
+        guard NativeResearchTaskRequest.workerTypes.contains(workerType),
+              let decoded = try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData),
+              (try? NativeResearchTaskRequest(objective: decoded.query, deliverables: decoded.deliverables,
+                                              workerType: workerType, title: decoded.title)) != nil else {
+            throw NativeTaskLocalStatus(code: 422, detail: "The task request is not valid")
         }
         return try store.create(workerType: workerType, payload: payloadData, idempotencyKey: key)
     }

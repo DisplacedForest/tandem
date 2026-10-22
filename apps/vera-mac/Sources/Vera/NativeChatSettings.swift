@@ -334,17 +334,19 @@ struct NativeChatToolDescriptor: Identifiable, Equatable, Sendable {
 enum NativeChatToolCatalog {
     static var tools: [NativeChatToolDescriptor] {
         tools(veraAPIConfigured: VeraAPIClient.resolvedBase() != nil,
-              imageConfigured: NativeImageTools.resolvedBase() != nil)
+              imageConfigured: NativeImageTools.resolvedBase() != nil,
+              searchConfigured: NativeWebSearch.resolvedBase() != nil)
     }
 
     static func tools(
-        veraAPIConfigured: Bool, imageConfigured: Bool = false, declarations: [NativeToolDeclaration] = []
+        veraAPIConfigured: Bool, imageConfigured: Bool = false, searchConfigured: Bool = false,
+        declarations: [NativeToolDeclaration] = []
     ) -> [NativeChatToolDescriptor] {
-        builtIn(veraAPIConfigured: veraAPIConfigured, imageConfigured: imageConfigured)
+        builtIn(imageConfigured: imageConfigured, searchConfigured: searchConfigured)
             + NativeCapabilityTools.descriptors(declarations, veraAPIConfigured: veraAPIConfigured)
     }
 
-    private static func builtIn(veraAPIConfigured: Bool, imageConfigured: Bool) -> [NativeChatToolDescriptor] {
+    private static func builtIn(imageConfigured: Bool, searchConfigured: Bool) -> [NativeChatToolDescriptor] {
         [
             NativeChatToolDescriptor(
                 id: "apple-reminders",
@@ -353,17 +355,23 @@ enum NativeChatToolCatalog {
                 available: true,
                 setup: "Enable this tool to grant Reminders access for explicit chat requests."),
             NativeChatToolDescriptor(
-                id: "web-search",
+                id: NativeWebTools.searchToolID,
                 name: "Web search",
-                summary: "Searches the web through your vera-api and answers from the results.",
-                available: veraAPIConfigured,
-                setup: "Set the vera-api base URL in the Connection tab to enable web search."),
+                summary: "Searches the web through your search server and answers with numbered sources.",
+                available: searchConfigured,
+                setup: "Set the search URL in the Search tab to enable web search."),
             NativeChatToolDescriptor(
-                id: "deep-research",
-                name: "Deep research",
-                summary: "Runs a multi-step research pass through your vera-api and cites its sources.",
-                available: veraAPIConfigured,
-                setup: "Set the vera-api base URL in the Connection tab to enable deep research."),
+                id: NativeWebTools.fetchToolID,
+                name: "Read web pages",
+                summary: "Reads the text of a public web page when a search snippet is not enough.",
+                available: true,
+                setup: "Enable this tool to let answers read pages you or a search point to."),
+            NativeChatToolDescriptor(
+                id: NativeWebTools.researchToolID,
+                name: "Background work",
+                summary: "Hands research and document writing to a background task that reports on a card in the chat.",
+                available: true,
+                setup: "Enable this tool to allow background research and documents."),
             NativeImageTools.descriptor(configured: imageConfigured),
         ]
     }

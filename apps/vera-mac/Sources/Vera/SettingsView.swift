@@ -13,6 +13,7 @@ struct SettingsView: View {
             KnowledgeView().tabItem { Label("Knowledge", systemImage: "books.vertical") }.tag(SettingsTab.knowledge)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
             ImageTab().tabItem { Label("Image", systemImage: "photo") }.tag(SettingsTab.image)
+            SearchTab().tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(SettingsTab.search)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
             PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)
             IdentityTab().tabItem { Label("Identity", systemImage: "person") }.tag(SettingsTab.identity)
@@ -367,6 +368,7 @@ struct NativeToolEditor: View {
         NativeChatToolCatalog.tools(
             veraAPIConfigured: config.veraAPIBase != nil,
             imageConfigured: config.imageBase != nil,
+            searchConfigured: config.searchBase != nil,
             declarations: config.capabilityTools.declarations)
     }
     private var available: [NativeChatToolDescriptor] { catalog.filter(\.available) }
@@ -639,6 +641,52 @@ private struct ImageTab: View {
         }
         store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
         status = configured ? "Saved. Ask for an image in any chat." : "Saved. Image generation is off."
+    }
+}
+
+private struct SearchTab: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
+    @State private var status: String?
+
+    var body: some View {
+        Form {
+            Section("Web search") {
+                ConfigField(label: "SearXNG URL", key: NativeWebSearch.configKey, placeholder: "http://my-search-host:8088",
+                            tip: "The SearXNG instance that answers web searches. Leave it empty to turn web search and background research off.")
+                InlineTest(title: "Test search") {
+                    try await ConnectionTest.search(base: config[NativeWebSearch.configKey])
+                }
+                Text("Searches run from this Mac against your own search server. Background research also reads the pages it finds.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            Section {
+                HStack(spacing: 10) {
+                    if let status {
+                        Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                    Button("Save") { save() }.keyboardShortcut("s", modifiers: .command)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func save() {
+        let configured = NativeWebSearch.base(from: config[NativeWebSearch.configKey]) != nil
+        if configured {
+            for id in [NativeWebTools.searchToolID, NativeWebTools.fetchToolID, NativeWebTools.researchToolID]
+                where !config.nativeSettings.enabledToolIDs.contains(id) {
+                config.setNativeTool(id, enabled: true)
+            }
+        }
+        do { try config.save() } catch {
+            status = "Save failed: \(error.localizedDescription)"
+            return
+        }
+        store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
+        status = configured ? "Saved. Ask to search the web or start background research in any chat." : "Saved. Web search is off."
     }
 }
 

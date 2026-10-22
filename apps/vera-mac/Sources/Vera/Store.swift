@@ -94,6 +94,8 @@ final class ChatStore: ObservableObject {
     let nativeTaskBroker: NativeTaskGenerationBroker?
     let nativeTaskEngine: NativeTaskEngineSelection
     let nativeTaskLocalEngine: NativeTaskLocalEngine?
+    let nativeWorkerIdentity: NativeWorkerIdentitySource
+    let nativeSearchAvailable: @Sendable () -> Bool
     let nativeTaskConfiguration: NativeTaskConfiguration?
     let nativeTaskEnrollment: NativeTaskProfileBinding?
     var nativeTaskRecoveryLoop: Task<Void, Never>?
@@ -150,13 +152,17 @@ final class ChatStore: ObservableObject {
          nativeTaskClient: NativeTaskClient? = nil,
          nativeResearchOptions: NativeTaskResearchOptions = .standard,
          nativeTaskEnrollment: NativeTaskProfileBinding? = nil,
+         nativeSearchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
          artifactPersistenceEnabled: Bool = true) {
+        self.nativeSearchAvailable = nativeSearchAvailable
         self.artifactPersistenceEnabled = artifactPersistenceEnabled
         let localEngine: NativeTaskLocalEngine?
+        let identity = NativeWorkerIdentitySource()
+        identity.update(assistantName: nativeAssistantName, ownerName: nativeOwnerName)
+        nativeWorkerIdentity = identity
         if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
-            let owner = nativeOwnerName
-            localEngine = NativeTaskLocalEngine.research(database: local.database,
-                search: .live(base: { VeraAPIClient.resolvedBase() }), ownerName: { owner })
+            localEngine = NativeTaskLocalEngine.workers(database: local.database,
+                search: .live(base: { NativeWebSearch.resolvedBase() }), identity: { identity.current })
         } else {
             localEngine = nil
         }
@@ -294,7 +300,7 @@ final class ChatStore: ObservableObject {
         let imageBase: @Sendable () -> URL? = { NativeImageTools.resolvedBase() }
         return NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
-                + NativeWebTools.definitions(base: base)
+                + NativeWebTools.definitions(searchBase: { NativeWebSearch.resolvedBase() })
                 + NativeImageTools.definitions(base: imageBase, attachments: attachments)
                 + NativeCapabilityTools.definitions(declarations, base: base))
     }
@@ -608,6 +614,7 @@ final class ChatStore: ObservableObject {
     func adoptAssistantName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         assistantName = trimmed.isEmpty ? ConfigStore.defaultAssistantName : trimmed
+        nativeWorkerIdentity.update(assistantName: assistantName, ownerName: nativeOwnerName)
         retitleVeraThread()
     }
 
@@ -1965,7 +1972,7 @@ final class ChatStore: ObservableObject {
     var mentionCatalog: ComposerMentionCatalog {
         let webAvailable = VeraAPIClient.resolvedBase() != nil
         var items = [ComposerMentionCatalog.filesItem]
-            + ComposerMentionCatalog.builtIns(webAvailable: webAvailable, imageAvailable: NativeImageTools.resolvedBase() != nil)
+            + ComposerMentionCatalog.builtIns(webAvailable: nativeSearchAvailable(), imageAvailable: NativeImageTools.resolvedBase() != nil)
             + capabilityDeclarations.map { ComposerMentionCatalog.capability($0, webAvailable: webAvailable) }
         for server in nativeMCP?.servers ?? [] {
             let allowed = server.tools.filter { nativeMCP?.authority.access.allowed($0, scope: "focused") == true }
@@ -2082,7 +2089,7 @@ final class ChatStore: ObservableObject {
             if nativeTaskConfiguration == nil || profile != nil {
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
-                        didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
+                        searchAvailable: nativeSearchAvailable, didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }
         }
@@ -2236,7 +2243,8 @@ final class ChatStore: ObservableObject {
                     knowledgeGrounding: groundingAssembly?.block ?? "",
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts,
-                    unavailableNotes: NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : []))
+                    unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
+                        + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",

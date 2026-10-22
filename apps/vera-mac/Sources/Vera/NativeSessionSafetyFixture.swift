@@ -374,7 +374,7 @@ enum NativeSessionSafetyFixture {
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
             nativeEnabledToolIDs: ["hold", NativeWebTools.researchToolID],
             nativeToolRegistry: NativeToolRegistry(definitions: [hold]), nativeTaskClient: taskClient,
-            artifactPersistenceEnabled: false)
+            nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         store.sendText("slow research acknowledgment")
         let messages = store.selected!.messages

@@ -47,7 +47,7 @@ enum NativeTurnAuthorityFixture {
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
             nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
-            nativeTaskClient: client, artifactPersistenceEnabled: false)
+            nativeTaskClient: client, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         try require(try NativeSessionFixture.acceptLegacyContinuous(first, store: store), "First request accepted")
         let firstReply = store.selected!.messages.last!.id
@@ -94,7 +94,7 @@ enum NativeTurnAuthorityFixture {
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
             nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
-            artifactPersistenceEnabled: false)
+            nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         store.suspendsTurnScheduling = true
         store.sendText(second)

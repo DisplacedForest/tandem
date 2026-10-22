@@ -572,6 +572,7 @@ struct NativeToolLoop: Sendable {
                     var webSearchCount = 0
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
+                    var searchSourceCount = 0
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
                         let active = registry.active(enabledIDs: enabledToolIDs)
@@ -666,10 +667,10 @@ struct NativeToolLoop: Sendable {
                                     throw NativeToolError.invalidArguments("Tool call identifier and name are required")
                                 }
                                 let arguments = try definition.validatedArguments(call.arguments)
-                                let isSearch = definition.id == NativeWebTools.searchToolID && definition.name == "web_search"
+                                let isSearch = definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName
                                 let cacheKey = isSearch && definition.confirmation == .none
                                     ? try Self.serializedResult(.object(arguments)) : nil
-                                let value: NativeJSONValue
+                                var value: NativeJSONValue
                                 if let cacheKey, let cached = searchResults[cacheKey] {
                                     try await checkAuthorization()
                                     callCount -= 1
@@ -707,6 +708,11 @@ struct NativeToolLoop: Sendable {
                                         try await Self.execute(
                                             definition, arguments: arguments, activity: activity,
                                             timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                    }
+                                    if isSearch, !Self.resultFailed(value, toolName: call.name) {
+                                        let numbered = NativeWebTools.numbered(value, offset: searchSourceCount)
+                                        searchSourceCount += numbered.count
+                                        value = numbered.value
                                     }
                                     if let cacheKey, !Self.resultFailed(value, toolName: call.name) {
                                         searchResults[cacheKey] = value
@@ -862,7 +868,7 @@ struct NativeToolLoop: Sendable {
     private static func partialFindings(_ activities: [NativeToolActivity]) -> String {
         var excerpts: [String] = []
         var urls: Set<String> = []
-        for activity in activities where (activity.toolID == NativeWebTools.searchToolID && activity.name == "web_search")
+        for activity in activities where (activity.toolID == NativeWebTools.searchToolID && activity.name == NativeWebTools.searchToolName)
             || (activity.toolID == NativeWebTools.researchToolID && activity.name == NativeWebTools.researchToolName) {
             guard let text = activity.result, let data = text.data(using: .utf8),
                   let fields = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }

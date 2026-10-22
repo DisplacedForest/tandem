@@ -31,7 +31,7 @@ struct NativeTaskProvider {
         let client = NativeChatClient(config: bounded, admission: nil)
         guard limits.connectAndSend.isFinite, limits.connectAndSend > 0,
               limits.readIdle.isFinite, limits.readIdle > 0,
-              let phase = NativeTaskTransportTiming.Phase(rawValue: job.phase) else {
+              let phase = NativeTaskTransportTiming.Phase(jobPhase: job.phase) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }
         var request = try client.request(messages: job.messages.map { NativeChatMessage(role: $0.role, content: $0.content) },

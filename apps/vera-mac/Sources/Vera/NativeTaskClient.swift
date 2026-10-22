@@ -14,17 +14,17 @@ enum NativeTaskHTTPError: Error, LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .unavailable: return "The research engine couldn't be reached."
+        case .unavailable: return "The task engine couldn't be reached."
         case .status(let status) where status == 401 || status == 403:
-            return "The research engine didn't authorize this request."
+            return "The task engine didn't authorize this request."
         case .status(let status) where status == 404:
-            return "The research engine couldn't find this task."
+            return "The task engine couldn't find this task."
         case .status(let status) where status == 409:
-            return "The research engine found a conflicting request."
+            return "The task engine found a conflicting request."
         case .status(let status) where status == 422:
-            return "The research engine couldn't accept this request."
-        case .status: return "The research engine is unavailable right now."
-        case .invalidResponse: return "The research engine returned an unreadable response."
+            return "The task engine couldn't accept this request."
+        case .status: return "The task engine is unavailable right now."
+        case .invalidResponse: return "The task engine returned an unreadable response."
         }
     }
 }
@@ -101,7 +101,7 @@ struct NativeTaskClient: Sendable {
               let expected = original["payload"] as? [String: Any],
               try Self.canonical(received) == Self.canonical(expected) else { throw NativeTaskHTTPError.invalidResponse }
         let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: data)
-        guard snapshot.id == id, snapshot.workerType == "research" else { throw NativeTaskHTTPError.invalidResponse }
+        guard snapshot.id == id, snapshot.workerType == reference.createRequest.workerType else { throw NativeTaskHTTPError.invalidResponse }
         return snapshot
     }
 
@@ -116,7 +116,7 @@ struct NativeTaskClient: Sendable {
         try NativeTaskJSON.validate(data)
         guard data.count <= 1048576,
               let snapshot = try? JSONDecoder().decode(NativeTaskSnapshot.self, from: data),
-              snapshot.id == id, snapshot.workerType == "research" else {
+              snapshot.id == id, snapshot.workerType == reference.createRequest.workerType else {
             throw NativeTaskHTTPError.invalidResponse
         }
         return snapshot
