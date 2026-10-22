@@ -178,7 +178,10 @@ enum NativeFolderTools {
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(location.path) }
         let pinned = URL(fileURLWithPath: "/.vol/\(info.st_dev)/\(info.st_ino)")
         var check = stat()
-        guard lstat(pinned.path, &check) == 0, check.st_dev == info.st_dev, check.st_ino == info.st_ino else {
+        guard lstat(pinned.path, &check) == 0 else {
+            throw NativeToolError.failed("The volume holding \(location.path) doesn't support moving items to the Trash safely from here. Ask the user to move it in the Finder.")
+        }
+        guard check.st_dev == info.st_dev, check.st_ino == info.st_ino else {
             throw NativeToolError.failed("\(location.path) changed while it was being moved to the Trash, so it was left in place.")
         }
         var resulting: NSURL?

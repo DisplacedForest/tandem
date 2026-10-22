@@ -276,7 +276,8 @@ extension ChatStore {
             return
         }
         resolveTurnConfirmation(messageID, approved: false)
-        turnDeclinedRequests.removeValue(forKey: turn.id)
+        turnDeclineSource.clear(turn: turn.id)
+        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
         execution?.deadline?.cancel()
@@ -339,19 +340,15 @@ extension ChatStore {
         (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
     }
 
-    static func declineKey(_ activity: NativeToolActivity) -> String {
-        activity.name + "\n" + activity.request.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-    }
-
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
-        if turnDeclinedRequests[turn.id]?.contains(Self.declineKey(activity)) == true { return false }
+        if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) { return false }
         if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
            let command = NativeCommandTools.command(inRequest: activity.request),
            NativeCommandClassifier.classify(command, grants: grants(for: turn.conversationID)) == .commands,
            conversationRules(for: turn.conversationID).isApproved(command: command) {
             guard turnOwned(turn) else { return false }
-            turnCommandReasonSource.set(.conversationPrefix, for: activity.id)
+            turnCommandReasonSource.set(.conversationPrefix, for: Self.scopedBlockID(activity.id, turn: turn))
             return true
         }
         return await withTaskCancellationHandler {
@@ -393,10 +390,10 @@ extension ChatStore {
            let command = NativeCommandTools.command(inRequest: request.request) {
             switch decision {
             case .approve:
-                turnCommandReasonSource.set(.userApproved, for: request.id)
+                turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
             case .approveSimilar:
                 if owned { approveCommandPrefix(command, conversationID: turn.conversationID) }
-                turnCommandReasonSource.set(.userApproved, for: request.id)
+                turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
             case .decline:
                 let turnGrants = grants(for: turn.conversationID)
                 let directory = NativeCommandTools.directory(inRequest: request.request) ?? (turnGrants.count == 1 ? turnGrants[0].path : "")
@@ -404,7 +401,7 @@ extension ChatStore {
             }
         }
         if let request, decision == .decline {
-            turnDeclinedRequests[turn.id, default: []].insert(request.name + "\n" + request.request.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
+            turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
         }
         continuation.resume(returning: decision.approved && owned)
     }

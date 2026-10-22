@@ -89,7 +89,7 @@ final class ChatStore: ObservableObject {
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
     let nativeRuleSource = NativeRuleSource()
-    var turnDeclinedRequests: [UUID: Set<String>] = [:]
+    let turnDeclineSource = NativeDeclineSource()
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry

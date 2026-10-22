@@ -216,16 +216,20 @@ enum NativeRequestPreapproval {
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after"]
 
+    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»"]
+
     static func grants(_ text: String) -> Bool {
         let sentences = text.lowercased().components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
-        return sentences.contains { sentence in
-            guard phrases.contains(where: { sentence.contains($0) }) else { return false }
-            guard !sentence.contains("\""), !sentence.contains("“"), !sentence.contains("”") else { return false }
+        var granting = 0
+        var vetoing = 0
+        for sentence in sentences where phrases.contains(where: { sentence.contains($0) }) {
             var remainder = sentence
             for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
+            if remainder.contains(where: { quoteCharacters.contains($0) }) { vetoing += 1; continue }
             let padded = " " + remainder + " "
-            return !negations.contains { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }
+            if negations.contains(where: { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }) { vetoing += 1 } else { granting += 1 }
         }
+        return granting > 0 && vetoing == 0
     }
 }
 
@@ -238,7 +242,7 @@ enum NativeCommandClassifier {
 
     static func segments(of command: String) -> [[String]] {
         var spaced = command
-        for separator in ["&&", "||", ";", "|", "\n", "(", ")", "{", "}"] {
+        for separator in ["&&", "||", "&", ";", "|", "\n", "(", ")", "{", "}"] {
             spaced = spaced.replacingOccurrences(of: separator, with: " ; ")
         }
         return spaced.components(separatedBy: " ; ").map { NativeCommandPrefix.tokens(of: $0) }.filter { !$0.isEmpty }
@@ -256,14 +260,15 @@ enum NativeCommandClassifier {
         return (name, Array(tokens.dropFirst()))
     }
 
-    static func classify(_ command: String, grants: [FolderGrant]) -> NativeActionClass {
+    static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
         if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
         var network = false
         for segment in segments(of: command) {
             let (name, arguments) = executable(segment)
             if privileged.contains(name) { return .sensitive }
-            if destructive.contains(name) && arguments.contains(where: { pathLeavesGrants($0, grants: grants) }) { return .sensitive }
+            if destructive.contains(name) && arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: working) }) { return .sensitive }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
             if name == "curl" && arguments.contains(where: { ["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-X", "--request"].contains($0) || $0.hasPrefix("--data") || $0.hasPrefix("-d") && $0.count > 2 || $0.hasPrefix("-F") && $0.count > 2 || $0.hasPrefix("-T") && $0.count > 2 || $0.hasPrefix("-X") && $0.count > 2 }) { network = true }
             if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
@@ -272,10 +277,15 @@ enum NativeCommandClassifier {
         return network ? .networkSends : .commands
     }
 
-    static func pathLeavesGrants(_ token: String, grants: [FolderGrant]) -> Bool {
+    static func pathLeavesGrants(_ token: String, grants: [FolderGrant], working: String?) -> Bool {
         var path = token.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
-        guard path.hasPrefix("/") || path.hasPrefix("~") || path.hasPrefix("$HOME") else { return false }
-        if path.hasPrefix("~") || path.hasPrefix("$HOME") { return true }
+        if path.hasPrefix("-") { return false }
+        if path.hasPrefix("~") || path.hasPrefix("$") { return true }
+        if path.split(separator: "/").contains("..") { return true }
+        if !path.hasPrefix("/") {
+            guard let working else { return path.contains("..") }
+            path = working + "/" + path
+        }
         path = URL(fileURLWithPath: path).standardizedFileURL.path
         return !grants.contains { NativeFolderAccess.contains(root: $0.path, path: path) }
     }

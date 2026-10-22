@@ -163,6 +163,19 @@ struct NativeFileChange: Codable, Equatable, Hashable, Identifiable, Sendable {
 
 enum NativeToolCallContext {
     @TaskLocal static var activityID: String?
+    @TaskLocal static var request: String?
+}
+
+enum NativeToolRequestKey {
+    static func canonical(name: String, request: String) -> String {
+        guard let data = request.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let canonical = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let text = String(data: canonical, encoding: .utf8) else {
+            return name + "\n" + request.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        return name + "\n" + text
+    }
 }
 
 final class NativeFileChangeLedger: @unchecked Sendable {

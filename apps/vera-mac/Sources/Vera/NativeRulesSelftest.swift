@@ -50,14 +50,16 @@ extension SelfTest {
         try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
         resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
         try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
-        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass."] {
+        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy."] {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
         try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
 
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
         let classify: (String) -> NativeActionClass = { NativeCommandClassifier.classify($0, grants: sample) }
-        try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands, "Ordinary commands inside the grant are commands")
+        try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands && classify("rm -rf ./build/out") == .commands, "Ordinary commands inside the grant are commands")
+        try require(classify("rm -rf ../Other") == .sensitive && classify("rm -rf build/../../Other") == .sensitive && classify("mv notes.txt /Volumes/Elsewhere/") == .sensitive, "Relative paths that leave the grant are sensitive")
+        try require(classify("printf ready & git push origin main") == .networkSends && classify("make & scp out host:") == .networkSends, "A single ampersand still separates commands")
         try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
                     && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,
                     "Privileged commands and destructive commands outside the grant are sensitive")
@@ -188,6 +190,15 @@ extension SelfTest {
         }
         try require(changedFinal?.activities.first?.state == .failed && changedFinal?.activities.first?.confirmationRequired == true
                     && changedTransport.histories[1].last?.content.contains("did not approve") == true && recorder.recorded.count == 2, "A rule tightened to ask mid-answer makes an act decision ask")
+        let declinedRegistry = NativeToolRegistry(definitions: NativeCommandTools.definitions(
+            grants: grants, decision: .act(.rule), reason: { _ in nil }, record: { recorder.add($0) }, declined: { $0.contains("printf declined") }))
+        let repeatTransport = ScriptedNativeToolTransport(rounds: [call("c12", "{\"command\":\"printf declined\"}"), done])
+        var declinedAgain: NativeToolTurnSnapshot?
+        for try await snapshot in NativeToolLoop(transport: repeatTransport, registry: declinedRegistry).stream(messages: [NativeChatMessage(role: "user", content: "run")], model: "local-model", enabledToolIDs: [NativeCommandTools.toolID]) {
+            declinedAgain = snapshot
+        }
+        try require(declinedAgain?.activities.first?.state == .failed && repeatTransport.histories[1].last?.content.contains("already declined") == true && recorder.recorded.count == 2, "A declined request is refused on every execution path, even when no card would show")
+        try require(NativeToolRequestKey.canonical(name: "run_command", request: "{\"directory\":\"/a\",\"command\":\"ls\"}") == NativeToolRequestKey.canonical(name: "run_command", request: "{ \"command\": \"ls\", \"directory\": \"/a\" }"), "Decline keys ignore argument order and spacing")
         let (sensitiveRun, sensitiveTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
         try require(sensitiveRun?.activities.first?.state == .failed && sensitiveTransport.histories[1].last?.content.contains("hand off") == true && recorder.recorded.count == 2, "A sensitive command is handed off even when commands act")
         let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in true })

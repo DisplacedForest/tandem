@@ -34,9 +34,29 @@ final class NativeCommandReasonSource: @unchecked Sendable {
         return reasons[activityID]
     }
 
-    func clear(_ activityID: String) {
+    func clear(prefix: String) {
         lock.lock(); defer { lock.unlock() }
-        reasons.removeValue(forKey: activityID)
+        reasons = reasons.filter { !$0.key.hasPrefix(prefix) }
+    }
+}
+
+final class NativeDeclineSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var declined: [UUID: Set<String>] = [:]
+
+    func record(_ key: String, turn: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        declined[turn, default: []].insert(key)
+    }
+
+    func contains(_ key: String, turn: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return declined[turn]?.contains(key) ?? false
+    }
+
+    func clear(turn: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        declined.removeValue(forKey: turn)
     }
 }
 
@@ -81,13 +101,17 @@ extension ChatStore {
         let conversationID = turn.conversationID
         let reasons = turnCommandReasonSource
         let rules = nativeRuleSource
+        let declines = turnDeclineSource
+        let turnID = turn.id
+        let scope = Self.scopedBlockID("", turn: turn)
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
-                                              reason: { reasons.reason(for: $0) }, record: record,
+                                              reason: { reasons.reason(for: scope + $0) }, record: record,
                                               live: { command, action in
                                                   let resolver = rules.resolver(for: conversationID, requestText: text)
                                                   return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
                                               },
+                                              declined: { declines.contains($0, turn: turnID) },
                                               alwaysAvailable: alwaysAvailable)
     }
 

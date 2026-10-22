@@ -70,14 +70,16 @@ enum NativeCommandTools {
                             reason: @escaping @Sendable (String) -> NativeRuleReason?,
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
                             live: @escaping @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { _, _ in nil },
+                            declined: @escaping @Sendable (String) -> Bool = { _ in false },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
         let staticReason: NativeRuleReason?
         if case .act(let value) = decision { staticReason = value } else { staticReason = nil }
-        let planned: @Sendable (String) -> (NativeActionClass, NativeRuleDecision) = { command in
-            let action = NativeCommandClassifier.classify(command, grants: grants())
+        let grantedAtStart = grants()
+        let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision) = { command, directory in
+            let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
             switch action {
             case .sensitive: return (action, .handOff)
             case .commands: return (action, live(command, .commands) ?? decision)
@@ -100,14 +102,18 @@ enum NativeCommandTools {
                     throw NativeToolError.invalidArguments("The command is too long")
                 }
                 let activityID = NativeToolCallContext.activityID ?? UUID().uuidString.lowercased()
+                if let request = NativeToolCallContext.request, declined(NativeToolRequestKey.canonical(name: runName, request: request)) {
+                    throw NativeToolError.failed("The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again.")
+                }
                 let approvedNow = reason(activityID)
-                let (action, current) = planned(command)
+                let requested = arguments.folderString("directory")
+                let (action, current) = planned(command, requested)
                 if action == .sensitive { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.sensitive)) }
                 try NativeRuleResolver.gate(live: current, planned: approvedNow == nil ? .act(.rule) : .ask, action: action, approved: approvedNow != nil)
-                let requested = arguments.folderString("directory")
                 let currentGrants = grants()
                 guard !currentGrants.isEmpty else {
-                    throw NativeToolError.failed("The folder for this command is no longer granted to this chat: \(requested ?? "the working directory"). It was not run.")
+                    let intended = requested ?? (grantedAtStart.count == 1 ? grantedAtStart[0].path : "the working directory")
+                    throw NativeToolError.failed("The folder for this command is no longer granted to this chat: \(intended). It was not run.")
                 }
                 let folderAccess = access()
                 let location: NativeFolderLocation
@@ -124,7 +130,7 @@ enum NativeCommandTools {
                 let run = NativeCommandRun(
                     id: activityID, command: command, directory: location.path,
                     outcome: outcome.timedOut ? .timedOut : (outcome.canceled ? .canceled : .ran),
-                    reason: approvedNow ?? staticReason,
+                    reason: approvedNow ?? { if case .act(let value) = current { value } else { staticReason } }(),
                     exitCode: outcome.exitCode.map(Int.init), signal: outcome.signal.map(Int.init),
                     stdout: outcome.stdout, stderr: outcome.stderr,
                     stdoutTruncated: outcome.stdoutTruncated, stderrTruncated: outcome.stderrTruncated,
@@ -134,7 +140,7 @@ enum NativeCommandTools {
             })
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
-            let (action, current) = planned(command)
+            let (action, current) = planned(command, arguments.folderString("directory"))
             if action == .sensitive { return false }
             return current.requiresConfirmation
         }

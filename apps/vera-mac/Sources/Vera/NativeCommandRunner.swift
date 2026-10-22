@@ -111,16 +111,25 @@ enum NativeCommandRunner {
 
         func kill(timeout: Bool) {
             lock.lock(); defer { lock.unlock() }
-            if !reaped {
-                if timeout { killedForTimeout = true } else { killedForCancel = true }
-            }
+            guard !reaped else { return }
+            if timeout { killedForTimeout = true } else { killedForCancel = true }
             Darwin.kill(-pid, SIGKILL)
         }
 
-        func markReaped() {
-            lock.lock(); defer { lock.unlock() }
-            reaped = true
+        func terminateGroupThenReap() -> Int32 {
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) < 0 {
+                if Darwin.errno != EINTR { break }
+            }
+            lock.lock()
             Darwin.kill(-pid, SIGKILL)
+            var raw: Int32 = -1
+            while waitpid(pid, &raw, 0) < 0 {
+                if Darwin.errno != EINTR { raw = -1; break }
+            }
+            reaped = true
+            lock.unlock()
+            return raw
         }
     }
 
@@ -188,12 +197,7 @@ enum NativeCommandRunner {
         let status: Int32 = await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
                 Thread.detachNewThread {
-                    var raw: Int32 = 0
-                    while waitpid(pid, &raw, 0) < 0 {
-                        if Darwin.errno != EINTR { raw = -1; break }
-                    }
-                    child.markReaped()
-                    continuation.resume(returning: raw)
+                    continuation.resume(returning: child.terminateGroupThenReap())
                 }
             }
         } onCancel: {
