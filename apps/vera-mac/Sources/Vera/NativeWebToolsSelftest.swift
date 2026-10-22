@@ -291,6 +291,19 @@ enum NativeWebToolsSelftest {
             _ = try NativePageTransport.parse(Data("not http".utf8), closed: true, maximumBytes: 10, finalURL: URL(string: "https://a.example/")!)
             throw NativeToolError.failed("garbage accepted")
         } catch let error as NativeToolError where error.localizedDescription.contains("HTTP response") {}
+        for hostile in ["HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\nxx", "HTTP/1.1 200 OK\r\nContent-Length: 99999999999999\r\n\r\nxx",
+                        "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n2\r\nxx\r\n0\r\n\r\n", "HTTP/1.1 20 OK\r\n\r\n"] {
+            do {
+                _ = try NativePageTransport.parse(Data(hostile.utf8), closed: true, maximumBytes: 100, finalURL: URL(string: "https://a.example/")!)
+                throw NativeToolError.failed("hostile response accepted: \(hostile.prefix(40))")
+            } catch let error as NativeToolError where !error.localizedDescription.hasPrefix("hostile") {}
+        }
+        let negativeChunk = NativePageTransport.dechunk(Data("-1\r\nxx\r\n0\r\n\r\n".utf8))
+        try require(negativeChunk.data.isEmpty && !negativeChunk.complete, "negative chunk size refused")
+        let hinted = try NativePageTransport.parse(Data("HTTP/1.1 103 Early Hints\r\nLink: </x>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".utf8), closed: true, maximumBytes: 100, finalURL: URL(string: "https://a.example/")!)
+        try require(hinted.status == 200 && String(decoding: hinted.body, as: UTF8.self) == "ok", "informational responses are skipped")
+        try require(NativePageTransport.requestTarget(URL(string: "https://a.example/a%20b/c?x=1%0D%0AInjected:%201")!) == "/a%20b/c?x=1%0D%0AInjected:%201"
+                    && NativePageTransport.requestTarget(URL(string: "https://a.example")!) == "/", "request target keeps percent encoding")
         for host in ["127.1", "localhost", "10.0.0.1"] {
             do { _ = try await NativePageTransport.pinnedAddress(host); throw NativeToolError.failed("pinned a private host \(host)") }
             catch let error as NativeToolError where error.localizedDescription.contains("private network") {}
