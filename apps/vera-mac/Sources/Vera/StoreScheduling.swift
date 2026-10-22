@@ -124,7 +124,8 @@ extension ChatStore {
             var schedule = try NativeSchedule(id: existing.id, owner: draft.owner,
                                               conversationID: draft.owner == existing.owner ? existing.conversationID : nil,
                                               workerType: draft.workerType, title: draft.title, instruction: draft.instruction,
-                                              cadence: draft.cadence, timeZone: .current, enabled: existing.enabled, lastRunAt: existing.lastRunAt,
+                                              cadence: draft.cadence, timeZone: draft.cadence == existing.cadence ? existing.timeZone : .current,
+                                              enabled: existing.enabled, lastRunAt: existing.lastRunAt,
                                               lastOutcome: existing.lastOutcome, createdAt: existing.createdAt)
             if existing.enabled {
                 schedule.advance(after: Date(), from: nil)
