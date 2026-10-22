@@ -2118,7 +2118,7 @@ final class ChatStore: ObservableObject {
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         if !turnGrants.isEmpty && folderConsented {
-            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id, ledger: fileChangeLedger(for: turn)))
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id, ledger: fileChangeLedger(for: turn), alwaysAvailable: true))
         }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,

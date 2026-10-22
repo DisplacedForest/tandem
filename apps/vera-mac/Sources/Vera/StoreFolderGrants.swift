@@ -55,7 +55,12 @@ extension ChatStore {
         let id = "file:" + change.id
         guard !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == id }) else { return }
         conversations[conversation].messages[reply].displayBlocks.append(.fileChange(change))
-        try? turnRepository?.checkpointTurn(turn, message: conversations[conversation].messages[reply], ordinal: reply)
+        let blocks = conversations[conversation].messages[reply].displayBlocks
+        do {
+            try (repository as? LocalChatRepository)?.saveDisplayBlocks(blocks, messageID: turn.assistantMessageID)
+        } catch {
+            grantError = "A file change couldn't be saved to the chat: \(error.localizedDescription)"
+        }
     }
 
     func grantFolder(_ url: URL) {

@@ -437,6 +437,13 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func saveDisplayBlocks(_ blocks: [NativeDisplayBlock], messageID: UUID) throws {
+        let encoded = try nativeTaskEncoded(blocks)
+        try database.write { db in
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [encoded, messageID.uuidString])
+        }
+    }
+
     static func saveMessage(_ message: Message, conversationID: String, ordinal: Int, db: Database) throws {
         let activityJSON: String?
         if message.toolActivities.isEmpty {

@@ -13,7 +13,7 @@ enum NativeFolderTools {
 
     static let defaultReadBytes = 65_536
     static let maximumReadBytes = 262_144
-    static let readResultBudget = 327_680
+    static let readResultBudget = maximumReadBytes * 6 + 8192
     static let maximumWriteBytes = 1_048_576
     static let maximumListEntries = 500
     static let maximumSearchResults = 100
@@ -292,10 +292,12 @@ enum NativeFolderTools {
         var created = false
         for component in location.components {
             display += "/" + component
-            if try NativeFolderIO.makeDirectory(directory, component, display: display) { created = true }
+            if try NativeFolderIO.makeDirectory(directory, component, display: display) {
+                created = true
+                ledger.record(NativeFileChange(path: display, kind: .directory))
+            }
             directory = try NativeFolderIO.openDirectory(directory, component, display: display)
         }
-        if created { ledger.record(NativeFileChange(path: location.path, kind: .directory)) }
         return .object(["path": .string(location.path), "created": .bool(created)])
     }
 

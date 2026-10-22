@@ -55,7 +55,12 @@ extension SelfTest {
                 _ = try access.locate(escape)
                 throw NativeTaskFixture.Failure.assertion("Escape must be refused: \(escape)")
             } catch let error as NativeFolderAccessError {
-                guard case .outsideGrants(let named) = error, !named.isEmpty else { throw NativeTaskFixture.Failure.assertion("Escape names the path: \(escape) \(error)") }
+                switch error {
+                case .outsideGrants(let named), .invalidPath(let named):
+                    try require(named == escape, "Escape names the path: \(escape) \(error)")
+                default:
+                    throw NativeTaskFixture.Failure.assertion("Escape is refused as outside or invalid: \(escape) \(error)")
+                }
             }
         }
         for linked in [root + "/escape-file", root + "/escape-dir/secret.txt", root + "/loop/one.txt", root + "/escape-dir"] {
@@ -68,6 +73,10 @@ extension SelfTest {
         do {
             _ = try access.locate(root + "/bad\nname")
             throw NativeTaskFixture.Failure.assertion("Newlines in paths are refused")
+        } catch NativeFolderAccessError.invalidPath {}
+        do {
+            _ = try access.locate(root + "/notes/../one.txt")
+            throw NativeTaskFixture.Failure.assertion("Dot segments are refused even when they would stay inside")
         } catch NativeFolderAccessError.invalidPath {}
         let two = NativeFolderAccess(grants: [grant, try FolderGrant.make(url: outside)])
         do {
@@ -130,6 +139,15 @@ extension SelfTest {
             _ = try NativeFolderTools.read(try access.locate(root + "/image.png"), startLine: 1, maximumBytes: 1024)
             throw NativeTaskFixture.Failure.assertion("Binary files are refused")
         } catch NativeFolderAccessError.binary {}
+        try "\n\nalpha\n".write(to: inside.appendingPathComponent("blank.txt"), atomically: true, encoding: .utf8)
+        guard case .object(let blankFields) = try NativeFolderTools.read(try access.locate(root + "/blank.txt"), startLine: 1, maximumBytes: 1024),
+              case .string(let blankText)? = blankFields["content"], case .number(let blankEnd)? = blankFields["end_line"] else { throw NativeTaskFixture.Failure.assertion("Blank read shape") }
+        try require(blankText == "\n\nalpha" && blankEnd == 3, "Leading blank lines are kept and counted: \(blankText.debugDescription) \(blankEnd)")
+        guard mkfifo(inside.appendingPathComponent("pipe").path, 0o600) == 0 else { throw NativeTaskFixture.Failure.assertion("fifo fixture") }
+        do {
+            _ = try NativeFolderTools.read(try access.locate(root + "/pipe"), startLine: 1, maximumBytes: 1024)
+            throw NativeTaskFixture.Failure.assertion("A named pipe is refused without blocking")
+        } catch NativeFolderAccessError.binary {}
         try Data([0xEF, 0xBB, 0xBF] + Array("bom text\n".utf8)).write(to: inside.appendingPathComponent("bom.txt"))
         guard case .object(let bomFields) = try NativeFolderTools.read(try access.locate(root + "/bom.txt"), startLine: 1, maximumBytes: 1024),
               case .string(let bomText)? = bomFields["content"] else { throw NativeTaskFixture.Failure.assertion("BOM read shape") }
@@ -153,6 +171,16 @@ extension SelfTest {
         try require((try String(contentsOf: inside.appendingPathComponent("notes/two.txt"), encoding: .utf8)) == "one\nthree\n", "Edit replaces the exact text")
         let editChange = recorded.changes(for: "call-2")
         try require(editChange.count == 1 && editChange[0].kind == .edited && editChange[0].before == "one\ntwo\n" && editChange[0].after == "one\nthree\n", "The edit records before and after")
+        let privateFile = inside.appendingPathComponent("private.txt")
+        try "keep\n".write(to: privateFile, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: privateFile.path)
+        _ = try NativeFolderTools.edit(try access.locate(root + "/private.txt"), old: "keep", new: "kept", all: false, ledger: ledger)
+        let privateMode = (try manager.attributesOfItem(atPath: privateFile.path)[.posixPermissions] as? NSNumber)?.intValue
+        try require(privateMode == 0o600 && (try String(contentsOf: privateFile, encoding: .utf8)) == "kept\n", "Editing keeps the file's permissions")
+        let longName = String(repeating: "n", count: 240) + ".txt"
+        _ = try NativeFolderTools.write(try access.locate(root + "/" + longName), content: "long\n", ledger: ledger)
+        try require(manager.fileExists(atPath: root + "/" + longName), "Long but valid file names can be written")
+        try require(try manager.contentsOfDirectory(atPath: root).allSatisfy { !$0.hasPrefix(".tandem-") }, "No temporary files are left behind")
         try "first\r\nsecond\r\n".write(to: inside.appendingPathComponent("crlf.txt"), atomically: true, encoding: .utf8)
         _ = try NativeFolderTools.edit(try access.locate(root + "/crlf.txt"), old: "first\r\n", new: "changed\r\n", all: false, ledger: ledger)
         try require((try String(contentsOf: inside.appendingPathComponent("crlf.txt"), encoding: .utf8)) == "changed\r\nsecond\r\n", "Edits keep literal line endings")
@@ -182,9 +210,19 @@ extension SelfTest {
             _ = try NativeFolderTools.move(from: try access.locate(root + "/escape-file"), to: try access.locate(root + "/moved-link"), ledger: ledger)
             throw NativeTaskFixture.Failure.assertion("Symlinks are not moved")
         } catch NativeFolderAccessError.symlink {}
-        _ = try NativeFolderTools.makeDirectory(try access.locate(root + "/made/deep"), ledger: ledger)
+        _ = try NativeToolCallContext.$activityID.withValue("mk-1") {
+            try NativeFolderTools.makeDirectory(try access.locate(root + "/made/deep"), ledger: ledger)
+        }
         var isDirectory: ObjCBool = false
         try require(manager.fileExists(atPath: root + "/made/deep", isDirectory: &isDirectory) && isDirectory.boolValue, "Folders are created with parents")
+        try require(recorded.changes(for: "mk-1").map(\.path) == [root + "/made", root + "/made/deep"], "Each created folder is recorded")
+        do {
+            _ = try NativeToolCallContext.$activityID.withValue("mk-2") {
+                try NativeFolderTools.makeDirectory(try access.locate(root + "/partial/" + String(repeating: "x", count: 300)), ledger: ledger)
+            }
+            throw NativeTaskFixture.Failure.assertion("An overlong component fails")
+        } catch is NativeToolError {}
+        try require(recorded.changes(for: "mk-2").map(\.path) == [root + "/partial"], "A parent created before a failure is still recorded")
         do {
             _ = try NativeFolderTools.write(try access.locate(root + "/image.png"), content: "text", ledger: ledger)
             throw NativeTaskFixture.Failure.assertion("Binary files are not overwritten")
@@ -248,6 +286,9 @@ extension SelfTest {
         let reloaded = try repository.messages(conversationID: conversation.id).first
         guard case .fileChange(let saved)? = reloaded?.displayBlocks.first else { throw NativeTaskFixture.Failure.assertion("File change blocks survive reload") }
         try require(saved.before == "a\nb\n" && saved.after == "a\nc\n" && saved.kind == .edited, "The diff content survives reload")
+        let lateChange = NativeFileChange(path: root + "/late.txt", kind: .created, after: "late")
+        try repository.saveDisplayBlocks(reply.displayBlocks + [.fileChange(lateChange)], messageID: reply.id)
+        try require(try repository.messages(conversationID: conversation.id).first?.displayBlocks.count == 2, "A change landing after the turn ended is still saved on the message")
 
         let hunks = NativeLineDiff.hunks(before: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n", after: "one\ntwo\nthree\nFOUR\nfive\nsix\nseven\n", context: 1)
         try require(hunks.count == 1 && hunks[0].lines == [.same("three"), .removed("four"), .added("FOUR"), .same("five")], "Diff hunks show changed lines with context: \(hunks)")
@@ -255,6 +296,6 @@ extension SelfTest {
         let capped2 = NativeFileChange(path: "/tmp/big", kind: .created, after: String(repeating: "x", count: NativeFileChange.contentCap + 10))
         try require(capped2.truncated && capped2.after == nil && capped2.before == nil, "Oversized content is marked too large instead of diffing a prefix")
         try require(NativeFolderTools.grantNote([grant])?.contains(grant.path) == true && NativeFolderTools.grantNote([]) == nil, "The prompt note lists granted paths")
-        print("  native folder tools OK (grants, identity, bookmarks, path guard, symlink refusal, swapped root, list, bounded reads, binary, search caps, write, edit, CRLF, move, mkdir, ledger, advertisement, scripted loop, revocation, persistence, diff)")
+        print("  native folder tools OK (grants, identity, bookmarks, path guard, symlink refusal, swapped root, list, bounded reads, binary, search caps, write, edit, CRLF, permissions, long names, move, mkdir, ledger, advertisement, scripted loop, revocation, persistence, diff)")
     }
 }

@@ -95,7 +95,7 @@ enum NativeFolderIO {
     }
 
     static func openFile(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws -> FileHandle {
-        let fd = openat(directory.raw, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        let fd = openat(directory.raw, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else {
             if let info = status(directory, name), (info.st_mode & S_IFMT) == S_IFLNK { throw NativeFolderAccessError.symlink(display) }
             switch Darwin.errno {
@@ -109,6 +109,8 @@ enum NativeFolderIO {
             close(fd)
             throw NativeFolderAccessError.binary(display)
         }
+        let flags = fcntl(fd, F_GETFL)
+        if flags >= 0 { _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) }
         return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
@@ -155,11 +157,11 @@ enum NativeFolderIO {
                 if line.count > maximumBytes {
                     throw NativeToolError.failed("Line \(currentLine) of \(display) is longer than \(maximumBytes) bytes. Raise max_bytes to read it.")
                 }
-                if collected.count + line.count + (collected.isEmpty ? 0 : 1) > maximumBytes {
+                if collected.count + line.count + (collectedLines == 0 ? 0 : 1) > maximumBytes {
                     more = true
                     return false
                 }
-                if !collected.isEmpty { collected.append(0x0A) }
+                if collectedLines > 0 { collected.append(0x0A) }
                 collected.append(line)
                 collectedLines += 1
                 sawAny = true
@@ -201,8 +203,13 @@ enum NativeFolderIO {
     }
 
     static func writeAtomically(_ directory: NativeFolderDescriptor, _ name: String, display: String, data: Data) throws {
-        let temporary = ".\(name).\(UUID().uuidString.prefix(8)).tandem"
-        let fd = openat(directory.raw, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        let temporary = ".tandem-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
+        let existing = status(directory, name)
+        if let existing {
+            guard (existing.st_mode & S_IFMT) == S_IFREG else { throw NativeFolderAccessError.notADirectory(display) }
+        }
+        let mode: mode_t = existing.map { $0.st_mode & 0o7777 } ?? 0o644
+        let fd = openat(directory.raw, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw errno("Couldn't write \(display)") }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         do {
@@ -212,11 +219,10 @@ enum NativeFolderIO {
             unlinkat(directory.raw, temporary, 0)
             throw NativeToolError.failed("Couldn't write \(display): \(error.localizedDescription)")
         }
-        if let existing = status(directory, name) {
-            guard (existing.st_mode & S_IFMT) == S_IFREG else {
-                unlinkat(directory.raw, temporary, 0)
-                throw NativeFolderAccessError.notADirectory(display)
-            }
+        guard fchmod(fd, mode) == 0 else {
+            let failure = errno("Couldn't keep the permissions of \(display)")
+            unlinkat(directory.raw, temporary, 0)
+            throw failure
         }
         guard renameat(directory.raw, temporary, directory.raw, name) == 0 else {
             let failure = errno("Couldn't replace \(display)")
@@ -235,8 +241,7 @@ enum NativeFolderIO {
     }
 
     static func rename(from: NativeFolderDescriptor, _ fromName: String, to: NativeFolderDescriptor, _ toName: String, display: String) throws {
-        guard status(to, toName) == nil else { throw NativeFolderAccessError.exists(display) }
-        guard renameat(from.raw, fromName, to.raw, toName) == 0 else {
+        guard renameatx_np(from.raw, fromName, to.raw, toName, UInt32(RENAME_EXCL)) == 0 else {
             switch Darwin.errno {
             case EEXIST, ENOTEMPTY: throw NativeFolderAccessError.exists(display)
             case ENOENT: throw NativeFolderAccessError.notFound(display)
