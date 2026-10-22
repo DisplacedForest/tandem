@@ -84,7 +84,10 @@ extension ChatStore {
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: $0) }, record: record,
-                                              live: { rules.resolver(for: conversationID, requestText: text).decision(forCommand: $0) },
+                                              live: { command, action in
+                                                  let resolver = rules.resolver(for: conversationID, requestText: text)
+                                                  return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+                                              },
                                               alwaysAvailable: alwaysAvailable)
     }
 

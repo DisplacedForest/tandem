@@ -56,15 +56,13 @@ enum NativeCommandRunner {
                 var chunk = [UInt8](repeating: 0, count: 16_384)
                 var poller = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
                 loop: while true {
+                    lock.lock()
+                    let stop = stopRequested
+                    lock.unlock()
+                    if stop { break }
                     poller.revents = 0
                     let ready = poll(&poller, 1, 250)
-                    if ready == 0 {
-                        lock.lock()
-                        let stop = stopRequested
-                        lock.unlock()
-                        if stop { break }
-                        continue
-                    }
+                    if ready == 0 { continue }
                     if ready < 0 {
                         if Darwin.errno == EINTR { continue }
                         break
@@ -113,14 +111,16 @@ enum NativeCommandRunner {
 
         func kill(timeout: Bool) {
             lock.lock(); defer { lock.unlock() }
-            guard !reaped else { return }
-            if timeout { killedForTimeout = true } else { killedForCancel = true }
+            if !reaped {
+                if timeout { killedForTimeout = true } else { killedForCancel = true }
+            }
             Darwin.kill(-pid, SIGKILL)
         }
 
         func markReaped() {
             lock.lock(); defer { lock.unlock() }
             reaped = true
+            Darwin.kill(-pid, SIGKILL)
         }
     }
 
@@ -159,11 +159,12 @@ enum NativeCommandRunner {
         posix_spawnattr_setpgroup(&attributes, 0)
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT))
 
-        let argv = [shell, "-c", command].map { strdup($0) } + [nil]
-        let envp = environment.sorted { $0.key < $1.key }.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(shell), strdup("-c"), strdup(command), nil]
+        var envp: [UnsafeMutablePointer<CChar>?] = environment.sorted { $0.key < $1.key }.map { strdup("\($0.key)=\($0.value)") }
+        envp.append(nil)
         defer {
-            argv.forEach { free($0) }
-            envp.forEach { free($0) }
+            for pointer in argv { free(pointer) }
+            for pointer in envp { free(pointer) }
         }
         var pid: pid_t = 0
         let started = Date()

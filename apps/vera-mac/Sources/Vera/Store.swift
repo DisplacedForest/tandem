@@ -89,6 +89,7 @@ final class ChatStore: ObservableObject {
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
     let nativeRuleSource = NativeRuleSource()
+    var turnDeclinedRequests: [UUID: Set<String>] = [:]
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
@@ -2100,7 +2101,13 @@ final class ChatStore: ObservableObject {
         if !turnGrants.isEmpty && commandsConsented {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(
                 for: turn, decision: resolver.decision(for: .commands),
-                record: { [weak self] run in Task { @MainActor [weak self] in self?.attachDisplayBlock(.commandRun(run), turn: turn) } },
+                record: { [weak self] run in
+                    Task { @MainActor [weak self] in
+                        var scoped = run
+                        scoped.id = Self.scopedBlockID(run.id, turn: turn)
+                        self?.attachDisplayBlock(.commandRun(scoped), turn: turn)
+                    }
+                },
                 alwaysAvailable: true))
         }
         let toolLoop = NativeToolLoop(

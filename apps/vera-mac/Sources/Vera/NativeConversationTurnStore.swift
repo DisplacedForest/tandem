@@ -276,6 +276,7 @@ extension ChatStore {
             return
         }
         resolveTurnConfirmation(messageID, approved: false)
+        turnDeclinedRequests.removeValue(forKey: turn.id)
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
         execution?.deadline?.cancel()
@@ -334,10 +335,20 @@ extension ChatStore {
         conversationTurns.contains { $0.assistantMessageID == messageID && $0.state == .pending }
     }
 
+    static func scopedBlockID(_ id: String, turn: NativeConversationTurn) -> String {
+        (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
+    }
+
+    static func declineKey(_ activity: NativeToolActivity) -> String {
+        activity.name + "\n" + activity.request.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
+        if turnDeclinedRequests[turn.id]?.contains(Self.declineKey(activity)) == true { return false }
         if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
            let command = NativeCommandTools.command(inRequest: activity.request),
+           NativeCommandClassifier.classify(command, grants: grants(for: turn.conversationID)) == .commands,
            conversationRules(for: turn.conversationID).isApproved(command: command) {
             guard turnOwned(turn) else { return false }
             turnCommandReasonSource.set(.conversationPrefix, for: activity.id)
@@ -389,8 +400,11 @@ extension ChatStore {
             case .decline:
                 let turnGrants = grants(for: turn.conversationID)
                 let directory = NativeCommandTools.directory(inRequest: request.request) ?? (turnGrants.count == 1 ? turnGrants[0].path : "")
-                attachDisplayBlock(.commandRun(NativeCommandRun(id: request.id, command: command, directory: directory, outcome: .declined)), turn: execution.record)
+                attachDisplayBlock(.commandRun(NativeCommandRun(id: Self.scopedBlockID(request.id, turn: execution.record), command: command, directory: directory, outcome: .declined)), turn: execution.record)
             }
+        }
+        if let request, decision == .decline {
+            turnDeclinedRequests[turn.id, default: []].insert(request.name + "\n" + request.request.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
         }
         continuation.resume(returning: decision.approved && owned)
     }

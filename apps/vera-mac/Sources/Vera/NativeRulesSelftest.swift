@@ -50,6 +50,20 @@ extension SelfTest {
         try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
         resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
         try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
+        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass."] {
+            try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
+        }
+        try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
+
+        let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
+        let classify: (String) -> NativeActionClass = { NativeCommandClassifier.classify($0, grants: sample) }
+        try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands, "Ordinary commands inside the grant are commands")
+        try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
+                    && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,
+                    "Privileged commands and destructive commands outside the grant are sensitive")
+        try require(classify("git push origin main") == .networkSends && classify("curl -X POST https://x") == .networkSends && classify("make; scp out host:") == .networkSends
+                    && classify("npm publish") == .networkSends && classify("curl https://example.com") == .commands && classify("git status") == .commands,
+                    "Commands that send follow the sending rule")
 
         try require(NativeCommandPrefix.prefix(of: "  swift   build --configuration release") == "swift build", "A prefix is the first two words")
         try require(NativeCommandPrefix.prefix(of: "ls") == "ls", "A one-word command is its own prefix")
@@ -167,12 +181,24 @@ extension SelfTest {
 
         let changedTransport = ScriptedNativeToolTransport(rounds: [call("c9", "{\"command\":\"printf changed\"}"), done])
         let changedRegistry = NativeToolRegistry(definitions: NativeCommandTools.definitions(
-            grants: grants, decision: .act(.rule), reason: { _ in nil }, record: { recorder.add($0) }, live: { _ in .ask }))
+            grants: grants, decision: .act(.rule), reason: { _ in nil }, record: { recorder.add($0) }, live: { _, _ in .ask }))
         var changedFinal: NativeToolTurnSnapshot?
         for try await snapshot in NativeToolLoop(transport: changedTransport, registry: changedRegistry).stream(messages: [NativeChatMessage(role: "user", content: "run")], model: "local-model", enabledToolIDs: [NativeCommandTools.toolID]) {
             changedFinal = snapshot
         }
-        try require(changedFinal?.activities.first?.state == .failed && changedTransport.histories[1].last?.content.contains("rules changed") == true && recorder.recorded.count == 2, "A rule tightened to ask mid-answer stops an act decision")
+        try require(changedFinal?.activities.first?.state == .failed && changedFinal?.activities.first?.confirmationRequired == true
+                    && changedTransport.histories[1].last?.content.contains("did not approve") == true && recorder.recorded.count == 2, "A rule tightened to ask mid-answer makes an act decision ask")
+        let (sensitiveRun, sensitiveTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
+        try require(sensitiveRun?.activities.first?.state == .failed && sensitiveTransport.histories[1].last?.content.contains("hand off") == true && recorder.recorded.count == 2, "A sensitive command is handed off even when commands act")
+        let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in true })
+        try require(sendRun?.activities.first?.state == .failed && sendTransport.histories[1].last?.content.contains("send on your behalf") == true && recorder.recorded.count == 2, "A sending command follows the sending rule (hand off by default)")
+        let backgroundStart = Date()
+        let lingering = try await NativeCommandRunner.run(command: "sleep 30 & echo $!; exit 0", directory: directory, timeout: .seconds(20))
+        try require(lingering.exitCode == 0 && Date().timeIntervalSince(backgroundStart) < 8, "A shell that exits with a background child returns promptly")
+        if let orphan = pid_t(lingering.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            try await Task.sleep(for: .milliseconds(200))
+            try require(kill(orphan, 0) != 0 && errno == ESRCH, "The background child is killed with the group when the shell exits")
+        }
         let source = NativeRuleSource()
         source.setGlobal(.defaults)
         source.set(NativeConversationRules(choices: [.fileEdits: .handOff]), for: "chat")
@@ -211,9 +237,16 @@ extension SelfTest {
         guard case .object(let trashResult) = trashed, case .string(let trashPath)? = trashResult["trash_path"] else {
             throw NativeTaskFixture.Failure.assertion("The trash result names the destination")
         }
-        try require(!manager.fileExists(atPath: root + "/sub/old.txt") && manager.fileExists(atPath: trashPath)
+        try require(!manager.fileExists(atPath: root + "/sub/old.txt") && manager.fileExists(atPath: trashPath) && trashPath.lowercased().contains("trash")
                     && ledger.recorded().last?.kind == .trashed && ledger.recorded().last?.movedFrom == trashPath, "A file moves to the Trash and the card records where")
         try? manager.removeItem(atPath: trashPath)
+        try "one".write(to: inside.appendingPathComponent("sub/dup.txt"), atomically: true, encoding: .utf8)
+        _ = try NativeFolderTools.moveToTrash(try access.locate(root + "/sub/dup.txt"), ledger: ledger)
+        try "two".write(to: inside.appendingPathComponent("sub/dup.txt"), atomically: true, encoding: .utf8)
+        _ = try NativeFolderTools.moveToTrash(try access.locate(root + "/sub/dup.txt"), ledger: ledger)
+        let duplicates = ledger.recorded().suffix(2).compactMap(\.movedFrom)
+        try require(duplicates.count == 2 && duplicates[0] != duplicates[1] && duplicates.allSatisfy { manager.fileExists(atPath: $0) }, "A second item with the same name gets a distinct name in the Trash")
+        for path in duplicates { try? manager.removeItem(atPath: path) }
         do {
             _ = try NativeFolderTools.moveToTrash(try access.locate(root), ledger: ledger)
             throw NativeTaskFixture.Failure.assertion("The grant root cannot be trashed")

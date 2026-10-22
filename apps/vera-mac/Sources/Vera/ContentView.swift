@@ -679,6 +679,7 @@ struct NativeToolConfirmationBar: View {
     var allowDecline = true
     var onDecision: (Bool) -> Void
     var onApproveSimilar: (() -> Void)? = nil
+    @Environment(\.renderSafe) private var renderSafe
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
@@ -724,9 +725,14 @@ struct NativeToolConfirmationBar: View {
                 Text(lines[0])
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
                 if lines.count > 1 {
-                    Text(lines.dropFirst().joined(separator: "\n"))
-                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(4).textSelection(.enabled)
+                    ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
+                        Text(lines.dropFirst().joined(separator: "\n"))
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: renderSafe ? nil : 180)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(detail ?? "This tool runs only after your decision.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)

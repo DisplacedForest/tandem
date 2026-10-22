@@ -80,12 +80,6 @@ enum NativeFolderIO {
         try walk(location, components: location.parentComponents)
     }
 
-    static func realPath(_ directory: NativeFolderDescriptor, display: String) throws -> String {
-        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-        guard fcntl(directory.raw, F_GETPATH, &buffer) == 0 else { throw errno("Couldn't resolve \(display)") }
-        return String(cString: buffer)
-    }
-
     static func status(_ directory: NativeFolderDescriptor, _ name: String) -> stat? {
         var info = stat()
         guard fstatat(directory.raw, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { return nil }

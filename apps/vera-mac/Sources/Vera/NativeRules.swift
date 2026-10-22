@@ -214,9 +214,70 @@ enum NativeRequestPreapproval {
         "just do it", "don't check with me", "do not check with me", "no confirmation needed", "skip the confirmation",
     ]
 
+    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after"]
+
     static func grants(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        return phrases.contains { lowered.contains($0) }
+        let sentences = text.lowercased().components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
+        return sentences.contains { sentence in
+            guard phrases.contains(where: { sentence.contains($0) }) else { return false }
+            guard !sentence.contains("\""), !sentence.contains("“"), !sentence.contains("”") else { return false }
+            var remainder = sentence
+            for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
+            let padded = " " + remainder + " "
+            return !negations.contains { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }
+        }
+    }
+}
+
+enum NativeCommandClassifier {
+    static let separators = ["&&", "||", ";", "|"]
+    static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
+    static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
+    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "npm", "pnpm", "yarn", "cargo", "pip", "twine", "gem", "docker", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let sensitiveFragments = ["/.ssh", "/.aws", "/.gnupg", "/.config/gh", "/library/keychains", "/etc/", "/private/etc/", "/system/", "/usr/", "/bin/", "/sbin/", "/var/", "/library/", "/applications/", "/.vera", "/.tandem", ".pem", ".p12", "keychain", "id_rsa", "id_ed25519"]
+
+    static func segments(of command: String) -> [[String]] {
+        var spaced = command
+        for separator in ["&&", "||", ";", "|", "\n", "(", ")", "{", "}"] {
+            spaced = spaced.replacingOccurrences(of: separator, with: " ; ")
+        }
+        return spaced.components(separatedBy: " ; ").map { NativeCommandPrefix.tokens(of: $0) }.filter { !$0.isEmpty }
+    }
+
+    static func executable(_ segment: [String]) -> (name: String, arguments: [String]) {
+        var tokens = segment[...]
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-"), !first.hasPrefix("/") { tokens = tokens.dropFirst() }
+        while let first = tokens.first, ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"].contains(first) {
+            tokens = tokens.dropFirst()
+            while let next = tokens.first, next.hasPrefix("-") || next.contains("=") { tokens = tokens.dropFirst() }
+        }
+        guard let first = tokens.first else { return ("", []) }
+        let name = first.split(separator: "/").last.map(String.init) ?? first
+        return (name, Array(tokens.dropFirst()))
+    }
+
+    static func classify(_ command: String, grants: [FolderGrant]) -> NativeActionClass {
+        let lowered = command.lowercased()
+        if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
+        var network = false
+        for segment in segments(of: command) {
+            let (name, arguments) = executable(segment)
+            if privileged.contains(name) { return .sensitive }
+            if destructive.contains(name) && arguments.contains(where: { pathLeavesGrants($0, grants: grants) }) { return .sensitive }
+            if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
+            if name == "curl" && arguments.contains(where: { ["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-X", "--request"].contains($0) || $0.hasPrefix("--data") || $0.hasPrefix("-d") && $0.count > 2 || $0.hasPrefix("-F") && $0.count > 2 || $0.hasPrefix("-T") && $0.count > 2 || $0.hasPrefix("-X") && $0.count > 2 }) { network = true }
+            if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
+            if senders.contains(name) { network = true }
+        }
+        return network ? .networkSends : .commands
+    }
+
+    static func pathLeavesGrants(_ token: String, grants: [FolderGrant]) -> Bool {
+        var path = token.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        guard path.hasPrefix("/") || path.hasPrefix("~") || path.hasPrefix("$HOME") else { return false }
+        if path.hasPrefix("~") || path.hasPrefix("$HOME") { return true }
+        path = URL(fileURLWithPath: path).standardizedFileURL.path
+        return !grants.contains { NativeFolderAccess.contains(root: $0.path, path: path) }
     }
 }
 

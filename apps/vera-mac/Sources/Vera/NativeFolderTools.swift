@@ -176,18 +176,16 @@ enum NativeFolderTools {
         let directory = try NativeFolderIO.parent(of: location)
         guard let info = NativeFolderIO.status(directory, location.name) else { throw NativeFolderAccessError.notFound(location.path) }
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(location.path) }
-        let before = NativeFolderIdentity(device: Int64(info.st_dev), inode: UInt64(info.st_ino))
-        let parentPath = try NativeFolderIO.realPath(directory, display: location.path)
-        let url = URL(fileURLWithPath: parentPath, isDirectory: true).appendingPathComponent(location.name)
+        let pinned = URL(fileURLWithPath: "/.vol/\(info.st_dev)/\(info.st_ino)")
+        var check = stat()
+        guard lstat(pinned.path, &check) == 0, check.st_dev == info.st_dev, check.st_ino == info.st_ino else {
+            throw NativeToolError.failed("\(location.path) changed while it was being moved to the Trash, so it was left in place.")
+        }
         var resulting: NSURL?
-        do { try FileManager.default.trashItem(at: url, resultingItemURL: &resulting) } catch {
+        do { try FileManager.default.trashItem(at: pinned, resultingItemURL: &resulting) } catch {
             throw NativeToolError.failed("Couldn't move \(location.path) to the Trash: \(error.localizedDescription)")
         }
         let destination = resulting?.path ?? ""
-        var moved = stat()
-        if !destination.isEmpty, lstat(destination, &moved) == 0, Int64(moved.st_dev) == before.device, UInt64(moved.st_ino) != before.inode {
-            throw NativeToolError.failed("\(location.path) changed while it was being moved to the Trash. Check the Trash before continuing.")
-        }
         ledger.record(NativeFileChange(path: location.path, kind: .trashed, movedFrom: destination.isEmpty ? nil : destination))
         return .object(["path": .string(location.path), "trashed": .bool(true), "trash_path": .string(destination)])
     }
