@@ -49,45 +49,61 @@ actor NativeScheduler {
     func tick() async -> Bool {
         let previousHeartbeat = try? store.heartbeat()
         var changed = settleRuns()
-        guard let due = try? store.due(at: now()) else { return changed }
-        for schedule in due where !firing.contains(schedule.id) {
-            guard let scheduledFor = schedule.nextRunAt else { continue }
-            let moment = now()
-            guard scheduledFor <= moment else { continue }
-            let offlineSince: Date? = previousHeartbeat.flatMap { moment.timeIntervalSince($0) > downtime ? $0 : nil }
-            var occurrences = [scheduledFor]
-            var cursor = scheduledFor
-            while let following = schedule.cadence.nextRun(after: cursor, previous: cursor, timeZone: schedule.timeZone), following <= moment {
-                occurrences.append(following)
-                cursor = following
-            }
-            let last = occurrences[occurrences.count - 1]
-            let late = moment.timeIntervalSince(last)
-            let lastMissed = late > grace || (offlineSince.map { last > $0 } ?? false)
-            var next = schedule
-            next.advance(after: moment, from: last)
-            var records = missedRuns(schedule.id, occurrences: lastMissed ? occurrences : Array(occurrences.dropLast()), at: moment)
-            var starting: NativeScheduleRun?
-            if !lastMissed {
-                if hasActiveRun(schedule.id) {
-                    records.append(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, finishedAt: moment, outcome: .skipped,
-                                                     detail: "The previous run was still going."))
-                } else {
-                    var run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, startedAt: moment, outcome: .running)
-                    if late >= 60 {
-                        let minutes = Int(late / 60)
-                        run.detail = "Started \(minutes) \(minutes == 1 ? "minute" : "minutes") after the scheduled time."
-                    }
-                    records.append(run)
-                    starting = run
+        var processed: Set<String> = []
+        var committed = true
+        var verified = now()
+        for _ in 0..<8 {
+            verified = now()
+            guard let due = try? store.due(at: verified) else { return changed }
+            let pending = due.filter { !firing.contains($0.id) && !processed.contains($0.id) }
+            if pending.isEmpty { break }
+            for schedule in pending {
+                processed.insert(schedule.id)
+                guard let scheduledFor = schedule.nextRunAt else { continue }
+                let moment = now()
+                guard scheduledFor <= moment else { continue }
+                let offlineSince: Date? = previousHeartbeat.flatMap { moment.timeIntervalSince($0) > downtime ? $0 : nil }
+                var occurrences = [scheduledFor]
+                var cursor = scheduledFor
+                while let following = schedule.cadence.nextRun(after: cursor, previous: cursor, timeZone: schedule.timeZone), following <= moment {
+                    occurrences.append(following)
+                    cursor = following
                 }
+                let last = occurrences[occurrences.count - 1]
+                let late = moment.timeIntervalSince(last)
+                let lastMissed = late > grace || (offlineSince.map { last > $0 } ?? false)
+                var next = schedule
+                next.advance(after: moment, from: last)
+                var records = missedRuns(schedule.id, occurrences: lastMissed ? occurrences : Array(occurrences.dropLast()), at: moment)
+                var starting: NativeScheduleRun?
+                if !lastMissed {
+                    if hasActiveRun(schedule.id) {
+                        records.append(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, finishedAt: moment, outcome: .skipped,
+                                                         detail: "The previous run was still going."))
+                    } else {
+                        var run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, startedAt: moment, outcome: .running)
+                        if late >= 60 {
+                            let minutes = Int(late / 60)
+                            run.detail = "Started \(minutes) \(minutes == 1 ? "minute" : "minutes") after the scheduled time."
+                        }
+                        records.append(run)
+                        starting = run
+                    }
+                }
+                let claimed: Bool
+                do {
+                    claimed = try store.claim(schedule.id, expectedNextRunAt: scheduledFor, nextRunAt: next.nextRunAt, enabled: next.enabled,
+                                              recording: records)
+                } catch {
+                    committed = false
+                    continue
+                }
+                guard claimed else { continue }
+                changed = true
+                if let starting { await start(schedule, run: starting) }
             }
-            guard (try? store.claim(schedule.id, expectedNextRunAt: scheduledFor, nextRunAt: next.nextRunAt, enabled: next.enabled,
-                                     recording: records)) == true else { continue }
-            changed = true
-            if let starting { await start(schedule, run: starting) }
         }
-        try? store.recordHeartbeat(now())
+        if committed { try? store.recordHeartbeat(verified) }
         return changed
     }
 
