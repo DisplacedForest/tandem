@@ -298,7 +298,7 @@ This is separate from the server scheduler in [section 6](#6-the-scheduler), whi
 
 Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.
 
-While a chat has at least one grant and the model supports tool calling, the model gets seven file tools. They share one consent entry, **Files in granted folders**, in Settings, Tools.
+While a chat has at least one grant and the model supports tool calling, the model gets eight file tools. They share one consent entry, **Files in granted folders**, in Settings, Tools. A separate entry, **Commands in granted folders**, covers the command tool described under [Rules and commands](#rules-and-commands). Granting a folder turns both on.
 
 - List a folder.
 - Read a text file. A call returns 64 KB by default and 256 KB at most. Continue a longer file with a start line. Binary files are refused.
@@ -307,8 +307,9 @@ While a chat has at least one grant and the model supports tool calling, the mod
 - Edit a file by exact replacement. The old text has to appear exactly once unless replace_all is set.
 - Move or rename a file or folder. It never overwrites and never deletes.
 - Create a folder.
+- Move a file or folder to the Trash. The grant itself and symlinks are refused, and the card shows where it went with a Show in Trash button.
 
-There is no delete tool. Writes and edits inside a grant don't ask per file. Revoking a grant mid-conversation makes the next call into that folder fail, and when no grants remain the tools are no longer offered.
+There is no delete tool. Whether writes, edits and Trash moves ask first is set by your [rules](#rules-and-commands); by default edits act and the Trash asks. Revoking a grant mid-conversation makes the next call into that folder fail, and when no grants remain the tools are no longer offered.
 
 Every path goes through one guard. It's made absolute (a relative path resolves against the grant when there is exactly one), the deepest existing ancestor is resolved through symlinks, and the real path must sit inside a granted folder. Anything else is refused with the path named, including a symlink that points outside the grant and any path starting with ~. The model receives the refusal as the tool result. File names and contents the tools return are treated as untrusted data.
 
@@ -316,7 +317,31 @@ Each changed file shows on the turn as a card: Created, Edited, Moved to, or Cre
 
 If the current model can't call tools, the chat gets no file tools. The folder control explains that instead of opening the picker, and the chips show the same note.
 
-Not included: running commands, moving files to the Trash, project-level grants, indexing file contents, and App Sandbox entitlements.
+Not included: project-level grants, indexing file contents, and App Sandbox entitlements.
+
+### Rules and commands
+
+Settings, Rules holds one setting per kind of action:
+
+| Action | Default |
+|---|---|
+| Edit files in granted folders (write, edit, move, create folder) | Act without asking |
+| Run commands in granted folders | Ask first |
+| Move files to the Trash | Ask first |
+| Send on your behalf (connected services that send) | Hand off to me |
+| Sensitive actions (credentials, payments, deleting outside the working tree) | Hand off to me, fixed |
+
+The four choices: **Act without asking** runs the action and shows what happened on the turn. **Act only when the request pre-approves it** runs only when your message says so in plain words (for example "go ahead", "no need to ask", "you have my approval") and asks otherwise. **Ask first** puts a card on the turn before anything runs. **Hand off to me** refuses the tool call with a message that names the rule, so the model tells you what it would have done. Rules never widen what a connected MCP server allows: a tool the server's authority denies stays denied.
+
+The Rules button next to the folder chips tightens any of these for the current chat. A chat can only choose a stricter setting than the global one, and the popover also lists the command prefixes you've approved for that chat so you can take one back.
+
+The command tool runs `/bin/sh -c` with the granted folder (or a folder inside it, walked the same way as the file tools, so symlinks are refused) as the working directory. The child gets a scrubbed environment: a fixed PATH covering the standard system and Homebrew locations plus HOME, LANG, LC_ALL, LC_CTYPE, TERM, TMPDIR, USER and LOGNAME copied from the app. Nothing else from the app's environment reaches it. Each command has a time limit, 60 seconds by default and 240 at most, and runs in its own process group. When the limit passes, or you stop the answer, the whole group is killed and the card says so. Standard output and standard error are captured separately, capped at 64 KB each with a visible marker, and the model receives the same text along with the exit status or signal.
+
+Each command is also classified before the commands rule applies. Privileged commands (sudo, su, security, diskutil, launchctl and the like), commands that reference credential or system locations (~/.ssh, ~/.aws, keychains, /etc, /System, /usr, /Library), and destructive commands (rm, mv, chmod, dd and similar) aimed at a path outside the granted folders count as sensitive and are always handed to you, whatever the commands rule says. Commands that send data elsewhere (git push, curl with a body or method, scp, ssh, rsync, publishing and deploy tools) follow the **Send on your behalf** rule. The classification is conservative and based on the command text, so an unusual command may be refused or asked about when it didn't need to be; the commands rule still applies to everything else.
+
+When the commands rule asks, the card shows the exact command and the folder. **Approve** runs it once. **Approve similar** also records the command's first two words for that chat, so later commands starting the same way run without asking. That shortcut covers only a single plain command: anything with shell control characters (`;`, `&&`, `|`, backticks, `$`, redirections, quotes) asks again even when it starts with an approved prefix. Rules are read again at the moment a tool runs, so tightening a rule mid-answer takes effect at once: an action that was going to run without asking stops and the model is told to ask again. **Decline** leaves a declined card on the turn, and the model is told the call was not approved and not to retry it. If the model sends the same call again in that answer, it is declined without another card. Only a validated tool call reaches the runner; prose that looks like a command is never executed.
+
+Not included: sandboxes or containers, network isolation, a terminal view, and commands that keep running after the answer finishes.
 
 ### Migrating Open WebUI knowledge collections
 

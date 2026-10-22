@@ -374,6 +374,7 @@ enum SelfTest {
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
+        do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
@@ -1103,7 +1104,7 @@ enum SelfTest {
                 deniedFinal = snapshot
             }
             guard deniedFinal?.activities.first?.state == .failed,
-                  deniedFinal?.activities.first?.result?.contains("not confirmed") == true,
+                  deniedFinal?.activities.first?.result?.contains("did not approve") == true,
                   confirmationState.count == 0 else {
                 print("SELFTEST ERROR: confirmation denial executed native tool"); exit(1)
             }
@@ -2688,7 +2689,7 @@ enum SelfTest {
                 declined = snapshot
             }
             guard declined?.activities.first?.state == .failed,
-                  declined?.activities.first?.result?.contains("not confirmed") == true,
+                  declined?.activities.first?.result?.contains("did not approve") == true,
                   declined?.content == "Noted.",
                   client.calls.count == callsBefore else {
                 print("SELFTEST ERROR: declined capability tool still ran"); exit(1)

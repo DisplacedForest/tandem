@@ -20,8 +20,57 @@ final class NativeFolderGrantSource: @unchecked Sendable {
     }
 }
 
+final class NativeCommandReasonSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reasons: [String: NativeRuleReason] = [:]
+
+    func set(_ reason: NativeRuleReason, for activityID: String) {
+        lock.lock(); defer { lock.unlock() }
+        reasons[activityID] = reason
+    }
+
+    func reason(for activityID: String) -> NativeRuleReason? {
+        lock.lock(); defer { lock.unlock() }
+        return reasons[activityID]
+    }
+
+    func clear(prefix: String) {
+        lock.lock(); defer { lock.unlock() }
+        reasons = reasons.filter { !$0.key.hasPrefix(prefix) }
+    }
+}
+
+final class NativeDeclineSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var declined: [UUID: Set<String>] = [:]
+
+    func record(_ key: String, turn: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        declined[turn, default: []].insert(key)
+    }
+
+    func contains(_ key: String, turn: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return declined[turn]?.contains(key) ?? false
+    }
+
+    func clear(turn: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        declined.removeValue(forKey: turn)
+    }
+}
+
+enum NativeToolDecision: Equatable, Sendable {
+    case approve
+    case approveSimilar
+    case decline
+
+    var approved: Bool { self != .decline }
+}
+
 extension ChatStore {
     var selectedGrants: [FolderGrant] { selected?.grants ?? [] }
+    var selectedConversationRules: NativeConversationRules { selected?.rules ?? NativeConversationRules() }
 
     var folderToolsSupported: Bool { activeCapabilityResolution?.profile.supportsTools ?? false }
 
@@ -36,9 +85,34 @@ extension ChatStore {
         conversations.first(where: { $0.id == conversationID })?.grants ?? nativeGrantSource.grants(for: conversationID)
     }
 
-    func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger, alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
+    func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger,
+                               edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
+                               live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
+                               alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
-        return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger, alwaysAvailable: alwaysAvailable)
+        return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger,
+                                             edits: edits, trash: trash, live: live, alwaysAvailable: alwaysAvailable)
+    }
+
+    func commandToolDefinitions(for turn: NativeConversationTurn, decision: NativeRuleDecision,
+                                record: @escaping @Sendable (NativeCommandRun) -> Void,
+                                alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
+        let source = nativeGrantSource
+        let conversationID = turn.conversationID
+        let reasons = turnCommandReasonSource
+        let rules = nativeRuleSource
+        let declines = turnDeclineSource
+        let turnID = turn.id
+        let scope = Self.scopedBlockID("", turn: turn)
+        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
+        return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
+                                              reason: { reasons.reason(for: scope + $0) }, record: record,
+                                              live: { command, action in
+                                                  let resolver = rules.resolver(for: conversationID, requestText: text)
+                                                  return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+                                              },
+                                              declined: { declines.contains($0, turn: turnID) },
+                                              alwaysAvailable: alwaysAvailable)
     }
 
     func fileChangeLedger(for turn: NativeConversationTurn) -> NativeFileChangeLedger {
@@ -50,7 +124,10 @@ extension ChatStore {
     }
 
     func attachFileChange(_ change: NativeFileChange, turn: NativeConversationTurn) {
-        let block = NativeDisplayBlock.fileChange(change)
+        attachDisplayBlock(.fileChange(change), turn: turn)
+    }
+
+    func attachDisplayBlock(_ block: NativeDisplayBlock, turn: NativeConversationTurn) {
         var stored: [NativeDisplayBlock]?
         do {
             stored = try (repository as? LocalChatRepository)?.appendDisplayBlock(block, messageID: turn.assistantMessageID)
@@ -61,8 +138,51 @@ extension ChatStore {
               let reply = conversations[conversation].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) else { return }
         if let stored {
             conversations[conversation].messages[reply].displayBlocks = stored
-        } else if !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == block.id }) {
+        } else if let existing = conversations[conversation].messages[reply].displayBlocks.firstIndex(where: { $0.id == block.id }) {
+            conversations[conversation].messages[reply].displayBlocks[existing] = block
+        } else {
             conversations[conversation].messages[reply].displayBlocks.append(block)
+        }
+    }
+
+    func conversationRules(for conversationID: String) -> NativeConversationRules {
+        conversations.first(where: { $0.id == conversationID })?.rules ?? NativeConversationRules()
+    }
+
+    func ruleResolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
+        NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText)
+    }
+
+    func syncRuleSource() {
+        nativeRuleSource.replaceAll(conversations.map { ($0.id, $0.rules) })
+    }
+
+    func tightenConversationRule(_ choice: NativeRuleChoice, for action: NativeActionClass, conversationID: String? = nil) {
+        guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].rules.tighten(choice, for: action, global: nativeRules)
+        persistRules(index)
+    }
+
+    func approveCommandPrefix(_ command: String, conversationID: String) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].rules.approve(prefix: command)
+        persistRules(index)
+    }
+
+    func revokeCommandPrefix(_ prefix: String, conversationID: String? = nil) {
+        guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].rules.revoke(prefix: prefix)
+        persistRules(index)
+    }
+
+    private func persistRules(_ index: Int) {
+        nativeRuleSource.set(conversations[index].rules, for: conversations[index].id)
+        guard let repository else { return }
+        do {
+            conversations[index].isPersisted = true
+            try repository.saveConversation(conversations[index])
+        } catch {
+            grantError = "The rule couldn't be saved: \(error.localizedDescription)"
         }
     }
 

@@ -23,6 +23,7 @@ struct FolderGrantChips: View {
             ForEach(grants) { grant in
                 FolderGrantChip(grant: grant, onRemove: { onRemove(grant.id) })
             }
+            if !renderSafe { ConversationRulesButton() }
         }
         .padding(.vertical, 2)
     }
@@ -83,7 +84,7 @@ struct NativeFileChangeCard: View {
         switch change.kind {
         case .edited: return NativeLineDiff.render(before: change.before ?? "", after: change.after ?? "")
         case .created: return NativeLineDiff.render(before: "", after: change.after ?? "")
-        case .moved, .directory: return NativeLineDiff.Rendering(hunks: [], omittedLines: 0)
+        case .moved, .directory, .trashed: return NativeLineDiff.Rendering(hunks: [], omittedLines: 0)
         }
     }
 
@@ -95,6 +96,7 @@ struct NativeFileChangeCard: View {
         case .created, .edited: return NativeLineDiff.summary(before: change.before, after: change.after)
         case .moved: return "from \(change.movedFrom.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path } ?? "")"
         case .directory: return "New folder"
+        case .trashed: return "In the Trash. Put it back from the Finder if you need it."
         }
     }
 
@@ -104,6 +106,7 @@ struct NativeFileChangeCard: View {
         case .edited: return "pencil.line"
         case .moved: return "arrow.right.doc.on.clipboard"
         case .directory: return "folder.badge.plus"
+        case .trashed: return "trash"
         }
     }
 
@@ -124,10 +127,17 @@ struct NativeFileChangeCard: View {
                         Button(expanded ? "Hide changes" : "Show changes") { expanded.toggle() }
                             .buttonStyle(.borderless).font(.system(size: 11))
                     }
-                    Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: change.path)) }
-                        .buttonStyle(.borderless).font(.system(size: 11))
-                    Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
-                        .buttonStyle(.borderless).font(.system(size: 11))
+                    if change.kind == .trashed {
+                        if let trashed = change.movedFrom {
+                            Button("Show in Trash") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: trashed)]) }
+                                .buttonStyle(.borderless).font(.system(size: 11))
+                        }
+                    } else {
+                        Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: change.path)) }
+                            .buttonStyle(.borderless).font(.system(size: 11))
+                        Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: change.path)]) }
+                            .buttonStyle(.borderless).font(.system(size: 11))
+                    }
                 }
             }
             .padding(12)

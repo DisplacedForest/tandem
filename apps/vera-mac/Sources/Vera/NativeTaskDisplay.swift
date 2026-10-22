@@ -50,6 +50,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
     case link(NativeDisplayLink)
     case artifact(NativeResearchArtifact)
     case fileChange(NativeFileChange)
+    case commandRun(NativeCommandRun)
 
     var id: String {
         switch self {
@@ -57,6 +58,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .link(let link): return "link:" + link.id
         case .artifact(let artifact): return "artifact:" + artifact.id
         case .fileChange(let change): return "file:" + change.id
+        case .commandRun(let run): return "command:" + run.id
         }
     }
 
@@ -64,8 +66,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case type, link, artifact
         case taskCard = "task_card"
         case fileChange = "file_change"
+        case commandRun = "command_run"
     }
-    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change" }
+    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change", commandRun = "command_run" }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,6 +77,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .link: self = .link(try container.decode(NativeDisplayLink.self, forKey: .link))
         case .artifact: self = .artifact(try container.decode(NativeResearchArtifact.self, forKey: .artifact))
         case .fileChange: self = .fileChange(try container.decode(NativeFileChange.self, forKey: .fileChange))
+        case .commandRun: self = .commandRun(try container.decode(NativeCommandRun.self, forKey: .commandRun))
         }
     }
 
@@ -92,6 +96,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .fileChange(let change):
             try container.encode(Kind.fileChange, forKey: .type)
             try container.encode(change, forKey: .fileChange)
+        case .commandRun(let run):
+            try container.encode(Kind.commandRun, forKey: .type)
+            try container.encode(run, forKey: .commandRun)
         }
     }
 }
