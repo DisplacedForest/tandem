@@ -24,7 +24,7 @@ For optional cloud model evaluation, see the [OpenRouter setup and synthetic smo
 ## 2. vera-api
 
 ```sh
-git clone https://github.com/DisplacedForest/vera.git && cd vera
+git clone https://github.com/DisplacedForest/tandem.git && cd tandem
 cp .env.example .env     # fill in what you run — everything unset degrades gracefully
 docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api image
 ```
@@ -235,7 +235,7 @@ Two host scripts cover the standing ops work, and each documents its own environ
 
 ## 3. The Mac app
 
-**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Tandem.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch: right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
+**From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/tandem/releases/latest), unzip, and drag `Tandem.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch: right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
 Releases before the bundle was renamed shipped `Vera.app.zip`, and an app installed from one of them cannot download the renamed asset. Upgrade from those once by hand: download `Tandem.app.zip`, drag `Tandem.app` to Applications and remove `Vera.app`. Saved keys, settings and conversations carry over because the bundle identifier is unchanged. Builds installed from `deploy.sh` migrate on the next deploy.
 

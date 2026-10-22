@@ -51,7 +51,7 @@ struct ReleaseInfo: Decodable, Equatable {
 
 @MainActor
 final class UpdateChecker: ObservableObject {
-    static let repo = "DisplacedForest/vera"
+    static let repo = "DisplacedForest/tandem"
 
     @Published var available: ReleaseInfo?
     @Published var checking = false
