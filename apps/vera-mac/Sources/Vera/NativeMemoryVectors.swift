@@ -153,7 +153,7 @@ extension LocalChatRepository {
     func lexicalMemoryCandidates(terms: [String], bankScope: String, now: Date = Date(),
                                  sensitive: NativeMemorySensitiveHandling = .neverStore,
                                  limit: Int = NativeMemoryRetrievalLimits.lexicalCandidates) throws -> [NativeMemoryCandidate] {
-        guard limit > 0 else { return [] }
+        guard limit > 0, !terms.isEmpty else { return [] }
         let query = terms.map { "\"" + $0 + "\"" }.joined(separator: " OR ")
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """

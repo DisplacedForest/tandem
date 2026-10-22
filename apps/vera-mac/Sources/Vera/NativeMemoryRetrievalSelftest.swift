@@ -184,6 +184,9 @@ extension SelfTest {
         try require(lateTurn.trace?.notes.contains(where: { $0.contains("waiting for vectors") }) == true, "A newly eligible record makes readiness incomplete for that turn")
         try require(try await waitFor(seconds: 10) { store.memoryIndexingProgress == nil && (store.memoryVectorStatus?.complete ?? false) },
                     "That turn schedules the backfill so later turns are semantic again: \(String(describing: store.memoryVectorStatus))")
+        let punctuation = await store.retrieveApprovedMemory("!!! ???", settings: settings, service: service)
+        try require(punctuation.trace?.mode == .fused && punctuation.trace?.notes.contains(where: { $0.contains("Local search failed") }) == false,
+                    "A request with no searchable words still runs the semantic path: \(punctuation.trace?.summary ?? "")")
         let noisy = [NativeTurnHistoryMessage(Message(role: .user, text: Array(repeating: "earlier", count: 60).joined(separator: " ")))]
         let noisyResult = await store.retrieveApprovedMemory("zymurgy", history: noisy, settings: settings, service: service)
         try require(noisyResult.selected.contains { $0.record.id == "exact" }, "The current request's terms come before history in lexical search")
