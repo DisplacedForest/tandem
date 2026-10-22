@@ -336,6 +336,13 @@ extension ChatStore {
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
+        if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
+           let command = NativeCommandTools.command(inRequest: activity.request),
+           conversationRules(for: turn.conversationID).isApproved(command: command) {
+            guard turnOwned(turn) else { return false }
+            turnCommandReasonSource.set(.conversationPrefix, for: activity.id)
+            return true
+        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard turnOwned(turn), execution.continuation == nil else {
@@ -357,6 +364,10 @@ extension ChatStore {
     }
 
     func resolveTurnConfirmation(_ messageID: UUID, approved: Bool, requestID: String? = nil, token: UUID? = nil) {
+        resolveTurnConfirmation(messageID, decision: approved ? .approve : .decline, requestID: requestID, token: token)
+    }
+
+    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeToolDecision, requestID: String? = nil, token: UUID? = nil) {
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               let execution = turnExecutions[turn.id],
               requestID == nil || turnConfirmations[messageID]?.id == requestID,
@@ -366,6 +377,21 @@ extension ChatStore {
         turnConfirmationTokens[messageID] = nil
         let request = turnConfirmations.removeValue(forKey: messageID)
         if pendingToolConfirmation?.id == request?.id { pendingToolConfirmation = nil }
-        continuation.resume(returning: approved && turnOwned(execution.record))
+        let owned = turnOwned(execution.record)
+        if let request, request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
+           let command = NativeCommandTools.command(inRequest: request.request) {
+            switch decision {
+            case .approve:
+                turnCommandReasonSource.set(.userApproved, for: request.id)
+            case .approveSimilar:
+                if owned { approveCommandPrefix(command, conversationID: turn.conversationID) }
+                turnCommandReasonSource.set(.userApproved, for: request.id)
+            case .decline:
+                let turnGrants = grants(for: turn.conversationID)
+                let directory = NativeCommandTools.directory(inRequest: request.request) ?? (turnGrants.count == 1 ? turnGrants[0].path : "")
+                attachDisplayBlock(.commandRun(NativeCommandRun(id: request.id, command: command, directory: directory, outcome: .declined)), turn: execution.record)
+            }
+        }
+        continuation.resume(returning: decision.approved && owned)
     }
 }

@@ -663,6 +663,15 @@ final class ConfigStore: ObservableObject {
             set: { value in self.applyMemorySetting(to: store) { $0[keyPath: keyPath] = value } })
     }
 
+    func applyRule(_ choice: NativeRuleChoice, for action: NativeActionClass, store: ChatStore) {
+        var settings = nativeSettings
+        settings.rules.set(choice, for: action)
+        nativeSettings = settings
+        let saved = (try? save()) != nil
+        store.updateNativeRules(settings.rules)
+        store.rulesNotice = saved ? nil : "This change applies now, but it couldn't be saved for the next launch."
+    }
+
     func applyMemorySetting(to store: ChatStore, _ update: (inout NativeMemorySettings) -> Void) {
         updateMemory(update)
         let saved = (try? save()) != nil

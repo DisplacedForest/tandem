@@ -347,7 +347,7 @@ enum Shot {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
             case "vera": section = .vera
-            case "chats", "chats-streaming", "chats-mentions", "chats-folder": section = .chat
+            case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command": section = .chat
             case "projects": section = .projects
             case "artifacts": section = .artifacts
             case "scheduled": section = .scheduled
@@ -362,6 +362,7 @@ enum Shot {
                          attachDemo: view == "attach",
                          streaming: view == "chats-streaming",
                          folder: view == "chats-folder",
+                         command: view == "chats-command",
                          collapsedSidebar: view == "sidebar-collapsed",
                          mentions: view == "chats-mentions")
                     .environment(\.renderSafe, true)

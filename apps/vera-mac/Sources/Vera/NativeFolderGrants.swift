@@ -122,7 +122,7 @@ struct NativeFolderAccess: Sendable {
 }
 
 enum NativeFileChangeKind: String, Codable, Equatable, Hashable, Sendable {
-    case created, edited, moved, directory
+    case created, edited, moved, directory, trashed
 }
 
 struct NativeFileChange: Codable, Equatable, Hashable, Identifiable, Sendable {
@@ -144,6 +144,7 @@ struct NativeFileChange: Codable, Equatable, Hashable, Identifiable, Sendable {
         case .edited: return "Edited \(name)"
         case .moved: return "Moved to \(name)"
         case .directory: return "Created folder \(name)"
+        case .trashed: return "Moved \(name) to the Trash"
         }
     }
 

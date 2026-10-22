@@ -37,7 +37,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 }
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case connection, model, persona, memory, knowledge, nativeTools, image, search, services, plugins, identity, about
+    case connection, model, persona, memory, knowledge, nativeTools, rules, image, search, services, plugins, identity, about
     var id: String { rawValue }
 }
 

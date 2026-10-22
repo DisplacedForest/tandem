@@ -12,6 +12,7 @@ struct SettingsView: View {
             NativeMemorySettingsTab().tabItem { Label("Memory", systemImage: "tray.full") }.tag(SettingsTab.memory)
             KnowledgeView().tabItem { Label("Knowledge", systemImage: "books.vertical") }.tag(SettingsTab.knowledge)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
+            RulesSettingsTab().tabItem { Label("Rules", systemImage: "checklist") }.tag(SettingsTab.rules)
             ImageTab().tabItem { Label("Image", systemImage: "photo") }.tag(SettingsTab.image)
             SearchTab().tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(SettingsTab.search)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
@@ -1039,6 +1040,7 @@ private struct SaveSection: View {
             visionBridge: config.visionBridgeResolved,
             memorySettings: config.nativeSettings.memory,
             memoryService: config.nativeMemoryService,
+            rules: config.nativeSettings.rules,
             capabilityDeclarations: config.capabilityTools.declarations)
         status = "Saved"
     }

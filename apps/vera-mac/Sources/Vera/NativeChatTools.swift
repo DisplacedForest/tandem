@@ -684,7 +684,7 @@ struct NativeToolLoop: Sendable {
                                         try await checkAuthorization()
                                         guard let activity = activities.first(where: { $0.id == call.id }),
                                               try await Self.awaitConfirmation({ await confirm(activity) }) else {
-                                            throw NativeToolError.failed("The tool call was not confirmed")
+                                            throw NativeToolError.failed("The user did not approve this call, so it was not run. Do not retry it unless the user asks again.")
                                         }
                                     }
                                     try await checkAuthorization()

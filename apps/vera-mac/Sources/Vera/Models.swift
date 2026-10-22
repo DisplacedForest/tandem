@@ -58,6 +58,7 @@ struct Conversation: Identifiable, Hashable {
     var mode: NativeSessionMode = .chat
     var titleSource: ConversationTitleSource = .fallback
     var grants: [FolderGrant] = []
+    var rules: NativeConversationRules = NativeConversationRules()
 }
 
 enum ConversationTitleSource: String, Codable, Sendable {

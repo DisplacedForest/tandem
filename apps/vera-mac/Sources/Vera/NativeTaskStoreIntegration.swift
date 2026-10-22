@@ -54,8 +54,10 @@ extension ChatStore {
             guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }),
                   let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
             let kept = conversations[conversation].messages[message].displayBlocks.filter { block in
-                if case .fileChange = block { return !update.blocks.contains(where: { $0.id == block.id }) }
-                return false
+                switch block {
+                case .fileChange, .commandRun: return !update.blocks.contains(where: { $0.id == block.id })
+                default: return false
+                }
             }
             let merged = update.blocks + kept
             guard conversations[conversation].messages[message].displayBlocks != merged else { continue }

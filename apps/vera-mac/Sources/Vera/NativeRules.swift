@@ -1,0 +1,269 @@
+import Foundation
+
+enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
+    case fileEdits = "file_edits"
+    case commands
+    case trash
+    case networkSends = "network_sends"
+    case sensitive
+
+    var title: String {
+        switch self {
+        case .fileEdits: return "Edit files in granted folders"
+        case .commands: return "Run commands in granted folders"
+        case .trash: return "Move files to the Trash"
+        case .networkSends: return "Send on your behalf"
+        case .sensitive: return "Sensitive actions"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .fileEdits: return "Writing, editing, moving and creating files and folders inside a folder you granted."
+        case .commands: return "Running a shell command with a granted folder as its working directory."
+        case .trash: return "Moving a file or folder inside a grant to the Trash. Nothing is ever deleted outright."
+        case .networkSends: return "Connected services that send messages, posts or uploads for you."
+        case .sensitive: return "Credentials, payments and deleting anything outside the working tree. Always handed to you."
+        }
+    }
+
+    var isFixed: Bool { self == .sensitive }
+}
+
+enum NativeRuleChoice: String, Codable, CaseIterable, Hashable, Sendable {
+    case act
+    case actIfPreapproved = "act_if_preapproved"
+    case ask
+    case handOff = "hand_off"
+
+    var title: String {
+        switch self {
+        case .act: return "Act without asking"
+        case .actIfPreapproved: return "Act only when the request pre-approves it"
+        case .ask: return "Ask first"
+        case .handOff: return "Hand off to me"
+        }
+    }
+
+    var strictness: Int {
+        switch self {
+        case .act: return 0
+        case .actIfPreapproved: return 1
+        case .ask: return 2
+        case .handOff: return 3
+        }
+    }
+
+    static func stricter(_ lhs: NativeRuleChoice, _ rhs: NativeRuleChoice) -> NativeRuleChoice {
+        lhs.strictness >= rhs.strictness ? lhs : rhs
+    }
+}
+
+struct NativeRules: Codable, Equatable, Hashable, Sendable {
+    var choices: [NativeActionClass: NativeRuleChoice]
+
+    static let defaults = NativeRules(choices: [
+        .fileEdits: .act,
+        .commands: .ask,
+        .trash: .ask,
+        .networkSends: .handOff,
+        .sensitive: .handOff,
+    ])
+
+    init(choices: [NativeActionClass: NativeRuleChoice]) {
+        self.choices = choices
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = (try? container.decode([String: String].self)) ?? [:]
+        var parsed: [NativeActionClass: NativeRuleChoice] = [:]
+        for (key, value) in raw {
+            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
+            parsed[action] = choice
+        }
+        choices = parsed
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) }))
+    }
+
+    func choice(for action: NativeActionClass) -> NativeRuleChoice {
+        if action.isFixed { return .handOff }
+        return choices[action] ?? Self.defaults.choices[action] ?? .handOff
+    }
+
+    mutating func set(_ choice: NativeRuleChoice, for action: NativeActionClass) {
+        guard !action.isFixed else { return }
+        choices[action] = choice
+    }
+}
+
+struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
+    static let maximumPrefixes = 64
+
+    var choices: [NativeActionClass: NativeRuleChoice] = [:]
+    var approvedCommandPrefixes: [String] = []
+
+    var isEmpty: Bool { choices.isEmpty && approvedCommandPrefixes.isEmpty }
+
+    private enum CodingKeys: String, CodingKey {
+        case choices
+        case approvedCommandPrefixes = "approved_command_prefixes"
+    }
+
+    init(choices: [NativeActionClass: NativeRuleChoice] = [:], approvedCommandPrefixes: [String] = []) {
+        self.choices = choices
+        self.approvedCommandPrefixes = approvedCommandPrefixes
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = (try? container.decodeIfPresent([String: String].self, forKey: .choices)) ?? [:]
+        var parsed: [NativeActionClass: NativeRuleChoice] = [:]
+        for (key, value) in raw {
+            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
+            parsed[action] = choice
+        }
+        choices = parsed
+        let prefixes = (try? container.decodeIfPresent([String].self, forKey: .approvedCommandPrefixes)) ?? []
+        approvedCommandPrefixes = Array(prefixes.filter { !$0.isEmpty }.prefix(Self.maximumPrefixes))
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) }), forKey: .choices)
+        try container.encode(approvedCommandPrefixes, forKey: .approvedCommandPrefixes)
+    }
+
+    static func encode(_ rules: NativeConversationRules) -> String? {
+        guard !rules.isEmpty, let data = try? JSONEncoder().encode(rules) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func decode(_ raw: String?) -> NativeConversationRules {
+        guard let raw, let data = raw.data(using: .utf8),
+              let rules = try? JSONDecoder().decode(NativeConversationRules.self, from: data) else { return NativeConversationRules() }
+        return rules
+    }
+
+    mutating func tighten(_ choice: NativeRuleChoice, for action: NativeActionClass, global: NativeRules) {
+        guard !action.isFixed else { return }
+        let base = global.choice(for: action)
+        if choice.strictness <= base.strictness {
+            choices.removeValue(forKey: action)
+        } else {
+            choices[action] = choice
+        }
+    }
+
+    mutating func approve(prefix: String) {
+        let trimmed = NativeCommandPrefix.normalize(prefix)
+        guard !trimmed.isEmpty, !approvedCommandPrefixes.contains(trimmed) else { return }
+        approvedCommandPrefixes.append(trimmed)
+        if approvedCommandPrefixes.count > Self.maximumPrefixes { approvedCommandPrefixes.removeFirst() }
+    }
+
+    mutating func revoke(prefix: String) {
+        approvedCommandPrefixes.removeAll { $0 == prefix }
+    }
+
+    func isApproved(command: String) -> Bool {
+        let own = NativeCommandPrefix.prefix(of: command)
+        guard !own.isEmpty else { return false }
+        return approvedCommandPrefixes.contains { NativeCommandPrefix.matches(command: command, prefix: $0) }
+    }
+}
+
+enum NativeCommandPrefix {
+    static let words = 2
+
+    static func tokens(of command: String) -> [String] {
+        command.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    static func normalize(_ prefix: String) -> String {
+        tokens(of: prefix).prefix(words).joined(separator: " ")
+    }
+
+    static func prefix(of command: String) -> String {
+        normalize(command)
+    }
+
+    static func matches(command: String, prefix: String) -> Bool {
+        let own = tokens(of: command)
+        let wanted = tokens(of: prefix)
+        guard !wanted.isEmpty, own.count >= wanted.count else { return false }
+        return Array(own.prefix(wanted.count)) == wanted
+    }
+}
+
+enum NativeRequestPreapproval {
+    static let phrases = [
+        "no need to ask", "don't ask", "do not ask", "dont ask", "without asking", "go ahead",
+        "you have my approval", "you have my permission", "pre-approved", "preapproved", "pre approved",
+        "just do it", "don't check with me", "do not check with me", "no confirmation needed", "skip the confirmation",
+    ]
+
+    static func grants(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        return phrases.contains { lowered.contains($0) }
+    }
+}
+
+enum NativeRuleDecision: Equatable, Hashable, Sendable {
+    case act(NativeRuleReason)
+    case ask
+    case handOff
+
+    var requiresConfirmation: Bool { self == .ask }
+}
+
+enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
+    case rule
+    case requestPreapproval = "request_preapproval"
+    case userApproved = "user_approved"
+    case conversationPrefix = "conversation_prefix"
+
+    var title: String {
+        switch self {
+        case .rule: return "Ran without asking, as your rules allow"
+        case .requestPreapproval: return "Ran because your request pre-approved it"
+        case .userApproved: return "Ran after you approved it"
+        case .conversationPrefix: return "Ran under an approval you gave earlier in this chat"
+        }
+    }
+}
+
+struct NativeRuleResolver: Sendable {
+    var global: NativeRules
+    var conversation: NativeConversationRules
+    var requestText: String
+
+    func choice(for action: NativeActionClass) -> NativeRuleChoice {
+        let base = global.choice(for: action)
+        guard let tightened = conversation.choices[action] else { return base }
+        return NativeRuleChoice.stricter(base, tightened)
+    }
+
+    func decision(for action: NativeActionClass) -> NativeRuleDecision {
+        switch choice(for: action) {
+        case .act: return .act(.rule)
+        case .actIfPreapproved: return NativeRequestPreapproval.grants(requestText) ? .act(.requestPreapproval) : .ask
+        case .ask: return .ask
+        case .handOff: return .handOff
+        }
+    }
+
+    func decision(forCommand command: String) -> NativeRuleDecision {
+        let base = decision(for: .commands)
+        guard base == .ask, conversation.isApproved(command: command) else { return base }
+        return .act(.conversationPrefix)
+    }
+
+    static func handOffMessage(_ action: NativeActionClass) -> String {
+        "This action is set to hand off to the user in their rules (\(action.title.lowercased())). Do not attempt it; tell the user exactly what you would do so they can do it themselves or change the rule."
+    }
+}
