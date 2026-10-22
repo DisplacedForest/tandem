@@ -67,10 +67,11 @@ extension ChatStore {
 
     func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger,
                                edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
+                               live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
                                alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
         return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger,
-                                             edits: edits, trash: trash, alwaysAvailable: alwaysAvailable)
+                                             edits: edits, trash: trash, live: live, alwaysAvailable: alwaysAvailable)
     }
 
     func commandToolDefinitions(for turn: NativeConversationTurn, decision: NativeRuleDecision,
@@ -79,8 +80,12 @@ extension ChatStore {
         let source = nativeGrantSource
         let conversationID = turn.conversationID
         let reasons = turnCommandReasonSource
+        let rules = nativeRuleSource
+        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
-                                              reason: { reasons.reason(for: $0) }, record: record, alwaysAvailable: alwaysAvailable)
+                                              reason: { reasons.reason(for: $0) }, record: record,
+                                              live: { rules.resolver(for: conversationID, requestText: text).decision(forCommand: $0) },
+                                              alwaysAvailable: alwaysAvailable)
     }
 
     func fileChangeLedger(for turn: NativeConversationTurn) -> NativeFileChangeLedger {
@@ -121,6 +126,10 @@ extension ChatStore {
         NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText)
     }
 
+    func syncRuleSource() {
+        nativeRuleSource.replaceAll(conversations.map { ($0.id, $0.rules) })
+    }
+
     func tightenConversationRule(_ choice: NativeRuleChoice, for action: NativeActionClass, conversationID: String? = nil) {
         guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].rules.tighten(choice, for: action, global: nativeRules)
@@ -140,6 +149,7 @@ extension ChatStore {
     }
 
     private func persistRules(_ index: Int) {
+        nativeRuleSource.set(conversations[index].rules, for: conversations[index].id)
         guard let repository else { return }
         do {
             conversations[index].isPersisted = true

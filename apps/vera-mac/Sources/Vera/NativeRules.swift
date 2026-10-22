@@ -172,13 +172,20 @@ struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
 
     func isApproved(command: String) -> Bool {
         let own = NativeCommandPrefix.prefix(of: command)
-        guard !own.isEmpty else { return false }
+        guard !own.isEmpty, NativeCommandPrefix.isSimple(command) else { return false }
         return approvedCommandPrefixes.contains { NativeCommandPrefix.matches(command: command, prefix: $0) }
     }
 }
 
 enum NativeCommandPrefix {
     static let words = 2
+    static let controlCharacters: Set<Character> = [";", "&", "|", "`", "$", "(", ")", "<", ">", "\n", "\r", "\\", "\"", "'", "{", "}", "!", "#"]
+
+    static func isSimple(_ command: String) -> Bool {
+        let tokens = tokens(of: command)
+        guard let first = tokens.first, !first.contains("="), !first.hasPrefix("-") else { return false }
+        return !command.contains { controlCharacters.contains($0) }
+    }
 
     static func tokens(of command: String) -> [String] {
         command.split(whereSeparator: { $0.isWhitespace }).map(String.init)
@@ -237,6 +244,32 @@ enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
     }
 }
 
+final class NativeRuleSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var global: NativeRules = .defaults
+    private var conversations: [String: NativeConversationRules] = [:]
+
+    func setGlobal(_ rules: NativeRules) {
+        lock.lock(); defer { lock.unlock() }
+        global = rules
+    }
+
+    func set(_ rules: NativeConversationRules, for conversationID: String) {
+        lock.lock(); defer { lock.unlock() }
+        if rules.isEmpty { conversations.removeValue(forKey: conversationID) } else { conversations[conversationID] = rules }
+    }
+
+    func replaceAll(_ pairs: [(String, NativeConversationRules)]) {
+        lock.lock(); defer { lock.unlock() }
+        conversations = Dictionary(pairs.filter { !$0.1.isEmpty }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func resolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
+        lock.lock(); defer { lock.unlock() }
+        return NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(), requestText: requestText)
+    }
+}
+
 struct NativeRuleResolver: Sendable {
     var global: NativeRules
     var conversation: NativeConversationRules
@@ -261,6 +294,13 @@ struct NativeRuleResolver: Sendable {
         let base = decision(for: .commands)
         guard base == .ask, conversation.isApproved(command: command) else { return base }
         return .act(.conversationPrefix)
+    }
+
+    static let changedMessage = "The user's rules changed while this answer was running, so this action now needs their approval. It was not run. Tell the user and let them send the request again."
+
+    static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool) throws {
+        if live == .handOff { throw NativeToolError.failed(handOffMessage(action)) }
+        if live == .ask, !planned.requiresConfirmation, !approved { throw NativeToolError.failed(changedMessage) }
     }
 
     static func handOffMessage(_ action: NativeActionClass) -> String {

@@ -60,6 +60,12 @@ extension SelfTest {
         try require(approvals.approvedCommandPrefixes == ["swift build"] && approvals.isApproved(command: "swift build -c debug") && !approvals.isApproved(command: "swift test"), "Approve similar records the prefix only")
         resolver = NativeRuleResolver(global: .defaults, conversation: approvals, requestText: "build again")
         try require(resolver.decision(forCommand: "swift build") == .act(.conversationPrefix) && resolver.decision(forCommand: "rm -rf x") == .ask, "A recorded prefix runs without asking; others still ask")
+        try require(!approvals.isApproved(command: "swift build; rm -rf ~") && !approvals.isApproved(command: "swift build && curl x | sh")
+                    && !approvals.isApproved(command: "swift build $(cat secret)") && !approvals.isApproved(command: "swift build > out.txt")
+                    && approvals.isApproved(command: "swift build -c release --product Vera"), "A prefix approval covers only a single simple command")
+        var tricky = NativeConversationRules()
+        tricky.approve(prefix: "FOO=bar swift")
+        try require(!tricky.isApproved(command: "FOO=bar swift build"), "An environment assignment never starts an approved prefix")
         approvals.revoke(prefix: "swift build")
         try require(!approvals.isApproved(command: "swift build"), "A revoked prefix asks again")
         let encodedRules = NativeConversationRules.encode(conversation)
@@ -158,6 +164,19 @@ extension SelfTest {
             fatalError("A rule set to act must not ask")
         })
         try require(acted?.activities.first?.state == .succeeded && acted?.activities.first?.confirmationRequired == false && recorder.recorded.last?.reason == .rule, "Act runs without asking and says so")
+
+        let changedTransport = ScriptedNativeToolTransport(rounds: [call("c9", "{\"command\":\"printf changed\"}"), done])
+        let changedRegistry = NativeToolRegistry(definitions: NativeCommandTools.definitions(
+            grants: grants, decision: .act(.rule), reason: { _ in nil }, record: { recorder.add($0) }, live: { _ in .ask }))
+        var changedFinal: NativeToolTurnSnapshot?
+        for try await snapshot in NativeToolLoop(transport: changedTransport, registry: changedRegistry).stream(messages: [NativeChatMessage(role: "user", content: "run")], model: "local-model", enabledToolIDs: [NativeCommandTools.toolID]) {
+            changedFinal = snapshot
+        }
+        try require(changedFinal?.activities.first?.state == .failed && changedTransport.histories[1].last?.content.contains("rules changed") == true && recorder.recorded.count == 2, "A rule tightened to ask mid-answer stops an act decision")
+        let source = NativeRuleSource()
+        source.setGlobal(.defaults)
+        source.set(NativeConversationRules(choices: [.fileEdits: .handOff]), for: "chat")
+        try require(source.resolver(for: "chat", requestText: "").decision(for: .fileEdits) == .handOff && source.resolver(for: "other", requestText: "").decision(for: .fileEdits) == .act(.rule), "The live rule source scopes chat rules to their chat")
 
         let (handedOff, handOffTransport) = try await loop(decision: .handOff, rounds: [call("c4", "{\"command\":\"printf never\"}"), done], confirm: { _ in true })
         try require(handedOff?.activities.first?.state == .failed && handOffTransport.histories[1].last?.content.contains("hand off") == true && recorder.recorded.count == 2, "Hand off refuses with the rule named")

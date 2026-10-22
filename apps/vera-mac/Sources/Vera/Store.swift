@@ -88,6 +88,7 @@ final class ChatStore: ObservableObject {
     private(set) var nativeRules: NativeRules
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
+    let nativeRuleSource = NativeRuleSource()
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
@@ -224,6 +225,7 @@ final class ChatStore: ObservableObject {
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
         self.nativeRules = nativeRules
+        nativeRuleSource.setGlobal(nativeRules)
         self.capabilityDeclarations = capabilityDeclarations
         self.nativeMCP = nativeMCP
         self.nativeToolRegistry = nativeToolRegistry
@@ -387,7 +389,7 @@ final class ChatStore: ObservableObject {
         visionBridgeConfig = visionBridge
         if let memorySettings { nativeMemorySettings = memorySettings }
         nativeMemoryService = memoryService
-        if let rules { nativeRules = rules }
+        if let rules { updateNativeRules(rules) }
         if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
         client = VeraAPIClient.resolved(model: cfg.model)
         if nativeTaskLocalEngine == nil { nativeTaskEngine.set(client?.base) }
@@ -417,6 +419,7 @@ final class ChatStore: ObservableObject {
         }
         ensureVeraThread()
         syncGrantSource()
+        syncRuleSource()
         if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
             select(previousSelected)
             section = previousSection
@@ -774,6 +777,7 @@ final class ChatStore: ObservableObject {
 
     func updateNativeRules(_ rules: NativeRules) {
         nativeRules = rules
+        nativeRuleSource.setGlobal(rules)
     }
 
     func updateNativeMemory(
@@ -2087,9 +2091,11 @@ final class ChatStore: ObservableObject {
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
         let resolver = ruleResolver(for: id, requestText: text)
         if !turnGrants.isEmpty && folderConsented {
+            let rules = nativeRuleSource
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
-                edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash), alwaysAvailable: true))
+                edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
+                live: { rules.resolver(for: id, requestText: text).decision(for: $0) }, alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(

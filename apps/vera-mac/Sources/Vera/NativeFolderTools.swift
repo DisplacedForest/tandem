@@ -38,12 +38,13 @@ enum NativeFolderTools {
 
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], ledger: NativeFileChangeLedger,
                             edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
+                            live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
         let editConfirmation: NativeToolConfirmation = edits.requiresConfirmation ? .required : .none
         let editGate: @Sendable () throws -> Void = {
-            if edits == .handOff { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.fileEdits)) }
+            try NativeRuleResolver.gate(live: live(.fileEdits) ?? edits, planned: edits, action: .fileEdits, approved: edits.requiresConfirmation)
         }
         return [
             NativeToolDefinition(
@@ -163,7 +164,7 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, isAvailable: available,
                 execute: { arguments in
-                    if trash == .handOff { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.trash)) }
+                    try NativeRuleResolver.gate(live: live(.trash) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
                     let location = try access().locate(try requiredString(arguments, "path"))
                     return try moveToTrash(location, ledger: ledger)
                 }),

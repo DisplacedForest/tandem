@@ -69,6 +69,7 @@ enum NativeCommandTools {
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], decision: NativeRuleDecision,
                             reason: @escaping @Sendable (String) -> NativeRuleReason?,
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
+                            live: @escaping @Sendable (String) -> NativeRuleDecision? = { _ in nil },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
@@ -91,7 +92,9 @@ enum NativeCommandTools {
                     guard command.utf8.count <= NativeCommandLimits.maximumCommandLength else {
                         throw NativeToolError.invalidArguments("The command is too long")
                     }
-                    if decision == .handOff { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.commands)) }
+                    let activityID = NativeToolCallContext.activityID ?? UUID().uuidString.lowercased()
+                    let approvedNow = reason(activityID)
+                    try NativeRuleResolver.gate(live: live(command) ?? decision, planned: decision, action: .commands, approved: approvedNow != nil)
                     let current = access()
                     let location: NativeFolderLocation
                     if let requested = arguments.folderString("directory") {
@@ -103,12 +106,11 @@ enum NativeCommandTools {
                     let directory = try NativeFolderIO.walk(location, components: location.components)
                     let requestedTimeout = arguments.folderInt("timeout_seconds").map { Duration.seconds(max(1, $0)) } ?? NativeCommandLimits.defaultTimeout
                     let limit = min(requestedTimeout, NativeCommandLimits.maximumTimeout)
-                    let activityID = NativeToolCallContext.activityID ?? UUID().uuidString.lowercased()
                     let outcome = try await NativeCommandRunner.run(command: command, directory: directory, timeout: limit, environment: environment())
                     let run = NativeCommandRun(
                         id: activityID, command: command, directory: location.path,
                         outcome: outcome.timedOut ? .timedOut : (outcome.canceled ? .canceled : .ran),
-                        reason: reason(activityID) ?? staticReason,
+                        reason: approvedNow ?? staticReason,
                         exitCode: outcome.exitCode.map(Int.init), signal: outcome.signal.map(Int.init),
                         stdout: outcome.stdout, stderr: outcome.stderr,
                         stdoutTruncated: outcome.stdoutTruncated, stderrTruncated: outcome.stderrTruncated,
