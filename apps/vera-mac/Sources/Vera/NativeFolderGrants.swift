@@ -263,7 +263,7 @@ enum NativeLineDiff {
         var omitted = 0
         for (index, line) in all.enumerated() where keep[index] {
             if emitted >= maximumLines {
-                omitted += 1
+                if case .same = line {} else { omitted += 1 }
                 continue
             }
             if index > 0, !keep[index - 1], !current.isEmpty {
