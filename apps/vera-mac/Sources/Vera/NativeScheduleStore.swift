@@ -110,7 +110,7 @@ final class NativeScheduleStore: Sendable {
         try database.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT * FROM native_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at
-                """, arguments: [now.timeIntervalSince1970]).compactMap { try? Self.schedule($0) }
+                """, arguments: [now.timeIntervalSince1970]).map { try Self.schedule($0) }
         }
     }
 
