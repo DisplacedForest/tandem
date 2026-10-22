@@ -734,6 +734,20 @@ final class ConfigStore: ObservableObject {
         NativeWebSearch.resolvedBase()
     }
 
+    static let menuBarKey = "menu_bar_keep_running"
+
+    var menuBarKeepRunning: Bool? {
+        switch self[Self.menuBarKey] {
+        case "on": return true
+        case "off": return false
+        default: return nil
+        }
+    }
+
+    func setMenuBarKeepRunning(_ value: Bool) {
+        self[Self.menuBarKey] = value ? "on" : "off"
+    }
+
     var voiceBase: URL? {
         let env = ProcessInfo.processInfo.environment["VERA_VOICE_BASE"]
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["voice_base"] as? String)

@@ -367,6 +367,7 @@ enum SelfTest {
         runNativeContext()
         await runNativeTools()
         await runNativeWebTools()
+        do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
         do {

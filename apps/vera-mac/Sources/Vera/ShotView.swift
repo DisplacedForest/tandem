@@ -37,7 +37,8 @@ struct ShotView: View {
                 case .pulse: pulse
                 case .memory: memory
                 case .agentic: agenticBoard
-                case .projects, .artifacts, .scheduled, .integrations: DestinationPlaceholder(section: section)
+                case .scheduled: ScheduledView(renderSafe: true)
+                case .projects, .artifacts, .integrations: DestinationPlaceholder(section: section)
                 case .vera, .chat: if emptyChat { emptyChatShot } else { chat }
                 }
             }

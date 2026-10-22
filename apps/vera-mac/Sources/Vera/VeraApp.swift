@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let bundled = Bundle.main.bundleURL.pathExtension == "app"
         if !bundled, let icon = Brand.icon { NSApp.applicationIconImage = icon }
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    @MainActor static var keepsRunningAfterLastWindowClosed: () -> Bool = { false }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !Self.keepsRunningAfterLastWindowClosed()
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
             await NativePiNativeContext.presentation.stop()
@@ -80,6 +83,10 @@ struct VeraApp: App {
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
         storeInstance.generatesConversationTitles = fixture == nil
+        storeInstance.menuBarPreference = configInstance.menuBarKeepRunning
+        if fixture == nil {
+            AppDelegate.keepsRunningAfterLastWindowClosed = { [weak storeInstance] in storeInstance?.keepsRunningInMenuBar ?? false }
+        }
         if fixture == nil {
             NativePiNativeContext.presentation = NativePiProduction.presentation(config: configInstance, store: storeInstance)
         }
@@ -90,7 +97,7 @@ struct VeraApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Tandem") {
+        WindowGroup("Tandem", id: "main") {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(voice)
@@ -114,6 +121,14 @@ struct VeraApp: App {
             }
         }
 
+        MenuBarExtra(isInserted: .constant(NativePiNativeContext.candidate == nil && store.keepsRunningInMenuBar)) {
+            MenuBarStatusMenu()
+                .environmentObject(store)
+                .environmentObject(config)
+        } label: {
+            Label(config.assistantName, systemImage: "sparkle")
+        }
+
         Settings {
             SettingsView()
                 .environmentObject(config)
@@ -122,5 +137,35 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .preferredColorScheme(config.colorSchemeOverride)
         }
+    }
+}
+
+struct MenuBarStatusMenu: View {
+    @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var config: ConfigStore
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        if let next = store.nextScheduledRun {
+            Text("Next: \(next.schedule.title), \(NativeScheduleClock.relative(next.at, now: Date(), timeZone: next.schedule.timeZone))")
+        } else {
+            Text("Nothing scheduled")
+        }
+        let running = store.runningScheduledWorkCount
+        if running > 0 {
+            Text(running == 1 ? "1 scheduled run in progress" : "\(running) scheduled runs in progress")
+        }
+        Divider()
+        Button("Open \(config.assistantName)") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Button("Scheduled work") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+            store.section = .scheduled
+        }
+        Divider()
+        Button("Quit Tandem") { NSApp.terminate(nil) }
     }
 }

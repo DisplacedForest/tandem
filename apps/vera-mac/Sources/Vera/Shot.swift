@@ -355,6 +355,7 @@ enum Shot {
             case "memory": section = .memory
             default: section = .chat
             }
+            if view == "scheduled" { NativeScheduleShotFixture.populate(store) }
             content = AnyView(
                 ShotView(store: store, section: section,
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",

@@ -282,6 +282,18 @@ Settings, Search holds the SearXNG URL the app uses for web search, page reading
 
 Saving a URL turns on Web search, Read web pages and Background work in Settings, Tools. While it is unset, the web search tool is not offered to the model, the model is told search is not set up, and background research is refused with a plain explanation. Page reading only fetches public http and https pages. It refuses private, loopback, link-local and `.local` hosts, follows at most five redirects, and returns at most 8,000 characters by default (20,000 at most) labelled as untrusted page content.
 
+### Scheduled work
+
+The **Scheduled** destination in the rail creates and manages recurring research and document runs. To make one, give it a name, choose what to do (research into a question, or a document written from a brief), choose where results go (the Vera thread, or a chat of its own named after the schedule), and pick a repeat. The options are every day at a time, weekdays at a time, weekly on a day and time, every N hours (1 to 168), or once at a date and time. The app always shows the cadence in plain words, for example "Every day at 7:00 AM", "Weekdays at 8:30 AM", "Every Monday at 9:00 AM", "Every 6 hours" or "Once on Oct 24 at 3:00 PM". No cron syntax is used. The time zone in effect when you create the schedule is saved with it, so the clock time doesn't move if the Mac travels.
+
+Each run appends a turn to the owning chat: the instruction as the user message, then a reply with the same task card the in-app task engine uses, along with its report or document, Stop and Retry. Each schedule has a run history showing the scheduled time, the outcome (Finished, Couldn't finish, Stopped, Missed, Skipped or Couldn't start), a short note where it helps, and Open to jump to the chat that holds the run. Rows offer Run now, Pause or Resume, Edit and Delete. A one-time schedule turns itself off after its time. Deleting a schedule removes its history but keeps the chats. Schedules and history live in the app's local history database next to tasks, and nothing exists after an upgrade until you create a schedule.
+
+The scheduler runs inside the app, so it only fires while Tandem is running. If a scheduled time passes while the app is closed, or the Mac is asleep past a five-minute grace window, that run is recorded as Missed with its scheduled time and is never caught up. The next occurrence goes ahead normally. A run that starts inside the grace window notes how many minutes late it began. If the previous run is still going when the next time comes, the new occurrence is recorded as Skipped, so only one run per schedule happens at a time. Research schedules need the search URL from the Search tab. Without it, a run is recorded as Couldn't start with that reason.
+
+Once a schedule exists, Tandem keeps running in the menu bar after you close the window, and the Scheduled view says so. The menu bar item is named after your assistant and shows the next scheduled run and how many scheduled runs are in progress, with Open, Scheduled work and Quit. To change this, use **Keep running in the menu bar** in Settings, Identity, beside Appearance. Turning it off makes closing the window quit the app. It's stored as `menu_bar_keep_running` in `~/.vera/config.json` with the values `on` or `off`. When unset, it behaves as on once a schedule exists.
+
+This is separate from the server scheduler in [section 6](#6-the-scheduler), which drives Pulse and veins on vera-api. In-app schedules only drive research and document runs in the app.
+
 ### Migrating Open WebUI knowledge collections
 
 If you are moving off an existing Open WebUI instance, its knowledge collections can be
@@ -455,6 +467,8 @@ runtime copy-out, both venvs, launchd agents), and the image/vision services shi
 templates installed via `scripts/install-launchd.sh`.
 
 ## 6. The scheduler
+
+In-app schedules for research and documents are separate and are described under [Scheduled work](#scheduled-work) in the Mac app section.
 
 vera-api runs all recurring work itself — no external cron. Defaults:
 

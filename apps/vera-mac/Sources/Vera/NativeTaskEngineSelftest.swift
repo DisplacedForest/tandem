@@ -124,8 +124,9 @@ extension SelfTest {
         try await taskEndToEnd()
         try await taskGatherRelaunch()
         try await taskDocumentEndToEnd()
+        try await taskScheduledRun()
         try await taskArbiterContract()
-        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, retry, relaunch, gather resume, documents, admission)")
+        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, retry, relaunch, gather resume, documents, scheduled runs, admission)")
     }
 
     private static func researchPayload(_ query: String = "What color is the fictional moon Luma?") throws -> Data {
@@ -503,6 +504,65 @@ extension SelfTest {
         try require(projection.snapshot?.result?.sources.count == 3, "Sources from before and after the relaunch are all kept")
         await secondRun.stop()
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private static func taskScheduledRun() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let counter = NativeTaskEngineCounter()
+        let harness = try NativeTaskEngineHarness.make(repository: repository, counter: counter) { job in
+            job.phase == "plan" ? "{\"subquestions\": [\"What is Luma?\"]}" : "Luma is blue [1].\n\nSources\n[1] Fictional moon guide"
+        }
+        try await harness.start()
+        let scheduleStore = NativeScheduleStore(database: repository.database)
+        let zone = TimeZone(identifier: "America/Chicago")!
+        let start = Date()
+        var schedule = try NativeSchedule(owner: .conversation, workerType: "research", title: "Moon check",
+                                          instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)
+        schedule.advance(after: start, from: nil)
+        try scheduleStore.save(schedule)
+        let conversation = Conversation(id: UUID().uuidString, title: schedule.title, messages: [], updatedAt: start)
+        try repository.saveConversation(conversation)
+        let service = harness.service
+        let profile = harness.profile
+        let scheduler = NativeScheduler(store: scheduleStore, now: { Date().addingTimeInterval(6 * 3600 + 30) }, lookup: { run in
+            guard let id = run.taskReferenceID, let uuid = UUID(uuidString: id), let reference = try? repository.taskReference(id: uuid) else { return nil }
+            switch (try? repository.taskProjection(id: uuid))?.snapshot?.state ?? reference.snapshot?.state {
+            case .completed: return NativeScheduleTaskLink(referenceID: id, status: .completed)
+            case .failed: return NativeScheduleTaskLink(referenceID: id, status: .failed)
+            case .canceled: return NativeScheduleTaskLink(referenceID: id, status: .stopped)
+            default: return NativeScheduleTaskLink(referenceID: id, status: .active)
+            }
+        }, fire: { fired, _, bind in
+            let user = Message(role: .user, text: fired.instruction)
+            let reply = Message(role: .assistant, text: "", state: .complete)
+            do {
+                let ordinal = try repository.messages(conversationID: conversation.id).count
+                try repository.saveMessage(user, conversationID: conversation.id, ordinal: ordinal)
+                try repository.saveMessage(reply, conversationID: conversation.id, ordinal: ordinal + 1)
+                await bind(conversation.id, reply.id.uuidString)
+                let origin = NativeTaskOrigin(conversationID: conversation.id, userMessageID: user.id, assistantMessageID: reply.id)
+                let reference = try await service.submit(origin: origin, request: try fired.taskRequest(), profile: profile)
+                return .started(taskReferenceID: reference.id.uuidString)
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        })
+        try require(await scheduler.tick(), "The due schedule fires through the engine")
+        let running = try scheduleStore.runs(scheduleID: schedule.id)
+        try require(running.count == 1 && running[0].outcome == .running && running[0].conversationID == conversation.id, "The run is bound to the conversation that holds the task")
+        let referenceID = UUID(uuidString: running[0].taskReferenceID!)!
+        try require(try await harness.wait { try repository.taskProjection(id: referenceID)?.snapshot?.state == .completed }, "The scheduled research completes")
+        try require(try await harness.waitAsync {
+            _ = await scheduler.tick()
+            return try scheduleStore.runs(scheduleID: schedule.id).first?.outcome == .completed
+        }, "The run settles as finished once the task completes")
+        let messages = try repository.messages(conversationID: conversation.id)
+        try require(messages.count == 2 && messages[0].role == .user && messages[0].text == schedule.instruction, "The instruction is the user turn")
+        try require(messages[1].displayBlocks.contains { if case .artifact = $0 { return true }; return false }, "The reply holds the report artifact")
+        let saved = try scheduleStore.get(schedule.id)!
+        try require(saved.lastOutcome == .completed && saved.nextRunAt! > Date().addingTimeInterval(6 * 3600), "The schedule shows the outcome and its next run")
+        await harness.stop()
     }
 
     private static func taskDocumentEndToEnd() async throws {
