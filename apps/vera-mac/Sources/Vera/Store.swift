@@ -2211,6 +2211,12 @@ final class ChatStore: ObservableObject {
                         memoryServiceState = .retrievalUnavailable("Saved memory could not be checked before sending.")
                     }
                 }
+                if var finalTrace = memoryRetrievalTraces[id] {
+                    finalTrace.injected = selectedMemories.enumerated().map { index, item in
+                        NativeMemoryTraceEntry(id: item.record.id, title: item.record.title, source: "injected", rank: index + 1, score: item.score)
+                    }
+                    memoryRetrievalTraces[id] = finalTrace
+                }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
                     contracts.insert(.citations)

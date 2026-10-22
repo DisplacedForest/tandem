@@ -68,12 +68,11 @@ extension ChatStore {
         }
         func abandoned() -> NativeMemoryRetrievalResult {
             trace.notes.append("Memory settings changed while this turn was being prepared, so no memory was used.")
-            memoryServiceState = .retrievalUnavailable("Memory settings changed while the request was being prepared.")
             return NativeMemoryRetrievalResult(selected: [], trace: trace)
         }
         func stillEligible(_ candidates: [NativeMemoryCandidate]) throws -> [NativeMemoryCandidate] {
             let ranked = candidates.map { NativeMemoryRanked(record: $0.record, score: $0.fused, revision: $0.revision) }
-            let kept = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: now, sensitive: nativeMemorySettings.sensitiveHandling)
+            let kept = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: nativeMemoryNow(), sensitive: nativeMemorySettings.sensitiveHandling)
             let ids = Set(kept.map(\.record.id))
             return candidates.filter { ids.contains($0.record.id) }
         }
@@ -163,9 +162,10 @@ extension ChatStore {
                 trace.rerankNote = "No rerank ran: no rerank model is set."
             }
             guard settingsUnchanged() else { return abandoned() }
+            ordered = try stillEligible(ordered)
             let budgeted = NativeMemoryRetrieval.budget(ordered)
             let ranked = budgeted.map { NativeMemoryRanked(record: $0.record, score: $0.rerank ?? $0.fused, revision: $0.revision) }
-            let selected = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: now, sensitive: sensitive)
+            let selected = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: nativeMemoryNow(), sensitive: sensitive)
             trace.injected = selected.enumerated().map { index, item in
                 NativeMemoryTraceEntry(id: item.record.id, title: item.record.title, source: "injected", rank: index + 1, score: item.score)
             }
