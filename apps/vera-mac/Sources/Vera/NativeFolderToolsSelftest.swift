@@ -287,8 +287,15 @@ extension SelfTest {
         guard case .fileChange(let saved)? = reloaded?.displayBlocks.first else { throw NativeTaskFixture.Failure.assertion("File change blocks survive reload") }
         try require(saved.before == "a\nb\n" && saved.after == "a\nc\n" && saved.kind == .edited, "The diff content survives reload")
         let lateChange = NativeFileChange(path: root + "/late.txt", kind: .created, after: "late")
-        try repository.saveDisplayBlocks(reply.displayBlocks + [.fileChange(lateChange)], messageID: reply.id)
-        try require(try repository.messages(conversationID: conversation.id).first?.displayBlocks.count == 2, "A change landing after the turn ended is still saved on the message")
+        let appended = try repository.appendDisplayBlock(.fileChange(lateChange), messageID: reply.id)
+        try require(appended?.count == 2 && (try repository.appendDisplayBlock(.fileChange(lateChange), messageID: reply.id))?.count == 2,
+                    "A change landing after the turn ended is appended to the stored message once")
+        try require(try repository.messages(conversationID: conversation.id).first?.displayBlocks.count == 2, "The appended change survives reload")
+        try require(try repository.appendDisplayBlock(.fileChange(lateChange), messageID: UUID()) == nil, "Appending to a missing message reports nothing stored")
+        do {
+            _ = try access.locate(root + "/.tandem-0123456789abcdef")
+            throw NativeTaskFixture.Failure.assertion("Temporary files are not addressable")
+        } catch NativeFolderAccessError.invalidPath {}
 
         let hunks = NativeLineDiff.hunks(before: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n", after: "one\ntwo\nthree\nFOUR\nfive\nsix\nseven\n", context: 1)
         try require(hunks.count == 1 && hunks[0].lines == [.same("three"), .removed("four"), .added("FOUR"), .same("five")], "Diff hunks show changed lines with context: \(hunks)")

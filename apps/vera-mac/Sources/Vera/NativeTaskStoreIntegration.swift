@@ -52,9 +52,14 @@ extension ChatStore {
         var changed = false
         for update in updates {
             guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }),
-                  let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }),
-                  conversations[conversation].messages[message].displayBlocks != update.blocks else { continue }
-            conversations[conversation].messages[message].displayBlocks = update.blocks
+                  let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
+            let kept = conversations[conversation].messages[message].displayBlocks.filter { block in
+                if case .fileChange = block { return !update.blocks.contains(where: { $0.id == block.id }) }
+                return false
+            }
+            let merged = update.blocks + kept
+            guard conversations[conversation].messages[message].displayBlocks != merged else { continue }
+            conversations[conversation].messages[message].displayBlocks = merged
             changed = true
         }
         if changed { reloadNativeTaskReferences() }

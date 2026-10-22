@@ -437,10 +437,14 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
-    func saveDisplayBlocks(_ blocks: [NativeDisplayBlock], messageID: UUID) throws {
-        let encoded = try nativeTaskEncoded(blocks)
+    func appendDisplayBlock(_ block: NativeDisplayBlock, messageID: UUID) throws -> [NativeDisplayBlock]? {
         try database.write { db in
-            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [encoded, messageID.uuidString])
+            guard let row = try Row.fetchOne(db, sql: "SELECT display_blocks_json FROM messages WHERE id = ?", arguments: [messageID.uuidString]) else { return nil }
+            let bytes: Data? = row["display_blocks_json"]
+            var blocks = try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? []
+            if !blocks.contains(where: { $0.id == block.id }) { blocks.append(block) }
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [try nativeTaskEncoded(blocks), messageID.uuidString])
+            return blocks
         }
     }
 

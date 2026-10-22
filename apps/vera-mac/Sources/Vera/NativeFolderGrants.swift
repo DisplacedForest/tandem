@@ -91,7 +91,7 @@ struct NativeFolderAccess: Sendable {
 
     func locate(_ requested: String) throws -> NativeFolderLocation {
         guard !requested.isEmpty, !requested.contains("\0"), !requested.contains("\n"), !requested.contains("\r"), requested.utf8.count <= 4096,
-              !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: { $0 == "." || $0 == ".." }) else {
+              !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: { $0 == "." || $0 == ".." || $0.hasPrefix(NativeFolderIO.temporaryPrefix) }) else {
             throw NativeFolderAccessError.invalidPath(requested)
         }
         guard !roots.isEmpty else { throw NativeFolderAccessError.noGrants }

@@ -50,16 +50,19 @@ extension ChatStore {
     }
 
     func attachFileChange(_ change: NativeFileChange, turn: NativeConversationTurn) {
-        guard let conversation = conversations.firstIndex(where: { $0.id == turn.conversationID }),
-              let reply = conversations[conversation].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) else { return }
-        let id = "file:" + change.id
-        guard !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == id }) else { return }
-        conversations[conversation].messages[reply].displayBlocks.append(.fileChange(change))
-        let blocks = conversations[conversation].messages[reply].displayBlocks
+        let block = NativeDisplayBlock.fileChange(change)
+        var stored: [NativeDisplayBlock]?
         do {
-            try (repository as? LocalChatRepository)?.saveDisplayBlocks(blocks, messageID: turn.assistantMessageID)
+            stored = try (repository as? LocalChatRepository)?.appendDisplayBlock(block, messageID: turn.assistantMessageID)
         } catch {
             grantError = "A file change couldn't be saved to the chat: \(error.localizedDescription)"
+        }
+        guard let conversation = conversations.firstIndex(where: { $0.id == turn.conversationID }),
+              let reply = conversations[conversation].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) else { return }
+        if let stored {
+            conversations[conversation].messages[reply].displayBlocks = stored
+        } else if !conversations[conversation].messages[reply].displayBlocks.contains(where: { $0.id == block.id }) {
+            conversations[conversation].messages[reply].displayBlocks.append(block)
         }
     }
 

@@ -36,6 +36,7 @@ final class NativeFolderDescriptor: @unchecked Sendable {
 
 enum NativeFolderIO {
     static let chunk = 65_536
+    static let temporaryPrefix = ".tandem-"
 
     static func errno(_ context: String) -> NativeToolError {
         NativeToolError.failed("\(context): \(String(cString: strerror(Darwin.errno)))")
@@ -203,7 +204,7 @@ enum NativeFolderIO {
     }
 
     static func writeAtomically(_ directory: NativeFolderDescriptor, _ name: String, display: String, data: Data) throws {
-        let temporary = ".tandem-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
+        let temporary = temporaryPrefix + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
         let existing = status(directory, name)
         if let existing {
             guard (existing.st_mode & S_IFMT) == S_IFREG else { throw NativeFolderAccessError.notADirectory(display) }
