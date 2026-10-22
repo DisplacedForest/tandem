@@ -104,6 +104,13 @@ final class ChatStore: ObservableObject {
     var nativeTaskTracker: NativeTaskTracker?
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
+    @Published var schedules: [NativeSchedule] = []
+    @Published var scheduleRuns: [String: [NativeScheduleRun]] = [:]
+    @Published var scheduleError: String?
+    @Published var menuBarPreference: Bool?
+    var nativeScheduleStore: NativeScheduleStore?
+    var nativeScheduler: NativeScheduler?
+    var nativeSchedulerLoop: Task<Void, Never>?
     let attachmentStore: NativeAttachmentStore
     private let artifactPersistenceEnabled: Bool
     var nativeKnowledgeQuery: @Sendable (URL, String, [String]) async -> KnowledgeClient.QueryResult = { base, query, collections in
@@ -403,6 +410,7 @@ final class ChatStore: ObservableObject {
         }
         resumeConversationTurns()
         startNativeTaskRecovery()
+        startNativeScheduler()
         await refreshPulse()
         reloadNativeMemory()
         runMemoryGroom()

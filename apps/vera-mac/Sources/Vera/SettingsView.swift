@@ -844,6 +844,7 @@ private struct MaintenanceControls: View {
 
 private struct IdentityTab: View {
     @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
     var body: some View {
         Form {
             Section("Identity") {
@@ -859,6 +860,16 @@ private struct IdentityTab: View {
                     Text("Dark").tag("dark")
                 }
                 .pickerStyle(.segmented)
+            }
+            Section("Menu bar") {
+                Toggle("Keep running in the menu bar", isOn: Binding(
+                    get: { store.keepsRunningInMenuBar },
+                    set: { value in
+                        config.setMenuBarKeepRunning(value)
+                        store.menuBarPreference = value
+                        try? config.save()
+                    }))
+                .help("Closing the window leaves Tandem in the menu bar so scheduled work keeps running. It turns on by itself once you create a schedule.")
             }
             SaveSection()
         }

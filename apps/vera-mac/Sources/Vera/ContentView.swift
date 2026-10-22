@@ -30,7 +30,8 @@ struct ContentView: View {
                         case .pulse: PulseView()
                         case .memory: MemoryView()
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
-                        case .projects, .artifacts, .scheduled, .integrations:
+                        case .scheduled: ScheduledView()
+                        case .projects, .artifacts, .integrations:
                             DestinationPlaceholder(section: store.section)
                         }
                     }

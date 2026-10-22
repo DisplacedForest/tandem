@@ -254,6 +254,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(sql: "UPDATE conversations SET title_source = 'kept'")
         }
         migrator.registerMigration("nativeTaskEngineV19") { db in try NativeTaskStore.migrate(db) }
+        migrator.registerMigration("nativeSchedulesV20") { db in try NativeScheduleStore.migrate(db) }
         try migrator.migrate(database)
     }
 

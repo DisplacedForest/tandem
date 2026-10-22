@@ -76,6 +76,8 @@ extension ChatStore {
     }
 
     func stopNativeTaskRecovery() {
+        nativeSchedulerLoop?.cancel()
+        nativeSchedulerLoop = nil
         if let engine = nativeTaskLocalEngine { Task { await engine.stop() } }
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
