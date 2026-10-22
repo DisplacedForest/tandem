@@ -4,8 +4,8 @@
 
 **A self-hosted AI assistant for your home.**
 
-[![CI](https://github.com/DisplacedForest/vera/actions/workflows/ci.yml/badge.svg)](https://github.com/DisplacedForest/vera/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/DisplacedForest/vera)](https://github.com/DisplacedForest/vera/releases/latest)
+[![CI](https://github.com/DisplacedForest/tandem/actions/workflows/ci.yml/badge.svg)](https://github.com/DisplacedForest/tandem/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/DisplacedForest/tandem)](https://github.com/DisplacedForest/tandem/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](apps/vera-mac)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](services/vera-api)
@@ -193,7 +193,7 @@ One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model 
 **Backend** (any Docker host: pulls the released image from GHCR):
 
 ```sh
-git clone https://github.com/DisplacedForest/vera.git && cd vera
+git clone https://github.com/DisplacedForest/tandem.git && cd tandem
 cp .env.example .env     # fill in the backend services you use; everything is optional
 docker compose up -d
 docker compose logs vera-api | head -60    # the config report: what's wired, what's not
@@ -201,7 +201,7 @@ docker compose logs vera-api | head -60    # the config report: what's wired, wh
 
 Local source builds can reuse a Keychain-owned signing certificate; see [local signing setup](docs/SETUP.md#stable-signing-for-local-builds).
 
-**App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
+**App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/tandem/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
 
 **Backend without Docker** (macOS arm64): each release also ships `vera-api-macos-arm64.zip`, a self-contained engine binary: verify the checksum, unzip, run; data lands in `~/.vera/data` (see `docs/SETUP.md`).
 

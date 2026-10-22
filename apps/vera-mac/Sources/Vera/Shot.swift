@@ -1260,7 +1260,7 @@ struct UpdateShotView: View {
         let c = UpdateChecker()
         c.available = ReleaseInfo(
             tag_name: "v0.2.0",
-            html_url: "https://github.com/DisplacedForest/vera/releases/latest",
+            html_url: "https://github.com/DisplacedForest/tandem/releases/latest",
             body: nil,
             assets: [.init(name: "Tandem.app.zip", browser_download_url: "https://example.invalid/Tandem.app.zip")])
         checker = c
