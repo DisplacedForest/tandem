@@ -47,22 +47,27 @@ actor NativeScheduler {
 
     @discardableResult
     func tick() async -> Bool {
-        let previousHeartbeat = try? store.heartbeat()
+        let tickStart = now()
+        let baseline = (try? store.heartbeat()) ?? tickStart
         var changed = settleRuns()
-        var processed: Set<String> = []
         var committed = true
-        var verified = now()
-        for _ in 0..<8 {
+        var verified = tickStart
+        var passes = 0
+        while true {
             verified = now()
             guard let due = try? store.due(at: verified) else { return changed }
-            let pending = due.filter { !firing.contains($0.id) && !processed.contains($0.id) }
-            if pending.isEmpty { break }
+            if due.isEmpty { break }
+            let pending = due.filter { !firing.contains($0.id) }
+            passes += 1
+            if pending.isEmpty || passes > 8 {
+                committed = false
+                break
+            }
             for schedule in pending {
-                processed.insert(schedule.id)
                 guard let scheduledFor = schedule.nextRunAt else { continue }
                 let moment = now()
                 guard scheduledFor <= moment else { continue }
-                let offlineSince: Date? = previousHeartbeat.flatMap { moment.timeIntervalSince($0) > downtime ? $0 : nil }
+                let offlineSince: Date? = moment.timeIntervalSince(baseline) > downtime ? baseline : nil
                 var occurrences = [scheduledFor]
                 var cursor = scheduledFor
                 while let following = schedule.cadence.nextRun(after: cursor, previous: cursor, timeZone: schedule.timeZone), following <= moment {
