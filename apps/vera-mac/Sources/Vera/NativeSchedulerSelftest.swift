@@ -236,6 +236,12 @@ extension SelfTest {
         _ = await scheduler.tick()
         let lostSaved = try store.run(lost.id)!
         try require(lostSaved.outcome == .couldNotStart && lostSaved.detail.contains("closed before"), "A run that never reached the engine says so")
+        let claimedOnly = NativeScheduleRun(scheduleID: quiet.id, scheduledFor: clock.now, startedAt: clock.now, outcome: .running)
+        try store.saveRun(claimedOnly)
+        _ = await scheduler.tick()
+        let claimedSaved = try store.run(claimedOnly.id)!
+        try require(claimedSaved.outcome == .couldNotStart && claimedSaved.detail.contains("never reached"), "A claimed occurrence that never fired keeps a truthful record")
+        try require(try store.heartbeat() == clock.now, "The heartbeat is recorded once the tick has classified its occurrences")
         log.status = .completed
         _ = await scheduler.tick()
         try require(try store.run(interrupted.id)?.outcome == .completed, "The relinked run settles from its task")

@@ -47,14 +47,14 @@ actor NativeScheduler {
 
     @discardableResult
     func tick() async -> Bool {
-        let moment = now()
         let previousHeartbeat = try? store.heartbeat()
-        try? store.recordHeartbeat(moment)
-        let offlineSince: Date? = previousHeartbeat.flatMap { moment.timeIntervalSince($0) > downtime ? $0 : nil }
         var changed = settleRuns()
-        guard let due = try? store.due(at: moment) else { return changed }
+        guard let due = try? store.due(at: now()) else { return changed }
         for schedule in due where !firing.contains(schedule.id) {
             guard let scheduledFor = schedule.nextRunAt else { continue }
+            let moment = now()
+            guard scheduledFor <= moment else { continue }
+            let offlineSince: Date? = previousHeartbeat.flatMap { moment.timeIntervalSince($0) > downtime ? $0 : nil }
             var occurrences = [scheduledFor]
             var cursor = scheduledFor
             while let following = schedule.cadence.nextRun(after: cursor, previous: cursor, timeZone: schedule.timeZone), following <= moment {
@@ -66,36 +66,50 @@ actor NativeScheduler {
             let lastMissed = late > grace || (offlineSince.map { last > $0 } ?? false)
             var next = schedule
             next.advance(after: moment, from: last)
-            guard (try? store.claim(schedule.id, expectedNextRunAt: scheduledFor, nextRunAt: next.nextRunAt, enabled: next.enabled)) == true else { continue }
-            changed = true
-            let missed = lastMissed ? occurrences : Array(occurrences.dropLast())
-            recordMissed(schedule.id, occurrences: missed, at: moment)
-            if lastMissed { continue }
-            if hasActiveRun(schedule.id) {
-                try? store.saveRun(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, finishedAt: moment, outcome: .skipped,
+            var records = missedRuns(schedule.id, occurrences: lastMissed ? occurrences : Array(occurrences.dropLast()), at: moment)
+            var starting: NativeScheduleRun?
+            if !lastMissed {
+                if hasActiveRun(schedule.id) {
+                    records.append(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, finishedAt: moment, outcome: .skipped,
                                                      detail: "The previous run was still going."))
-                continue
+                } else {
+                    var run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, startedAt: moment, outcome: .running)
+                    if late >= 60 {
+                        let minutes = Int(late / 60)
+                        run.detail = "Started \(minutes) \(minutes == 1 ? "minute" : "minutes") after the scheduled time."
+                    }
+                    records.append(run)
+                    starting = run
+                }
             }
-            await start(schedule, scheduledFor: last, at: moment, late: late)
+            guard (try? store.claim(schedule.id, expectedNextRunAt: scheduledFor, nextRunAt: next.nextRunAt, enabled: next.enabled,
+                                     recording: records)) == true else { continue }
+            changed = true
+            if let starting { await start(schedule, run: starting) }
         }
+        try? store.recordHeartbeat(now())
         return changed
     }
 
     func runNow(_ id: String) async -> NativeScheduleRun? {
         guard let schedule = try? store.get(id), !firing.contains(id), !hasActiveRun(id) else { return nil }
-        return await start(schedule, scheduledFor: now(), at: now(), late: 0)
+        let run = NativeScheduleRun(scheduleID: id, scheduledFor: now(), startedAt: now(), outcome: .running)
+        guard (try? store.saveRun(run)) != nil else { return nil }
+        return await start(schedule, run: run)
     }
 
-    private func recordMissed(_ scheduleID: String, occurrences: [Date], at moment: Date) {
-        guard !occurrences.isEmpty else { return }
+    private func missedRuns(_ scheduleID: String, occurrences: [Date], at moment: Date) -> [NativeScheduleRun] {
+        guard !occurrences.isEmpty else { return [] }
         let overflow = max(0, occurrences.count - Self.missedHistoryCap)
+        var runs: [NativeScheduleRun] = []
         for (index, occurrence) in occurrences.enumerated() where index >= overflow {
             var detail = Self.missedNote
             if overflow > 0 && index == overflow {
                 detail = "\(overflow) earlier \(overflow == 1 ? "run was" : "runs were") also missed while Tandem wasn't running."
             }
-            try? store.saveRun(NativeScheduleRun(scheduleID: scheduleID, scheduledFor: occurrence, finishedAt: moment, outcome: .missed, detail: detail))
+            runs.append(NativeScheduleRun(scheduleID: scheduleID, scheduledFor: occurrence, finishedAt: moment, outcome: .missed, detail: detail))
         }
+        return runs
     }
 
     private func bind(_ runID: String, conversationID: String, messageID: String) {
@@ -106,15 +120,9 @@ actor NativeScheduler {
     }
 
     @discardableResult
-    private func start(_ schedule: NativeSchedule, scheduledFor: Date, at moment: Date, late: TimeInterval) async -> NativeScheduleRun? {
+    private func start(_ schedule: NativeSchedule, run: NativeScheduleRun) async -> NativeScheduleRun? {
         firing.insert(schedule.id)
         defer { firing.remove(schedule.id) }
-        var run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: scheduledFor, startedAt: moment, outcome: .running)
-        if late >= 60 {
-            let minutes = Int(late / 60)
-            run.detail = "Started \(minutes) \(minutes == 1 ? "minute" : "minutes") after the scheduled time."
-        }
-        guard (try? store.saveRun(run)) != nil else { return nil }
         let runID = run.id
         let result = await fire(schedule, run) { [weak self] conversationID, messageID in
             await self?.bind(runID, conversationID: conversationID, messageID: messageID)

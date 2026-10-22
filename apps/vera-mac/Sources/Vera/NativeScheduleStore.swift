@@ -114,12 +114,14 @@ final class NativeScheduleStore: Sendable {
         }
     }
 
-    func claim(_ id: String, expectedNextRunAt: Date, nextRunAt: Date?, enabled: Bool) throws -> Bool {
+    func claim(_ id: String, expectedNextRunAt: Date, nextRunAt: Date?, enabled: Bool, recording runs: [NativeScheduleRun]) throws -> Bool {
         try database.write { db in
             try db.execute(sql: """
                 UPDATE native_schedules SET next_run_at = ?, enabled = ? WHERE id = ? AND enabled = 1 AND next_run_at = ?
                 """, arguments: [nextRunAt?.timeIntervalSince1970, enabled ? 1 : 0, id, expectedNextRunAt.timeIntervalSince1970])
-            return db.changesCount == 1
+            guard db.changesCount == 1 else { return false }
+            for run in runs { try Self.write(run, db: db) }
+            return true
         }
     }
 
@@ -137,21 +139,23 @@ final class NativeScheduleStore: Sendable {
     }
 
     func saveRun(_ run: NativeScheduleRun) throws {
-        try database.write { db in
-            try db.execute(sql: """
-                INSERT INTO native_schedule_runs(id, schedule_id, scheduled_for, started_at, finished_at, outcome, detail,
-                    conversation_id, message_id, task_reference_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET started_at = excluded.started_at, finished_at = excluded.finished_at,
-                    outcome = excluded.outcome, detail = excluded.detail, conversation_id = excluded.conversation_id,
-                    message_id = excluded.message_id, task_reference_id = excluded.task_reference_id
-                """, arguments: [run.id, run.scheduleID, run.scheduledFor.timeIntervalSince1970, run.startedAt?.timeIntervalSince1970,
-                                 run.finishedAt?.timeIntervalSince1970, run.outcome.rawValue, run.detail, run.conversationID,
-                                 run.messageID, run.taskReferenceID])
-            try db.execute(sql: """
-                UPDATE native_schedules SET last_run_at = ?, last_outcome = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)
-                """, arguments: [run.scheduledFor.timeIntervalSince1970, run.outcome.rawValue, run.scheduleID, run.scheduledFor.timeIntervalSince1970])
-        }
+        try database.write { db in try Self.write(run, db: db) }
+    }
+
+    private static func write(_ run: NativeScheduleRun, db: Database) throws {
+        try db.execute(sql: """
+            INSERT INTO native_schedule_runs(id, schedule_id, scheduled_for, started_at, finished_at, outcome, detail,
+                conversation_id, message_id, task_reference_id)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET started_at = excluded.started_at, finished_at = excluded.finished_at,
+                outcome = excluded.outcome, detail = excluded.detail, conversation_id = excluded.conversation_id,
+                message_id = excluded.message_id, task_reference_id = excluded.task_reference_id
+            """, arguments: [run.id, run.scheduleID, run.scheduledFor.timeIntervalSince1970, run.startedAt?.timeIntervalSince1970,
+                             run.finishedAt?.timeIntervalSince1970, run.outcome.rawValue, run.detail, run.conversationID,
+                             run.messageID, run.taskReferenceID])
+        try db.execute(sql: """
+            UPDATE native_schedules SET last_run_at = ?, last_outcome = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)
+            """, arguments: [run.scheduledFor.timeIntervalSince1970, run.outcome.rawValue, run.scheduleID, run.scheduledFor.timeIntervalSince1970])
     }
 
     func runs(scheduleID: String, limit: Int = 50) throws -> [NativeScheduleRun] {
