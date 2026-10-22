@@ -572,7 +572,7 @@ struct NativeToolLoop: Sendable {
                     var webSearchCount = 0
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
-                    var searchSourceCount = 0
+                    var turnSources: [String: Int] = [:]
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
                         let active = registry.active(enabledIDs: enabledToolIDs)
@@ -709,10 +709,9 @@ struct NativeToolLoop: Sendable {
                                             definition, arguments: arguments, activity: activity,
                                             timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
                                     }
-                                    if isSearch, !Self.resultFailed(value, toolName: call.name) {
-                                        let numbered = NativeWebTools.numbered(value, offset: searchSourceCount)
-                                        searchSourceCount += numbered.count
-                                        value = numbered.value
+                                    if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
+                                       !Self.resultFailed(value, toolName: call.name) {
+                                        value = NativeWebTools.numbered(value, sources: &turnSources)
                                     }
                                     if let cacheKey, !Self.resultFailed(value, toolName: call.name) {
                                         searchResults[cacheKey] = value

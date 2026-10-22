@@ -163,9 +163,16 @@ enum NativeWebToolsSelftest {
         let firstNumbers = (first?["results"] as? [[String: Any]])?.compactMap { ($0["n"] as? NSNumber)?.intValue } ?? []
         let second = try JSONSerialization.jsonObject(with: Data(activities[1].result!.utf8)) as? [String: Any]
         let secondNumbers = (second?["results"] as? [[String: Any]])?.compactMap { ($0["n"] as? NSNumber)?.intValue } ?? []
-        try require(firstNumbers == [1, 2, 3, 4] && secondNumbers == [5, 6, 7, 8], "search results numbered across the turn")
+        try require(firstNumbers == [1, 2, 3, 4] && secondNumbers == [1, 2, 3, 4], "repeated urls keep their first number across the turn: \(secondNumbers)")
         let lifted = NativeResearchSources.lift(activities)
         try require(lifted.map(\.n) == [1, 2, 3, 4] && lifted.first?.url == "https://weather.example/rain", "turn sources lifted from search results")
+        var assigned: [String: Int] = [:]
+        for index in 0..<4 {
+            let batch: NativeJSONValue = .object(["results": .array((0..<5).map { .object(["url": .string("https://s.example/\(index)-\($0)")]) })])
+            _ = NativeWebTools.numbered(batch, sources: &assigned)
+        }
+        let reused = NativeWebTools.numbered(.object(["url": .string("https://s.example/0-1")]), sources: &assigned)
+        try require(assigned.count == NativeWebTools.maximumSources && reused.pi("n") == .number(2), "numbering stops at the source cap and pages reuse their search number")
         try require(transport.schemas.first?.map(\.name) == ["web_search", "fetch_page"], "both web tools advertised")
 
         for hostile in ["1e100", "2.5", "-0.75", "1e-300"] {
@@ -191,6 +198,10 @@ enum NativeWebToolsSelftest {
             try require(NativePageFetch.allowed("https://\(host)/page") != nil, "public host rejected: \(host)")
         }
         try require(NativePageFetch.allowed("ftp://example.com/x") == nil && NativePageFetch.allowed("https://u:p@example.com/") == nil, "scheme and credential rejection")
+        for host in ["127.1", "2130706433", "0x7f000001", "localhost", "0177.0.0.1", "[::ffff:7f00:1]"] {
+            try require(NativePageFetch.hostResolvesPrivate(host), "non-canonical private host resolved as public: \(host)")
+        }
+        try require(!NativePageFetch.hostResolvesPrivate("93.184.216.34") && !NativePageFetch.hostResolvesPrivate("[2606:4700::1111]"), "public literal resolved as private")
 
         let extracted = NativePageFetch.extract(html: pageHTML)
         try require(extracted.title == "Rain & Rivers", "title extraction: \(extracted.title)")
@@ -242,7 +253,9 @@ enum NativeWebToolsSelftest {
                     && injectedActivities[0].result?.contains(NativePageFetch.untrustedNote) == true, "page content returned as labelled data")
         try require(guarded.active(enabledIDs: enabled).map(\.name) == before && before == ["web_search", "fetch_page"], "tool availability unchanged by page content")
         try require(injectedTransport.schemas.allSatisfy { $0.map(\.name) == ["web_search", "fetch_page"] }, "advertised tools unchanged by page content")
-        try require(NativeResearchSources.lift(injectedActivities).map(\.url) == ["https://inject.example/page"], "fetched page lifted as a source")
+        let injectedLift = NativeResearchSources.lift(injectedActivities)
+        try require(injectedLift.map(\.url) == ["https://inject.example/page"] && injectedLift.first?.n == 1
+                    && injectedActivities[0].result?.contains("\"n\":1") == true, "fetched page numbered for the model and lifted as a source")
 
         client.respond(json: searchJSON)
         client.fail(with: nil)

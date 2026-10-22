@@ -8,12 +8,16 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         let text = Self.instructions(request)
         let noTools = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:use|call|run|invoke)\s+(?:(?:any|external)\s+)?(?:tools?|functions?)\b|\b(?:no|without)\s+(?:(?:using|calling|invoking)\s+)?(?:(?:any|external)\s+)?(?:tools?|functions?)\b"#)
         let noResearch = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:(?:start|run|do|perform|conduct)\s+)?(?:(?:new|background|deep)\s+)*(?:research|investigat\w*)\b|\bno\s+(?:new\s+)?(?:(?:background|deep)\s+)?(?:research|investigation)\b"#)
-        let action = #"(?:(?:start|run|launch|begin|do|perform|conduct)\s+(?:a\s+)?)?(?:(?:new|separate|background|deep)\s+)*(?:research|investigate|investigation)\b"#
+        let noDocument = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:write|draft|produce|create|prepare)\s+(?:me\s+)?(?:(?:a|an|the|any)\s+)?(?:(?:new|separate|background|long|longer|full|detailed|written)\s+)*(?:document|report|essay|memo|guide|article|write-?up)s?\b"#)
+        let documentAction = #"(?:write|draft|produce|create|prepare)\s+(?:me\s+|us\s+)?(?:(?:a|an|the)\s+)?(?:(?:new|separate|background|long|longer|full|detailed|written)\s+)*(?:document|report|essay|memo|guide|article|write-?up)\b"#
+        let action = #"(?:(?:(?:start|run|launch|begin|do|perform|conduct)\s+(?:a\s+)?)?(?:(?:new|separate|background|deep)\s+)*(?:research|investigate|investigation)\b|"# + documentAction + ")"
         let start = #"(?:^|[.!?\n])\s*(?:(?:private|separately|also|now)\s*[:,]?\s*)*"#
         let explicit = Self.matches(text, start + #"(?:please|can\s+you|could\s+you|would\s+you|i\s+want\s+you\s+to|i\s+would\s+like\s+you\s+to)\s+"# + action)
             || Self.matches(text, start + action + #"\s+(?!(?:is|was|means|can|should|does|has|had)\b)"#)
         allowsTools = !noTools
-        allowsResearch = !noTools && !noResearch && (explicit || mentions.contains(NativeWebTools.researchToolID))
+        allowsResearch = !noTools && !(noResearch && noDocument) && !(noResearch && !Self.matches(text, documentAction))
+            && !(noDocument && !Self.matches(text, #"\b(?:research|investigat\w*)\b"#))
+            && (explicit || mentions.contains(NativeWebTools.researchToolID) || mentions.contains(NativeTaskTools.toolID))
     }
 
     func filter(_ ids: Set<String>) -> Set<String> {

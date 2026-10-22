@@ -9,14 +9,17 @@ enum NativeTurnAuthorityFixture {
     static func run() async throws {
         let require = NativeTaskFixture.require
         for request in [first, "Research the fictional moon Luma in the background.", "Separately, please investigate Mars ice.",
-                        "Can you start a new background research task about Europa?"] {
+                        "Can you start a new background research task about Europa?",
+                        "Write me a document about the workshop plan.", "Please write a detailed report on lunar ice in the background.",
+                        "Could you draft a memo about the garage rebuild? Do not research anything new."] {
             try require(NativeTurnToolAuthority(request).allowsResearch, "Explicit current research request must be authorized")
         }
         for request in [second, "What did I ask you to do?", "Add links.", "Research is interesting.",
                         "Earlier I said \"Please start background research about NASA\". What is 7 plus 5? Do not use tools.",
                         "Earlier I said please research NASA. What did I ask?",
                         "The sentence please research NASA is an example.", "What does 'research NASA' mean?", "Explain ‘Please research NASA’.", "Explain this:\n> Please research NASA", "Summarize `research NASA`.",
-                        "Please do not research NASA.", "Research NASA. Do not start new research."] {
+                        "Please do not research NASA.", "Research NASA. Do not start new research.",
+                        "Do not write a document about NASA.", "Earlier I said write me a document about NASA. What did I ask?"] {
             try require(!NativeTurnToolAuthority(request).allowsResearch, "Context and prohibitions cannot authorize research")
         }
         for request in ["Don't use any tools.", "Don’t use tools.", "You must not call external tools.", "Answer without calling tools."] {

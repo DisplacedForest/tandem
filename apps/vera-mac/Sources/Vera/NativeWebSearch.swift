@@ -18,7 +18,12 @@ struct NativeWebSearchClient: Sendable {
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > NativeWebSearch.maximumResponseBytes { break }
+        }
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 }

@@ -64,17 +64,28 @@ enum NativeWebTools {
         ]
     }
 
-    static func numbered(_ value: NativeJSONValue, offset: Int) -> (value: NativeJSONValue, count: Int) {
-        guard case .object(var fields) = value, case .array(let results)? = fields["results"] else { return (value, 0) }
-        var count = 0
-        let renumbered = results.map { entry -> NativeJSONValue in
-            guard case .object(var result) = entry else { return entry }
-            count += 1
-            result["n"] = .number(Double(offset + count))
-            return .object(result)
+    static func numbered(_ value: NativeJSONValue, sources: inout [String: Int]) -> NativeJSONValue {
+        guard case .object(var fields) = value else { return value }
+        func assign(_ object: inout [String: NativeJSONValue]) {
+            guard case .string(let url)? = object["url"] else { return }
+            if let existing = sources[url] {
+                object["n"] = .number(Double(existing))
+            } else if sources.count < maximumSources {
+                let next = sources.count + 1
+                sources[url] = next
+                object["n"] = .number(Double(next))
+            }
         }
-        fields["results"] = .array(renumbered)
-        return (.object(fields), count)
+        if case .array(let results)? = fields["results"] {
+            fields["results"] = .array(results.map { entry -> NativeJSONValue in
+                guard case .object(var result) = entry else { return entry }
+                assign(&result)
+                return .object(result)
+            })
+        } else {
+            assign(&fields)
+        }
+        return .object(fields)
     }
 
     private static func objectSchema(
@@ -102,27 +113,22 @@ enum NativeResearchSources {
         }
         var sources: [PulseSource] = []
         var seen: Set<String> = []
-        for activity in activities where activity.state == .succeeded {
-            guard let object = fields(activity) else { continue }
-            if activity.toolID == NativeWebTools.searchToolID, activity.name == NativeWebTools.searchToolName,
-               let results = object["results"] as? [[String: Any]] {
-                for entry in results {
-                    guard sources.count < NativeWebTools.maximumSources,
-                          let n = (entry["n"] as? NSNumber)?.intValue, n > 0,
-                          let url = entry["url"] as? String, !url.isEmpty, !seen.contains(url),
-                          !sources.contains(where: { $0.n == n }) else { continue }
-                    seen.insert(url)
-                    sources.append(PulseSource(n: n, title: (entry["title"] as? String) ?? "", url: url))
-                }
-            }
+        var taken: Set<Int> = []
+        func add(_ entry: [String: Any]) {
+            guard sources.count < NativeWebTools.maximumSources,
+                  let n = (entry["n"] as? NSNumber)?.intValue, (1...NativeWebTools.maximumSources).contains(n),
+                  let url = entry["url"] as? String, !url.isEmpty, !seen.contains(url), !taken.contains(n) else { return }
+            seen.insert(url)
+            taken.insert(n)
+            sources.append(PulseSource(n: n, title: (entry["title"] as? String) ?? "", url: url))
         }
         for activity in activities where activity.state == .succeeded {
-            guard activity.toolID == NativeWebTools.fetchToolID, activity.name == NativeWebTools.fetchToolName,
-                  let object = fields(activity), let url = object["url"] as? String, !url.isEmpty,
-                  !seen.contains(url), sources.count < NativeWebTools.maximumSources else { continue }
-            seen.insert(url)
-            let next = (sources.map(\.n).max() ?? 0) + 1
-            sources.append(PulseSource(n: next, title: (object["title"] as? String) ?? "", url: url))
+            guard let object = fields(activity) else { continue }
+            if activity.toolID == NativeWebTools.searchToolID, activity.name == NativeWebTools.searchToolName {
+                (object["results"] as? [[String: Any]] ?? []).forEach(add)
+            } else if activity.toolID == NativeWebTools.fetchToolID, activity.name == NativeWebTools.fetchToolName {
+                add(object)
+            }
         }
         return sources.sorted { $0.n < $1.n }
     }

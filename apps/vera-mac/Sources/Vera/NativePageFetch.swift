@@ -19,6 +19,9 @@ struct NativePageFetchClient: Sendable {
     let get: @Sendable (URL, Int, TimeInterval) async throws -> NativePageResponse
 
     static let live = NativePageFetchClient { url, maximumBytes, timeout in
+        guard let host = url.host, !(await Task.detached { NativePageFetch.hostResolvesPrivate(host) }.value) else {
+            throw NativeToolError.failed("The page address resolves to a private network and cannot be read")
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
@@ -40,6 +43,9 @@ struct NativePageFetchClient: Sendable {
             if body.count >= maximumBytes { truncated = true; break }
             body.append(byte)
         }
+        guard !guardian.reachedPrivateAddress else {
+            throw NativeToolError.failed("The page address resolves to a private network and cannot be read")
+        }
         return NativePageResponse(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"),
                                   body: body, truncated: truncated, finalURL: finalURL)
     }
@@ -48,6 +54,13 @@ struct NativePageFetchClient: Sendable {
 final class NativePageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var hops = 0
+    private var privateHit = false
+
+    var reachedPrivateAddress: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return privateHit
+    }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -55,8 +68,8 @@ final class NativePageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecke
         hops += 1
         let count = hops
         lock.unlock()
-        guard count <= NativePageFetch.maximumRedirects, let target = request.url,
-              NativePageFetch.allowed(target.absoluteString) != nil else {
+        guard count <= NativePageFetch.maximumRedirects, let target = request.url, let host = target.host,
+              NativePageFetch.allowed(target.absoluteString) != nil, !NativePageFetch.hostResolvesPrivate(host) else {
             completionHandler(nil)
             return
         }
@@ -64,6 +77,15 @@ final class NativePageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecke
         next.httpMethod = "GET"
         next.httpBody = nil
         completionHandler(next)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollectingMetrics metrics: URLSessionTaskMetrics) {
+        let remotes = metrics.transactionMetrics.compactMap(\.remoteAddress)
+        guard remotes.contains(where: NativePageFetch.hostIsPrivate) else { return }
+        lock.lock()
+        privateHit = true
+        lock.unlock()
+        task.cancel()
     }
 }
 
@@ -90,12 +112,43 @@ enum NativePageFetch {
         return url
     }
 
+    static func resolvedAddresses(_ host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var list: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &list) == 0, let first = list else { return [] }
+        defer { freeaddrinfo(first) }
+        var addresses: [String] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let entry = cursor {
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(entry.pointee.ai_addr, entry.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 {
+                addresses.append(String(cString: buffer))
+            }
+            cursor = entry.pointee.ai_next
+        }
+        return addresses
+    }
+
+    static func hostResolvesPrivate(_ host: String) -> Bool {
+        if hostIsPrivate(host) { return true }
+        var bare = host.lowercased()
+        if bare.hasPrefix("["), bare.hasSuffix("]") { bare = String(bare.dropFirst().dropLast()) }
+        let addresses = resolvedAddresses(bare)
+        return addresses.isEmpty || addresses.contains(where: hostIsPrivate)
+    }
+
     static func hostIsPrivate(_ rawHost: String) -> Bool {
         var host = rawHost.lowercased()
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         if let zone = host.firstIndex(of: "%") { host = String(host[..<zone]) }
         if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local")
             || host.hasSuffix(".internal") || host.hasSuffix(".home.arpa") || host.hasSuffix(".lan") || host.hasSuffix(".arpa") {
+            return true
+        }
+        if host.range(of: "^(0x[0-9a-f]+|[0-9]+)(\\.(0x[0-9a-f]+|[0-9]+))*$", options: .regularExpression) != nil,
+           host.range(of: "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$", options: .regularExpression) == nil {
             return true
         }
         var v4 = in_addr()
