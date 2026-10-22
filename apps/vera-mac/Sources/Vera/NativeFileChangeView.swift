@@ -131,7 +131,7 @@ struct NativeFileChangeCard: View {
             .padding(12)
             if expanded && !hunks.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                ShotSafeScroll(renderSafe: renderSafe, axis: .horizontal) {
+                ShotSafeScroll(renderSafe: renderSafe, axis: [.horizontal, .vertical]) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(hunks) { hunk in
                             if hunk.id > 0 {

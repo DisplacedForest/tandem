@@ -395,7 +395,7 @@ struct ShotSafeScroll<Content: View>: View {
         if renderSafe {
             VStack(spacing: 0) { content() }.frame(maxWidth: .infinity, maxHeight: axis == .vertical ? .infinity : nil, alignment: .topLeading)
         } else {
-            ScrollView(axis, showsIndicators: axis == .horizontal) { content() }
+            ScrollView(axis, showsIndicators: axis.contains(.horizontal)) { content() }
         }
     }
 }
