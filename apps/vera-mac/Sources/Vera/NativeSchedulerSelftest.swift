@@ -26,13 +26,19 @@ private final class NativeSchedulerClock: @unchecked Sendable {
 private final class NativeSchedulerFireLog: @unchecked Sendable {
     private let lock = NSLock()
     private(set) var fired: [(schedule: String, scheduledFor: Date)] = []
-    var result: NativeScheduleFireResult = .started(conversationID: "c", messageID: "m", taskReferenceID: UUID().uuidString)
+    var result: NativeScheduleFireResult = .started(taskReferenceID: "reference-1")
     var status: NativeScheduleTaskStatus = .active
 
     func record(_ schedule: NativeSchedule, _ run: NativeScheduleRun) -> NativeScheduleFireResult {
         lock.lock(); defer { lock.unlock() }
         fired.append((schedule.id, run.scheduledFor))
         return result
+    }
+
+    func link(_ run: NativeScheduleRun) -> NativeScheduleTaskLink? {
+        lock.lock(); defer { lock.unlock() }
+        guard let id = run.taskReferenceID ?? (run.messageID == "recovered" ? "reference-recovered" : nil) else { return nil }
+        return NativeScheduleTaskLink(referenceID: id, status: status)
     }
 
     var count: Int {
@@ -94,8 +100,12 @@ extension SelfTest {
         let store = NativeScheduleStore(database: repository.database)
         let clock = NativeSchedulerClock(monday)
         let log = NativeSchedulerFireLog()
-        let scheduler = NativeScheduler(store: store, now: { clock.now }, grace: 300,
-                                        taskStatus: { _ in log.status }, fire: { schedule, run in log.record(schedule, run) })
+        let scheduler = NativeScheduler(store: store, now: { clock.now }, grace: 300, downtime: 60,
+                                        lookup: { run in log.link(run) },
+                                        fire: { schedule, run, bind in
+                                            await bind("conversation", "message")
+                                            return log.record(schedule, run)
+                                        })
         var schedule = try NativeSchedule(owner: .conversation, workerType: "research", title: "Morning check",
                                           instruction: "Look into the fictional moon", cadence: daily, timeZone: zone, createdAt: monday)
         schedule.advance(after: monday, from: nil)
@@ -103,14 +113,19 @@ extension SelfTest {
         try require(try store.get(schedule.id)?.nextRunAt == dailyNext, "The saved schedule keeps its next run")
 
         try require(await scheduler.tick() == false && log.count == 0, "Nothing fires before its time")
+        clock.set(dailyNext.addingTimeInterval(-20))
+        _ = await scheduler.tick()
+        clock.set(dailyNext.addingTimeInterval(40))
+        try? store.recordHeartbeat(clock.now)
         clock.set(dailyNext.addingTimeInterval(90))
         async let first: Bool = scheduler.tick()
         async let second: Bool = scheduler.tick()
         _ = await (first, second)
         try require(log.count == 1 && log.fired[0].scheduledFor == dailyNext, "A due schedule fires exactly once under concurrent ticks")
         var runs = try store.runs(scheduleID: schedule.id)
-        try require(runs.count == 1 && runs[0].outcome == .running && runs[0].taskReferenceID != nil && runs[0].detail.contains("1 minute"),
-                    "The run is recorded as running, bound to its task, and says it started a minute late")
+        try require(runs.count == 1 && runs[0].outcome == .running && runs[0].taskReferenceID == "reference-1" && runs[0].messageID == "message"
+                    && runs[0].detail.contains("1 minute"),
+                    "The run is recorded as running, bound to its chat and task, and says it started a minute late")
         var saved = try store.get(schedule.id)!
         try require(saved.nextRunAt == dailyAfter && saved.lastOutcome == .running && saved.lastRunAt == dailyNext, "The schedule advanced to tomorrow and remembers the run")
         clock.advance(60)
@@ -133,11 +148,15 @@ extension SelfTest {
 
         let third = saved.nextRunAt!
         log.status = .active
+        clock.set(third.addingTimeInterval(-10))
+        _ = await scheduler.tick()
         clock.set(third.addingTimeInterval(10))
         _ = await scheduler.tick()
         let againRuns = try store.runs(scheduleID: schedule.id)
         try require(log.count == 2 && againRuns[0].outcome == .running, "The schedule fires again on time")
         let fourth = try store.get(schedule.id)!.nextRunAt!
+        clock.set(fourth.addingTimeInterval(-10))
+        _ = await scheduler.tick()
         clock.set(fourth.addingTimeInterval(10))
         _ = await scheduler.tick()
         runs = try store.runs(scheduleID: schedule.id)
@@ -165,17 +184,66 @@ extension SelfTest {
                                       cadence: .once(clock.now.addingTimeInterval(600)), timeZone: zone)
         once.advance(after: clock.now, from: nil)
         try store.save(once)
-        clock.advance(620)
+        clock.advance(590)
+        _ = await scheduler.tick()
+        clock.advance(30)
         _ = await scheduler.tick()
         let onceRuns = try store.runs(scheduleID: once.id)
         try require(onceRuns.count == 1 && onceRuns[0].outcome == .couldNotStart && onceRuns[0].detail == "No model is set up.", "A refused start is recorded with its reason")
         let onceSaved = try store.get(once.id)!
         try require(onceSaved.enabled == false && onceSaved.nextRunAt == nil, "A one-time schedule turns itself off after its time")
 
+        log.result = .started(taskReferenceID: "reference-2")
+        var quiet = try NativeSchedule(owner: .conversation, workerType: "research", title: "Quiet", instruction: "Check", cadence: daily, timeZone: zone)
+        quiet.advance(after: clock.now, from: nil)
+        try store.save(quiet)
+        let quietFirst = quiet.nextRunAt!
+        clock.set(quietFirst.addingTimeInterval(-120))
+        _ = await scheduler.tick()
+        clock.set(quietFirst.addingTimeInterval(120))
+        _ = await scheduler.tick()
+        var quietRuns = try store.runs(scheduleID: quiet.id)
+        try require(quietRuns.count == 1 && quietRuns[0].outcome == .missed && quietRuns[0].scheduledFor == quietFirst,
+                    "A time that passed while the scheduler was not ticking is missed even inside the grace window")
+        log.status = .completed
+        let quietSecond = try store.get(quiet.id)!.nextRunAt!
+        clock.set(quietSecond.addingTimeInterval(-20))
+        _ = await scheduler.tick()
+        clock.set(quietSecond.addingTimeInterval(40))
+        _ = await scheduler.tick()
+        quietRuns = try store.runs(scheduleID: quiet.id)
+        try require(quietRuns.count == 2 && quietRuns[0].scheduledFor == quietSecond && quietRuns[0].outcome != .missed,
+                    "Ordinary polling delay still fires on time")
+        _ = await scheduler.tick()
+        let quietThird = try store.get(quiet.id)!.nextRunAt!
+        clock.set(quietThird.addingTimeInterval(3 * 86400 + 600))
+        _ = await scheduler.tick()
+        quietRuns = try store.runs(scheduleID: quiet.id)
+        let missedDays = quietRuns.filter { $0.outcome == .missed && $0.scheduledFor >= quietThird }
+        try require(missedDays.count == 4 && Set(missedDays.map(\.scheduledFor)).count == 4, "Every missed occurrence across a long absence is recorded")
+        let afterAbsence = try store.get(quiet.id)!
+        try require(afterAbsence.nextRunAt! > clock.now && afterAbsence.enabled, "The schedule continues after a long absence")
+
+        let interrupted = NativeScheduleRun(scheduleID: quiet.id, scheduledFor: clock.now, startedAt: clock.now, outcome: .running,
+                                            conversationID: "conversation", messageID: "recovered")
+        try store.saveRun(interrupted)
+        log.status = .active
+        _ = await scheduler.tick()
+        try require(try store.run(interrupted.id)?.taskReferenceID == "reference-recovered", "A run interrupted during handoff relinks to its task by message")
+        let lost = NativeScheduleRun(scheduleID: quiet.id, scheduledFor: clock.now, startedAt: clock.now, outcome: .running,
+                                     conversationID: "conversation", messageID: "never-submitted")
+        try store.saveRun(lost)
+        _ = await scheduler.tick()
+        let lostSaved = try store.run(lost.id)!
+        try require(lostSaved.outcome == .couldNotStart && lostSaved.detail.contains("closed before"), "A run that never reached the engine says so")
+        log.status = .completed
+        _ = await scheduler.tick()
+        try require(try store.run(interrupted.id)?.outcome == .completed, "The relinked run settles from its task")
+
         try store.delete(schedule.id)
         let gone = try store.get(schedule.id)
         let goneRuns = try store.runs(scheduleID: schedule.id)
         try require(gone == nil && goneRuns.isEmpty, "Deleting a schedule removes its history")
-        print("  native scheduler OK (cadence math, time zones, plain summaries, single fire, late note, settle, missed, skip, disable, run now, refused start, once)")
+        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink)")
     }
 }

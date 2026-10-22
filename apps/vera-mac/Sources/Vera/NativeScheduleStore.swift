@@ -40,6 +40,10 @@ final class NativeScheduleStore: Sendable {
             );
             CREATE INDEX native_schedule_runs_schedule ON native_schedule_runs(schedule_id, scheduled_for);
             CREATE INDEX native_schedule_runs_open ON native_schedule_runs(outcome);
+            CREATE TABLE native_scheduler_state (
+                key TEXT PRIMARY KEY NOT NULL,
+                value DOUBLE NOT NULL
+            );
             """)
     }
 
@@ -107,6 +111,28 @@ final class NativeScheduleStore: Sendable {
             try Row.fetchAll(db, sql: """
                 SELECT * FROM native_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at
                 """, arguments: [now.timeIntervalSince1970]).compactMap { try? Self.schedule($0) }
+        }
+    }
+
+    func claim(_ id: String, expectedNextRunAt: Date, nextRunAt: Date?, enabled: Bool) throws -> Bool {
+        try database.write { db in
+            try db.execute(sql: """
+                UPDATE native_schedules SET next_run_at = ?, enabled = ? WHERE id = ? AND enabled = 1 AND next_run_at = ?
+                """, arguments: [nextRunAt?.timeIntervalSince1970, enabled ? 1 : 0, id, expectedNextRunAt.timeIntervalSince1970])
+            return db.changesCount == 1
+        }
+    }
+
+    func heartbeat() throws -> Date? {
+        try database.read { db in
+            try Double.fetchOne(db, sql: "SELECT value FROM native_scheduler_state WHERE key = 'heartbeat'").map(Date.init(timeIntervalSince1970:))
+        }
+    }
+
+    func recordHeartbeat(_ date: Date) throws {
+        try database.write { db in
+            try db.execute(sql: "INSERT INTO native_scheduler_state(key, value) VALUES('heartbeat', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                           arguments: [date.timeIntervalSince1970])
         }
     }
 

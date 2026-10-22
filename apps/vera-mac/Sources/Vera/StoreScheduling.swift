@@ -43,20 +43,33 @@ extension ChatStore {
         let store = NativeScheduleStore(database: local.database)
         nativeScheduleStore = store
         let projectionRepository = repository as? any NativeTaskProjectionRepository
-        let scheduler = NativeScheduler(store: store, taskStatus: { referenceID in
-            guard let id = UUID(uuidString: referenceID), let projectionRepository,
-                  let reference = try? projectionRepository.taskReference(id: id) else { return .gone }
-            if reference.deliveryState == .rejected { return .failed }
-            let state = (try? projectionRepository.taskProjection(id: id))?.snapshot?.state ?? reference.snapshot?.state
-            switch state {
-            case .completed: return .completed
-            case .failed: return .failed
-            case .canceled: return .stopped
-            default: return .active
+        let scheduler = NativeScheduler(store: store, lookup: { run in
+            guard let projectionRepository else { return nil }
+            let reference: NativeTaskReference?
+            if let id = run.taskReferenceID, let uuid = UUID(uuidString: id) {
+                reference = try? projectionRepository.taskReference(id: uuid)
+            } else if let conversationID = run.conversationID, let message = run.messageID, let uuid = UUID(uuidString: message) {
+                reference = (try? projectionRepository.taskReferences(conversationID: conversationID))?
+                    .first { $0.origin.assistantMessageID == uuid }
+            } else {
+                reference = nil
             }
-        }, fire: { [weak self] schedule, run in
+            guard let reference else { return nil }
+            if reference.deliveryState == NativeTaskDeliveryState.rejected {
+                return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: .failed)
+            }
+            let state = (try? projectionRepository.taskProjection(id: reference.id))?.snapshot?.state ?? reference.snapshot?.state
+            let status: NativeScheduleTaskStatus
+            switch state {
+            case .completed: status = .completed
+            case .failed: status = .failed
+            case .canceled: status = .stopped
+            default: status = .active
+            }
+            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status)
+        }, fire: { [weak self] schedule, run, bind in
             guard let self else { return .failed("Tandem is closing.") }
-            return await self.fireSchedule(schedule, run: run)
+            return await self.fireSchedule(schedule, run: run, bind: bind)
         })
         nativeScheduler = scheduler
         reloadSchedules()
@@ -111,12 +124,14 @@ extension ChatStore {
             var schedule = try NativeSchedule(id: existing.id, owner: draft.owner,
                                               conversationID: draft.owner == existing.owner ? existing.conversationID : nil,
                                               workerType: draft.workerType, title: draft.title, instruction: draft.instruction,
-                                              cadence: draft.cadence, timeZone: .current, enabled: true, lastRunAt: existing.lastRunAt,
+                                              cadence: draft.cadence, timeZone: .current, enabled: existing.enabled, lastRunAt: existing.lastRunAt,
                                               lastOutcome: existing.lastOutcome, createdAt: existing.createdAt)
-            schedule.advance(after: Date(), from: nil)
-            guard schedule.nextRunAt != nil else {
-                scheduleError = "Pick a time that is still ahead."
-                return
+            if existing.enabled {
+                schedule.advance(after: Date(), from: nil)
+                guard schedule.nextRunAt != nil else {
+                    scheduleError = "Pick a time that is still ahead."
+                    return
+                }
             }
             try store.save(schedule)
             scheduleError = nil
@@ -175,7 +190,7 @@ extension ChatStore {
         select(conversationID)
     }
 
-    func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun) async -> NativeScheduleFireResult {
+    func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
         }
@@ -205,6 +220,7 @@ extension ChatStore {
             conversations[index].isPersisted = true
             try? repository.saveConversation(conversations[index])
         }
+        await bind(conversationID, reply.id.uuidString)
         let origin = NativeTaskOrigin(conversationID: conversationID, userMessageID: user.id, assistantMessageID: reply.id)
         do {
             let reference = try await service.submit(origin: origin, request: request, profile: profile)
@@ -212,7 +228,7 @@ extension ChatStore {
             if reference.deliveryState == NativeTaskDeliveryState.rejected {
                 return .failed(reference.lastDeliveryError ?? "The task engine refused the run.")
             }
-            return .started(conversationID: conversationID, messageID: reply.id.uuidString, taskReferenceID: reference.id.uuidString)
+            return .started(taskReferenceID: reference.id.uuidString)
         } catch {
             return .failed(error.localizedDescription)
         }

@@ -525,24 +525,25 @@ extension SelfTest {
         try repository.saveConversation(conversation)
         let service = harness.service
         let profile = harness.profile
-        let scheduler = NativeScheduler(store: scheduleStore, now: { Date().addingTimeInterval(6 * 3600 + 30) }, taskStatus: { id in
-            guard let uuid = UUID(uuidString: id), let reference = try? repository.taskReference(id: uuid) else { return .gone }
+        let scheduler = NativeScheduler(store: scheduleStore, now: { Date().addingTimeInterval(6 * 3600 + 30) }, lookup: { run in
+            guard let id = run.taskReferenceID, let uuid = UUID(uuidString: id), let reference = try? repository.taskReference(id: uuid) else { return nil }
             switch (try? repository.taskProjection(id: uuid))?.snapshot?.state ?? reference.snapshot?.state {
-            case .completed: return .completed
-            case .failed: return .failed
-            case .canceled: return .stopped
-            default: return .active
+            case .completed: return NativeScheduleTaskLink(referenceID: id, status: .completed)
+            case .failed: return NativeScheduleTaskLink(referenceID: id, status: .failed)
+            case .canceled: return NativeScheduleTaskLink(referenceID: id, status: .stopped)
+            default: return NativeScheduleTaskLink(referenceID: id, status: .active)
             }
-        }, fire: { fired, _ in
+        }, fire: { fired, _, bind in
             let user = Message(role: .user, text: fired.instruction)
             let reply = Message(role: .assistant, text: "", state: .complete)
             do {
                 let ordinal = try repository.messages(conversationID: conversation.id).count
                 try repository.saveMessage(user, conversationID: conversation.id, ordinal: ordinal)
                 try repository.saveMessage(reply, conversationID: conversation.id, ordinal: ordinal + 1)
+                await bind(conversation.id, reply.id.uuidString)
                 let origin = NativeTaskOrigin(conversationID: conversation.id, userMessageID: user.id, assistantMessageID: reply.id)
                 let reference = try await service.submit(origin: origin, request: try fired.taskRequest(), profile: profile)
-                return .started(conversationID: conversation.id, messageID: reply.id.uuidString, taskReferenceID: reference.id.uuidString)
+                return .started(taskReferenceID: reference.id.uuidString)
             } catch {
                 return .failed(error.localizedDescription)
             }
