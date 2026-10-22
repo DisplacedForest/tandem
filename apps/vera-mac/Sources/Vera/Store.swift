@@ -32,6 +32,10 @@ final class ChatStore: ObservableObject {
     @Published var memoryServiceState: NativeMemoryServiceState = .off
     @Published var memoryEndpointStatus: NativeMemoryEndpointStatus = .notConfigured
     @Published var memoryIndexingProgress: NativeMemoryIndexingProgress?
+    @Published var memoryVectorStatus: NativeMemoryVectorStatus?
+    var memoryBackfillPending = false
+    @Published var memoryRetrievalTraces: [String: NativeMemoryRetrievalTrace] = [:]
+    @Published var inspectedMemoryTrace: NativeMemoryRetrievalTrace?
     @Published private(set) var queuedMemoryTurns: [NativeMemoryQueuedTurn] = []
     private var drainingMemoryQueue = false
     private var memoryQueueStatusMessage: String?
@@ -80,8 +84,8 @@ final class ChatStore: ObservableObject {
     private var visionBridgeConfig: VisionBridgeConfig?
     private let visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)?
     private var turnMemorySelections: [UUID: [NativeMemoryRanked]] = [:]
-    private var nativeMemorySettings: NativeMemorySettings
-    private var nativeMemoryService: (any NativeMemoryServing)?
+    private(set) var nativeMemorySettings: NativeMemorySettings
+    private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
     private let usesInjectedToolRegistry: Bool
@@ -719,6 +723,7 @@ final class ChatStore: ObservableObject {
                 throw NativeMemoryEvidenceError.unavailable
             }
             inspectedMemoryRevision = revision
+            inspectedMemoryTrace = selectedID.flatMap { memoryRetrievalTraces[$0] }
             inspectedMemory = record
         } catch {
             memoryServiceState = .failed(error.localizedDescription)
@@ -796,7 +801,9 @@ final class ChatStore: ObservableObject {
         if !semanticRecallAvailable(service, settings: nativeMemorySettings) { return "Recall uses local search only until an embeddings model is chosen." }
         switch memoryEndpointStatus {
         case .unreachable: return "The memory endpoint is unreachable, so recall uses local search for now."
-        default: return "Recall uses semantic search through the memory endpoint."
+        default:
+            if let status = memoryVectorStatus, !status.complete { return "Recall uses local search until memory vectors finish preparing." }
+            return "Recall combines local search with semantic search through the memory endpoint."
         }
     }
 
@@ -1297,31 +1304,11 @@ final class ChatStore: ObservableObject {
     }
 
     func indexApprovedMemoryIfNeeded() {
-        guard nativeMemorySettings.enabled, let service = nativeMemoryService, semanticRecallAvailable(service, settings: nativeMemorySettings),
-              let memoryRepository = repository as? LocalChatRepository, memoryIndexingProgress == nil else { return }
-        let missing = memoryRecords.filter {
-            $0.status == .approved && $0.embedding == nil && $0.eligible(at: Date())
-                && NativeMemorySafety.recordIsSafe($0)
+        guard nativeMemorySettings.enabled, let service = nativeMemoryService, semanticRecallAvailable(service, settings: nativeMemorySettings) else {
+            refreshMemoryVectorStatus()
+            return
         }
-        guard !missing.isEmpty else { return }
-        memoryServiceState = .indexing
-        memoryIndexingProgress = NativeMemoryIndexingProgress(completed: 0, total: missing.count)
-        Task {
-            defer { memoryIndexingProgress = nil }
-            for (offset, memory) in missing.enumerated() {
-                do {
-                    guard !(try memoryRepository.eligibleMemory([NativeMemoryRanked(record: memory, score: 1)], bankScope: "all", sensitive: nativeMemorySettings.sensitiveHandling)).isEmpty else { continue }
-                    let embedding = try await service.embed(memory.details.joined(separator: "\n"))
-                    guard nativeMemorySettings.enabled else { return }
-                    try memoryRepository.saveMemoryEmbedding(embedding, expected: memory)
-                    memoryIndexingProgress = NativeMemoryIndexingProgress(completed: offset + 1, total: missing.count)
-                } catch {
-                    memoryServiceState = .retrievalUnavailable(error.localizedDescription)
-                    return
-                }
-            }
-            reloadNativeMemory()
-        }
+        backfillMemoryVectorsIfNeeded()
     }
 
     func learnFromCompletedTurn(
@@ -2032,44 +2019,9 @@ final class ChatStore: ObservableObject {
 
     func selectApprovedMemory(_ text: String, settings: NativeMemorySettings? = nil,
                               service: (any NativeMemoryServing)? = nil) async -> [NativeMemoryRanked] {
-        let settings = settings ?? nativeMemorySettings
-        guard settings.enabled, nativeMemorySettings.enabled else { return [] }
-        var selected: [NativeMemoryRanked] = []
-        do {
-            if let local = repository as? LocalChatRepository { try local.refreshDomainProjections() }
-            let semanticService = service ?? nativeMemoryService
-            var usedLocalFallback: String?
-            if semanticService.map({ semanticRecallAvailable($0, settings: settings) }) != true, let local = repository as? LocalChatRepository {
-                selected = try local.recallMemory(text, bankScope: settings.bankScope, sensitive: nativeMemorySettings.sensitiveHandling)
-            } else if !NativeMemorySafety.containsSensitiveData(text),
-                      let memoryRepository = repository as? any NativeMemoryRepository,
-                      let service = semanticService {
-                do {
-                    let query = try await service.embed(text)
-                    selected = NativeMemoryRecall.rank(records: try memoryRepository.approvedMemories(),
-                        query: query, bankScope: settings.bankScope)
-                } catch let error as NativeMemoryServiceError where error.isEndpointOutage {
-                    memoryEndpointStatus = .unreachable(error.localizedDescription)
-                    usedLocalFallback = "The memory endpoint could not be reached, so recall used local search."
-                    if let local = repository as? LocalChatRepository {
-                        selected = try local.recallMemory(text, bankScope: settings.bankScope, sensitive: nativeMemorySettings.sensitiveHandling)
-                    }
-                }
-            }
-            guard nativeMemorySettings.enabled else { return [] }
-            if let local = repository as? LocalChatRepository {
-                selected = try local.eligibleMemory(selected, bankScope: nativeMemorySettings.bankScope, sensitive: nativeMemorySettings.sensitiveHandling)
-            }
-            if let usedLocalFallback {
-                memoryServiceState = .retrievalUnavailable(usedLocalFallback)
-            } else {
-                memoryServiceState = memoryProposals.isEmpty ? .ready : .pendingReview(memoryProposals.count)
-            }
-            return selected
-        } catch {
-            memoryServiceState = .retrievalUnavailable("Saved memory could not be searched on this Mac.")
-            return []
-        }
+        let result = await retrieveApprovedMemory(text, settings: settings, service: service)
+        if let trace = result.trace, let id = selectedID { memoryRetrievalTraces[id] = trace }
+        return result.selected
     }
 
     func memorySelectionIsCurrent(_ selected: [NativeMemoryRanked]) -> Bool {
@@ -2218,7 +2170,10 @@ final class ChatStore: ObservableObject {
                     turnMessages[current].routeNote = conversations[location.conversation].messages[location.user].routeNote
                 }
                 var selectedMemories: [NativeMemoryRanked] = []
-                selectedMemories = await selectApprovedMemory(text, settings: memorySettings, service: memoryService)
+                let retrieval = await retrieveApprovedMemory(text, history: turn.history.filter { $0.id != turn.userMessageID },
+                                                             settings: memorySettings, service: memoryService)
+                selectedMemories = retrieval.selected
+                if let trace = retrieval.trace { memoryRetrievalTraces[id] = trace }
                 var groundingAssembly: KnowledgeGrounding.Assembly?
                 if !groundingCollections.isEmpty {
                     if let groundingBase {
@@ -2255,6 +2210,12 @@ final class ChatStore: ObservableObject {
                         selectedMemories = []
                         memoryServiceState = .retrievalUnavailable("Saved memory could not be checked before sending.")
                     }
+                }
+                if var finalTrace = memoryRetrievalTraces[id] {
+                    finalTrace.injected = selectedMemories.enumerated().map { index, item in
+                        NativeMemoryTraceEntry(id: item.record.id, title: item.record.title, source: "injected", rank: index + 1, score: item.score)
+                    }
+                    memoryRetrievalTraces[id] = finalTrace
                 }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {

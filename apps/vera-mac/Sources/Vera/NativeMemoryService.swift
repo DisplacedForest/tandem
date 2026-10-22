@@ -293,6 +293,8 @@ struct NativeMemoryRerankScore: Equatable, Sendable {
 
 protocol NativeMemoryServing: Sendable {
     var supportsSemanticRecall: Bool { get }
+    var embeddingsModelName: String { get }
+    var rerankModelName: String { get }
     func embed(_ text: String) async throws -> [Double]
     func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore]
     func probe() async throws -> [String]
@@ -379,6 +381,8 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
 
 extension NativeMemoryServing {
     var supportsSemanticRecall: Bool { false }
+    var embeddingsModelName: String { supportsSemanticRecall ? "fixture" : "" }
+    var rerankModelName: String { "" }
     func rerank(query: String, documents: [String]) async throws -> [NativeMemoryRerankScore] { [] }
     func probe() async throws -> [String] { [] }
 }
@@ -389,6 +393,8 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
     var admission: NativeInferenceAdmission? = nil
 
     var supportsSemanticRecall: Bool { !configuration.embeddingsModel.isEmpty }
+    var embeddingsModelName: String { configuration.embeddingsModel }
+    var rerankModelName: String { configuration.rerankModel }
 
     func probe() async throws -> [String] {
         var request = URLRequest(url: configuration.modelsURL)
