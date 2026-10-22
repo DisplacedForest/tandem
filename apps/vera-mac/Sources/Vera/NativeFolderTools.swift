@@ -257,6 +257,8 @@ enum NativeFolderTools {
         guard all || occurrences == 1 else {
             throw NativeToolError.failed("old_text appears \(occurrences) times in \(location.path). Include more surrounding text or set replace_all")
         }
+        let projected = before.utf8.count + (all ? occurrences : 1) * (new.utf8.count - old.utf8.count)
+        guard projected <= maximumWriteBytes else { throw NativeToolError.failed("The edited file would exceed the 1 MB limit") }
         let after: String
         if all {
             after = before.replacingOccurrences(of: old, with: new)

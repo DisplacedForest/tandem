@@ -194,6 +194,13 @@ extension SelfTest {
             _ = try NativeFolderTools.edit(try access.locate(root + "/notes/one.txt"), old: "zeta", new: "x", all: false, ledger: ledger)
             throw NativeTaskFixture.Failure.assertion("Missing text is refused")
         } catch is NativeToolError {}
+        try String(repeating: "a", count: 200_000).write(to: inside.appendingPathComponent("many.txt"), atomically: true, encoding: .utf8)
+        do {
+            _ = try NativeFolderTools.edit(try access.locate(root + "/many.txt"), old: "a", new: String(repeating: "b", count: 4096), all: true, ledger: ledger)
+            throw NativeTaskFixture.Failure.assertion("An edit that would blow past the size limit is refused before being built")
+        } catch let error as NativeToolError {
+            try require(error.localizedDescription.contains("1 MB"), "Oversized edit message")
+        }
         _ = try NativeFolderTools.edit(try access.locate(root + "/notes/one.txt"), old: "a", new: "A", all: true, ledger: ledger)
         try require((try String(contentsOf: inside.appendingPathComponent("notes/one.txt"), encoding: .utf8)) == "AlphA\nbetA\ngAmmA\n", "replace_all replaces every occurrence")
         do {
