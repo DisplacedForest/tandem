@@ -180,7 +180,7 @@ extension SelfTest {
                                                                                        NativeTurnHistoryMessage(Message(role: .assistant, text: "Noted [10001]"))])
         try require(userBrackets.current == "item [42]" && userBrackets.context == ["see item [43]", "Noted "], "Only assistant citations are stripped; user-authored numbers stay")
         try repository.saveMemory(memoryFixtureRecord("late", title: "Late fact", details: ["A fact added after the backfill finished"], now: now), decision: .accepted, note: "fixture")
-        let lateTurn = await store.retrieveApprovedMemory("late fact", settings: settings)
+        let lateTurn = await store.retrieveApprovedMemory("late fact", settings: settings, service: service)
         try require(lateTurn.trace?.notes.contains(where: { $0.contains("waiting for vectors") }) == true, "A newly eligible record makes readiness incomplete for that turn")
         try require(try await waitFor(seconds: 10) { store.memoryIndexingProgress == nil && (store.memoryVectorStatus?.complete ?? false) },
                     "That turn schedules the backfill so later turns are semantic again: \(String(describing: store.memoryVectorStatus))")

@@ -59,8 +59,24 @@ extension ChatStore {
         let model = memoryVectorModel(semanticService, settings: settings)
         let sensitive = nativeMemorySettings.sensitiveHandling
         let scope = settings.bankScope
+        let liveScope = nativeMemorySettings.bankScope
         let now = nativeMemoryNow()
         var trace = NativeMemoryRetrievalTrace(query: semanticText, mode: .lexical, rerankNote: "No rerank ran.", vectorStatus: "")
+        let settingsUnchanged: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return self.nativeMemorySettings.enabled && self.nativeMemorySettings.sensitiveHandling == sensitive && self.nativeMemorySettings.bankScope == liveScope
+        }
+        func abandoned() -> NativeMemoryRetrievalResult {
+            trace.notes.append("Memory settings changed while this turn was being prepared, so no memory was used.")
+            memoryServiceState = .retrievalUnavailable("Memory settings changed while the request was being prepared.")
+            return NativeMemoryRetrievalResult(selected: [], trace: trace)
+        }
+        func stillEligible(_ candidates: [NativeMemoryCandidate]) throws -> [NativeMemoryCandidate] {
+            let ranked = candidates.map { NativeMemoryRanked(record: $0.record, score: $0.fused, revision: $0.revision) }
+            let kept = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: now, sensitive: nativeMemorySettings.sensitiveHandling)
+            let ids = Set(kept.map(\.record.id))
+            return candidates.filter { ids.contains($0.record.id) }
+        }
         if memoryIndexingProgress != nil {
             let deadline = ContinuousClock.now.advanced(by: .milliseconds(NativeMemoryRetrievalLimits.backfillWaitMilliseconds))
             while memoryIndexingProgress != nil, ContinuousClock.now < deadline {
@@ -68,6 +84,7 @@ extension ChatStore {
             }
             if memoryIndexingProgress != nil { trace.notes.append("Vectors were still being prepared when this turn started.") }
         }
+        guard settingsUnchanged() else { return abandoned() }
         do {
             try local.refreshDomainProjections(now: now)
             let currentSensitive = NativeMemorySafety.containsSensitiveData(query.current)
@@ -82,11 +99,12 @@ extension ChatStore {
             if let semanticService, !currentSensitive, semanticService.supportsSemanticRecall || !settings.embeddingsModel.trimmingCharacters(in: .whitespaces).isEmpty {
                 if !status.complete {
                     trace.notes.append("Semantic recall is waiting for vectors, so this turn used local search only.")
-                    if memoryIndexingProgress == nil, service == nil { backfillMemoryVectorsIfNeeded() }
+                    if memoryIndexingProgress == nil, model == memoryVectorModel(nativeMemoryService, settings: nativeMemorySettings) { backfillMemoryVectorsIfNeeded() }
                 } else if NativeMemorySafety.containsSensitiveData(semanticText) {
                     trace.notes.append("The conversation window looked sensitive, so it was not sent to the memory endpoint.")
                 } else {
                     do {
+                        guard settingsUnchanged() else { return abandoned() }
                         let remaining = budget - elapsedMilliseconds(since: started)
                         let embedded = try await NativeMemoryDeadline.run(milliseconds: remaining) { try await semanticService.embed(semanticText) }
                         semantic = try local.semanticMemoryCandidates(query: embedded, model: model, bankScope: scope, now: now, sensitive: sensitive)
@@ -101,11 +119,7 @@ extension ChatStore {
                     }
                 }
             }
-            guard nativeMemorySettings.enabled, nativeMemorySettings.sensitiveHandling == sensitive, nativeMemorySettings.bankScope == scope || settings.bankScope != nativeMemorySettings.bankScope else {
-                trace.notes.append("Memory settings changed while this turn was being prepared, so no memory was used.")
-                memoryServiceState = .retrievalUnavailable("Memory settings changed while the request was being prepared.")
-                return NativeMemoryRetrievalResult(selected: [], trace: trace)
-            }
+            guard settingsUnchanged() else { return abandoned() }
             trace.semantic = NativeMemoryRetrieval.entries(semantic, source: "semantic") { $0.cosine ?? 0 }
             var ordered: [NativeMemoryCandidate]
             if semanticAvailable {
@@ -117,6 +131,7 @@ extension ChatStore {
             }
             let typed = try local.typedMemoryRecords(bankScope: scope, now: now, sensitive: sensitive)
             ordered = NativeMemoryRetrieval.preferTyped(ordered, typed: typed)
+            ordered = try stillEligible(ordered)
             trace.fused = NativeMemoryRetrieval.entries(ordered, source: trace.mode == .fused ? "fused" : "lexical") { $0.fused }
             let rerankModel = semanticService?.rerankModelName.trimmingCharacters(in: .whitespaces) ?? ""
             if !rerankModel.isEmpty, let semanticService, !ordered.isEmpty, !currentSensitive {
@@ -147,11 +162,7 @@ extension ChatStore {
             } else if rerankModel.isEmpty {
                 trace.rerankNote = "No rerank ran: no rerank model is set."
             }
-            guard nativeMemorySettings.enabled, nativeMemorySettings.sensitiveHandling == sensitive else {
-                trace.notes.append("Memory settings changed while this turn was being prepared, so no memory was used.")
-                memoryServiceState = .retrievalUnavailable("Memory settings changed while the request was being prepared.")
-                return NativeMemoryRetrievalResult(selected: [], trace: trace)
-            }
+            guard settingsUnchanged() else { return abandoned() }
             let budgeted = NativeMemoryRetrieval.budget(ordered)
             let ranked = budgeted.map { NativeMemoryRanked(record: $0.record, score: $0.rerank ?? $0.fused, revision: $0.revision) }
             let selected = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: now, sensitive: sensitive)
@@ -208,8 +219,8 @@ extension ChatStore {
                           !(try local.eligibleMemory([NativeMemoryRanked(record: memory, score: 1)], bankScope: "all", sensitive: nativeMemorySettings.sensitiveHandling)).isEmpty else { continue }
                     let embedding = try await service.embed(memory.details.joined(separator: "\n"))
                     guard nativeMemorySettings.enabled, memoryVectorModel(nativeMemoryService, settings: nativeMemorySettings) == model,
-                          nativeMemorySettings.sensitiveHandling == sensitive,
-                          !(try local.eligibleMemory([NativeMemoryRanked(record: memory, score: 1)], bankScope: "all", sensitive: nativeMemorySettings.sensitiveHandling)).isEmpty else { return }
+                          nativeMemorySettings.sensitiveHandling == sensitive else { return }
+                    guard !(try local.eligibleMemory([NativeMemoryRanked(record: memory, score: 1)], bankScope: "all", sensitive: nativeMemorySettings.sensitiveHandling)).isEmpty else { continue }
                     try local.saveMemoryVector(embedding, model: model, expected: memory)
                     memoryIndexingProgress = NativeMemoryIndexingProgress(completed: offset + 1, total: missing.count)
                 } catch NativeMemoryEvidenceError.changed {
