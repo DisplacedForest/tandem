@@ -60,35 +60,48 @@ extension LocalChatRepository {
         }
     }
 
-    func memoryVectorStatus(model: String, now: Date = Date()) throws -> NativeMemoryVectorStatus {
+    static let vectorEligibleSQL = """
+        m.status = 'approved' AND (m.expiry IS NULL OR m.expiry > ?) AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
+          AND (? = 1 OR COALESCE(json_extract(m.record_json, '$.sensitiveConsent'), 0) = 0)
+        """
+
+    func memoryVectorStatus(model: String, now: Date = Date(), sensitive: NativeMemorySensitiveHandling = .neverStore) throws -> NativeMemoryVectorStatus {
         try database.read { db in
             let total = try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM native_memories m LEFT JOIN conversations c ON c.id = m.source_conversation_id
-                WHERE m.status = 'approved' AND (m.expiry IS NULL OR m.expiry > ?) AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
-                  AND \(Self.sourceEligibleSQL)
-                """, arguments: [now.timeIntervalSince1970]) ?? 0
+                WHERE \(Self.vectorEligibleSQL) AND \(Self.sourceEligibleSQL)
+                """, arguments: [now.timeIntervalSince1970, sensitive == .reviewOnly]) ?? 0
             let ready = model.isEmpty ? 0 : try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM native_memories m LEFT JOIN conversations c ON c.id = m.source_conversation_id
                 JOIN native_memory_vectors v ON v.memory_id = m.id
                   AND v.revision = (SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = m.id)
-                WHERE m.status = 'approved' AND (m.expiry IS NULL OR m.expiry > ?) AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
-                  AND v.model = ? AND \(Self.sourceEligibleSQL)
-                """, arguments: [now.timeIntervalSince1970, model]) ?? 0
+                WHERE \(Self.vectorEligibleSQL) AND v.model = ? AND \(Self.sourceEligibleSQL)
+                """, arguments: [now.timeIntervalSince1970, sensitive == .reviewOnly, model]) ?? 0
             return NativeMemoryVectorStatus(model: model, ready: ready, total: total)
         }
     }
 
-    func memoriesMissingVectors(model: String, now: Date = Date()) throws -> [NativeMemoryRecord] {
+    func memoriesMissingVectors(model: String, now: Date = Date(), sensitive: NativeMemorySensitiveHandling = .neverStore) throws -> [NativeMemoryRecord] {
         guard !model.isEmpty else { return [] }
         return try database.read { db in
             try String.fetchAll(db, sql: """
                 SELECT m.record_json FROM native_memories m LEFT JOIN conversations c ON c.id = m.source_conversation_id
-                WHERE m.status = 'approved' AND (m.expiry IS NULL OR m.expiry > ?) AND (m.durability = 'durable' OR m.expiry IS NOT NULL)
-                  AND \(Self.sourceEligibleSQL)
+                WHERE \(Self.vectorEligibleSQL) AND \(Self.sourceEligibleSQL)
                   AND NOT EXISTS (SELECT 1 FROM native_memory_vectors v WHERE v.memory_id = m.id AND v.model = ?
                       AND v.revision = (SELECT MAX(revision) FROM native_memory_revisions WHERE memory_id = m.id))
                 ORDER BY m.updated_at DESC, m.id
-                """, arguments: [now.timeIntervalSince1970, model]).compactMap { try? JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
+                """, arguments: [now.timeIntervalSince1970, sensitive == .reviewOnly, model]).compactMap { try? JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
+        }
+    }
+
+    func typedMemoryRecords(bankScope: String, now: Date = Date(), sensitive: NativeMemorySensitiveHandling = .neverStore) throws -> [NativeMemoryRecord] {
+        try database.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT m.record_json FROM native_memories m LEFT JOIN conversations c ON c.id = m.source_conversation_id
+                WHERE json_extract(m.record_json, '$.domainEntityID') IS NOT NULL AND \(Self.recallScopeSQL) AND \(Self.sourceEligibleSQL)
+                """, arguments: [bankScope, bankScope, now.timeIntervalSince1970, sensitive == .reviewOnly])
+                .compactMap { try? JSONDecoder().decode(NativeMemoryRecord.self, from: Data($0.utf8)) }
+                .filter { NativeMemorySafety.recordIsSafe($0) }
         }
     }
 
@@ -133,9 +146,14 @@ extension LocalChatRepository {
     func lexicalMemoryCandidates(_ text: String, bankScope: String, now: Date = Date(),
                                  sensitive: NativeMemorySensitiveHandling = .neverStore,
                                  limit: Int = NativeMemoryRetrievalLimits.lexicalCandidates) throws -> [NativeMemoryCandidate] {
-        guard limit > 0, !NativeMemorySafety.containsSensitiveData(text) else { return [] }
-        let terms = Array(Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.prefix(48).map(String.init))).sorted()
-        guard !terms.isEmpty else { return [] }
+        guard !NativeMemorySafety.containsSensitiveData(text) else { return [] }
+        return try lexicalMemoryCandidates(terms: NativeMemoryQuery(current: text, context: []).lexicalTerms, bankScope: bankScope, now: now, sensitive: sensitive, limit: limit)
+    }
+
+    func lexicalMemoryCandidates(terms: [String], bankScope: String, now: Date = Date(),
+                                 sensitive: NativeMemorySensitiveHandling = .neverStore,
+                                 limit: Int = NativeMemoryRetrievalLimits.lexicalCandidates) throws -> [NativeMemoryCandidate] {
+        guard limit > 0 else { return [] }
         let query = terms.map { "\"" + $0 + "\"" }.joined(separator: " OR ")
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """

@@ -13,6 +13,9 @@ enum NativeMemoryRetrievalLimits {
     static let minimumCosine = 0.2
     static let latencyBudgetMilliseconds = 1_500
     static let backfillWaitMilliseconds = 1_000
+    static let lexicalTerms = 48
+    static let bytesPerToken = 3
+    static let framingTokens = 60
 }
 
 enum NativeMemoryVectorCodec {
@@ -118,12 +121,41 @@ struct NativeMemoryCandidate: Sendable {
     }
 }
 
+struct NativeMemoryQuery: Equatable, Sendable {
+    let current: String
+    let context: [String]
+
+    var semanticText: String {
+        String((context + [current]).joined(separator: "\n").suffix(NativeMemoryRetrievalLimits.queryCharacters))
+    }
+
+    var lexicalTerms: [String] {
+        var seen: Set<String> = []
+        var terms: [String] = []
+        for text in [current] + context.reversed() {
+            for raw in text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+                let term = String(raw)
+                guard terms.count < NativeMemoryRetrievalLimits.lexicalTerms, seen.insert(term).inserted else { continue }
+                terms.append(term)
+            }
+        }
+        return terms
+    }
+}
+
 enum NativeMemoryRetrieval {
-    static func queryText(current: String, history: [NativeTurnHistoryMessage]) -> String {
+    static func stripCitations(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\[\d{1,6}\]"#, with: "", options: .regularExpression)
+    }
+
+    static func query(current: String, history: [NativeTurnHistoryMessage]) -> NativeMemoryQuery {
         let window = history.filter { !$0.text.isEmpty }.suffix(NativeMemoryRetrievalLimits.contextWindowMessages)
-        let context = window.map { String($0.text.prefix(NativeMemoryRetrievalLimits.contextWindowCharacters)) }
-        let combined = (context + [current]).joined(separator: "\n")
-        return String(combined.suffix(NativeMemoryRetrievalLimits.queryCharacters))
+        let context = window.map { String(stripCitations($0.text).prefix(NativeMemoryRetrievalLimits.contextWindowCharacters)) }
+        return NativeMemoryQuery(current: stripCitations(current), context: context)
+    }
+
+    static func queryText(current: String, history: [NativeTurnHistoryMessage]) -> String {
+        query(current: current, history: history).semanticText
     }
 
     static func fuse(lexical: [NativeMemoryCandidate], semantic: [NativeMemoryCandidate],
@@ -162,19 +194,45 @@ enum NativeMemoryRetrieval {
         record.title.lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ")
     }
 
-    static func preferTyped(_ candidates: [NativeMemoryCandidate]) -> [NativeMemoryCandidate] {
-        let typedSubjects = Set(candidates.filter { $0.record.domainEntityID != nil }.map { subjectKey($0.record) })
-        return candidates.filter { $0.record.domainEntityID != nil || !typedSubjects.contains(subjectKey($0.record)) }
+    static func preferTyped(_ candidates: [NativeMemoryCandidate], typed: [NativeMemoryRecord] = []) -> [NativeMemoryCandidate] {
+        var typedBySubject: [String: NativeMemoryRecord] = [:]
+        for record in typed where record.domainEntityID != nil && !subjectKey(record).isEmpty {
+            typedBySubject[subjectKey(record)] = record
+        }
+        for candidate in candidates where candidate.record.domainEntityID != nil && !subjectKey(candidate.record).isEmpty {
+            typedBySubject[subjectKey(candidate.record)] = candidate.record
+        }
+        var result: [NativeMemoryCandidate] = []
+        var seen: Set<String> = []
+        for candidate in candidates {
+            let key = subjectKey(candidate.record)
+            if candidate.record.domainEntityID == nil, !key.isEmpty, let authority = typedBySubject[key] {
+                guard seen.insert(authority.id).inserted else { continue }
+                var replacement = candidate
+                replacement.record = authority
+                replacement.revision = nil
+                result.append(replacement)
+            } else {
+                guard seen.insert(candidate.record.id).inserted else { continue }
+                result.append(candidate)
+            }
+        }
+        return result
+    }
+
+    static func renderedLine(_ record: NativeMemoryRecord) -> String {
+        let detail = record.details.joined(separator: "; ")
+        return "- \(record.title): \(detail.isEmpty ? record.summary : detail) [00000]"
     }
 
     static func estimatedTokens(_ record: NativeMemoryRecord) -> Int {
-        max(1, (record.title.count + record.summary.count + record.details.joined().count + 3) / 4)
+        max(1, (renderedLine(record).utf8.count + NativeMemoryRetrievalLimits.bytesPerToken - 1) / NativeMemoryRetrievalLimits.bytesPerToken)
     }
 
     static func budget(_ ordered: [NativeMemoryCandidate], itemLimit: Int = NativeMemoryRetrievalLimits.itemLimit,
                        tokenBudget: Int = NativeMemoryRetrievalLimits.tokenBudget) -> [NativeMemoryCandidate] {
         var selected: [NativeMemoryCandidate] = []
-        var tokens = 0
+        var tokens = NativeMemoryRetrievalLimits.framingTokens
         for candidate in ordered {
             let cost = estimatedTokens(candidate.record)
             guard selected.count < itemLimit, tokens + cost <= tokenBudget else { continue }

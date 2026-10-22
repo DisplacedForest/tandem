@@ -33,6 +33,7 @@ final class ChatStore: ObservableObject {
     @Published var memoryEndpointStatus: NativeMemoryEndpointStatus = .notConfigured
     @Published var memoryIndexingProgress: NativeMemoryIndexingProgress?
     @Published var memoryVectorStatus: NativeMemoryVectorStatus?
+    var memoryBackfillPending = false
     @Published var memoryRetrievalTraces: [String: NativeMemoryRetrievalTrace] = [:]
     @Published var inspectedMemoryTrace: NativeMemoryRetrievalTrace?
     @Published private(set) var queuedMemoryTurns: [NativeMemoryQueuedTurn] = []

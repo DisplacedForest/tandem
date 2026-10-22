@@ -8,6 +8,7 @@ final class NativeMemoryFixtureService: NativeMemoryServing, @unchecked Sendable
     private var rerankCount = 0
     var rerankFailure: Error?
     var embedFailure: Error?
+    var embedDelayMilliseconds = 0
 
     init(model: String = "fixture-embed", reranker: String = "") {
         self.model = model
@@ -45,6 +46,7 @@ final class NativeMemoryFixtureService: NativeMemoryServing, @unchecked Sendable
     func embed(_ text: String) async throws -> [Double] {
         lock.withLock { embedCount += 1 }
         if let embedFailure { throw embedFailure }
+        if embedDelayMilliseconds > 0 { try await Task.sleep(for: .milliseconds(embedDelayMilliseconds)) }
         return Self.vector(text)
     }
 
@@ -170,6 +172,36 @@ extension SelfTest {
                        NativeTurnHistoryMessage(Message(role: .assistant, text: "earlier"))]
         let query = NativeMemoryRetrieval.queryText(current: "now", history: history)
         try require(query.hasSuffix("\nearlier\nnow") && query.count <= NativeMemoryRetrievalLimits.contextWindowCharacters + 20, "The query takes a bounded window plus the current message")
+        let cited = [NativeTurnHistoryMessage(Message(role: .assistant, text: "You drink espresso [10001] and ride a bike [10002]."))]
+        let citedResult = await store.retrieveApprovedMemory("where is the zymurgy club", history: cited, settings: settings, service: service)
+        try require(citedResult.trace?.mode == .fused && !citedResult.trace!.lexical.isEmpty && !citedResult.trace!.query.contains("[10001]"),
+                    "Citation markers in earlier answers do not poison the query: \(citedResult.trace?.summary ?? "")")
+        let noisy = [NativeTurnHistoryMessage(Message(role: .user, text: Array(repeating: "earlier", count: 60).joined(separator: " ")))]
+        let noisyResult = await store.retrieveApprovedMemory("zymurgy", history: noisy, settings: settings, service: service)
+        try require(noisyResult.selected.contains { $0.record.id == "exact" }, "The current request's terms come before history in lexical search")
+        let heavyText = String(repeating: "\u{8fd9}", count: 600)
+        let heavyRecord = memoryFixtureRecord("heavy", title: "Heavy", details: [heavyText, heavyText, heavyText, heavyText], now: now)
+        try require(NativeMemoryRetrieval.estimatedTokens(heavyRecord) > NativeMemoryRetrievalLimits.tokenBudget, "Multibyte text is estimated by bytes, not characters")
+        try require(NativeMemoryRetrieval.budget([NativeMemoryCandidate(record: heavyRecord, fused: 1)]).isEmpty, "A fact larger than the budget is not injected")
+        var farTyped = memoryFixtureRecord("flock-typed", title: "Flock", details: ["Current count: 10"], now: now)
+        farTyped.domainEntityID = UUID()
+        let flockFree = memoryFixtureRecord("flock-free", title: "Flock", details: ["I have 12 chickens"], now: now)
+        let resolved = NativeMemoryRetrieval.preferTyped([NativeMemoryCandidate(record: flockFree, fused: 0.4)], typed: [farTyped])
+        try require(resolved.map(\.record.id) == ["flock-typed"], "A typed counterpart outside the candidates still replaces the free-text fact")
+        let slowService = NativeMemoryFixtureService(model: "fixture-embed")
+        slowService.embedDelayMilliseconds = NativeMemoryRetrievalLimits.latencyBudgetMilliseconds + 400
+        let deadlineStart = ContinuousClock.now
+        let slowResult = await store.retrieveApprovedMemory("zymurgy news", settings: settings, service: slowService)
+        let deadlineElapsed = deadlineStart.duration(to: .now)
+        try require(slowResult.trace?.mode == .lexical && slowResult.trace?.notes.contains(where: { $0.contains("deadline") }) == true
+                    && slowResult.selected.contains { $0.record.id == "exact" } && deadlineElapsed < .milliseconds(NativeMemoryRetrievalLimits.latencyBudgetMilliseconds + 700),
+                    "A slow embeddings call is cut at the deadline and the turn keeps local results: \(slowResult.trace?.summary ?? "")")
+        var consented = memoryFixtureRecord("consented", title: "Consented", details: ["A consented sensitive fact about espresso"], now: now)
+        consented.sensitiveConsent = true
+        try repository.saveMemory(consented, decision: .accepted, note: "fixture")
+        let neverStore = try repository.memoryVectorStatus(model: "fixture-embed", now: now, sensitive: .neverStore)
+        let reviewOnly = try repository.memoryVectorStatus(model: "fixture-embed", now: now, sensitive: .reviewOnly)
+        try require(neverStore.total == 6 && reviewOnly.total == 7, "Readiness counts follow the sensitive setting like the backfill does")
 
         service.setModel("fixture-embed-v2")
         settings.embeddingsModel = "fixture-embed-v2"
@@ -183,7 +215,7 @@ extension SelfTest {
         try require(waiting.trace?.mode == .lexical && waiting.trace?.notes.contains(where: { $0.contains("waiting for vectors") }) == true && slow.embeds == 0,
                     "Until the backfill for a new model finishes, recall stays lexical and the endpoint is not queried: \(waiting.trace?.summary ?? "")")
         try require(try repository.memoryVectorStatus(model: "fixture-embed-v3", now: now).label.contains("Preparing 0 of 6"), "Settings can show the backfill status")
-        print("  native memory retrieval OK (packing, backfill, lexical and semantic sources, fusion, budgets, scope, rerank, rerank fallback, typed precedence, query window, model change, lexical until ready)")
+        print("  native memory retrieval OK (packing, backfill, lexical and semantic sources, fusion, budgets, scope, rerank, rerank fallback, typed precedence, query window, citations stripped, current terms first, byte budget, deadline, sensitive readiness, model change, lexical until ready)")
     }
 
     static func waitFor(seconds: Double, _ condition: @MainActor () throws -> Bool) async throws -> Bool {
