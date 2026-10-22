@@ -128,10 +128,14 @@ extension ChatStore {
                                               enabled: existing.enabled, lastRunAt: existing.lastRunAt,
                                               lastOutcome: existing.lastOutcome, createdAt: existing.createdAt)
             if existing.enabled {
-                schedule.advance(after: Date(), from: nil)
-                guard schedule.nextRunAt != nil else {
-                    scheduleError = "Pick a time that is still ahead."
-                    return
+                if draft.cadence == existing.cadence, let kept = existing.nextRunAt {
+                    schedule.nextRunAt = kept
+                } else {
+                    schedule.advance(after: Date(), from: nil)
+                    guard schedule.nextRunAt != nil else {
+                        scheduleError = "Pick a time that is still ahead."
+                        return
+                    }
                 }
             }
             try store.save(schedule)
