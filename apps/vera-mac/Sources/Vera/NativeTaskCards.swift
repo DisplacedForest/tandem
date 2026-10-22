@@ -4,13 +4,13 @@ import MarkdownUI
 struct NativeTaskCardView: View {
     let card: NativeTaskCardPresentation
     var statusTitle: String? = nil
-    var stopTitle = "Stop research"
+    var stopTitle: String? = nil
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(statusTitle ?? card.status.title, systemImage: card.status.symbol)
+            Label(statusTitle ?? card.statusTitle, systemImage: card.statusSymbol)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
             Text(card.title)
@@ -35,7 +35,7 @@ struct NativeTaskCardView: View {
             if card.canCancel || card.canRetry {
                 HStack(spacing: 12) {
                     if card.canRetry { Button("Retry") { onRetry?() }.disabled(onRetry == nil) }
-                    if card.canCancel { Button(stopTitle) { onCancel?() }.disabled(onCancel == nil) }
+                    if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
                 }
                 .font(.system(size: 12))
             }
@@ -82,7 +82,7 @@ struct NativeDisplayBlocksView: View {
                             Image(systemName: "doc.text").foregroundStyle(Theme.accent)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(artifact.title).font(.system(size: 13, weight: .medium)).lineLimit(3)
-                                Text("Open report").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                Text(artifact.openTitle).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                             }
                             Spacer(minLength: 8)
                             Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -110,7 +110,7 @@ struct NativeDisplayBlocksView: View {
         var saved = card
         saved.canCancel = false
         saved.canRetry = false
-        saved.connectionNote = "Saved here. The research engine is disconnected."
+        saved.connectionNote = "Saved here. Background work is disconnected."
         return saved
     }
 }

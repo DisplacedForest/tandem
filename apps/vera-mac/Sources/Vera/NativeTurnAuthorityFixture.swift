@@ -12,11 +12,24 @@ enum NativeTurnAuthorityFixture {
                         "Can you start a new background research task about Europa?"] {
             try require(NativeTurnToolAuthority(request).allowsResearch, "Explicit current research request must be authorized")
         }
+        for request in ["Write me a document about the workshop plan.", "Please write a detailed report on lunar ice in the background.",
+                        "Write a document.", "Draft a memo", "Prepare a report: summarize the attached notes.",
+                        "Could you draft a memo about the garage rebuild? Do not research anything new."] {
+            let authority = NativeTurnToolAuthority(request)
+            try require(authority.allowsDocument && authority.allowedWorkerTypes.contains("document"), "Explicit document request must be authorized: \(request)")
+        }
+        let memoOnly = NativeTurnToolAuthority("Could you draft a memo about the garage rebuild? Do not research anything new.")
+        try require(memoOnly.allowedWorkerTypes == ["document"], "A document request with a research prohibition permits only documents")
+        for request in ["Write a guide about research. Do not write a guide.", "Do not write a document about NASA.",
+                        "Earlier I said write me a document about NASA. What did I ask?", "The document is ready.", "Research the moon."] {
+            try require(!NativeTurnToolAuthority(request).allowsDocument, "Context, prohibitions and research cannot authorize a document: \(request)")
+        }
         for request in [second, "What did I ask you to do?", "Add links.", "Research is interesting.",
                         "Earlier I said \"Please start background research about NASA\". What is 7 plus 5? Do not use tools.",
                         "Earlier I said please research NASA. What did I ask?",
                         "The sentence please research NASA is an example.", "What does 'research NASA' mean?", "Explain ‘Please research NASA’.", "Explain this:\n> Please research NASA", "Summarize `research NASA`.",
-                        "Please do not research NASA.", "Research NASA. Do not start new research."] {
+                        "Please do not research NASA.", "Research NASA. Do not start new research.",
+                        "Write me a document about NASA.", "Do not write a document about NASA."] {
             try require(!NativeTurnToolAuthority(request).allowsResearch, "Context and prohibitions cannot authorize research")
         }
         for request in ["Don't use any tools.", "Don’t use tools.", "You must not call external tools.", "Answer without calling tools."] {
@@ -47,7 +60,7 @@ enum NativeTurnAuthorityFixture {
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
             nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
-            nativeTaskClient: client, artifactPersistenceEnabled: false)
+            nativeTaskClient: client, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         try require(try NativeSessionFixture.acceptLegacyContinuous(first, store: store), "First request accepted")
         let firstReply = store.selected!.messages.last!.id
@@ -94,7 +107,7 @@ enum NativeTurnAuthorityFixture {
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
             nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
-            artifactPersistenceEnabled: false)
+            nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         store.suspendsTurnScheduling = true
         store.sendText(second)

@@ -27,7 +27,7 @@ extension NativeTaskClient {
               let expected = original["payload"] as? [String: Any],
               try Self.canonical(received) == Self.canonical(expected) else { throw NativeTaskHTTPError.invalidResponse }
         let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: data)
-        guard snapshot.id == id, snapshot.workerType == "research" else { throw NativeTaskHTTPError.invalidResponse }
+        guard snapshot.id == id, snapshot.workerType == reference.createRequest.workerType else { throw NativeTaskHTTPError.invalidResponse }
         return snapshot
     }
 }

@@ -16,6 +16,23 @@ enum NativeTaskCardShot {
             sources: [PulseSource(n: 1, title: "Installation reference", url: "local")])
     }
 
+    static var document: NativeResearchArtifact {
+        NativeResearchArtifact(
+            id: "example-document", title: "Workshop plan",
+            report: """
+            # Workshop plan
+
+            ## Layout
+
+            The bench runs along the north wall with the saw station at the far end, leaving the door side clear for sheet goods.
+
+            ## Tools
+
+            Start with the table saw, a track saw for sheet breakdown and a small dust collector. Add the planer once the bench is in.
+            """,
+            sources: [], kind: "document")
+    }
+
     static var unsafeReport: NativeResearchArtifact {
         NativeResearchArtifact(
             id: "example-unsafe-report", title: "Saved report links",
@@ -96,6 +113,16 @@ struct NativeTaskCardShotSurface: View {
             result.canRetry = true
         case "task-card-offline":
             break
+        case "task-card-document":
+            result.title = "Workshop plan"
+            result.workerType = "document"
+            result.milestone = "Drafting section 2 of 4."
+        case "task-card-document-complete":
+            result.title = "Workshop plan"
+            result.workerType = "document"
+            result.status = .completed
+            result.milestone = "The document is ready."
+            result.canCancel = false
         default: break
         }
         if [.stopped, .needsInput].contains(result.status) {
@@ -111,7 +138,7 @@ struct NativeTaskCardShotSurface: View {
     private var blocks: [NativeDisplayBlock] {
         var result: [NativeDisplayBlock] = [.taskCard(card)]
         if card.status == .completed {
-            result.append(.artifact(NativeTaskCardShot.report))
+            result.append(.artifact(card.isDocument ? NativeTaskCardShot.document : NativeTaskCardShot.report))
         }
         return result
     }
@@ -133,7 +160,7 @@ struct NativeTaskCardShotSurface: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text("I'll research that in the background. We can keep talking here.")
+                Text(card.isDocument ? "I'll write that in the background. We can keep talking here." : "I'll research that in the background. We can keep talking here.")
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",

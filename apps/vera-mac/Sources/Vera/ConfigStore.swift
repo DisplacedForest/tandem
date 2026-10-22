@@ -82,6 +82,7 @@ final class ConfigStore: ObservableObject {
         "owner_name": "VERA_OWNER_NAME", "assistant_name": "VERA_ASSISTANT_NAME",
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
         NativeImageTools.configKey: NativeImageTools.envName,
+        NativeWebSearch.configKey: NativeWebSearch.envName,
     ]
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
@@ -729,6 +730,10 @@ final class ConfigStore: ObservableObject {
         NativeImageTools.resolvedBase()
     }
 
+    var searchBase: URL? {
+        NativeWebSearch.resolvedBase()
+    }
+
     var voiceBase: URL? {
         let env = ProcessInfo.processInfo.environment["VERA_VOICE_BASE"]
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["voice_base"] as? String)
@@ -792,7 +797,22 @@ enum ConnectionTest {
         return "\(label) is reachable"
     }
 
-    /// Probe the voice host by opening (and closing) a Wyoming ASR connection.
+    static func search(base: String) async throws -> String {
+        guard let url = NativeWebSearch.base(from: base) else {
+            throw TestError.message("Enter a valid search URL first")
+        }
+        let results: [NativeWebSearchResult]
+        do {
+            results = try await NativeWebSearch.search(base: url, query: "weather today", maximum: 3)
+        } catch {
+            throw TestError.message(error.localizedDescription)
+        }
+        guard !results.isEmpty else {
+            throw TestError.message("Search answered but returned no results. Check that the JSON format is enabled on the server.")
+        }
+        return "Search is working"
+    }
+
     static func voice(base: String) async throws -> String {
         guard let url = URL(string: base), url.host != nil else {
             throw TestError.message("Enter a valid voice URL first")

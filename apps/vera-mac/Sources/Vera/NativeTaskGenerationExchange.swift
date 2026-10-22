@@ -43,7 +43,7 @@ actor NativeTaskGenerationExchange {
     }
 
     private func checkBinding(_ task: NativeTaskRecord, _ body: NativeTaskAdmissionBinding) throws {
-        guard task.workerType == "research", Self.binding(of: task) == body else {
+        guard NativeResearchTaskRequest.workerTypes.contains(task.workerType), Self.binding(of: task) == body else {
             throw NativeTaskLocalStatus(code: 409, detail: "Native task binding does not match")
         }
         guard !task.cancelRequested, ![.completed, .failed, .canceled, .needsDecision].contains(task.state) else {

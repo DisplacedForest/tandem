@@ -108,6 +108,10 @@ struct NativeResearchArtifact: Codable, Hashable, Identifiable, Sendable {
     var report: String
     var sources: [PulseSource]
     var taskOutput: NativeTaskOutputReference? = nil
+    var kind: String? = nil
+
+    var isDocument: Bool { kind == "document" }
+    var openTitle: String { isDocument ? "Open document" : "Open report" }
 }
 
 struct NativeTaskOutputReference: Codable, Hashable, Sendable {
@@ -119,23 +123,27 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     enum Status: String, Codable, Sendable {
         case preparing, queued, working, stopping, stopped, completed, needsInput, failed
 
-        var title: String {
+        var title: String { title(document: false) }
+
+        func title(document: Bool) -> String {
             switch self {
-            case .preparing: return "Starting research"
+            case .preparing: return document ? "Starting the document" : "Starting research"
             case .queued: return "Ready to continue"
-            case .working: return "Researching"
-            case .stopping: return "Stopping research"
-            case .stopped: return "Research stopped"
-            case .completed: return "Research complete"
+            case .working: return document ? "Writing" : "Researching"
+            case .stopping: return document ? "Stopping writing" : "Stopping research"
+            case .stopped: return document ? "Writing stopped" : "Research stopped"
+            case .completed: return document ? "Document ready" : "Research complete"
             case .needsInput: return "Needs your input"
             case .failed: return "Couldn't finish"
             }
         }
 
-        var symbol: String {
+        var symbol: String { symbol(document: false) }
+
+        func symbol(document: Bool) -> String {
             switch self {
             case .preparing, .queued: return "clock"
-            case .working: return "magnifyingglass"
+            case .working: return document ? "pencil" : "magnifyingglass"
             case .stopping, .stopped: return "stop.circle"
             case .completed: return "checkmark.circle"
             case .needsInput: return "questionmark.circle"
@@ -152,4 +160,10 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var connectionNote: String? = nil
     var canCancel: Bool = false
     var canRetry: Bool = false
+    var workerType: String? = nil
+
+    var isDocument: Bool { workerType == "document" }
+    var statusTitle: String { status.title(document: isDocument) }
+    var statusSymbol: String { status.symbol(document: isDocument) }
+    var stopTitle: String { isDocument ? "Stop writing" : "Stop research" }
 }

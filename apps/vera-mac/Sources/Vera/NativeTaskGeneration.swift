@@ -52,13 +52,22 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
         return try JSONDecoder().decode(Self.self, from: data)
     }
 
+    static func validPhase(_ phase: String) -> Bool {
+        let parts = phase.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let name = parts.first, NativeTaskTransportTiming.Phase(rawValue: String(name)) != nil else { return false }
+        if parts.count == 1 { return ["plan", "synthesize", "outline"].contains(String(name)) }
+        let index = parts[1]
+        return ["draft", "revise"].contains(String(name)) && (1...2).contains(index.count)
+            && index.allSatisfy(\.isNumber) && (Int(index) ?? 99) < NativeDocumentWorker.maximumSections
+    }
+
     func validate(reference: NativeTaskReference, enforceInputLimit: Bool = true) throws {
         guard let profile = reference.profile, let binding = reference.createRequest.payload.nativeBinding,
               reference.remoteTaskID == taskID, reference.deliveryState == .accepted,
               !reference.cancelRequested, reference.snapshot?.state.isTerminal != true,
               bindingID == binding.id, enrollmentDigest == binding.enrollmentDigest,
               admissionBase == binding.admissionBase, admissionBase == profile.provider.base,
-              ["plan", "synthesize"].contains(phase), (1...80).contains(attempt.utf8.count),
+              Self.validPhase(phase), (1...80).contains(attempt.utf8.count),
               attempt.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0)
                   || (97...122).contains($0) || $0 == 45 }),
               UUID(uuidString: id) != nil, generation > 0,

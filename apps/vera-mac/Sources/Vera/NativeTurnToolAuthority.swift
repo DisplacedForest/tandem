@@ -3,22 +3,38 @@ import Foundation
 struct NativeTurnToolAuthority: Equatable, Sendable {
     let allowsTools: Bool
     let allowsResearch: Bool
+    let allowsDocument: Bool
+
+    var allowsBackground: Bool { allowsResearch || allowsDocument }
+
+    var allowedWorkerTypes: Set<String> {
+        var types: Set<String> = []
+        if allowsResearch { types.insert("research") }
+        if allowsDocument { types.insert("document") }
+        return types
+    }
 
     init(_ request: String, mentions: Set<String> = []) {
         let text = Self.instructions(request)
         let noTools = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:use|call|run|invoke)\s+(?:(?:any|external)\s+)?(?:tools?|functions?)\b|\b(?:no|without)\s+(?:(?:using|calling|invoking)\s+)?(?:(?:any|external)\s+)?(?:tools?|functions?)\b"#)
         let noResearch = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:(?:start|run|do|perform|conduct)\s+)?(?:(?:new|background|deep)\s+)*(?:research|investigat\w*)\b|\bno\s+(?:new\s+)?(?:(?:background|deep)\s+)?(?:research|investigation)\b"#)
-        let action = #"(?:(?:start|run|launch|begin|do|perform|conduct)\s+(?:a\s+)?)?(?:(?:new|separate|background|deep)\s+)*(?:research|investigate|investigation)\b"#
+        let documentNoun = #"(?:document|report|essay|memo|guide|article|write-?up)"#
+        let noDocument = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:write|draft|produce|create|prepare)\s+(?:me\s+|us\s+)?(?:(?:a|an|the|any)\s+)?(?:(?:new|separate|background|long|longer|full|detailed|written)\s+)*"# + documentNoun + #"s?\b"#)
+        let researchAction = #"(?:(?:start|run|launch|begin|do|perform|conduct)\s+(?:a\s+)?)?(?:(?:new|separate|background|deep)\s+)*(?:research|investigate|investigation)\b"#
+        let documentAction = #"(?:write|draft|produce|create|prepare)\s+(?:me\s+|us\s+)?(?:(?:a|an|the)\s+)?(?:(?:new|separate|background|long|longer|full|detailed|written)\s+)*"# + documentNoun + #"\b"#
         let start = #"(?:^|[.!?\n])\s*(?:(?:private|separately|also|now)\s*[:,]?\s*)*"#
-        let explicit = Self.matches(text, start + #"(?:please|can\s+you|could\s+you|would\s+you|i\s+want\s+you\s+to|i\s+would\s+like\s+you\s+to)\s+"# + action)
-            || Self.matches(text, start + action + #"\s+(?!(?:is|was|means|can|should|does|has|had)\b)"#)
+        let polite = #"(?:please|can\s+you|could\s+you|would\s+you|i\s+want\s+you\s+to|i\s+would\s+like\s+you\s+to)\s+"#
+        let after = #"(?:\s+(?!(?:is|was|means|can|should|does|has|had)\b)|\s*(?:[.!?:,;]|$))"#
+        let researchExplicit = Self.matches(text, start + polite + researchAction) || Self.matches(text, start + researchAction + after)
+        let documentExplicit = Self.matches(text, start + polite + documentAction) || Self.matches(text, start + documentAction + after)
         allowsTools = !noTools
-        allowsResearch = !noTools && !noResearch && (explicit || mentions.contains(NativeWebTools.researchToolID))
+        allowsResearch = !noTools && !noResearch && (researchExplicit || mentions.contains(NativeWebTools.researchToolID))
+        allowsDocument = !noTools && !noDocument && (documentExplicit || mentions.contains(NativeTaskTools.toolID))
     }
 
     func filter(_ ids: Set<String>) -> Set<String> {
         guard allowsTools else { return [] }
-        return allowsResearch ? ids : ids.subtracting([NativeWebTools.researchToolID, NativeTaskTools.toolID])
+        return allowsBackground ? ids : ids.subtracting([NativeWebTools.researchToolID, NativeTaskTools.toolID])
     }
 
     private static func matches(_ text: String, _ pattern: String) -> Bool {

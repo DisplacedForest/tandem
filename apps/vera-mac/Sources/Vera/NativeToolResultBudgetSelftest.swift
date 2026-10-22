@@ -92,19 +92,26 @@ enum NativeToolResultBudgetSelftest {
     }
 
     static func loopCases(research: NativeJSONValue, researchExact: NativeJSONValue) async throws {
-        let web = NativeWebTools.definitions(base: { URL(string: "https://api.example") }, client: NativeWebToolClient { url, _, _ in
-            let value = url.path.hasSuffix("research") ? research : .object(["results": research.pi("sources"), "report": research.pi("report")])
+        let searchClient = NativeWebSearchClient { _, _ in
+            let value: NativeJSONValue = .object(["results": .array((research.pi("sources").piArray ?? []).map { source in
+                .object(["title": source.pi("title"), "url": source.pi("url"), "content": research.pi("report")])
+            })])
             return (try NativeToolLoop.serializedResult(value).data(using: .utf8)!, 200)
-        })
-        guard let search = web.first(where: { $0.name == "web_search" }), let deep = web.first(where: { $0.name == "deep_research" }) else { throw NativeToolError.unavailable }
-        try require(search.resultByteBudget == 32_768 && deep.resultByteBudget == 131_072, "built-in definitions have wrong budgets")
-        for definition in [search, deep] {
-            let text = try await modelResult(definition, arguments: "{\"query\":\"fixture\"}")
-            try require(text.utf8.count <= definition.resultByteBudget && decode(text).pi("truncated") == .bool(true), "model received an unbounded built-in result")
         }
-        var intact = deep
-        intact = NativeToolDefinition(id: intact.id, name: intact.name, title: intact.title, description: intact.description,
-            parameters: intact.parameters, confirmation: .none, resultByteBudget: intact.resultByteBudget, isAvailable: { true }, execute: { _ in researchExact })
+        let fetchClient = NativePageFetchClient { url, _, _ in
+            NativePageResponse(status: 200, contentType: "text/plain", body: Data(String(repeating: "東京の雨 ", count: 4_000).utf8), truncated: false, finalURL: url)
+        }
+        let web = NativeWebTools.definitions(searchBase: { URL(string: "https://search.example") }, searchClient: searchClient, fetchClient: fetchClient)
+        guard let search = web.first(where: { $0.name == "web_search" }), let fetch = web.first(where: { $0.name == "fetch_page" }) else { throw NativeToolError.unavailable }
+        try require(search.resultByteBudget == 32_768 && fetch.resultByteBudget == 32_768, "built-in definitions have wrong budgets")
+        let text = try await modelResult(search, arguments: "{\"query\":\"fixture\",\"max_results\":10}")
+        try require(text.utf8.count <= search.resultByteBudget && decode(text).pi("truncated") == .null
+                    && (decode(text).pi("results").piArray ?? []).allSatisfy { ($0.pi("content").piString?.count ?? 0) <= NativeWebSearch.snippetCharacters },
+                    "search results exceeded their snippet caps")
+        let fetched = try await modelResult(fetch, arguments: "{\"url\":\"https://pages.example/report\",\"max_chars\":20000}")
+        try require(fetched.utf8.count <= fetch.resultByteBudget && decode(fetched).pi("truncated") == .bool(true), "model received an unbounded page result")
+        let intact = NativeToolDefinition(id: "deep-research", name: "deep_research", title: "Deep research", description: "Fixture",
+            parameters: search.parameters, confirmation: .none, resultByteBudget: NativeToolResultBudget.researchBytes, isAvailable: { true }, execute: { _ in researchExact })
         try require(try await modelResult(intact, arguments: "{\"query\":\"fixture\"}") == NativeToolLoop.serializedResult(researchExact), "128 KiB model history changed")
         let scalar = definition(.string("small scalar"))
         try require(try await modelResult(scalar) == NativeToolLoop.serializedResult(.string("small scalar")), "scalar result failed in loop")

@@ -7,7 +7,14 @@ struct NativeTaskTransportLimits: Sendable {
 }
 
 struct NativeTaskTransportTiming: Codable, Sendable {
-    enum Phase: String, Codable, Sendable { case plan, synthesize }
+    enum Phase: String, Codable, Sendable {
+        case plan, synthesize, outline, draft, revise
+
+        init?(jobPhase: String) {
+            let name = jobPhase.split(separator: "-", maxSplits: 1).first.map(String.init) ?? jobPhase
+            self.init(rawValue: name)
+        }
+    }
     enum Outcome: String, Codable, Sendable {
         case completed, connect_send_timeout, read_idle_timeout, overall_timeout, transport_timeout, canceled
         case provider_auth, provider_quota, provider_unavailable, provider_response
