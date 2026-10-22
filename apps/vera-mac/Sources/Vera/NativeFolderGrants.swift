@@ -85,13 +85,17 @@ struct NativeFolderAccess: Sendable {
         roots = grants.compactMap { $0.current() }
     }
 
+    static func reserved(_ component: Substring) -> Bool {
+        component == "." || component == ".." || component.lowercased().hasPrefix(NativeFolderIO.temporaryPrefix)
+    }
+
     static func contains(root: String, path: String) -> Bool {
         path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
     func locate(_ requested: String) throws -> NativeFolderLocation {
         guard !requested.isEmpty, !requested.contains("\0"), !requested.contains("\n"), !requested.contains("\r"), requested.utf8.count <= 4096,
-              !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: { $0 == "." || $0 == ".." || $0.hasPrefix(NativeFolderIO.temporaryPrefix) }) else {
+              !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: Self.reserved) else {
             throw NativeFolderAccessError.invalidPath(requested)
         }
         guard !roots.isEmpty else { throw NativeFolderAccessError.noGrants }
@@ -109,7 +113,7 @@ struct NativeFolderAccess: Sendable {
         for candidate in candidates {
             for root in roots where Self.contains(root: root.path, path: candidate) {
                 let relative = String(candidate.dropFirst(root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-                guard !relative.contains(where: { $0 == "." || $0 == ".." }) else { throw NativeFolderAccessError.invalidPath(requested) }
+                guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
                 return NativeFolderLocation(root: root, components: relative)
             }
         }

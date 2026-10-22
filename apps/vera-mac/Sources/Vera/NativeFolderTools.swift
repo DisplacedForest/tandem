@@ -147,7 +147,7 @@ enum NativeFolderTools {
         let names = try NativeFolderIO.entries(directory)
         var entries: [NativeJSONValue] = []
         var skippedHidden = 0
-        for name in names where !name.hasPrefix(NativeFolderIO.temporaryPrefix) {
+        for name in names where !name.lowercased().hasPrefix(NativeFolderIO.temporaryPrefix) {
             if name.hasPrefix(".") && !hidden { skippedHidden += 1; continue }
             if entries.count >= maximumListEntries { break }
             guard let info = NativeFolderIO.status(directory, name) else { continue }
@@ -157,7 +157,7 @@ enum NativeFolderTools {
             entries.append(.object(entry))
         }
         var result: [String: NativeJSONValue] = ["path": .string(location.path), "entries": .array(entries)]
-        if names.filter({ !$0.hasPrefix(NativeFolderIO.temporaryPrefix) }).count - skippedHidden > entries.count { result["truncated"] = .bool(true) }
+        if names.filter({ !$0.lowercased().hasPrefix(NativeFolderIO.temporaryPrefix) }).count - skippedHidden > entries.count { result["truncated"] = .bool(true) }
         if skippedHidden > 0 { result["hidden_skipped"] = .number(Double(skippedHidden)) }
         return .object(result)
     }
