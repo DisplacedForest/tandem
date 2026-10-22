@@ -156,7 +156,7 @@ struct MenuBarStatusMenu: View {
             Text(running == 1 ? "1 scheduled run in progress" : "\(running) scheduled runs in progress")
         }
         Divider()
-        Button("Open \(config.assistantName)") {
+        Button("Open Tandem") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
