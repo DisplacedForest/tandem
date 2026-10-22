@@ -8,6 +8,7 @@ struct ShotView: View {
     var emptyChat: Bool = false
     var attachDemo: Bool = false
     var streaming: Bool = false
+    var folder: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
@@ -268,6 +269,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if folder { return folderMessages }
         var m = store.selected?.messages ?? []
         m.append(Message(role: .assistant, text: """
         <details type="tool_calls" done="true" name="kitchen_status"><summary>Tool Executed</summary>"low: spaghetti, chicken nuggets, pork sausage"</details>
@@ -294,6 +296,26 @@ struct ShotView: View {
                       PulseSource(n: 2, title: "Cover crop guide", url: "https://extension.example/cover-crops")]))
         return m
     }
+
+    private var folderMessages: [Message] {
+        let before = "# Greenhouse plan\n\nWater every morning.\nCheck the vents at noon.\nLog the temperature.\n"
+        let after = "# Greenhouse plan\n\nWater every morning.\nCheck the vents at noon and 4 PM.\nLog the temperature and humidity.\n"
+        var activity = NativeToolActivity(id: "e1", toolID: NativeFolderTools.toolID, name: NativeFolderTools.editName, title: "Edit a file", round: 1,
+                                          request: "{\"path\":\"~/Greenhouse/plan.md\"}", result: "{\"replacements\":1}", state: .succeeded, confirmationRequired: false)
+        activity.result = "{\"path\":\"~/Greenhouse/plan.md\",\"replacements\":1}"
+        return [
+            Message(role: .user, text: "Add the afternoon vent check and humidity logging to the plan, and start a watering log file."),
+            Message(role: .assistant, text: "Updated the plan and started a log you can fill in each morning.",
+                    toolActivities: [activity],
+                    displayBlocks: [
+                        .fileChange(NativeFileChange(id: "shot-edit", path: "/Volumes/Notes/Greenhouse/plan.md", kind: .edited, before: before, after: after)),
+                        .fileChange(NativeFileChange(id: "shot-new", path: "/Volumes/Notes/Greenhouse/watering-log.md", kind: .created, before: nil,
+                                                     after: "# Watering log\n\n| Date | Minutes | Notes |\n|---|---|---|\n")),
+                    ]),
+        ]
+    }
+
+    private var shotGrants: [FolderGrant] { [FolderGrant(id: "shot-grant", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)] }
 
     // Render-safe mirror of the empty-chat welcome (ImageRenderer can't draw the live TextField).
     private var emptyChatShot: some View {
@@ -453,6 +475,9 @@ struct ShotView: View {
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
+                if folder {
+                    FolderGrantChips(grants: shotGrants, onRemove: { _ in })
+                }
                 if mentions {
                     ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })
                     Rectangle().fill(Theme.hairline).frame(height: 1)
@@ -479,7 +504,7 @@ struct ShotView: View {
     }
 
     private var shotMentionCatalog: ComposerMentionCatalog {
-        ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem]
+        ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem, ComposerMentionCatalog.folderItem]
             + ComposerMentionCatalog.builtIns(webAvailable: true, imageAvailable: true)
             + [ComposerMentionCatalog.plugin(name: "Home Assistant", serverID: "ha", connected: true, toolIDs: ["a", "b", "c"], allowedIDs: ["a", "b", "c"]),
                ComposerMentionCatalog.plugin(name: "Calendar", serverID: "cal", connected: false, toolIDs: [], allowedIDs: [])])

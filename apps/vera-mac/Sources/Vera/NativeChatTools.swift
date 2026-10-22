@@ -774,7 +774,9 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             guard await authorize() else { throw CancellationError() }
             try Task.checkCancellation()
-            return try await definition.execute(arguments)
+            return try await NativeToolCallContext.$activityID.withValue(activity.id) {
+                try await definition.execute(arguments)
+            }
         }
     }
 

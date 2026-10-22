@@ -49,20 +49,23 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
     case taskCard(NativeTaskCardPresentation)
     case link(NativeDisplayLink)
     case artifact(NativeResearchArtifact)
+    case fileChange(NativeFileChange)
 
     var id: String {
         switch self {
         case .taskCard(let card): return "task:" + card.id
         case .link(let link): return "link:" + link.id
         case .artifact(let artifact): return "artifact:" + artifact.id
+        case .fileChange(let change): return "file:" + change.id
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case type, link, artifact
         case taskCard = "task_card"
+        case fileChange = "file_change"
     }
-    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact }
+    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change" }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -70,6 +73,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .taskCard: self = .taskCard(try container.decode(NativeTaskCardPresentation.self, forKey: .taskCard))
         case .link: self = .link(try container.decode(NativeDisplayLink.self, forKey: .link))
         case .artifact: self = .artifact(try container.decode(NativeResearchArtifact.self, forKey: .artifact))
+        case .fileChange: self = .fileChange(try container.decode(NativeFileChange.self, forKey: .fileChange))
         }
     }
 
@@ -85,6 +89,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .artifact(let artifact):
             try container.encode(Kind.artifact, forKey: .type)
             try container.encode(artifact, forKey: .artifact)
+        case .fileChange(let change):
+            try container.encode(Kind.fileChange, forKey: .type)
+            try container.encode(change, forKey: .fileChange)
         }
     }
 }

@@ -735,6 +735,7 @@ struct ComposerField: View {
     @State private var pasteMonitor: Any?
     @State private var mentionSelectionID: String?
     @State private var dismissedDraft: String?
+    @State private var showingFolderUnsupported = false
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
@@ -760,6 +761,7 @@ struct ComposerField: View {
         dismissedDraft = next
         mentionSelectionID = nil
         if case .files = item.kind { pickFiles() }
+        if case .folder = item.kind { pickFolder() }
         focused = true
     }
 
@@ -785,6 +787,21 @@ struct ComposerField: View {
                     .buttonStyle(.plain)
                 }
                 .foregroundStyle(Theme.textSecondary)
+            }
+            if let error = store.grantError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                    Text(error).font(.system(size: 11))
+                    Button { store.grantError = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(Theme.textSecondary)
+            }
+            if !store.selectedGrants.isEmpty {
+                FolderGrantChips(grants: store.selectedGrants, unsupported: store.folderToolsUnsupportedReason,
+                                 onRemove: { store.revokeGrant($0) })
             }
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
@@ -822,6 +839,7 @@ struct ComposerField: View {
             HStack(spacing: 8) {
                 Menu {
                     Button("Add files or photos") { pickFiles() }
+                    Button("Work in a folder…") { pickFolder() }
                     if let prompts = try? store.promptLibrary?.reusablePrompts(), !prompts.isEmpty {
                         Divider()
                         ForEach(prompts) { prompt in
@@ -836,7 +854,7 @@ struct ComposerField: View {
                     ComposerControlGlyph(kind: .plus)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Add images or insert a saved prompt")
+                .help("Add files, grant a folder, or insert a saved prompt")
                 Spacer()
                 Button(action: {}) { ComposerControlGlyph(kind: .voice) }
                     .buttonStyle(.plain)
@@ -909,6 +927,22 @@ struct ComposerField: View {
         .dropDestination(for: URL.self) { urls, _ in
             route.addFiles(urls)
         } isTargeted: { dropTargeted = $0 }
+        .alert("This model can't use folders", isPresented: $showingFolderUnsupported) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.folderToolsUnsupportedReason ?? "")
+        }
+    }
+
+    private func pickFolder() {
+        if store.folderToolsUnsupportedReason != nil {
+            showingFolderUnsupported = true
+            return
+        }
+        FilePicker.pickFolder { url in
+            guard let url else { return }
+            store.grantFolder(url)
+        }
     }
 
     private func resetRejectedParameter() {

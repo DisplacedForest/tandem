@@ -12,6 +12,18 @@ enum FilePicker {
         p.message = "Add files or photos"
         completion(p.runModal() == .OK ? p.urls : [])
     }
+
+    @MainActor
+    static func pickFolder(_ completion: @escaping (URL?) -> Void) {
+        let p = NSOpenPanel()
+        p.allowsMultipleSelection = false
+        p.canChooseDirectories = true
+        p.canChooseFiles = false
+        p.canCreateDirectories = true
+        p.message = "Choose a folder this chat may read and change"
+        p.prompt = "Grant"
+        completion(p.runModal() == .OK ? p.urls.first : nil)
+    }
 }
 
 /// Row of pending composer attachments (image thumbnails + file cards), remove-on-hover.

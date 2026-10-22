@@ -368,6 +368,7 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
+        do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
         do {

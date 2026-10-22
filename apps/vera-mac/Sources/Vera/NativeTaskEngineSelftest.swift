@@ -665,6 +665,7 @@ extension SelfTest {
             case .taskCard: return "card"
             case .artifact: return "artifact"
             case .link: return "link"
+            case .fileChange: return "file"
             }
         }
         try require(message.id == reference.origin.assistantMessageID && kinds == ["card", "artifact"], "The original reply carries the card and the report")

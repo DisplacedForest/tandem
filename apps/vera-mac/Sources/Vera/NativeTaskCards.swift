@@ -76,6 +76,8 @@ struct NativeDisplayBlocksView: View {
                     } else {
                         Text(link.title).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     }
+                case .fileChange(let change):
+                    NativeFileChangeCard(change: change)
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
                         HStack(spacing: 10) {
