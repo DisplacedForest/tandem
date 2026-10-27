@@ -85,6 +85,11 @@ final class ChatStore: ObservableObject {
     private let visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)?
     private var turnMemorySelections: [UUID: [NativeMemoryRanked]] = [:]
     private(set) var nativeMemorySettings: NativeMemorySettings
+    private(set) var nativeRules: NativeRules
+    @Published var rulesNotice: String?
+    let turnCommandReasonSource = NativeCommandReasonSource()
+    let nativeRuleSource = NativeRuleSource()
+    let turnDeclineSource = NativeDeclineSource()
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
@@ -156,6 +161,7 @@ final class ChatStore: ObservableObject {
          visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)? = nil,
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
+         nativeRules: NativeRules = .defaults,
          nativeToolRegistry: NativeToolRegistry? = nil,
          nativeMCP: NativeMCPManager? = nil,
          capabilityDeclarations: [NativeToolDeclaration] = [],
@@ -219,6 +225,8 @@ final class ChatStore: ObservableObject {
         self.visionBridgeTransportFactory = visionBridgeTransportFactory
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
+        self.nativeRules = nativeRules
+        nativeRuleSource.setGlobal(nativeRules)
         self.capabilityDeclarations = capabilityDeclarations
         self.nativeMCP = nativeMCP
         self.nativeToolRegistry = nativeToolRegistry
@@ -320,7 +328,7 @@ final class ChatStore: ObservableObject {
     }
 
     static var builtInToolNames: Set<String> {
-        Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName]).union(NativeFolderTools.toolNames)
+        Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName]).union(NativeFolderTools.toolNames).union(NativeCommandTools.toolNames)
     }
 
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
@@ -368,6 +376,7 @@ final class ChatStore: ObservableObject {
         visionBridge: VisionBridgeConfig? = nil,
         memorySettings: NativeMemorySettings? = nil,
         memoryService: (any NativeMemoryServing)? = nil,
+        rules: NativeRules? = nil,
         capabilityDeclarations: [NativeToolDeclaration]? = nil
     ) {
         nativeConfig = cfg
@@ -381,6 +390,7 @@ final class ChatStore: ObservableObject {
         visionBridgeConfig = visionBridge
         if let memorySettings { nativeMemorySettings = memorySettings }
         nativeMemoryService = memoryService
+        if let rules { updateNativeRules(rules) }
         if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
         client = VeraAPIClient.resolved(model: cfg.model)
         if nativeTaskLocalEngine == nil { nativeTaskEngine.set(client?.base) }
@@ -410,6 +420,7 @@ final class ChatStore: ObservableObject {
         }
         ensureVeraThread()
         syncGrantSource()
+        syncRuleSource()
         if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
             select(previousSelected)
             section = previousSection
@@ -763,6 +774,11 @@ final class ChatStore: ObservableObject {
         } catch {
             memoryServiceState = .failed("The local memory library could not open: \(error.localizedDescription)")
         }
+    }
+
+    func updateNativeRules(_ rules: NativeRules) {
+        nativeRules = rules
+        nativeRuleSource.setGlobal(rules)
     }
 
     func updateNativeMemory(
@@ -2009,11 +2025,15 @@ final class ChatStore: ObservableObject {
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
-        if !(supportsTools && authority.allowsTools && turn.mode != .continuous) { allowed.remove(NativeFolderTools.toolID) }
+        if !(supportsTools && authority.allowsTools && turn.mode != .continuous) {
+            allowed.remove(NativeFolderTools.toolID)
+            allowed.remove(NativeCommandTools.toolID)
+        }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
         let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
-            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
+            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
+            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2069,8 +2089,26 @@ final class ChatStore: ObservableObject {
         }
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
+        let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
+        let resolver = ruleResolver(for: id, requestText: text)
         if !turnGrants.isEmpty && folderConsented {
-            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(for: id, ledger: fileChangeLedger(for: turn), alwaysAvailable: true))
+            let rules = nativeRuleSource
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
+                for: id, ledger: fileChangeLedger(for: turn),
+                edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
+                live: { rules.resolver(for: id, requestText: text).decision(for: $0) }, alwaysAvailable: true))
+        }
+        if !turnGrants.isEmpty && commandsConsented {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(
+                for: turn, decision: resolver.decision(for: .commands),
+                record: { [weak self] run in
+                    Task { @MainActor [weak self] in
+                        var scoped = run
+                        scoped.id = Self.scopedBlockID(run.id, turn: turn)
+                        self?.attachDisplayBlock(.commandRun(scoped), turn: turn)
+                    }
+                },
+                alwaysAvailable: true))
         }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
@@ -2097,7 +2135,11 @@ final class ChatStore: ObservableObject {
         if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeFolderTools.toolID)
         }
-        let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) ? NativeFolderTools.grantNote(turnGrants) : nil
+        if !(capabilityProfile.supportsTools && authority.allowsTools && commandsConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
+            enabledToolIDs.remove(NativeCommandTools.toolID)
+        }
+        let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
+            ? NativeFolderTools.grantNote(turnGrants) : nil
         let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
         var memorySettings = turn.memorySettings

@@ -276,6 +276,8 @@ extension ChatStore {
             return
         }
         resolveTurnConfirmation(messageID, approved: false)
+        turnDeclineSource.clear(turn: turn.id)
+        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
         execution?.deadline?.cancel()
@@ -334,8 +336,21 @@ extension ChatStore {
         conversationTurns.contains { $0.assistantMessageID == messageID && $0.state == .pending }
     }
 
+    static func scopedBlockID(_ id: String, turn: NativeConversationTurn) -> String {
+        (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
+    }
+
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
+        if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) { return false }
+        if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
+           let command = NativeCommandTools.command(inRequest: activity.request),
+           NativeCommandClassifier.classify(command, grants: grants(for: turn.conversationID)) == .commands,
+           conversationRules(for: turn.conversationID).isApproved(command: command) {
+            guard turnOwned(turn) else { return false }
+            turnCommandReasonSource.set(.conversationPrefix, for: Self.scopedBlockID(activity.id, turn: turn))
+            return true
+        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard turnOwned(turn), execution.continuation == nil else {
@@ -357,6 +372,10 @@ extension ChatStore {
     }
 
     func resolveTurnConfirmation(_ messageID: UUID, approved: Bool, requestID: String? = nil, token: UUID? = nil) {
+        resolveTurnConfirmation(messageID, decision: approved ? .approve : .decline, requestID: requestID, token: token)
+    }
+
+    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeToolDecision, requestID: String? = nil, token: UUID? = nil) {
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               let execution = turnExecutions[turn.id],
               requestID == nil || turnConfirmations[messageID]?.id == requestID,
@@ -366,6 +385,24 @@ extension ChatStore {
         turnConfirmationTokens[messageID] = nil
         let request = turnConfirmations.removeValue(forKey: messageID)
         if pendingToolConfirmation?.id == request?.id { pendingToolConfirmation = nil }
-        continuation.resume(returning: approved && turnOwned(execution.record))
+        let owned = turnOwned(execution.record)
+        if let request, request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
+           let command = NativeCommandTools.command(inRequest: request.request) {
+            switch decision {
+            case .approve:
+                turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
+            case .approveSimilar:
+                if owned { approveCommandPrefix(command, conversationID: turn.conversationID) }
+                turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
+            case .decline:
+                let turnGrants = grants(for: turn.conversationID)
+                let directory = NativeCommandTools.directory(inRequest: request.request) ?? (turnGrants.count == 1 ? turnGrants[0].path : "")
+                attachDisplayBlock(.commandRun(NativeCommandRun(id: Self.scopedBlockID(request.id, turn: execution.record), command: command, directory: directory, outcome: .declined)), turn: execution.record)
+            }
+        }
+        if let request, decision == .decline {
+            turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
+        }
+        continuation.resume(returning: decision.approved && owned)
     }
 }

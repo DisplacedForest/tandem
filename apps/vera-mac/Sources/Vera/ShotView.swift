@@ -9,6 +9,7 @@ struct ShotView: View {
     var attachDemo: Bool = false
     var streaming: Bool = false
     var folder: Bool = false
+    var command: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
@@ -269,6 +270,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if command { return commandMessages }
         if folder { return folderMessages }
         var m = store.selected?.messages ?? []
         m.append(Message(role: .assistant, text: """
@@ -297,6 +299,29 @@ struct ShotView: View {
         return m
     }
 
+    private var commandMessages: [Message] {
+        let ran = NativeToolActivity(id: "c1", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                     request: "{\"command\":\"make check\"}", result: "{\"exit_code\":0}", state: .succeeded, confirmationRequired: true)
+        return [
+            Message(role: .user, text: "Run the checks so we know the plan still parses."),
+            Message(role: .assistant, text: "The checks pass. Two files were linted and nothing needs fixing.",
+                    toolActivities: [ran],
+                    displayBlocks: [
+                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                                                     exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
+                    ]),
+            Message(role: .user, text: "Now rebuild the PDF."),
+            Message(role: .assistant, text: "",
+                    toolActivities: [NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                                        request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true)]),
+        ]
+    }
+
+    private var shotConfirmation: NativeToolConfirmationRequest {
+        NativeToolConfirmationRequest(activity: NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                                                   request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true))
+    }
+
     private var folderMessages: [Message] {
         let before = "# Greenhouse plan\n\nWater every morning.\nCheck the vents at noon.\nLog the temperature.\n"
         let after = "# Greenhouse plan\n\nWater every morning.\nCheck the vents at noon and 4 PM.\nLog the temperature and humidity.\n"
@@ -311,6 +336,14 @@ struct ShotView: View {
                         .fileChange(NativeFileChange(id: "shot-edit", path: "/Volumes/Notes/Greenhouse/plan.md", kind: .edited, before: before, after: after)),
                         .fileChange(NativeFileChange(id: "shot-new", path: "/Volumes/Notes/Greenhouse/watering-log.md", kind: .created, before: nil,
                                                      after: "# Watering log\n\n| Date | Minutes | Notes |\n|---|---|---|\n")),
+                    ]),
+            Message(role: .user, text: "Run the checks so we know the plan still parses."),
+            Message(role: .assistant, text: "The checks pass. Two files were linted and nothing needs fixing.",
+                    toolActivities: [NativeToolActivity(id: "c1", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                                        request: "{\"command\":\"make check\"}", result: "{\"exit_code\":0}", state: .succeeded, confirmationRequired: true)],
+                    displayBlocks: [
+                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                                                     exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
                     ]),
         ]
     }
@@ -468,14 +501,16 @@ struct ShotView: View {
     private var chat: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
-                ForEach(shotMessages) { MessageRow(message: $0) }
+                ForEach(shotMessages) { message in
+                    MessageRow(message: message, pendingConfirmation: command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
+                }
             }
             .padding(.horizontal, 28).padding(.vertical, 26)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
-                if folder {
+                if folder || command {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })
                 }
                 if mentions {

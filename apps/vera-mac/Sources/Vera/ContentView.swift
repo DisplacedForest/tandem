@@ -179,8 +179,8 @@ private struct ChatPane: View {
                                            onOpenArtifact: { store.openArtifact($0) },
                                            attachmentStore: store.attachmentStore,
                                            pendingConfirmation: confirmation,
-                                           onToolDecision: { approved in
-                                               store.resolveTurnConfirmation(msg.id, approved: approved,
+                                           onToolDecision: { decision in
+                                               store.resolveTurnConfirmation(msg.id, decision: decision,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            })
                                     .background(
@@ -455,7 +455,7 @@ struct MessageRow: View {
     var onOpenArtifact: ((Artifact) -> Void)? = nil
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
-    var onToolDecision: ((Bool) -> Void)? = nil
+    var onToolDecision: ((NativeToolDecision) -> Void)? = nil
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
@@ -474,7 +474,10 @@ struct MessageRow: View {
                         if let pendingConfirmation, pendingConfirmation.id == activity.id {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
-                                onDecision: { onToolDecision?($0) })
+                                prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
+                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation),
+                                onDecision: { onToolDecision?($0 ? .approve : .decline) },
+                                onApproveSimilar: NativeToolConfirmationBar.similarPrefix(for: pendingConfirmation).map { _ in { onToolDecision?(.approveSimilar) } })
                         }
                     }
                     AssistantBody(message: message, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
@@ -670,23 +673,76 @@ struct NativeToolActivityChip: View {
 struct NativeToolConfirmationBar: View {
     let request: NativeToolConfirmationRequest
     var prompt: String? = nil
+    var detail: String? = nil
     var defaultApproval = true
     var allowApprove = true
     var allowDecline = true
     var onDecision: (Bool) -> Void
+    var onApproveSimilar: (() -> Void)? = nil
+    @Environment(\.renderSafe) private var renderSafe
+
+    static func prompt(for request: NativeToolConfirmationRequest) -> String? {
+        if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
+            return "Run this command?\n" + command
+        }
+        if request.toolID == NativeFolderTools.toolID {
+            let path = NativeFolderTools.pathArgument(inRequest: request.request)
+            switch request.name {
+            case NativeFolderTools.trashName: return path.map { "Move \($0) to the Trash?" }
+            case NativeFolderTools.writeName: return path.map { "Write \($0)?" }
+            case NativeFolderTools.editName: return path.map { "Edit \($0)?" }
+            case NativeFolderTools.mkdirName: return path.map { "Create the folder \($0)?" }
+            case NativeFolderTools.moveName: return path.map { "Move \($0)?" }
+            default: return nil
+            }
+        }
+        return nil
+    }
+
+    static func detail(for request: NativeToolConfirmationRequest) -> String? {
+        if request.toolID == NativeCommandTools.toolID {
+            let directory = NativeCommandTools.directory(inRequest: request.request)
+            return directory.map { "In \($0). Your rules ask before commands run." } ?? "Your rules ask before commands run."
+        }
+        if request.toolID == NativeFolderTools.toolID { return "Your rules ask before this kind of change." }
+        return nil
+    }
+
+    static func similarPrefix(for request: NativeToolConfirmationRequest) -> String? {
+        guard request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
+              let command = NativeCommandTools.command(inRequest: request.request) else { return nil }
+        let prefix = NativeCommandPrefix.prefix(of: command)
+        return prefix.isEmpty ? nil : prefix
+    }
+
+    private var lines: [String] { (prompt ?? "Run \(request.title)?").components(separatedBy: "\n") }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: "hand.raised")
                 .font(.system(size: 13)).foregroundStyle(Color.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(prompt ?? "Run \(request.title)?")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(lines[0])
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text("This tool runs only after your decision.")
+                if lines.count > 1 {
+                    ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
+                        Text(lines.dropFirst().joined(separator: "\n"))
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: renderSafe ? nil : 180)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(detail ?? "This tool runs only after your decision.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 8)
             Button("Decline") { onDecision(false) }.disabled(!allowDecline)
+            if let onApproveSimilar, let prefix = Self.similarPrefix(for: request) {
+                Button("Approve similar") { onApproveSimilar() }.disabled(!allowApprove)
+                    .help("Also run later commands in this chat that start with \"\(prefix)\" without asking")
+            }
             if defaultApproval {
                 Button("Approve") { onDecision(true) }.keyboardShortcut(.defaultAction).disabled(!allowApprove)
             } else {
@@ -694,7 +750,7 @@ struct NativeToolConfirmationBar: View {
             }
         }
         .padding(.horizontal, 11).padding(.vertical, 9)
-        .frame(maxWidth: 480, alignment: .leading)
+        .frame(maxWidth: 560, alignment: .leading)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -890,8 +946,9 @@ struct ComposerField: View {
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .onChange(of: store.grantConsentTick) { _, _ in
-            guard !config.nativeSettings.enabledToolIDs.contains(NativeFolderTools.toolID) else { return }
-            config.setNativeTool(NativeFolderTools.toolID, enabled: true)
+            let missing = [NativeFolderTools.toolID, NativeCommandTools.toolID].filter { !config.nativeSettings.enabledToolIDs.contains($0) }
+            guard !missing.isEmpty else { return }
+            for id in missing { config.setNativeTool(id, enabled: true) }
             try? config.save()
         }
         .confirmationDialog(

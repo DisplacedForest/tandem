@@ -78,6 +78,8 @@ struct NativeDisplayBlocksView: View {
                     }
                 case .fileChange(let change):
                     NativeFileChangeCard(change: change)
+                case .commandRun(let run):
+                    NativeCommandRunCard(run: run)
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
                         HStack(spacing: 10) {

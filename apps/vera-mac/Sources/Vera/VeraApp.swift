@@ -75,6 +75,7 @@ struct VeraApp: App {
             visionBridgeConfig: configInstance.visionBridgeResolved,
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
+            nativeRules: configInstance.nativeSettings.rules,
             nativeMCP: configInstance.nativeMCP,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
             sweepOrphanedAttachments: fixture == nil,

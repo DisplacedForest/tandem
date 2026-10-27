@@ -243,10 +243,12 @@ extension SelfTest {
         grantsBox.set([grant], for: "conversation")
         let definitions = NativeFolderTools.definitions(grants: { grantsBox.grants(for: "conversation") }, ledger: ledger)
         try require(definitions.first(where: { $0.name == NativeFolderTools.readName })?.resultByteBudget == NativeFolderTools.readResultBudget, "Reads keep their own result budget")
-        try require(Set(definitions.map(\.name)) == NativeFolderTools.toolNames && definitions.allSatisfy { $0.id == NativeFolderTools.toolID && $0.confirmation == .none },
-                    "Seven file tools share one consent id and never ask per file")
+        try require(Set(definitions.map(\.name)) == NativeFolderTools.toolNames && definitions.allSatisfy { $0.id == NativeFolderTools.toolID }
+                    && definitions.filter { $0.name != NativeFolderTools.trashName }.allSatisfy { $0.confirmation == .none }
+                    && definitions.first { $0.name == NativeFolderTools.trashName }?.confirmation == .required,
+                    "Eight file tools share one consent id; edits act and the Trash asks by default")
         let registry = NativeToolRegistry(definitions: definitions)
-        try require(registry.active(enabledIDs: [NativeFolderTools.toolID]).count == 7, "Tools are advertised with a grant")
+        try require(registry.active(enabledIDs: [NativeFolderTools.toolID]).count == 8, "Tools are advertised with a grant")
         try require(ChatStore.builtInToolNames.isSuperset(of: NativeFolderTools.toolNames), "File tool names are reserved from capability tools")
         let catalog = NativeChatToolCatalog.tools(veraAPIConfigured: false)
         try require(catalog.contains { $0.id == NativeFolderTools.toolID && $0.available }, "The Tools tab lists the file tools")

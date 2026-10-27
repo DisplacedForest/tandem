@@ -84,6 +84,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     var capabilityOverrides: [String: ModelCapabilityProfile]
     var visionBridge: VisionBridgeSettings
     var parameterOverrides: [String: [String: ModelParameterOverrides]]
+    var rules: NativeRules = .defaults
 
     static var fresh: NativeChatSettings {
         NativeChatSettings(
@@ -163,7 +164,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case version, profiles, activeProfileID, systemPrompt, activePersonaID, enabledToolIDs
         case onboardingState, onboardingStep, memory, memoryEndpoint, capabilityOverrides, visionBridge
-        case parameterOverrides
+        case parameterOverrides, rules
     }
 
     init(
@@ -209,6 +210,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             VisionBridgeSettings.self, forKey: .visionBridge) ?? .fresh
         parameterOverrides = try values.decodeIfPresent(
             [String: [String: ModelParameterOverrides]].self, forKey: .parameterOverrides) ?? [:]
+        rules = (try? values.decodeIfPresent(NativeRules.self, forKey: .rules)) ?? .defaults
     }
 
     func merging(into raw: [String: Any]) -> [String: Any] {
@@ -369,9 +371,15 @@ enum NativeChatToolCatalog {
             NativeChatToolDescriptor(
                 id: NativeFolderTools.toolID,
                 name: "Files in granted folders",
-                summary: "Reads, searches, writes, edits and moves files inside folders you grant to a chat. Nothing is deleted.",
+                summary: "Reads, searches, writes, edits and moves files inside folders you grant to a chat, and can move them to the Trash under your rules. Nothing is deleted outright.",
                 available: true,
                 setup: "Grant a folder from the composer to turn these on for that chat."),
+            NativeChatToolDescriptor(
+                id: NativeCommandTools.toolID,
+                name: "Commands in granted folders",
+                summary: "Runs shell commands with a granted folder as the working directory. Your rules decide whether each command runs, asks first, or is handed to you.",
+                available: true,
+                setup: "Grant a folder from the composer to turn this on for that chat. Set what asks first in the Rules tab."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Background work",

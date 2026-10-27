@@ -115,7 +115,7 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     var request: String
     var result: String?
     var state: NativeToolActivityState
-    let confirmationRequired: Bool
+    var confirmationRequired: Bool
     var progress: NativeToolProgress? = nil
 
     var isCancelableRun: Bool {
@@ -167,6 +167,7 @@ struct NativeToolDefinition: Sendable {
     let confirmation: NativeToolConfirmation
     var timeout: Duration? = nil
     var resultByteBudget = NativeToolResultBudget.defaultBytes
+    var confirmationFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
@@ -680,11 +681,16 @@ struct NativeToolLoop: Sendable {
                                         stopped = true
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
-                                    if definition.confirmation == .required {
+                                    let needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
+                                    if let index = activities.firstIndex(where: { $0.id == call.id }), activities[index].confirmationRequired != needsConfirmation {
+                                        activities[index].confirmationRequired = needsConfirmation
+                                        continuation.yield(NativeToolTurnSnapshot(content: content, activities: activities))
+                                    }
+                                    if needsConfirmation {
                                         try await checkAuthorization()
                                         guard let activity = activities.first(where: { $0.id == call.id }),
                                               try await Self.awaitConfirmation({ await confirm(activity) }) else {
-                                            throw NativeToolError.failed("The tool call was not confirmed")
+                                            throw NativeToolError.failed("The user did not approve this call, so it was not run. Do not retry it unless the user asks again.")
                                         }
                                     }
                                     try await checkAuthorization()
@@ -775,7 +781,9 @@ struct NativeToolLoop: Sendable {
             guard await authorize() else { throw CancellationError() }
             try Task.checkCancellation()
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
-                try await definition.execute(arguments)
+                try await NativeToolCallContext.$request.withValue(activity.request) {
+                    try await definition.execute(arguments)
+                }
             }
         }
     }
