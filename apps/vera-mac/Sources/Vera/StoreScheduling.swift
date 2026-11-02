@@ -38,6 +38,59 @@ extension ChatStore {
         scheduleRuns.values.flatMap { $0 }.filter { $0.outcome == .running }.count
     }
 
+    var waitingScheduledWorkCount: Int {
+        scheduleRuns.values.flatMap { $0 }.filter { $0.outcome == .waiting }.count
+    }
+
+    static func checkInKey(taskReferenceID: String, decision: NativeTaskDecision?) -> String {
+        taskReferenceID + ":" + (decision?.id ?? "")
+    }
+
+    func scheduleRunDecision(_ run: NativeScheduleRun) -> NativeTaskDecision? {
+        guard run.outcome == .waiting, let id = run.taskReferenceID, let uuid = UUID(uuidString: id),
+              let projectionRepository = repository as? any NativeTaskProjectionRepository else { return nil }
+        return (try? projectionRepository.taskProjection(id: uuid))?.snapshot?.decision
+    }
+
+    func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
+        guard let reference = run.taskReferenceID else { return }
+        if choice == "retry" { retryNativeTask(reference) } else { cancelNativeTask(reference) }
+    }
+
+    func postScheduleCheckIns() {
+        guard nativeScheduleStore != nil, let repository, let local = repository as? LocalChatRepository,
+              let projectionRepository = repository as? any NativeTaskProjectionRepository else { return }
+        var posted = false
+        for run in scheduleRuns.values.flatMap({ $0 }) where run.outcome == .waiting {
+            guard let referenceID = run.taskReferenceID, let uuid = UUID(uuidString: referenceID),
+                  let conversationID = run.conversationID,
+                  let reference = try? projectionRepository.taskReference(id: uuid),
+                  let snapshot = (try? projectionRepository.taskProjection(id: uuid))?.snapshot,
+                  snapshot.state == .needsDecision, let decision = snapshot.decision else { continue }
+            let key = Self.checkInKey(taskReferenceID: referenceID, decision: decision)
+            guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
+            guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
+            var message = Message(role: .assistant,
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(decision.prompt)",
+                                  state: .complete)
+            message.displayBlocks = [.taskCard(display.card)]
+            guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
+                                                  decisionID: decision.id)) == true else { continue }
+            if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+                if !conversations[index].messages.isEmpty || selectedID == conversationID {
+                    conversations[index].messages.append(message)
+                }
+                conversations[index].updatedAt = Date()
+                conversations[index].isPersisted = true
+                try? repository.saveConversation(conversations[index])
+            } else if let stored = try? repository.listConversations().first(where: { $0.id == conversationID }) {
+                conversations.insert(stored, at: 0)
+            }
+            posted = true
+        }
+        if posted { reloadSchedules() }
+    }
+
     func startNativeScheduler() {
         guard nativeScheduler == nil, let local = repository as? LocalChatRepository else { return }
         let store = NativeScheduleStore(database: local.database)
@@ -58,12 +111,14 @@ extension ChatStore {
             if reference.deliveryState == NativeTaskDeliveryState.rejected {
                 return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: .failed)
             }
-            let state = (try? projectionRepository.taskProjection(id: reference.id))?.snapshot?.state ?? reference.snapshot?.state
+            let snapshot = (try? projectionRepository.taskProjection(id: reference.id))?.snapshot ?? reference.snapshot
             let status: NativeScheduleTaskStatus
-            switch state {
+            switch snapshot?.state {
             case .completed: status = .completed
             case .failed: status = .failed
             case .canceled: status = .stopped
+            case .needsDecision: status = .waiting(snapshot?.decision?.prompt ?? NativeScheduler.waitingNote)
+            case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active
             }
             return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status)
@@ -78,6 +133,7 @@ extension ChatStore {
                 let changed = await scheduler.tick()
                 guard let self else { return }
                 if changed || self.runningScheduledWorkCount > 0 { self.reloadSchedules() }
+                if changed || self.waitingScheduledWorkCount > 0 { self.postScheduleCheckIns() }
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
             }
         }

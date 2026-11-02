@@ -272,6 +272,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
         migrator.registerMigration("artifactsV24") { db in try Self.migrateArtifacts(db) }
         migrator.registerMigration("projectsV25") { db in try Self.migrateProjects(db) }
+        migrator.registerMigration("nativeScheduleCheckInsV27") { db in try NativeScheduleStore.migrateCheckIns(db) }
         migrator.registerMigration("nativeDotProfileV26") { db in try NativeDotProfileStore.migrate(db) }
         try migrator.migrate(database)
     }
@@ -460,6 +461,19 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
         try database.write { db in
             try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)
+        }
+    }
+
+    func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID, decisionID: String) throws -> Bool {
+        try database.write { db in
+            guard let snapshot = try Self.readTaskProjection(db, id: referenceID)?.snapshot,
+                  snapshot.state == .needsDecision, snapshot.decision?.id == decisionID else { return false }
+            guard try NativeScheduleStore.claimCheckIn(db, runID: runID, key: key) else { return false }
+            let ordinal = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE conversation_id = ?", arguments: [conversationID]) ?? 0
+            try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)
+            try db.execute(sql: "INSERT OR REPLACE INTO native_task_card_mirrors(message_id, reference_id, conversation_id) VALUES(?, ?, ?)",
+                           arguments: [message.id.uuidString, referenceID.uuidString, conversationID])
+            return true
         }
     }
 

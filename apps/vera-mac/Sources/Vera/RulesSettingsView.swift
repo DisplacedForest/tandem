@@ -40,7 +40,7 @@ struct RulesSettingsTab: View {
                 }
             }
             Section("How the choices work") {
-                Text("Act without asking runs the action and shows what happened on the turn. Act only when the request pre-approves it runs only when your message says so in plain words, such as \"go ahead\" or \"no need to ask\", and asks otherwise. Pre-approval is recognized only when a sentence of your request is exactly the phrase on its own, such as \"Go ahead.\"; otherwise Tandem asks. Ask first puts a card on the turn with Approve, Decline and, for commands, Approve similar, which lets later commands in that chat with the same first words run without asking. Hand off to me means Vera describes what she would do and leaves it to you.")
+                Text("Act without asking runs the action and shows what happened on the turn. Act only when the request pre-approves it runs only when your message says so in plain words, such as \"go ahead\" or \"no need to ask\", and asks otherwise. Pre-approval is recognized only when a sentence of your request is exactly the phrase on its own: \"Run the tests. Go ahead.\" runs, while \"Go ahead and run the tests\" asks. Ask first puts a card on the turn with Approve, Decline and, for commands, Approve similar, which lets later commands in that chat with the same first words run without asking. Hand off to me means Vera describes what she would do and leaves it to you.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }

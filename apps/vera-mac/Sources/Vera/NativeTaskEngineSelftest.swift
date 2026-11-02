@@ -23,6 +23,7 @@ struct NativeTaskEngineHarness {
 
     static func make(repository: LocalChatRepository, counter: NativeTaskEngineCounter,
                      search customSearch: NativeResearchSearch? = nil,
+                     onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                      generate: @escaping @Sendable (NativeTaskGenerationJob) async throws -> String) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -39,7 +40,7 @@ struct NativeTaskEngineHarness {
         let base: @Sendable () -> URL? = { NativeTaskLocalEngine.identity.base }
         let service = NativeTaskHandoffService(repository: repository, client: engine.client, configuredBase: base)
         let tracker = NativeTaskTracker(repository: repository, client: engine.client, service: service,
-                                        transport: engine.transport, configuredBase: base)
+                                        transport: engine.transport, configuredBase: base, onUpdate: onUpdate)
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
             savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
@@ -125,9 +126,11 @@ extension SelfTest {
         try await taskEndToEnd()
         try await taskGatherRelaunch()
         try await taskDocumentEndToEnd()
+        try await taskDocumentAutomaticRetry()
         try await taskScheduledRun()
+        try await taskScheduleCheckIns()
         try await taskArbiterContract()
-        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, retry, relaunch, gather resume, documents, scheduled runs, admission)")
+        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission)")
     }
 
     private static func researchPayload(_ query: String = "What color is the fictional moon Luma?") throws -> Data {
@@ -528,10 +531,13 @@ extension SelfTest {
         let profile = harness.profile
         let scheduler = NativeScheduler(store: scheduleStore, now: { Date().addingTimeInterval(6 * 3600 + 30) }, lookup: { run in
             guard let id = run.taskReferenceID, let uuid = UUID(uuidString: id), let reference = try? repository.taskReference(id: uuid) else { return nil }
-            switch (try? repository.taskProjection(id: uuid))?.snapshot?.state ?? reference.snapshot?.state {
+            let snapshot = (try? repository.taskProjection(id: uuid))?.snapshot ?? reference.snapshot
+            switch snapshot?.state {
             case .completed: return NativeScheduleTaskLink(referenceID: id, status: .completed)
             case .failed: return NativeScheduleTaskLink(referenceID: id, status: .failed)
             case .canceled: return NativeScheduleTaskLink(referenceID: id, status: .stopped)
+            case .needsDecision: return NativeScheduleTaskLink(referenceID: id, status: .waiting(snapshot?.decision?.prompt ?? NativeScheduler.waitingNote))
+            case .blocked: return NativeScheduleTaskLink(referenceID: id, status: .blocked(NativeScheduler.blockedNote))
             default: return NativeScheduleTaskLink(referenceID: id, status: .active)
             }
         }, fire: { fired, _, bind in
@@ -564,6 +570,169 @@ extension SelfTest {
         let saved = try scheduleStore.get(schedule.id)!
         try require(saved.lastOutcome == .completed && saved.nextRunAt! > Date().addingTimeInterval(6 * 3600), "The schedule shows the outcome and its next run")
         await harness.stop()
+    }
+
+    private static func documentHarness(_ counter: NativeTaskEngineCounter, failures: Int) throws -> NativeTaskEngineHarness {
+        try NativeTaskEngineHarness.make(repository: try LocalChatRepository(inMemory: true), counter: counter) { job in
+            if job.phase == "outline" {
+                if await counter.count("generate:outline") <= failures { throw NativeTaskGenerationFailure(code: "request_timeout") }
+                return "{\"sections\":[{\"heading\":\"Layout\",\"instructions\":\"Describe the bench layout\"}]}"
+            }
+            if job.phase.hasPrefix("draft") { return "{\"text\":\"Draft for \(job.phase).\"}" }
+            return "Revised \(job.phase)."
+        }
+    }
+
+    private static func taskDocumentAutomaticRetry() async throws {
+        let require = NativeTaskFixture.require
+        let onceCounter = NativeTaskEngineCounter()
+        let once = try documentHarness(onceCounter, failures: 1)
+        try await once.start()
+        let recovered = try await once.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await once.wait { try once.state(recovered) == .completed }, "One outline timeout retries on its own and the document completes")
+        let checkpoint = try JSONDecoder().decode(NativeDocumentCheckpoint.self, from: try once.engine.store.get(recovered.remoteTaskID!).checkpoint)
+        try require(checkpoint.errors.contains(NativeTaskWorkerFailures.automaticRetryNote), "The document notes the automatic retry: \(checkpoint.errors)")
+        let onceOutlines = await onceCounter.count("generate:outline")
+        try require(onceOutlines == 2, "The outline request ran twice: \(onceOutlines)")
+        await once.stop()
+
+        let twiceCounter = NativeTaskEngineCounter()
+        let twice = try documentHarness(twiceCounter, failures: 2)
+        try await twice.start()
+        let paused = try await twice.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await twice.wait { try twice.state(paused) == .needsDecision }, "A second outline timeout pauses the document for a decision")
+        let card = try twice.repository.taskProjection(id: paused.id)!.snapshot!
+        try require(card.decision?.choices == ["retry"], "The document asks a plain retry question")
+        let pausedOutlines = await twiceCounter.count("generate:outline")
+        try require(pausedOutlines == 2, "The outline request ran twice before pausing: \(pausedOutlines)")
+        await twice.tracker.retry(paused.id)
+        try require(try await twice.wait { try twice.state(paused) == .completed }, "Retry finishes the document")
+        await twice.stop()
+    }
+
+    private static func taskScheduleCheckIns() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = directory.appendingPathComponent("chat.sqlite")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = try LocalChatRepository(url: url)
+        let counter = NativeTaskEngineCounter()
+        let harness = try NativeTaskEngineHarness.make(repository: repository, counter: counter) { job in
+            if job.phase == "plan", await counter.count("generate:plan") <= 2 { throw NativeTaskGenerationFailure(code: "provider_quota") }
+            return job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await harness.start()
+        let reference = try await harness.submit("Scheduled quota research")
+        try require(try await harness.wait { try harness.state(reference) == .needsDecision }, "The scheduled task pauses for a decision")
+        await harness.stop()
+        let decision = try repository.taskProjection(id: reference.id)!.snapshot!.decision!
+        let conversationID = reference.origin.conversationID
+        let scheduleStore = NativeScheduleStore(database: repository.database)
+        let zone = TimeZone(identifier: "America/Chicago")!
+        var schedule = try NativeSchedule(owner: .conversation, workerType: "research", title: "Moon check",
+                                          instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)
+        schedule.advance(after: Date(), from: nil)
+        try scheduleStore.save(schedule)
+        let run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date(), startedAt: Date(), outcome: .waiting, detail: decision.prompt,
+                                    conversationID: conversationID, messageID: reference.origin.assistantMessageID.uuidString,
+                                    taskReferenceID: reference.id.uuidString)
+        try scheduleStore.saveRun(run)
+        let before = try repository.messages(conversationID: conversationID).count
+
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: "Sol",
+                              artifactPersistenceEnabled: false)
+        store.nativeScheduleStore = scheduleStore
+        store.reloadSchedules()
+        try require(store.waitingScheduledWorkCount == 1, "The store sees one waiting run")
+        try require(store.scheduleRunDecision(try scheduleStore.run(run.id)!)?.id == decision.id, "The waiting run exposes its decision")
+        store.postScheduleCheckIns()
+        store.postScheduleCheckIns()
+        let messages = try repository.messages(conversationID: conversationID)
+        try require(messages.count == before + 1, "One check-in is posted for a waiting run: \(messages.count - before)")
+        let checkIn = messages.last!
+        try require(checkIn.role == .assistant && checkIn.text.contains(decision.prompt), "The check-in quotes the question: \(checkIn.text)")
+        try require(checkIn.displayBlocks.contains { if case .taskCard = $0 { return true }; return false }, "The check-in carries the task card")
+        try require(try scheduleStore.run(run.id)?.checkInKey == ChatStore.checkInKey(taskReferenceID: reference.id.uuidString, decision: decision),
+                    "The run remembers the posted check-in")
+
+        let reopened = try LocalChatRepository(url: url)
+        let reopenedStore = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: reopened, nativeAssistantName: "Sol",
+                                      artifactPersistenceEnabled: false)
+        reopenedStore.nativeScheduleStore = NativeScheduleStore(database: reopened.database)
+        reopenedStore.reloadSchedules()
+        reopenedStore.postScheduleCheckIns()
+        try require(try reopened.messages(conversationID: conversationID).count == before + 1, "A relaunch never posts the same check-in again")
+        let mirrored = try await repository.database.read { db in
+            try String.fetchAll(db, sql: "SELECT message_id FROM native_task_card_mirrors WHERE reference_id = ?", arguments: [reference.id.uuidString])
+        }
+        try require(mirrored == [checkIn.id.uuidString], "The posted check-in is registered as a card mirror: \(mirrored)")
+
+        let atomicRun = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date().addingTimeInterval(60), startedAt: Date(), outcome: .running,
+                                          conversationID: conversationID, taskReferenceID: reference.id.uuidString)
+        try scheduleStore.saveRun(atomicRun)
+        var draft = Message(role: .assistant, text: "A fixture check-in", state: .complete)
+        draft.displayBlocks = checkIn.displayBlocks
+        let atomic = draft
+        let firstPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key",
+                                                           referenceID: reference.id, decisionID: decision.id)
+        let secondPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key",
+                                                            referenceID: reference.id, decisionID: decision.id)
+        let wrongDecision = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "other-key",
+                                                               referenceID: reference.id, decisionID: "not-the-current-decision")
+        try require(!wrongDecision, "A post for a decision the task is not paused on is refused inside the transaction")
+        try require(firstPost && !secondPost, "The same check-in key posts once and then refuses")
+        let afterAtomic = try repository.messages(conversationID: conversationID)
+        try require(afterAtomic.count == before + 2 && afterAtomic.filter { $0.id == atomic.id }.count == 1, "A refused post adds no message")
+        let atomicMirror = try await repository.database.read { db in
+            try String.fetchOne(db, sql: "SELECT reference_id FROM native_task_card_mirrors WHERE message_id = ?", arguments: [atomic.id.uuidString])
+        }
+        try require(atomicMirror == reference.id.uuidString, "The posted message is registered as a mirror of the task")
+
+        store.select(conversationID)
+        try require(store.conversations.first { $0.id == conversationID }?.messages.contains { $0.id == checkIn.id } == true,
+                    "The store holds the check-in in memory")
+        let resumed = try NativeTaskEngineHarness.make(repository: repository, counter: counter,
+                                                       onUpdate: { updates in store.applyNativeTaskUpdates(updates) }) { job in
+            job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await resumed.start()
+        await resumed.tracker.retry(reference.id)
+        try require(try await resumed.wait { try resumed.state(reference) == .completed }, "Answering the check-in finishes the task")
+        await resumed.stop()
+        let cardStatus: (Message) -> NativeTaskCardPresentation.Status? = { message in
+            for block in message.displayBlocks { if case .taskCard(let card) = block { return card.status } }
+            return nil
+        }
+        let storedCheckIn = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
+        try require(storedCheckIn.flatMap(cardStatus) == .completed, "The stored check-in card shows the finished task")
+        let liveCheckIn = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == checkIn.id }
+        try require(liveCheckIn.flatMap(cardStatus) == .completed, "The check-in card in memory shows the finished task")
+        let movedOn = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "moved-on",
+                                                         referenceID: reference.id, decisionID: decision.id)
+        try require(!movedOn && (try repository.messages(conversationID: conversationID)).count == before + 2,
+                    "A post whose task completed between the read and the write is refused and adds nothing")
+        let waitingBlocks = try nativeTaskEncoded(checkIn.displayBlocks)
+        try await repository.database.write { db in
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [waitingBlocks, checkIn.id.uuidString])
+        }
+        let unchanged = try repository.projectTask(id: reference.id, snapshot: nil, cursor: 0)
+        try require(unchanged?.mirrors.contains(checkIn.id) == true, "An unchanged projection still names the check-in mirror")
+        let refreshed = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
+        try require(refreshed.flatMap(cardStatus) == .completed, "An unchanged projection tick rewrites a stale mirror card")
+
+        var answered = try NativeSchedule(owner: .conversation, workerType: "research", title: "Answered check",
+                                          instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)
+        answered.advance(after: Date(), from: nil)
+        try scheduleStore.save(answered)
+        let stale = NativeScheduleRun(scheduleID: answered.id, scheduledFor: Date(), startedAt: Date(), outcome: .waiting, detail: decision.prompt,
+                                      conversationID: conversationID, messageID: reference.origin.assistantMessageID.uuidString,
+                                      taskReferenceID: reference.id.uuidString)
+        try scheduleStore.saveRun(stale)
+        let beforeStale = try repository.messages(conversationID: conversationID).count
+        store.reloadSchedules()
+        store.postScheduleCheckIns()
+        try require(try repository.messages(conversationID: conversationID).count == beforeStale, "A waiting run whose task already moved on posts nothing")
+        try require(try scheduleStore.run(stale.id)?.checkInKey == nil, "The stale run claims no check-in")
     }
 
     private static func taskDocumentEndToEnd() async throws {
@@ -690,6 +859,7 @@ extension SelfTest {
         try require(nativeTaskSeconds(started.duration(to: .now)) < 5, "Cancel lands within the step")
         await cancelHarness.stop()
 
+        let note = NativeTaskWorkerFailures.automaticRetryNote
         let retryRepository = try LocalChatRepository(inMemory: true)
         let retryCounter = NativeTaskEngineCounter()
         let retryHarness = try NativeTaskEngineHarness.make(repository: retryRepository, counter: retryCounter) { job in
@@ -697,15 +867,60 @@ extension SelfTest {
             return job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
         }
         try await retryHarness.start()
-        let paused = try await retryHarness.submit("Quota research")
-        try require(try await retryHarness.wait { try retryHarness.state(paused) == .needsDecision }, "A provider failure pauses for a decision")
-        let card = try retryRepository.taskProjection(id: paused.id)!.snapshot!
-        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("usage limit") == true, "The card asks a plain retry question")
-        await retryHarness.tracker.retry(paused.id)
-        try require(try await retryHarness.wait { try retryHarness.state(paused) == .completed }, "Retry resumes and completes the task")
-        let engineTask = try retryHarness.engine.store.get(paused.remoteTaskID!)
-        try require(try retryHarness.engine.store.events(taskID: engineTask.id).map(\.kind).contains("decision_received"), "The answer is in the event log")
+        let recovered = try await retryHarness.submit("Quota research")
+        try require(try await retryHarness.wait { try retryHarness.state(recovered) == .completed }, "One provider failure retries on its own and completes")
+        let recoveredTask = try retryHarness.engine.store.get(recovered.remoteTaskID!)
+        let recoveredCheckpoint = try JSONDecoder().decode(NativeResearchCheckpoint.self, from: recoveredTask.checkpoint)
+        try require(recoveredCheckpoint.errors.contains(note), "The automatic retry is noted in the checkpoint: \(recoveredCheckpoint.errors)")
+        try require(!(try retryHarness.engine.store.events(taskID: recoveredTask.id).map(\.kind).contains("decision_received")), "No decision was asked or answered")
+        let recoveredPlans = await retryCounter.count("generate:plan")
+        try require(recoveredPlans == 2, "The plan request ran twice: \(recoveredPlans)")
         await retryHarness.stop()
+
+        let pauseRepository = try LocalChatRepository(inMemory: true)
+        let pauseCounter = NativeTaskEngineCounter()
+        let pauseHarness = try NativeTaskEngineHarness.make(repository: pauseRepository, counter: pauseCounter) { job in
+            if job.phase == "plan", await pauseCounter.count("generate:plan") <= 2 { throw NativeTaskGenerationFailure(code: "provider_quota") }
+            return job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await pauseHarness.start()
+        let paused = try await pauseHarness.submit("Quota research twice")
+        try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .needsDecision }, "A second provider failure in the same step pauses for a decision")
+        let card = try pauseRepository.taskProjection(id: paused.id)!.snapshot!
+        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("usage limit") == true, "The card asks a plain retry question")
+        await pauseHarness.tracker.retry(paused.id)
+        try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .completed }, "Retry resumes and completes the task")
+        let engineTask = try pauseHarness.engine.store.get(paused.remoteTaskID!)
+        try require(try pauseHarness.engine.store.events(taskID: engineTask.id).map(\.kind).contains("decision_received"), "The answer is in the event log")
+        let pausedPlans = await pauseCounter.count("generate:plan")
+        try require(pausedPlans == 3, "The plan request ran three times: \(pausedPlans)")
+        await pauseHarness.stop()
+
+        let authRepository = try LocalChatRepository(inMemory: true)
+        let authCounter = NativeTaskEngineCounter()
+        let authHarness = try NativeTaskEngineHarness.make(repository: authRepository, counter: authCounter) { job in
+            if job.phase == "plan", await authCounter.count("generate:plan") == 1 { throw NativeTaskGenerationFailure(code: "provider_auth") }
+            return job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await authHarness.start()
+        let refused = try await authHarness.submit("Auth research")
+        try require(try await authHarness.wait { try authHarness.state(refused) == .needsDecision }, "A sign-in failure pauses right away")
+        let authPlans = await authCounter.count("generate:plan")
+        try require(authPlans == 1, "A sign-in failure is never retried on its own: \(authPlans)")
+        await authHarness.stop()
+
+        let cutRepository = try LocalChatRepository(inMemory: true)
+        let cutCounter = NativeTaskEngineCounter()
+        let cutHarness = try NativeTaskEngineHarness.make(repository: cutRepository, counter: cutCounter) { job in
+            if job.phase == "plan", await cutCounter.count("generate:plan") == 1 { throw NativeTaskGenerationFailure(code: "canceled") }
+            return job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await cutHarness.start()
+        let cut = try await cutHarness.submit("Cut off research")
+        try require(try await cutHarness.wait { try cutHarness.state(cut) == .needsDecision }, "A cut off model request pauses right away")
+        let cutPlans = await cutCounter.count("generate:plan")
+        try require(cutPlans == 1, "A cut off model request is never retried on its own: \(cutPlans)")
+        await cutHarness.stop()
 
         let relaunchDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let relaunchURL = relaunchDirectory.appendingPathComponent("chat.sqlite")
