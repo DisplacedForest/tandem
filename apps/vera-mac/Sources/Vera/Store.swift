@@ -140,6 +140,7 @@ final class ChatStore: ObservableObject {
     @Published var dotProfile = NativeDotProfile()
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
+    var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
     var nativeSchedulerLoop: Task<Void, Never>?
@@ -309,6 +310,7 @@ final class ChatStore: ObservableObject {
 
     deinit {
         conversationTurnLoop?.cancel()
+        nativeSchedulerLoop?.cancel()
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
         nativeTaskTrackingLoop?.cancel()
@@ -1665,6 +1667,7 @@ final class ChatStore: ObservableObject {
     }
 
     func purgeConversation(_ id: String) throws {
+        discardedConversationIDs.insert(id)
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         try repository?.deleteConversation(id)
         for message in stored {

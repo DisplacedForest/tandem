@@ -212,6 +212,8 @@ extension SelfTest {
         try await checkFireLiveness(folder: folder)
         try await checkExtractionAfterReset()
         print("  dot OK (profile, context, tightening, services, pause, resume, liveness, extraction, header, schedule controls, reset)")
+        store.stopNativeTaskRecovery()
+        reopened.stopNativeTaskRecovery()
     }
 
     private static func turn(_ store: ChatStore, conversationID: String, text: String) -> NativeConversationTurn {
@@ -344,6 +346,7 @@ extension SelfTest {
         try require(store.dotToolIDs(base: ["a", "b"]).isEmpty && !store.dotProfile.allowsScheduledRun(owner: .dot), "Nothing runs or connects while the profile is unreadable")
         store.saveDotProfile { $0.goal = "Plan the garden" }
         try require(try NativeDotProfileStore(database: repository.database).load()?.goal == "Plan the garden", "Saving the settings repairs the stored profile")
+        store.stopNativeTaskRecovery()
     }
 
     private static func checkFireLiveness(folder: URL) async throws {
@@ -409,6 +412,7 @@ extension SelfTest {
         let legacy = try JSONDecoder().decode(NativeDotProfile.self, from: Data(#"{"goal":"g","state":"active"}"#.utf8))
         try require(legacy.resumedAt == nil, "A profile saved before resume times decodes without one")
         store.deleteSchedule(resumable.id)
+        store.stopNativeTaskRecovery()
     }
 
     private static func checkExtractionAfterReset() async throws {
@@ -444,11 +448,12 @@ extension SelfTest {
                     "An extraction started before start over is dropped")
         let gone = Conversation(id: UUID().uuidString, title: "Gone", messages: [], updatedAt: Date())
         try repository.saveConversation(gone)
-        service.onExtract = { try? repository.deleteConversation(gone.id) }
+        service.onExtract = { try? store.purgeConversation(gone.id) }
         await learn(gone.id)
         try require(try repository.pendingProposals().allSatisfy { $0.sourceConversationID != gone.id },
                     "An extraction for a deleted chat is dropped")
         service.onExtract = nil
+        store.stopNativeTaskRecovery()
     }
 }
 

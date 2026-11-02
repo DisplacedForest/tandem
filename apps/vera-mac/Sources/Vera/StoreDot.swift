@@ -104,11 +104,7 @@ extension ChatStore {
     func memorySourceIsLive(_ source: NativeMemoryTurnSource?, generation: Int, wasVeraThread: Bool) -> Bool {
         guard let source else { return true }
         if wasVeraThread && generation != dotResetGeneration { return false }
-        if conversations.contains(where: { $0.id == source.conversationID }) { return true }
-        if let local = repository as? LocalChatRepository {
-            return (try? local.conversationExists(source.conversationID)) ?? false
-        }
-        return ((try? repository?.listConversations()) ?? []).contains { $0.id == source.conversationID }
+        return !discardedConversationIDs.contains(source.conversationID)
     }
 
     func dotToolIDs(base: Set<String>) -> Set<String> {
