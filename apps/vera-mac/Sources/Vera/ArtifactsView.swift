@@ -71,15 +71,24 @@ struct ArtifactsView: View {
     @State private var selectedID: String?
     @State private var search = ""
     @State private var filter: ArtifactKindFilter = .all
+    @State private var conversationFilter: String?
 
-    init(initialSelection: String? = nil) {
+    init(initialSelection: String? = nil, conversationFilter: String? = nil) {
         _selectedID = State(initialValue: initialSelection)
+        _conversationFilter = State(initialValue: conversationFilter)
+    }
+
+    private var conversationFilterTitle: String? {
+        guard let conversationFilter else { return nil }
+        if store.isVeraThread(conversationFilter) { return "From \(store.assistantName)" }
+        return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
     }
 
     private var filtered: [ArtifactRecord] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return store.artifactRecords.filter { record in
             guard filter.matches(record.kind) else { return false }
+            if let conversationFilter, record.conversationID != conversationFilter { return false }
             guard !query.isEmpty else { return true }
             return record.title.localizedCaseInsensitiveContains(query)
                 || (record.originTitle?.localizedCaseInsensitiveContains(query) ?? false)
@@ -106,9 +115,20 @@ struct ArtifactsView: View {
         .background(Theme.bg)
         .onAppear {
             if !renderSafe { store.reloadArtifacts() }
+            adoptPendingConversationFilter()
             openRequested()
         }
         .onChange(of: store.requestedArtifactID) { _, _ in openRequested() }
+        .onChange(of: store.pendingLibraryConversationID) { _, _ in adoptPendingConversationFilter() }
+    }
+
+    private func adoptPendingConversationFilter() {
+        guard let pending = store.pendingLibraryConversationID else { return }
+        store.pendingLibraryConversationID = nil
+        conversationFilter = pending
+        search = ""
+        filter = .all
+        selectedID = filtered.first?.id
     }
 
     private func openRequested() {
@@ -127,6 +147,21 @@ struct ArtifactsView: View {
                 ForEach(ArtifactKindFilter.allCases) { option in
                     ArtifactFilterPill(title: option.title, selected: option == filter) { filter = option }
                 }
+            }
+            if let title = conversationFilterTitle {
+                Button {
+                    conversationFilter = nil
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(title).font(.system(size: 12, weight: .medium))
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Theme.surfaceSelected))
+                }
+                .buttonStyle(.plain)
+                .help("Showing only results from this conversation")
+                .accessibilityLabel("\(title). Clear filter")
             }
             if filtered.isEmpty {
                 Text("Nothing matches.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)

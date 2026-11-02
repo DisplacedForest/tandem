@@ -27,7 +27,8 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     Group {
                         switch store.section {
-                        case .vera, .chat: ChatPane(workCollapsed: ConversationPresence.showsWorkButton(
+                        case .vera: ChatPane(workCollapsed: companionPlacement == .header)
+                        case .chat: ChatPane(workCollapsed: ConversationPresence.showsWorkButton(
                             references: store.nativeTaskReferences, conversationID: store.selectedID,
                             wide: wideEnoughForWork, canvasOpen: store.showCanvas))
                         case .pulse: PulseView()
@@ -43,6 +44,9 @@ struct ContentView: View {
                     if store.showCanvas, chatSection {
                         Divider()
                         CanvasPanel().frame(width: 480)
+                    } else if companionPlacement == .beside {
+                        CompanionThreadPanel()
+                            .frame(width: CompanionThreadPanelMetrics.width)
                     } else if chatSection, ConversationPresence.showsWorkPanel(
                         references: store.nativeTaskReferences, conversationID: store.selectedID,
                         wide: wideEnoughForWork, canvasOpen: store.showCanvas) {
@@ -81,6 +85,10 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
+    private var companionPlacement: CompanionPanelPlacement {
+        CompanionPanelPlacement.decide(isCompanionThread: store.section == .vera && store.isVeraThread(store.selectedID),
+                                       windowWidth: windowWidth, canvasShowing: store.showCanvas)
+    }
     private var wideEnoughForWork: Bool { windowWidth >= OngoingWorkMetrics.minimumWindowWidth }
 
     private var deletionTitle: String {
@@ -358,7 +366,23 @@ private struct ChatPane: View {
             refreshDotSetup()
         }
         .overlay(alignment: .topTrailing) {
-            if workCollapsed {
+            if workCollapsed, store.isVeraThread(conversation?.id) {
+                Button { showingWork = true } label: {
+                    HStack(spacing: 8) {
+                        CompanionAvatar(size: 18)
+                        Text("Details").font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.warmTextPrimary)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(Theme.cardFill))
+                    .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("\(store.assistantName)'s state, activity and results")
+                .accessibilityLabel("Details for \(store.assistantName)")
+                .padding(.top, 44).padding(.trailing, 20)
+            } else if workCollapsed {
                 OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: conversation?.id)) {
                     showingWork = true
                 }
@@ -366,7 +390,12 @@ private struct ChatPane: View {
             }
         }
         .sheet(isPresented: $showingWork) {
-            if OngoingWork.items(store.nativeTaskReferences, conversationID: conversation?.id).isEmpty {
+            if store.isVeraThread(conversation?.id) {
+                CompanionThreadPanel(onClose: { showingWork = false })
+                    .frame(width: 420, height: 640)
+                    .environmentObject(store)
+                    .environmentObject(config)
+            } else if OngoingWork.items(store.nativeTaskReferences, conversationID: conversation?.id).isEmpty {
                 OngoingWorkAllSheet(onGo: { reference in
                     showingWork = false
                     store.revealOngoingWork(reference)
@@ -384,6 +413,9 @@ private struct ChatPane: View {
         }
         .onAppear(perform: refreshDotSetup)
         .onChange(of: store.dotProfile) { refreshDotSetup() }
+        .onChange(of: workCollapsed) { _, collapsed in
+            if !collapsed, store.isVeraThread(conversation?.id) { showingWork = false }
+        }
         .onChange(of: store.dotProfileLoaded) { refreshDotSetup() }
         .sheet(isPresented: $showingDotSetup) {
             DotSetupView().environmentObject(store).environmentObject(config)
