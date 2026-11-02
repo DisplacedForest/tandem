@@ -1487,7 +1487,8 @@ enum SelfTest {
             }
             store.sendText("What do I like?")
             await waitForGeneration(store)
-            for _ in 0..<100 where memoryService.extractionCalls == 0 {
+            for _ in 0..<1_000 where !(memoryService.extractionCalls >= 1
+                && ((try? repository.pendingProposals().contains(where: { $0.title == "Meeting preference" })) ?? false)) {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
             guard memoryService.embedCalls == 4, memoryService.extractionCalls == 1,
