@@ -215,7 +215,7 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
@@ -223,9 +223,7 @@ enum NativeRequestPreapproval {
     static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as",
                           "permission", "approval", "authorization", "authorisation", "consent", "express", "expresses", "analyze", "analyse", "analysis", "grammar", "grammatical", "parse", "syntax", "language", "linguistic", "imperative", "verb", "noun", "following"]
     static let subjects: Set<String> = ["i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "its", "our", "their", "the", "a", "an", "this", "that", "these", "those", "someone", "somebody", "everyone", "anyone", "nobody"]
-    static let continuations = ["and ", "with ", "to ", "on ", "then ", "now", ","]
-    static let copulas: Set<String> = ["is", "are", "was", "were", "be", "been", "being", "am", "means", "equals", "seems", "sounds"]
-    static let speech = ["say", "says", "said", "saying", "reply", "replied", "replies", "answer", "answered", "tell", "told", "wrote", "write", "writes", "text", "texted", "message", "messaged", "ask", "asked", "mention", "mentioned", "suggest", "suggested", "note", "noted", "quote", "quoted", "respond", "responded", "response"]
+    static let speech = ["says", "said", "saying", "replied", "replies", "answered", "answers", "told", "tells", "wrote", "writes", "texted", "messaged", "asked", "asks", "mentioned", "mentions", "suggested", "suggests", "noted", "quoted", "quotes", "responded", "responds", "whispered", "whispers", "shouted", "shouts", "yelled", "muttered", "insisted", "added", "remarked"]
 
     static func normalized(_ text: String) -> String {
         text.lowercased()
@@ -233,9 +231,6 @@ enum NativeRequestPreapproval {
             .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
     }
 
-    static func hasCopula(_ text: String) -> Bool {
-        words(text).contains { copulas.contains($0) }
-    }
 
     static func quoted(_ text: String) -> Bool {
         let characters = Array(text)
@@ -266,18 +261,8 @@ enum NativeRequestPreapproval {
 
     static func sentenceGrants(_ sentence: String) -> Bool {
         var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        if let phrase = phrases.first(where: { rest.hasSuffix(", " + $0) }) {
-            let head = String(rest.dropLast(phrase.count + 2))
-            guard let lead = words(head).first, !subjects.contains(lead) else { return false }
-            return !hasCopula(head)
-        }
         while true {
-            if let phrase = phrases.first(where: { rest.hasPrefix($0) }) {
-                let after = String(rest.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
-                if after.isEmpty { return true }
-                guard continuations.contains(where: { after.hasPrefix($0) }) else { return false }
-                return !hasCopula(after)
-            }
+            if phrases.contains(rest) { return true }
             guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
             rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
         }
@@ -316,13 +301,13 @@ enum NativeCommandClassifier {
         for separator in ["&&", "||", "&", ";", "|", "\n", "(", ")", "{", "}"] {
             spaced = spaced.replacingOccurrences(of: separator, with: " ; ")
         }
-        return spaced.components(separatedBy: " ; ").map { NativeCommandPrefix.tokens(of: $0) }.filter { !$0.isEmpty }
+        return spaced.components(separatedBy: " ; ").map { shellTokens($0) }.filter { !$0.isEmpty }
     }
 
-    static func executable(_ segment: [String]) -> (name: String, arguments: [String]) {
+    static func executable(_ segment: [String], grants: [FolderGrant] = [], working: String? = nil) -> (name: String, arguments: [String]) {
         var tokens = segment[...]
         while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
-            guard isPlainAssignment(first) else { return ("?", Array(tokens.dropFirst())) }
+            guard isPlainAssignment(first, grants: grants, working: working) else { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
         }
         let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun"]
@@ -331,7 +316,7 @@ enum NativeCommandClassifier {
             tokens = tokens.dropFirst()
             if let next = tokens.first, next.hasPrefix("-") { return ("?", Array(tokens.dropFirst())) }
             while let next = tokens.first, next.contains("=") {
-                guard isPlainAssignment(next) else { return ("?", Array(tokens.dropFirst())) }
+                guard isPlainAssignment(next, grants: grants, working: working) else { return ("?", Array(tokens.dropFirst())) }
                 tokens = tokens.dropFirst()
             }
         }
@@ -342,12 +327,38 @@ enum NativeCommandClassifier {
         return (name, Array(tokens.dropFirst()))
     }
 
-    static func isPlainAssignment(_ token: String) -> Bool {
+    static func isPlainAssignment(_ token: String, grants: [FolderGrant] = [], working: String? = nil) -> Bool {
         guard let equals = token.firstIndex(of: "=") else { return false }
         let name = token[token.startIndex..<equals]
-        let value = token[token.index(after: equals)...]
+        let value = stripOuterQuotes(String(token[token.index(after: equals)...]))
         guard let head = name.first, head.isLetter || head == "_", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return false }
-        return value.allSatisfy { $0.isLetter || $0.isNumber || "._+-/~:,@%".contains($0) }
+        if name.uppercased().hasPrefix("GIT_") { return false }
+        guard value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " || "._+-/~:,@%=".contains($0) }) else { return false }
+        if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
+            if pathLeavesGrants(value, grants: grants, working: working) { return false }
+        }
+        return true
+    }
+
+    static func shellTokens(_ text: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        for character in text {
+            if let open = quote {
+                current.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                quote = character
+                current.append(character)
+            } else if character.isWhitespace {
+                if !current.isEmpty { tokens.append(current); current = "" }
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
     }
 
     static func stripOuterQuotes(_ token: String) -> String {
@@ -357,7 +368,10 @@ enum NativeCommandClassifier {
 
     static func hasInlineCode(_ name: String, _ arguments: [String]) -> Bool {
         if wrappers.contains(name) { return true }
-        if interpreters.contains(name) && arguments.contains(where: { $0 == "-c" || $0 == "-e" || $0 == "--eval" || $0.hasPrefix("-c") && $0.count > 2 || $0.hasPrefix("-e") && $0.count > 2 }) { return true }
+        if interpreters.contains(name) && arguments.contains(where: { argument in
+            if argument.hasPrefix("--") { return argument.contains("eval") || argument.contains("exec") || argument.contains("command") }
+            return argument.hasPrefix("-") && argument.dropFirst().contains(where: { $0 == "c" || $0 == "e" })
+        }) { return true }
         return false
     }
 
@@ -368,7 +382,7 @@ enum NativeCommandClassifier {
         let subshells = command.contains { "(){}".contains($0) }
         var network = false
         for segment in segments(of: command) {
-            var (name, arguments) = executable(segment)
+            var (name, arguments) = executable(segment, grants: grants, working: working)
             if name == "?" { return .sensitive }
             if privileged.contains(name) { return .sensitive }
             if hasInlineCode(name, arguments) { return .sensitive }

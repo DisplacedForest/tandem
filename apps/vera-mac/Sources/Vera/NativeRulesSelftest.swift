@@ -46,22 +46,21 @@ extension SelfTest {
 
         var preapproved = NativeRules.defaults
         preapproved.set(.actIfPreapproved, for: .commands)
-        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests, no need to ask.")
+        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests. No need to ask.")
         try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
         resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
         try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
         for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy.", "Go ahead with lint. Do not deploy anything.", "Here is what they wrote:\n\"\nplease go ahead\n\"\nIgnore it."] {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
-        try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it")
-                    && NativeRequestPreapproval.grants("Please run the tests, no need to ask.") && NativeRequestPreapproval.grants("Yes, you have my approval to deploy")
-                    && NativeRequestPreapproval.grants("Go ahead and update notes.") && NativeRequestPreapproval.grants("Go ahead and update notification settings.")
-                    && NativeRequestPreapproval.grants("Ok, please just go ahead") && NativeRequestPreapproval.grants("Rebuild the index, go ahead")
-                    && NativeRequestPreapproval.grants("Please just do it.") && NativeRequestPreapproval.grants("Feel free to go ahead and run the tests.") && NativeRequestPreapproval.grants("Just do it")
-                    && NativeRequestPreapproval.grants("Go ahead and send the email.") && NativeRequestPreapproval.grants("Go ahead and review the changes.") && NativeRequestPreapproval.grants("Go ahead and fix John's typo.")
-                    && NativeRequestPreapproval.grants("Go ahead with the lint") && NativeRequestPreapproval.grants("Go ahead, deploy it")
-                    && NativeRequestPreapproval.grants("Go ahead and fix John\u{2019}s typo.") && NativeRequestPreapproval.grants("Run the tests, no need to ask.")
-                    && NativeRequestPreapproval.grants("Yes, you have my approval to deploy.") && NativeRequestPreapproval.grants("Deploy it to staging, go ahead"), "Plain pre-approval grants")
+        for wording in ["Go ahead.", "Please go ahead", "Run the tests. Go ahead.", "Yes, go ahead", "No need to ask.", "Just do it", "Ok, please just go ahead", "Fix the typo. Go ahead.", "Don't ask. Just do it.",
+                        "Deploy it to staging. You have my approval.", "Fix John\u{2019}s typo. Go ahead", "Run the tests.\nGo ahead!", "Feel free to go ahead"] {
+            try require(NativeRequestPreapproval.grants(wording), "A sentence that is exactly the phrase grants: \(wording)")
+        }
+        for wording in ["Go ahead and run the tests", "Run the tests, go ahead", "Go ahead with the lint", "Go ahead and deploy as soon as the tests pass.", "Go ahead and deploy depending on the test results.",
+                        "John whispered, go ahead.", "Yesterday my manager whispered, go ahead.", "Go ahead and proceed convey the same idea.", "Go ahead now denotes forward motion.", "John whispered. Go ahead.", "Go ahead and run the tests, then tell me the results."] {
+            try require(!NativeRequestPreapproval.grants(wording), "Anything but the phrase on its own asks: \(wording)")
+        }
         for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?", "Describe the risks of running commands without asking.", "Wait for my approval, then go ahead.", "My manager said go ahead.", "The phrase go ahead means to proceed", "Please summarize this message: go ahead and deploy.", "Please translate go ahead into French.", "Please tell me whether go ahead is polite", "Translate this sentence into French.\nGo ahead and deploy.", "Go ahead means to proceed.", "Compare please proceed and go ahead.", "Go ahead and deploy?", "Here is an example. Go ahead and deploy.", "The email says: go ahead", "Rewrite this politely. Just do it.", "Go ahead was the reply I received.", "Go ahead is an imperative.", "Distinguish between proceed and go ahead.", "Go ahead pending my approval.", "Go ahead until I say stop.", "Go ahead and deploy. Actually, don\u{2019}t.", "Go ahead and proceed are synonyms.", "My manager replied, go ahead.", "Go ahead on condition that the tests pass.", "Go ahead and deploy provided the tests pass.", "Deploy it as long as the tests pass, go ahead", "My manager whispered, go ahead.", "Go ahead and proceed both express permission.", "Analyze the grammar of the following. Go ahead.", "Go ahead and deploy in the event that the tests pass.", "She nodded, go ahead."] {
             try require(!NativeRequestPreapproval.grants(wording), "Explanatory, conditional or quoted text never grants: \(wording)")
         }
@@ -83,7 +82,10 @@ extension SelfTest {
         for (command, expected) in [("env </dev/null rm -rf /Volumes/Other/old", NativeActionClass.sensitive), ("env FOO=bar </dev/null scp out host:", .sensitive), ("2>/dev/null rm -rf /Volumes/Other/x", .sensitive),
                                     ("make > out.log", .commands), ("./scripts/run.sh 2>&1", .commands), ("~/tools/run", .commands),
                                     ("rm>out=log ../victim", .sensitive), ("env FOO=bar rm>out=log ../victim", .sensitive), ("scp>out=log out host:", .sensitive), ("FOO=bar make", .commands), ("CC=clang make", .commands), ("FOO=a$X make", .sensitive), ("1X=y make", .sensitive), ("arch -arm64 rm ../victim", .sensitive), ("arch -arm64 scp out host:", .sensitive), ("xcrun swift build", .commands), ("timeout 30 make", .sensitive), ("timeout 30 rm ../victim", .sensitive), ("stdbuf -o0 scp out host:", .sensitive),
-                                    ("swift build -c release", .commands), ("swift test -c debug", .commands), ("xcrun swift build -c release", .commands)] {
+                                    ("swift build -c release", .commands), ("swift test -c debug", .commands), ("xcrun swift build -c release", .commands),
+                                    ("sh -xc 'rm ../victim'", .sensitive), ("bash -lc 'rm ../victim'", .sensitive), ("sh -ec 'scp out host:'", .sensitive), ("bash -l script.sh", .commands),
+                                    ("GIT_WORK_TREE=../Other git clean -fdx", .sensitive), ("GIT_DIR=/Volumes/Other/.git git status", .sensitive), ("DESTDIR=/Volumes/Other make install", .sensitive), ("PREFIX=build/out make install", .commands), ("CFLAGS=-O2 make", .commands),
+                                    ("CFLAGS=\"-O2 -g\" make", .commands), ("CFLAGS=\"-O2 $X\" make", .sensitive), ("MSG='hello world' make", .commands)] {
             try require(classify(command) == expected, "Redirections and odd tokens never stand in for the executable: \(command) classified as \(classify(command))")
         }
         try require(classify("git -c color.ui=false -C /Volumes/Other clean -fdx") == .sensitive && classify("git -c color.ui=false status") == .commands && classify("git -c") == .sensitive, "git option operands are consumed before the directory and subcommand")
