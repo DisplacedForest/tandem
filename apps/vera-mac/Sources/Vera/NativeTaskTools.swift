@@ -14,7 +14,7 @@ enum NativeTaskTools {
     static func definition(service: NativeTaskHandoffService, origin: NativeTaskOrigin,
                            profile: NativeTaskProfileBinding?,
                            searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
-                           allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.workerTypes },
+                           allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.chatWorkerTypes },
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         NativeToolDefinition(id: toolID, name: toolName, title: "Start background work",
             description: "Start one background task only when the current user message explicitly asks for research or for a written document to be produced in the background. Earlier conversation requests do not authorize another task. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for documents. Then acknowledge briefly. Progress and the result appear on the task card. Do not repeat task status on unrelated turns, expose internal identifiers, wait for the result, or claim completion.",
@@ -32,7 +32,7 @@ enum NativeTaskTools {
             ]), confirmation: .none, timeout: .seconds(10), isAvailable: { true }, execute: { arguments in
                 guard Set(arguments.keys).isSubset(of: ["worker_type", "title", "objective", "deliverables"]),
                       case .string(let workerType) = arguments["worker_type"],
-                      NativeResearchTaskRequest.workerTypes.contains(workerType),
+                      NativeResearchTaskRequest.chatWorkerTypes.contains(workerType),
                       case .string(let objective) = arguments["objective"],
                       case .array(let values) = arguments["deliverables"] else {
                     throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")

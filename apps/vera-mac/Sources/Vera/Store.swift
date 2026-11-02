@@ -226,9 +226,9 @@ final class ChatStore: ObservableObject {
             nativeTaskBroker = NativeTaskGenerationBroker(repository: taskRepository, client: nativeTaskClient,
                 configuredBase: { taskEngine.base },
                 isProfileAvailable: { await nativeTaskConfiguration.isAvailable($0) },
-                generate: { profile, job in
+                complete: { profile, job in
                     let config = try await nativeTaskConfiguration.load(profile)
-                    return try await NativeTaskProvider.complete(config: config, binding: profile, job: job)
+                    return try await NativeTaskProvider.completion(config: config, binding: profile, job: job)
                 })
         } else {
             nativeTaskBroker = nil

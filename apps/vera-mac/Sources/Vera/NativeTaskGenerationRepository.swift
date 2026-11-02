@@ -22,7 +22,9 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
             }
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations WHERE request_id = ?",
                                         arguments: [referenceID.uuidString]) ?? 0
-            guard count < profile.limits.maximumRequests else { return .unavailable("request_limit") }
+            let maximum = reference.createRequest.workerType == "dot"
+                ? NativeDotWorkerBudget.standard.taskCalls : profile.limits.maximumRequests
+            guard count < maximum else { return .unavailable("request_limit") }
             try db.execute(sql: """
                 INSERT INTO native_task_generations(request_id, generation_key, messages_digest, reserved_until, state)
                 VALUES (?, ?, ?, ?, 'reserved')

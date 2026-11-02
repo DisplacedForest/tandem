@@ -1,6 +1,12 @@
 import Foundation
 import GRDB
 
+actor NativeTaskJobRecorder {
+    private var jobs: [NativeTaskGenerationJob] = []
+    func record(_ job: NativeTaskGenerationJob) { jobs.append(job) }
+    func all() -> [NativeTaskGenerationJob] { jobs }
+}
+
 actor NativeTaskEngineCounter {
     private var counts: [String: Int] = [:]
     func bump(_ key: String) { counts[key, default: 0] += 1 }
@@ -25,6 +31,16 @@ struct NativeTaskEngineHarness {
                      search customSearch: NativeResearchSearch? = nil,
                      onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                      generate: @escaping @Sendable (NativeTaskGenerationJob) async throws -> String) throws -> NativeTaskEngineHarness {
+        try makeTurns(repository: repository, counter: counter, search: customSearch, onUpdate: onUpdate) { job in
+            .text(try await generate(job))
+        }
+    }
+
+    static func makeTurns(repository: LocalChatRepository, counter: NativeTaskEngineCounter,
+                          search customSearch: NativeResearchSearch? = nil,
+                          onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
+                          workers extra: @escaping (NativeTaskGenerationExchange) -> [String: NativeTaskWorker] = { _ in [:] },
+                          complete: @escaping @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
             await counter.bump("search")
@@ -35,7 +51,8 @@ struct NativeTaskEngineHarness {
             workers: { exchange in
                 let identity: @Sendable () -> NativeWorkerIdentity = { NativeWorkerIdentity(assistantName: "Nova", ownerName: "Jordan") }
                 return ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
-                        "document": NativeDocumentWorker.make(exchange: exchange, identity: identity)]
+                        "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
+                        "dot": NativeTaskLocalEngine.dotPlaceholder()].merging(extra(exchange)) { _, injected in injected }
             })
         let base: @Sendable () -> URL? = { NativeTaskLocalEngine.identity.base }
         let service = NativeTaskHandoffService(repository: repository, client: engine.client, configuredBase: base)
@@ -45,9 +62,9 @@ struct NativeTaskEngineHarness {
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
             savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
         let broker = NativeTaskGenerationBroker(repository: repository, client: engine.client, configuredBase: base,
-            isProfileAvailable: { _ in true }, generate: { _, job in
+            isProfileAvailable: { _ in true }, complete: { _, job in
                 await counter.bump("generate:\(job.phase)")
-                return try await generate(job)
+                return try await complete(job)
             })
         return NativeTaskEngineHarness(repository: repository, engine: engine, service: service, tracker: tracker,
                                        broker: broker, counter: counter, profile: profile, loops: NativeTaskEngineLoops())
@@ -87,6 +104,12 @@ struct NativeTaskEngineHarness {
     func submitDocument(title: String?, brief: String, inputs: [String]) async throws -> NativeTaskReference {
         let origin = try NativeTaskFixture.origin(repository)
         let request = try NativeResearchTaskRequest(objective: brief, deliverables: inputs, workerType: "document", title: title)
+        return try await service.submit(origin: origin, request: request, profile: profile)
+    }
+
+    func submitDot(_ assignment: String, goal: String = "") async throws -> NativeTaskReference {
+        let origin = try NativeTaskFixture.origin(repository)
+        let request = try NativeResearchTaskRequest(dot: NativeDotTaskPayload(assignment: assignment, mode: "manual", goal: goal))
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
@@ -130,7 +153,8 @@ extension SelfTest {
         try await taskScheduledRun()
         try await taskScheduleCheckIns()
         try await taskArbiterContract()
-        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission)")
+        try await taskDotGeneration()
+        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission, dot tool generation)")
     }
 
     private static func researchPayload(_ query: String = "What color is the fictional moon Luma?") throws -> Data {
@@ -1063,5 +1087,207 @@ extension SelfTest {
         _ = try? await holder.value
         let afterHolder = await arbiter.activeCounts(resource: endpointResource)
         try require(!afterHolder.background, "The lease is released when the operation ends")
+    }
+
+    private static func dotPayload(_ assignment: String = "Find out what color the fictional moon Luma is.") throws -> Data {
+        let request = try NativeResearchTaskRequest(dot: NativeDotTaskPayload(assignment: assignment, mode: "manual", goal: "Know the moon"))
+        let binding = NativeTaskAdmissionBinding(id: "binding-1", admissionBase: URL(string: "https://provider.test/v1")!,
+                                                 enrollmentDigest: String(repeating: "a", count: 64))
+        return try nativeTaskEncoded(NativeResearchTaskPayload(request: request, nativeBinding: binding))
+    }
+
+    nonisolated static let dotLookupTool = NativeTaskGenerationTool(name: "lookup_moon", description: "Look up a fictional moon",
+        parameters: .object(["type": .string("object"), "required": .array([.string("moon")]),
+                             "properties": .object(["moon": .object(["type": .string("string")])])]))
+
+    nonisolated private static func dotWorker(exchange: NativeTaskGenerationExchange, gate: NativeTaskEngineCounter) -> NativeTaskWorker {
+        NativeTaskWorker(timeoutSeconds: 40) { task in
+            let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
+            guard let binding = payload.nativeBinding, payload.dot != nil else {
+                return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "binding_missing")
+            }
+            do {
+                let base = [NativeTaskGenerationMessage(role: "system", content: "You work toward the goal with tools."),
+                            NativeTaskGenerationMessage(role: "user", content: payload.query)]
+                let first = try await exchange.completeTurn(task: task, binding: binding, phase: "work-1", attempt: "a", ordinal: 0,
+                                                            messages: base, tools: [dotLookupTool], toolChoice: "auto")
+                guard let call = first.toolCalls.first else { return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "no_tool_call") }
+                let followUp = base + [NativeTaskGenerationMessage(role: "assistant", content: first.content, toolCalls: first.toolCalls),
+                                       NativeTaskGenerationMessage(role: "tool", content: "{\"color\":\"blue\"}", toolCallID: call.id)]
+                let second = try await exchange.completeTurn(task: task, binding: binding, phase: "work-2", attempt: "a", ordinal: 0,
+                                                             messages: followUp, tools: [dotLookupTool], toolChoice: "auto")
+                if await gate.count("release") == 0 {
+                    await gate.bump("blocked")
+                    try await Task.sleep(for: .seconds(30))
+                }
+                return NativeTaskStepResult(state: .completed, checkpoint: NativeTaskStore.emptyObject,
+                    result: try NativeTaskStore.canonical(["kind": "dot_report", "query": payload.query, "title": "Luma",
+                                                           "report": second.content, "summary": "Luma is blue.", "sources": [Any]()]),
+                    event: "completed")
+            } catch is NativeTaskExecutorUnavailable {
+                return NativeTaskStepResult(state: .blocked, checkpoint: try NativeTaskStore.canonical(["native_unavailable": binding.id]))
+            }
+        }
+    }
+
+    private static func taskDotGeneration() async throws {
+        let require = NativeTaskFixture.require
+        let budget = NativeDotWorkerBudget.standard
+        try require(budget == NativeDotWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32, transcriptBytes: 131072,
+                                                    taskRounds: 32, taskCalls: 64), "The dot budget holds its standard values")
+        let enforced = NativeTaskGenerationBudget.forWorker("dot")
+        try require(enforced.maximumOrdinal == budget.calls && enforced.maximumMessages == budget.transcriptMessages
+                     && enforced.maximumBytes == budget.transcriptBytes && enforced.allowsTools, "The exchange reads the dot budget")
+        try require(NativeTaskGenerationBudget.forWorker("research") == .standard && NativeTaskGenerationBudget.forWorker("document") == .standard,
+                    "Research and documents keep their budget")
+        try require(NativeTaskGenerationJob.validPhase("work-5") && NativeTaskGenerationJob.validPhase("work-63")
+                    && !NativeTaskGenerationJob.validPhase("work-64") && !NativeTaskGenerationJob.validPhase("work"),
+                    "Work phases are numbered below 64")
+        try require(NativeTaskTransportTiming.Phase(jobPhase: "work-3") == .work, "Work phases have their own timing")
+
+        let call = NativeTaskGenerationToolCall(id: "call-1", name: "lookup_moon", arguments: "{\"moon\":\"Luma\"}")
+        let base = [NativeTaskGenerationMessage(role: "system", content: "Work"), NativeTaskGenerationMessage(role: "user", content: "Luma")]
+        let transcript = base + [NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: [call]),
+                                 NativeTaskGenerationMessage(role: "tool", content: "{\"color\":\"blue\"}", toolCallID: "call-1")]
+        let changed = base + [NativeTaskGenerationMessage(role: "assistant", content: "",
+                                  toolCalls: [NativeTaskGenerationToolCall(id: "call-1", name: "lookup_moon", arguments: "{\"moon\":\"Nyx\"}")]),
+                              NativeTaskGenerationMessage(role: "tool", content: "{\"color\":\"blue\"}", toolCallID: "call-1")]
+        let digest = NativeTaskGenerationJob.digest(transcript, tools: [dotLookupTool], toolChoice: "auto")
+        try require(digest != NativeTaskGenerationJob.digest(changed, tools: [dotLookupTool], toolChoice: "auto"),
+                    "The digest changes when a tool call's arguments change")
+        try require(digest != NativeTaskGenerationJob.digest(transcript), "The digest covers the offered tools")
+        try require(NativeTaskGenerationJob.digest(base) == NativeTaskGenerationJob.digest(base, tools: nil, toolChoice: nil),
+                    "Messages without tools keep the existing digest")
+        let wireJob = NativeTaskGenerationJob(id: UUID().uuidString, taskID: "t", bindingID: "b", enrollmentDigest: "e",
+            admissionBase: URL(string: "https://provider.test/v1")!, phase: "work-2", attempt: "a-0", messages: transcript,
+            messagesDigest: digest, deadlineSeconds: 10, generation: 1, tools: [dotLookupTool], toolChoice: "auto")
+        try require(try NativeTaskGenerationJob.decode(try nativeTaskEncoded(wireJob)) == wireJob, "A tool-carrying job round-trips the wire")
+
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = NativeTaskStore(database: repository.database)
+        let arbiter = NativeInferenceArbiter(cooldown: 0)
+        let exchange = NativeTaskGenerationExchange(store: store, admission: { .local(arbiter) })
+        let dotTask = try store.create(workerType: "dot", payload: try dotPayload(), idempotencyKey: "dot")
+        let researchTask = try store.create(workerType: "research", payload: try researchPayload(), idempotencyKey: "research")
+        let binding = NativeTaskGenerationExchange.binding(of: dotTask)!
+        try require(NativeTaskGenerationExchange.binding(of: researchTask) == binding, "Dot tasks carry the same native binding")
+        func outcome(_ task: NativeTaskRecord, ordinal: Int = 0, _ messages: [NativeTaskGenerationMessage],
+                     tools: [NativeTaskGenerationTool]? = nil) async -> String {
+            do {
+                _ = try await exchange.completeTurn(task: task, binding: binding, phase: "work-1", attempt: "a", ordinal: ordinal,
+                                                    messages: messages, tools: tools, toolChoice: tools == nil ? nil : "auto")
+                return "issued"
+            } catch is NativeTaskExecutorUnavailable {
+                return "accepted"
+            } catch let failure as NativeTaskGenerationFailure {
+                return failure.code
+            } catch {
+                return "other"
+            }
+        }
+        let accepted5 = await outcome(dotTask, ordinal: 5, base)
+        let rejected5 = await outcome(researchTask, ordinal: 5, base)
+        try require(accepted5 == "accepted" && rejected5 == "request_limit", "Ordinal 5 is accepted for dot and refused for research: \(accepted5) \(rejected5)")
+        let overRounds = await outcome(dotTask, ordinal: budget.calls + 1, base)
+        let atRounds = await outcome(dotTask, ordinal: budget.calls, base)
+        try require(atRounds == "accepted" && overRounds == "request_limit", "The dot round limit comes from the budget")
+        let filler = (0..<(budget.transcriptMessages - 1)).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
+        let fullTranscript = [NativeTaskGenerationMessage(role: "system", content: "Work")] + filler
+        let atMessages = await outcome(dotTask, fullTranscript)
+        let overMessages = await outcome(dotTask, fullTranscript + [NativeTaskGenerationMessage(role: "user", content: "x")])
+        let researchNine = await outcome(researchTask, Array(fullTranscript.prefix(9)))
+        try require(atMessages == "accepted" && overMessages == "provider_response" && researchNine == "provider_response",
+                    "The message limit is 32 for dot and 8 for research")
+        let large = [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: 100_000))]
+        let oversized = [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: budget.transcriptBytes))]
+        let dotLarge = await outcome(dotTask, large)
+        let dotOversized = await outcome(dotTask, oversized)
+        let researchLarge = await outcome(researchTask, [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: 70_000))])
+        try require(dotLarge == "accepted" && dotOversized == "input_limit" && researchLarge == "input_limit",
+                    "The byte limit is 131072 for dot and 65536 for research")
+        let dotTools = await outcome(dotTask, transcript, tools: [dotLookupTool])
+        let researchTools = await outcome(researchTask, transcript)
+        let researchOffered = await outcome(researchTask, base, tools: [dotLookupTool])
+        try require(dotTools == "accepted" && researchTools == "provider_response" && researchOffered == "provider_response",
+                    "Tool messages and tool lists are accepted only for dot")
+        let orphan = await outcome(dotTask, base + [NativeTaskGenerationMessage(role: "tool", content: "x", toolCallID: "never-issued")],
+                                   tools: [dotLookupTool])
+        try require(orphan == "provider_response", "A tool result must answer an issued call")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = directory.appendingPathComponent("chat.sqlite")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let counter = NativeTaskEngineCounter()
+        let gate = NativeTaskEngineCounter()
+        let recorder = NativeTaskJobRecorder()
+        let complete: @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion = { job in
+            await recorder.record(job)
+            if job.phase == "work-1" {
+                return NativeTaskGenerationCompletion(content: "", toolCalls: [call], finishReason: "tool_calls")
+            }
+            return .text("The fictional moon Luma is blue.")
+        }
+        let firstRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
+            workers: { ["dot": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
+        try await firstRun.start()
+        let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.", goal: "Know the moon")
+        try require(reference.deliveryState == .accepted && reference.createRequest.workerType == "dot", "The dot handoff is accepted")
+        try require(try await firstRun.waitAsync(seconds: 15) { await gate.count("blocked") >= 1 }, "The dot worker finishes both work phases")
+        let jobs = await recorder.all()
+        let firstJob = jobs.first { $0.phase == "work-1" }
+        let secondJob = jobs.first { $0.phase == "work-2" }
+        try require(firstJob?.tools == [dotLookupTool] && firstJob?.toolChoice == "auto", "The dot request carries the tools list")
+        try require(secondJob?.messages.contains { $0.role == "assistant" && $0.toolCalls == [call] } == true
+                    && secondJob?.messages.contains { $0.role == "tool" && $0.toolCallID == call.id } == true,
+                    "The tool call and its result reach the provider")
+        let rows = try await firstRun.repository.database.read { db in
+            try Row.fetchAll(db, sql: "SELECT generation_key, state, response FROM native_task_generations WHERE request_id = ?",
+                             arguments: [reference.id.uuidString]).map { row -> (String, String, String?) in
+                (row["generation_key"], row["state"], row["response"])
+            }
+        }
+        let settled = Dictionary(uniqueKeysWithValues: rows.map { row -> (String, (String, String?)) in
+            (String(row.0.split(separator: ":").dropFirst().joined(separator: ":")), (row.1, row.2))
+        })
+        try require(settled["work-1:a-0"]?.0 == "completed" && settled["work-2:a-0"]?.0 == "completed", "Both work phases settle: \(settled.keys.sorted())")
+        let storedCall = try settled["work-1:a-0"]?.1.map { try NativeTaskGenerationCompletion.restored($0, job: firstJob!) }
+        try require(storedCall?.toolCalls == [call] && storedCall?.finishReason == "tool_calls", "The settled row keeps the tool call")
+        await firstRun.crash()
+        await gate.bump("release")
+        let secondRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
+            workers: { ["dot": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
+        try await secondRun.start()
+        try require(try await secondRun.wait(seconds: 15) { try secondRun.state(reference) == .completed }, "The relaunched dot task completes")
+        let firstCalls = await counter.count("generate:work-1")
+        let secondCalls = await counter.count("generate:work-2")
+        try require(firstCalls == 1 && secondCalls == 1, "A relaunch replays settled work phases without another provider call: \(firstCalls) \(secondCalls)")
+        let saved = try secondRun.repository.taskReference(id: reference.id)!
+        let display = try NativeTaskProjection.display(reference: saved, snapshot: saved.snapshot)
+        try require(display.card.status == .completed && display.card.milestone == "Finished." && display.artifact?.report == "The fictional moon Luma is blue.",
+                    "A finished dot task shows its report")
+        await secondRun.stop()
+
+        let placeholderCounter = NativeTaskEngineCounter()
+        let placeholder = try NativeTaskEngineHarness.make(repository: try LocalChatRepository(inMemory: true), counter: placeholderCounter) { _ in "unused" }
+        try await placeholder.start()
+        let settledDot = try await placeholder.submitDot("Keep an eye on the fictional moon Luma.")
+        try require(try await placeholder.wait { try placeholder.state(settledDot) == .completed }, "The placeholder dot worker settles a dot task")
+        let placeholderSaved = try placeholder.repository.taskReference(id: settledDot.id)!
+        let placeholderDisplay = try NativeTaskProjection.display(reference: placeholderSaved, snapshot: placeholderSaved.snapshot)
+        try require(placeholderDisplay.card.milestone == "Finished." && placeholderDisplay.artifact == nil, "An empty dot report finishes without an artifact")
+        await placeholder.stop()
+
+        let researchCounter = NativeTaskEngineCounter()
+        let research = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(inMemory: true), counter: researchCounter) { _ in
+            NativeTaskGenerationCompletion(content: "", toolCalls: [call], finishReason: "tool_calls")
+        }
+        try await research.start()
+        let refused = try await research.submit("What color is the fictional moon Luma?")
+        try require(try await research.wait(seconds: 15) { try research.state(refused) == .needsDecision }, "A research task that receives a tool call does not continue")
+        let failures = try await research.repository.database.read { db in
+            try String.fetchAll(db, sql: "SELECT failure FROM native_task_generations WHERE request_id = ?", arguments: [refused.id.uuidString])
+        }
+        try require(!failures.isEmpty && failures.allSatisfy { $0 == "provider_response" }, "The research tool call fails with provider_response: \(failures)")
+        await research.stop()
     }
 }

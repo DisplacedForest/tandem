@@ -71,7 +71,7 @@ enum NativeScheduleTools {
               case .string(let repeatKind)? = arguments["repeat"] else {
             throw NativeToolError.invalidArguments("Provide a title, a worker type, an instruction and a repeat.")
         }
-        guard NativeSchedule.workerTypes.contains(workerType) else {
+        guard NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) else {
             throw NativeToolError.invalidArguments("Scheduled work must be research or a document.")
         }
         var draft = NativeScheduleDraft()
