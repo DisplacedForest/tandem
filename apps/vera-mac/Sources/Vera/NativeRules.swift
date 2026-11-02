@@ -215,7 +215,7 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "do nothing", "on second thought", "actually", "instead", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
@@ -289,8 +289,9 @@ enum NativeCommandClassifier {
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
     static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
     static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "npm", "pnpm", "yarn", "cargo", "pip", "twine", "gem", "docker", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
-    static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf"]
-    static let interpreters: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "perl", "ruby", "node", "php", "lua"]
+    static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf", "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!"]
+    static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+    static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua"]
     static let findEffects: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]
     static let destructiveGit: Set<String> = ["clean", "reset", "rm", "restore", "checkout", "switch", "stash", "worktree", "branch", "filter-branch", "gc", "prune", "reflog"]
     static let unsafeCharacters: Set<Character> = ["\"", "'", "`", "$", "\\"]
@@ -324,7 +325,14 @@ enum NativeCommandClassifier {
         let unquoted = stripOuterQuotes(first)
         if unquoted.isEmpty || unquoted.contains(where: { !($0.isLetter || $0.isNumber || "._+-/~".contains($0)) }) { return ("?", Array(tokens.dropFirst())) }
         let name = unquoted.split(separator: "/").last.map(String.init) ?? unquoted
-        return (name, Array(tokens.dropFirst()))
+        return (name, tokens.dropFirst().map(stripOuterQuotes))
+    }
+
+    static func assignmentValue(_ token: String) -> String {
+        guard let equals = token.firstIndex(of: "="), equals != token.startIndex else { return token }
+        let name = token[token.startIndex..<equals]
+        guard let head = name.first, head.isLetter || head == "_", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return token }
+        return String(token[token.index(after: equals)...])
     }
 
     static func isPlainAssignment(_ token: String, grants: [FolderGrant] = [], working: String? = nil) -> Bool {
@@ -368,6 +376,10 @@ enum NativeCommandClassifier {
 
     static func hasInlineCode(_ name: String, _ arguments: [String]) -> Bool {
         if wrappers.contains(name) { return true }
+        if shells.contains(name) && arguments.contains(where: { argument in
+            if argument.hasPrefix("--") { return argument.contains("command") }
+            return argument.hasPrefix("-") && argument.dropFirst().contains("c")
+        }) { return true }
         if interpreters.contains(name) && arguments.contains(where: { argument in
             if argument.hasPrefix("--") { return argument.contains("eval") || argument.contains("exec") || argument.contains("command") }
             return argument.hasPrefix("-") && argument.dropFirst().contains(where: { $0 == "c" || $0 == "e" })
@@ -375,10 +387,64 @@ enum NativeCommandClassifier {
         return false
     }
 
+    static let metacharacters: Set<Character> = [";", "&", "|", "(", ")", "{", "}", "`", "$", "<", ">", "\\", "\n", "\r"]
+    static let keywords: Set<String> = ["if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!", "time", "coproc"]
+
+    static func isPlainWord(_ token: String) -> Bool {
+        !token.isEmpty && token.allSatisfy { $0.isLetter || $0.isNumber || "._+-/~".contains($0) }
+    }
+
+    static func isPlain(_ command: String, grants: [FolderGrant] = [], directory: String? = nil) -> Bool {
+        if command.contains(where: { metacharacters.contains($0) }) { return false }
+        let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
+        var tokens = shellTokens(command)[...]
+        guard !tokens.isEmpty else { return false }
+        for token in tokens {
+            let inner = stripOuterQuotes(assignmentValue(token))
+            if inner.contains(where: { $0 == "\"" || $0 == "'" }) { return false }
+        }
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
+            guard isPlainAssignment(first, grants: grants, working: working) else { return false }
+            tokens = tokens.dropFirst()
+        }
+        let launchers: Set<String> = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun"]
+        while true {
+            guard let executable = tokens.first, isPlainWord(executable), !executable.hasPrefix("-") else { return false }
+            let name = executable.split(separator: "/").last.map(String.init) ?? executable
+            if keywords.contains(name) || wrappers.contains(name) { return false }
+            if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return false }
+            guard launchers.contains(name) else { break }
+            tokens = tokens.dropFirst()
+            while let next = tokens.first, next.contains("="), !next.hasPrefix("-") {
+                guard isPlainAssignment(next, grants: grants, working: working) else { return false }
+                tokens = tokens.dropFirst()
+            }
+        }
+        return !tokens.dropFirst().contains { keywords.contains($0) }
+    }
+
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        let plain = isPlain(command, grants: grants, directory: directory)
+        let segmented = classifySegments(command, grants: grants, directory: directory)
+        if plain || segmented == .sensitive { return segmented }
+        let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
+        var sends = segmented == .networkSends
+        for token in shellTokens(command.replacingOccurrences(of: ";", with: " ").replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "&", with: " ")) {
+            let inner = stripOuterQuotes(assignmentValue(token))
+            let name = inner.split(separator: "/").last.map(String.init) ?? inner
+            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .sensitive }
+            if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .sensitive }
+            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .sensitive }
+            if senders.contains(name) || name == "push" { sends = true }
+        }
+        return sends ? .networkSends : .commands
+    }
+
+    static func classifySegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
         var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
         if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
+        if command.contains("`") || command.contains("$(") { return .sensitive }
         let subshells = command.contains { "(){}".contains($0) }
         var network = false
         for segment in segments(of: command) {
@@ -472,6 +538,11 @@ enum NativeRuleDecision: Equatable, Hashable, Sendable {
     case handOff
 
     var requiresConfirmation: Bool { self == .ask }
+
+    var atLeastAsk: NativeRuleDecision {
+        if case .act = self { return .ask }
+        return self
+    }
 }
 
 enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {

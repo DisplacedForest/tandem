@@ -80,10 +80,15 @@ enum NativeCommandTools {
         let grantedAtStart = grants()
         let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision) = { command, directory in
             let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
+            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
             switch action {
             case .sensitive: return (action, .handOff)
-            case .commands: return (action, live(command, .commands) ?? decision)
-            default: return (action, live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action))
+            case .commands:
+                let current = live(command, .commands) ?? decision
+                return (action, plain ? current : current.atLeastAsk)
+            default:
+                let current = live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
+                return (action, plain ? current : current.atLeastAsk)
             }
         }
         var definition = NativeToolDefinition(
