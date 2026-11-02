@@ -173,13 +173,14 @@ private struct IntegrationsDestination: View {
             VStack(spacing: 2) {
                 ForEach(manager.servers) { server in
                     let selected = server.id == selectedServer?.id
-                    IntegrationsServerRow(name: server.configuration.name,
-                                          state: IntegrationsText.state(server, signingIn: manager.oauthProgress[server.id] != nil),
-                                          live: server.connected, selected: selected)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedServerID = server.id }
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityAction { selectedServerID = server.id }
+                    Button { selectedServerID = server.id } label: {
+                        IntegrationsServerRow(name: server.configuration.name,
+                                              state: IntegrationsText.state(server, signingIn: manager.oauthProgress[server.id] != nil),
+                                              live: server.connected, selected: selected)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? [.isSelected] : [])
                 }
             }
             .padding(.bottom, 12)
@@ -204,12 +205,13 @@ private struct IntegrationsDestination: View {
                 ShotSafeScroll(renderSafe: renderSafe) {
                     VStack(spacing: 2) {
                         ForEach(matches) { entry in
-                            IntegrationsEntryRow(entry: entry, installed: installed(entry),
-                                                 selected: entry.id == selectedEntry?.id)
-                                .contentShape(Rectangle())
-                                .onTapGesture { selectedEntryID = entry.id }
-                                .accessibilityAddTraits(.isButton)
-                                .accessibilityAction { selectedEntryID = entry.id }
+                            let selected = entry.id == selectedEntry?.id
+                            Button { selectedEntryID = entry.id } label: {
+                                IntegrationsEntryRow(entry: entry, installed: installed(entry), selected: selected)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? [.isSelected] : [])
                         }
                     }
                     .padding(.bottom, 12)
