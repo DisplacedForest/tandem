@@ -102,7 +102,7 @@ extension SelfTest {
         try require(composed([research], NativeTurnToolAuthority("Research news about NASA every weekday at 7")).isSuperset(of: [NativeScheduleTools.toolID]),
                     "A recurring request with a subject word before the cadence still offers the schedule tool")
         try require(composed([research], asksNeither).isEmpty, "An ordinary message offers neither")
-        for text in ["Please set up a printer", "Write a guide to set up a home server", "Set up the project folder", "Help me set up a standing desk", "Set up a regular expression for emails"] {
+        for text in ["Please set up a printer", "Write a guide to set up a home server", "Set up the project folder", "Help me set up a standing desk", "Set up a regular expression for emails", "Schedule a meeting with the plumber", "What is on my schedule today"] {
             try require(!composed([research], NativeTurnToolAuthority(text)).contains(NativeScheduleTools.toolID),
                         "A generic set up request does not offer the schedule tool: \(text)")
         }
