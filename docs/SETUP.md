@@ -298,6 +298,13 @@ Once a schedule exists, Tandem keeps running in the menu bar after you close the
 
 This is separate from the server scheduler in [section 6](#6-the-scheduler), which drives Pulse and veins on vera-api. In-app schedules only drive research and document runs in the app.
 
+### Tandem identity
+
+Tandem is the application name. The assistant inside uses the name you chose (the default is Vera). The app icon is two overlapping green circles on a charcoal tile. The menu bar item is a monochrome two-circle template that adapts to light and dark menu bars.
+
+**Logo motion.** The two-circle logo has a small set of named motions driven by real events: a greeting on launch, a bounded orbit while an answer is being generated, a nudge when something needs a decision, a gather on completion, a recoil on failure, listen and speak only during real audio, and rest when the app is inactive. The menu bar stays on the static template. With Reduce Motion on in System Settings, the logo stays still. Settings, About has a motion gallery that previews every sequence with replay, speed, size, light and dark background and Reduce Motion controls. It is a preview tool and does not show live status.
+
+**Brand sources.** `apps/vera-mac/Brand` holds the layered color mark, the flat mark, the monochrome template, a vector PDF, the logo motion master, the twelve motion sequences as animated SVGs, `motion.json` (the shared motion timeline the app loads at runtime), and the exporter and rebuild script. The exporter is a Swift script: run it with `swift` and then `iconutil`, as its header describes. The app's packaging script turns the 1024 pixel icon in the resource bundle into the icon file. Edit the masters under `Brand` and re-export instead of editing the PNGs.
 ### Quick ask
 
 Quick ask is a small always-on-top panel for talking to the assistant without switching to Tandem. Press the global shortcut, Option Shift Space by default, and the panel opens over whatever app is in front. You can also open it from the menu bar item with **Quick ask**. The menu bar item exists once **Keep running in the menu bar** is on, which happens by itself when a schedule exists.

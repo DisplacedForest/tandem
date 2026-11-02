@@ -29,6 +29,10 @@ enum Shot {
             size = CGSize(width: 1180, height: 1500)
         } else if view == "image-placeholder" {
             size = CGSize(width: 1800, height: 640)
+        } else if view == "brand-gallery" {
+            size = CGSize(width: 900, height: 640)
+        } else if view == "brand-marks" {
+            size = CGSize(width: 900, height: 320)
         } else if view == "companion" {
             size = CompanionPanelController.size
         } else {
@@ -336,6 +340,19 @@ enum Shot {
         } else if view == "vein-configure" || view == "vein-configure-delete" {
             content = AnyView(
                 ShotVeinConfigureView(confirmingDelete: view == "vein-configure-delete")
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "brand-gallery" {
+            content = AnyView(
+                TandemMotionGalleryView(renderSafe: true)
+                    .frame(width: size.width, height: size.height, alignment: .top)
+                    .clipped()
+                    .background(Theme.bg)
+            )
+        } else if view == "brand-marks" {
+            content = AnyView(
+                ShotBrandMarks()
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
@@ -1311,6 +1328,35 @@ struct UpdateShotView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .foregroundStyle(Theme.textPrimary)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+private struct ShotBrandMarks: View {
+    private let markSizes: [CGFloat] = [16, 18, 22, 32, 44, 120]
+    private let templateSizes: [CGFloat] = [16, 18, 22, 32]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            strip(dark: true)
+            strip(dark: false)
+        }
+    }
+
+    private func strip(dark: Bool) -> some View {
+        HStack(alignment: .center, spacing: 22) {
+            ForEach(markSizes, id: \.self) { size in
+                TandemLogoMark(size: size)
+            }
+            Divider().frame(height: 60)
+            ForEach(templateSizes, id: \.self) { size in
+                Image(nsImage: TandemTemplate.image(pointSize: size))
+                    .renderingMode(.template)
+                    .foregroundStyle(dark ? Color.white : Color.black)
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(dark ? Color(red: 0.07, green: 0.08, blue: 0.09) : Color(red: 0.96, green: 0.96, blue: 0.94))
     }
 }
 

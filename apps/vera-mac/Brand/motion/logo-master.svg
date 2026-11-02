@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 410 256" role="img" aria-label="Tandem">
+  <defs>
+    <linearGradient id="left-shading" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#C9E6A5"/>
+      <stop offset="1" stop-color="#90B66E"/>
+    </linearGradient>
+    <linearGradient id="right-shading" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#A7CF86"/>
+      <stop offset="1" stop-color="#628F47"/>
+    </linearGradient>
+    <linearGradient id="overlap-shading" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="410" y2="256">
+      <stop stop-color="#BADC97"/>
+      <stop offset="1" stop-color="#A2C780"/>
+    </linearGradient>
+    <clipPath id="left-boundary"><circle cx="128" cy="128" r="128"/></clipPath>
+  </defs>
+  <g id="tandem-pair">
+    <circle id="left-circle" cx="128" cy="128" r="128" fill="url(#left-shading)"/>
+    <circle id="right-circle" cx="282" cy="128" r="128" fill="url(#right-shading)"/>
+    <g id="overlap" clip-path="url(#left-boundary)">
+      <circle cx="282" cy="128" r="128" fill="url(#overlap-shading)"/>
+    </g>
+  </g>
+</svg>
