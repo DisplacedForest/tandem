@@ -52,6 +52,7 @@ enum NativeTurnCurrencyFixture {
         try await releaseContention()
         try await completionRelocation()
         try await completionReconciliation()
+        try await completionReplacement()
         print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization, dispatch and claim writes off main with their gates re-checked afterwards)")
     }
 
@@ -339,6 +340,42 @@ enum NativeTurnCurrencyFixture {
         try await NativeSessionFixture.eventually("The finished execution is released") { store.turnExecutions.isEmpty }
         try require(transport.histories.count == 2, "The answer and its title request each ran exactly once")
         try require(try base.conversationTurns().first?.state == .complete, "The finished turn is saved")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func completionReplacement() async throws {
+        let require = NativeTaskFixture.require
+        let base = try LocalChatRepository(inMemory: true)
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.failReadsAfterAcceptance = false
+        let staleFailure = DispatchSemaphore(value: 0)
+        repository.completeFailGate = staleFailure
+        repository.completeHold = 0.3
+        let transport = NativeSessionFixtureTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.generatesConversationTitles = true
+        store.newConversation()
+        store.sendText("replace the attempt while the first completion fails")
+        guard let conversationID = store.selectedID else { throw NativeTaskFixture.Failure.assertion("The sent message has a conversation") }
+        try await NativeSessionFixture.eventually("The first attempt enters completion") {
+            store.turnExecutions.values.contains { $0.completing != nil }
+        }
+        guard let messageID = store.selected?.messages.last?.id else { throw NativeTaskFixture.Failure.assertion("The answer exists") }
+        store.stopAnswer(messageID)
+        store.retryAnswer(messageID)
+        try await NativeSessionFixture.eventually("The replacement attempt commits its completion") { repository.completeLanded.value }
+        staleFailure.signal()
+        try await Task.sleep(for: .milliseconds(60))
+        store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("A scheduler tick runs while the replacement is held") { !store.isSchedulingTurns }
+        try require(store.turnExecutions.count == 1 && store.turnExecutions.values.first?.completing == .complete,
+                    "A stale attempt's late failure leaves the replacement's completion marker alone")
+        try await NativeSessionFixture.eventually("The replacement's completion effects run") {
+            store.conversations.first(where: { $0.id == conversationID })?.titleSource == .generated
+        }
+        try await NativeSessionFixture.eventually("The replacement execution is released") { store.turnExecutions.isEmpty }
+        try require(try base.conversationTurns().first?.state == .complete, "The replacement turn is saved complete")
         store.conversationTurnLoop?.cancel()
     }
 

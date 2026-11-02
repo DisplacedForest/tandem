@@ -592,15 +592,16 @@ extension ChatStore {
     func finishTurnOffMain(_ turn: NativeConversationTurn, state: NativeConversationTurn.State, message: Message, ordinal: Int,
                            updatedAt: Date) async throws {
         guard let turnRepository else { return }
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { throw CancellationError() }
         let id = turn.id
         let attempt = turn.attempt
-        turnExecutions[id]?.completing = state
+        execution.completing = state
         do {
             try await Task.detached(priority: .userInitiated) {
                 try turnRepository.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
             }.value
         } catch {
-            turnExecutions[id]?.completing = nil
+            execution.completing = nil
             throw error
         }
         guard turnOwned(turn) else { throw CancellationError() }

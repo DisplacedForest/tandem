@@ -14,6 +14,7 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var claimHold: TimeInterval = 0
     let claimLanded = NativeTurnCurrencyFlag()
     var completeHold: TimeInterval = 0
+    var completeFailGate: DispatchSemaphore?
     let completeLanded = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
@@ -72,6 +73,15 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         try base.finishTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal)
     }
     func completeTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int, updatedAt: Date) throws {
+        let gate = lock.withLock { () -> DispatchSemaphore? in
+            let taken = completeFailGate
+            completeFailGate = nil
+            return taken
+        }
+        if let gate {
+            gate.wait()
+            throw NativeToolError.failed("synthetic stale completion failure")
+        }
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic completion failure") }
         try base.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
         completeLanded.raise()
