@@ -109,6 +109,8 @@ struct SidebarFieldChrome: ViewModifier {
 
 struct VeraSidebar: View {
     @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var config: ConfigStore
+    @State private var showingCompanionSettings = false
     @Binding var collapsed: Bool
     @Binding var search: String
     @ObservedObject var workflowEditor: WorkflowEditorStore
@@ -292,6 +294,13 @@ struct VeraSidebar: View {
         .help(store.assistantName)
         .accessibilityLabel(store.assistantName)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .contextMenu {
+            Button(store.isDotPaused ? "Resume" : "Pause") { store.setDotState(store.isDotPaused ? .active : .paused) }
+            Button("Companion settings") { showingCompanionSettings = true }
+        }
+        .sheet(isPresented: $showingCompanionSettings) {
+            DotSettingsView().environmentObject(store).environmentObject(config)
+        }
     }
 
     private func tileButton(icon: String, title: String, active: Bool, action: @escaping () -> Void) -> some View {

@@ -3,14 +3,30 @@ import SwiftUI
 struct OngoingWorkItem: Identifiable, Equatable {
     enum Glyph: Equatable { case done, running, waiting, problem }
 
-    let reference: NativeTaskReference
+    let id: String
+    let conversationID: String
     let title: String
     let state: String
     let glyph: Glyph
     let artifact: NativeResearchArtifact?
+    let reference: NativeTaskReference?
 
-    var id: String { reference.id.uuidString }
-    var conversationID: String { reference.origin.conversationID }
+    init(id: String, conversationID: String, title: String, state: String, glyph: Glyph,
+         artifact: NativeResearchArtifact?, reference: NativeTaskReference?) {
+        self.id = id
+        self.conversationID = conversationID
+        self.title = title
+        self.state = state
+        self.glyph = glyph
+        self.artifact = artifact
+        self.reference = reference
+    }
+
+    init(reference: NativeTaskReference, title: String, state: String, glyph: Glyph, artifact: NativeResearchArtifact?) {
+        self.init(id: reference.id.uuidString, conversationID: reference.origin.conversationID, title: title, state: state,
+                  glyph: glyph, artifact: artifact, reference: reference)
+    }
+
     var isActive: Bool { glyph == .running || glyph == .waiting }
 }
 
@@ -226,7 +242,7 @@ struct OngoingWorkPanel: View {
     private func list(_ items: [OngoingWorkItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(items) { item in
-                OngoingWorkCard(item: item) { onSelect(item.reference) }
+                OngoingWorkCard(item: item) { if let reference = item.reference { onSelect(reference) } }
             }
         }
         .padding(.horizontal, 24).padding(.bottom, 8)
@@ -291,8 +307,8 @@ struct OngoingWorkAllSheet: View {
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: 8)
-            if canGo {
-                Button("Go") { onGo(item.reference) }
+            if canGo, let reference = item.reference {
+                Button("Go") { onGo(reference) }
                     .accessibilityLabel("Go to \(item.title)")
             }
         }
@@ -329,5 +345,19 @@ struct OngoingWorkButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(activeCount > 0 ? "Ongoing work, \(activeCount) in progress or waiting" : "Ongoing work")
+    }
+}
+
+struct OngoingWorkFooter: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.sage)
+        }
+        .buttonStyle(.plain)
     }
 }

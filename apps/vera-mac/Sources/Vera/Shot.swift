@@ -38,6 +38,8 @@ enum Shot {
             size = CGSize(width: 640, height: 560)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 520)
+        } else if view == "companion-thread" {
+            size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" {
             size = CompanionPanelController.size
         } else if view == "conversation-narrow" {
@@ -396,6 +398,25 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-thread" || view == "companion-thread-empty" {
+            let populated = view == "companion-thread"
+            NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
+            if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
+                store.conversations[index].messages = []
+            }
+            let model = populated ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
+                : CompanionOverviewModel.build(name: NativeDotShotFixture.name, profile: store.dotProfile, services: "Can reach every service that is turned on.",
+                                               rules: store.companionRulesSummary, activity: [], results: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
+                         companionSelection: populated ? CompanionOverviewFixture.visitID.uuidString : nil, height: size.height)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .environmentObject(config)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "vera-header" {
             NativeDotShotFixture.populate(store, paused: true, setupCompleted: true)
             content = AnyView(
@@ -421,7 +442,10 @@ enum Shot {
             switch view {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
-            case "vera": section = .vera
+            case "vera":
+                section = .vera
+                store.ensureVeraThread()
+                store.openVeraThread()
             case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects

@@ -97,10 +97,6 @@ extension ChatStore {
         return dotContext(for: turn.conversationID, requestText: text)
     }
 
-    var dotHeaderRules: String {
-        NativeDotContext.headerSummary(resolver: ruleResolver(for: veraThreadID ?? "", requestText: ""))
-    }
-
     func memorySourceIsLive(_ source: NativeMemoryTurnSource?, generation: Int, wasVeraThread: Bool) -> Bool {
         guard let source else { return true }
         if wasVeraThread && generation != dotResetGeneration { return false }

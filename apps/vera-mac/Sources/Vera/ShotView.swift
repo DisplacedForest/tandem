@@ -15,6 +15,9 @@ struct ShotView: View {
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
     var dotHeader: Bool = false
+    var companionPanel: CompanionOverviewModel? = nil
+    var companionSelection: String? = nil
+    var height: CGFloat = 760
     var artifactSelection: String? = nil
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
@@ -38,7 +41,7 @@ struct ShotView: View {
             case .dotSheet(let settings): dotSheetShot(settings: settings)
             }
         }
-        .frame(width: width, height: 760)
+        .frame(width: width, height: height)
         .foregroundStyle(Theme.textPrimary)
     }
 
@@ -58,17 +61,19 @@ struct ShotView: View {
                                      initialSearch: integrationsSeed?.search ?? "",
                                      initialSelection: integrationsSeed?.selection)
                 case .vera, .chat:
-                    if emptyChat {
+                    if emptyChat, companionPanel == nil {
                         emptyChatShot
                     } else {
-                        HStack(spacing: 0) {
+                        HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 0) {
-                                if dotHeader {
-                                    DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused)
-                                }
-                                chat
+                                if emptyChat { emptyChatShot } else { chat }
                             }
-                            if workColumn {
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .clipped()
+                            if let companionPanel {
+                                CompanionThreadPanel(fixed: companionPanel, selectedID: companionSelection)
+                                    .frame(width: CompanionThreadPanelMetrics.width)
+                            } else if workColumn {
                                 OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
                                     .frame(width: OngoingWorkMetrics.panelWidth)
                             }
@@ -314,7 +319,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
-        if dotHeader { return store.selected?.messages ?? [] }
+        if dotHeader || companionPanel != nil { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
         if folder { return folderMessages }
@@ -418,7 +423,7 @@ struct ShotView: View {
             Spacer()
             VStack(spacing: 22) {
                 HStack(spacing: 14) {
-                    CompanionAvatar(size: 56)
+                    ConversationFigureView(figure: ConversationPresence.greetingFigure(companionThread: store.isVeraThread(store.selectedID)), size: 56)
                     Text("Good afternoon, Jordan").font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
@@ -623,13 +628,13 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            if !dotHeader {
+            if ConversationPresence.headerKind(companionThread: store.isVeraThread(store.selectedID)) == .conversation, companionPanel == nil {
                 ConversationHeader(name: store.assistantName, status: shotStatusLine)
             }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
-                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil, companionThread: store.isVeraThread(store.selectedID))
                 }
             }
             .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)

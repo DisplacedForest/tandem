@@ -81,6 +81,7 @@ final class ChatStore: ObservableObject {
     var recordedArtifactSourceKeys: Set<String> = []
     @Published var projects: [ProjectRecord] = []
     @Published var requestedArtifactID: String?
+    @Published var pendingLibraryConversationID: String?
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
