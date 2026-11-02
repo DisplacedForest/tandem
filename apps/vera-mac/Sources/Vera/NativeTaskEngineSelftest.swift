@@ -1,13 +1,13 @@
 import Foundation
 import GRDB
 
-private actor NativeTaskEngineCounter {
+actor NativeTaskEngineCounter {
     private var counts: [String: Int] = [:]
     func bump(_ key: String) { counts[key, default: 0] += 1 }
     func count(_ key: String) -> Int { counts[key] ?? 0 }
 }
 
-private struct NativeTaskEngineHarness {
+struct NativeTaskEngineHarness {
     let repository: LocalChatRepository
     let engine: NativeTaskLocalEngine
     let service: NativeTaskHandoffService
@@ -117,6 +117,7 @@ private struct NativeTaskEngineHarness {
 @MainActor
 extension SelfTest {
     static func runTaskEngine() async throws {
+        try await workerAudienceContract()
         try await taskStoreContract()
         try await taskDispatcherContract()
         try await taskExchangeContract()
@@ -570,7 +571,8 @@ extension SelfTest {
         let repository = try LocalChatRepository(inMemory: true)
         let counter = NativeTaskEngineCounter()
         let harness = try NativeTaskEngineHarness.make(repository: repository, counter: counter) { job in
-            try require(job.messages.first?.content.hasPrefix("You are Nova, writing a document for Jordan") == true, "Document prompts carry the assistant identity")
+            let audience = job.phase == "outline" ? NativeWorkerIdentity.neutralAudience : "Jordan"
+            try require(job.messages.first?.content.hasPrefix("You are Nova, writing a document for \(audience).") == true, "Document prompts carry the assistant identity")
             try require(job.messages.last?.content.contains("Workshop notes") == true, "Document prompts carry the brief")
             if job.phase == "outline" {
                 return "{\"sections\":[{\"heading\":\"Layout\",\"instructions\":\"Describe the bench layout\"},{\"heading\":\"Tools\",\"instructions\":\"List the tools\"}]}"

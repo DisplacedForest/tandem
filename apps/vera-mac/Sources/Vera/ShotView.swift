@@ -14,6 +14,7 @@ struct ShotView: View {
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
     var dotHeader: Bool = false
+    var artifactSelection: String? = nil
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
     enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab), dotSheet(settings: Bool) }
@@ -42,7 +43,8 @@ struct ShotView: View {
                 case .memory: memory
                 case .agentic: agenticBoard
                 case .scheduled: ScheduledView(renderSafe: true)
-                case .projects, .artifacts, .integrations: DestinationPlaceholder(section: section)
+                case .artifacts: ArtifactsView(initialSelection: artifactSelection)
+                case .projects, .integrations: DestinationPlaceholder(section: section)
                 case .vera, .chat:
                     if emptyChat { emptyChatShot }
                     else if dotHeader {

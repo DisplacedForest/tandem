@@ -31,7 +31,8 @@ struct ContentView: View {
                         case .memory: MemoryView()
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
                         case .scheduled: ScheduledView()
-                        case .projects, .artifacts, .integrations:
+                        case .artifacts: ArtifactsView()
+                        case .projects, .integrations:
                             DestinationPlaceholder(section: store.section)
                         }
                     }
@@ -54,6 +55,30 @@ struct ContentView: View {
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
         .animation(.easeInOut(duration: 0.2), value: voice.isActive)
         .sheet(isPresented: $config.showOnboarding) { OnboardingSheet() }
+        .confirmationDialog(
+            deletionTitle,
+            isPresented: Binding(
+                get: { store.pendingConversationDeletion != nil },
+                set: { if !$0 { store.cancelDeleteConversation() } }),
+            titleVisibility: .visible,
+            presenting: store.pendingConversationDeletion
+        ) { _ in
+            Button("Keep artifacts") { store.confirmDeleteConversation(.keep) }
+            Button("Delete artifacts too", role: .destructive) { store.confirmDeleteConversation(.delete) }
+            Button("Cancel", role: .cancel) { store.cancelDeleteConversation() }
+        } message: { pending in
+            Text(Self.deletionMessage(pending.artifactCount))
+        }
+    }
+
+    private var deletionTitle: String {
+        "Delete \u{201C}\(store.pendingConversationDeletion?.title ?? "chat")\u{201D}?"
+    }
+
+    static func deletionMessage(_ count: Int) -> String {
+        let noun = count == 1 ? "an artifact" : "\(count) artifacts"
+        let pronoun = count == 1 ? "it" : "them"
+        return "This chat produced \(noun). You can keep \(pronoun) in Artifacts or delete \(pronoun) with the chat."
     }
 }
 

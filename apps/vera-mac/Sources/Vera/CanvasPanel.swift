@@ -2,12 +2,9 @@ import SwiftUI
 import WebKit
 import MarkdownUI
 
-/// The Canvas — a side panel that renders/edits a Vera artifact. HTML/SVG/Mermaid get a live
-/// WKWebView preview; markdown renders; code shows as source. Editable source live-updates.
 struct CanvasPanel: View {
     @EnvironmentObject var store: ChatStore
     @State private var mode: Mode = .preview
-    @State private var draft: String = ""
     enum Mode { case preview, source }
 
     private var artifact: Artifact? { store.activeArtifact }
@@ -32,8 +29,7 @@ struct CanvasPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-        .onAppear { draft = artifact?.content ?? "" }
-        .onChange(of: artifact?.id) { _, _ in draft = artifact?.content ?? ""; mode = .preview }
+        .onChange(of: artifact?.id) { _, _ in mode = .preview }
     }
 
     private var header: some View {
@@ -60,10 +56,13 @@ struct CanvasPanel: View {
     }
 
     private var sourceEditor: some View {
-        TextEditor(text: $draft)
-            .font(.system(size: 12, design: .monospaced))
-            .padding(8)
-            .onChange(of: draft) { _, new in store.updateActiveArtifact(content: new) }
+        ScrollView {
+            Text(artifact?.content ?? "")
+                .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        }
     }
 
     private func copy() {

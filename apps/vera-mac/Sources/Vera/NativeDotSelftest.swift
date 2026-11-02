@@ -167,6 +167,9 @@ extension SelfTest {
         }
         store.artifactLibrary = [Artifact.mock()]
         let artifactsBefore = store.artifactLibrary
+        let threadArtifact = try repository.recordArtifact(ArtifactDraft(
+            kind: .document, title: "Greenhouse note", conversationID: veraID, originTitle: "Ada", messageID: nil,
+            sourceKey: "dot:note", data: Data("# Note".utf8), mime: "text/markdown", fileExtension: "md"), revising: nil)
         store.saveDotProfile { $0.goal = goal }
 
         let summary = store.dotRemovalSummary()
@@ -198,6 +201,8 @@ extension SelfTest {
         try require(store.schedules.map(\.id) == [kept.id], "Only the conversation schedule remains")
         try require((try repository.messages(conversationID: focused.id)).count == 2, "Focused chats survive reset")
         try require(store.artifactLibrary == artifactsBefore, "Artifacts stay")
+        let keptArtifact = try repository.artifact(threadArtifact.artifactID)
+        try require(keptArtifact != nil && keptArtifact?.conversationID == nil, "An artifact made in the Vera thread stays in Artifacts, detached from the removed thread")
         try require(store.dotProfile == NativeDotProfile(updatedAt: store.dotProfile.updatedAt) && !store.dotProfile.setupCompleted
                     && (try NativeDotProfileStore(database: repository.database).load()) == nil, "The profile returns to defaults and setup shows again")
         try require(store.conversationRules(for: freshID).isEmpty, "The fresh thread starts with the global rules")

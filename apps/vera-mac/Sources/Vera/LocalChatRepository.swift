@@ -53,6 +53,7 @@ extension NativeMemoryRepository {
 final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativePromptLibraryRepository,
     @unchecked Sendable {
     let database: DatabaseQueue
+    let artifactDirectory: URL
 
     static var defaultURL: URL {
         let directory: URL
@@ -68,7 +69,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try self.init(url: Self.defaultURL)
     }
 
-    init(url: URL) throws {
+    init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory) throws {
+        self.artifactDirectory = artifactDirectory
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var configuration = Configuration()
         configuration.busyMode = .timeout(0.25)
@@ -78,7 +80,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try recoverInterruptedMessages()
     }
 
-    init(inMemory: Bool) throws {
+    init(inMemory: Bool, artifactDirectory: URL = NativeAttachmentStore.standardDirectory) throws {
+        self.artifactDirectory = artifactDirectory
         database = try DatabaseQueue()
         try migrate()
         try recoverInterruptedMessages()
@@ -262,7 +265,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("conversationRulesV23") { db in
             try db.execute(sql: "ALTER TABLE conversations ADD COLUMN rules_json TEXT")
         }
-        migrator.registerMigration("nativeDotProfileV24") { db in try NativeDotProfileStore.migrate(db) }
+        migrator.registerMigration("artifactsV24") { db in try Self.migrateArtifacts(db) }
+        migrator.registerMigration("nativeDotProfileV25") { db in try NativeDotProfileStore.migrate(db) }
         try migrator.migrate(database)
     }
 
@@ -527,6 +531,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     if let fileName = attachment.fileName { names.insert(fileName) }
                 }
             }
+            names.formUnion(try String.fetchAll(db, sql: "SELECT file_name FROM artifact_versions"))
             return names
         }
     }

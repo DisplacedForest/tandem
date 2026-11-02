@@ -143,6 +143,10 @@ extension ChatStore {
         } else {
             conversations[conversation].messages[reply].displayBlocks.append(block)
         }
+        if case .fileChange(let change) = block {
+            recordFileChangeArtifact(change, conversationID: turn.conversationID, messageID: turn.assistantMessageID.uuidString,
+                                     revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
+        }
     }
 
     func conversationRules(for conversationID: String) -> NativeConversationRules {

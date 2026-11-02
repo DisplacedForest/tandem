@@ -147,7 +147,7 @@ extension ChatStore {
 
     func dotRemovalSummary() -> NativeDotRemovalSummary {
         var summary = NativeDotRemovalSummary(hasGoal: dotProfile.hasGoal, services: dotProfile.connectedToolIDs != nil)
-        summary.artifacts = artifactLibrary.count
+        summary.artifacts = veraThreadID.flatMap { try? artifactRepository?.artifactIDs(conversationID: $0).count } ?? 0
         summary.schedules = ((try? nativeScheduleStore?.all()) ?? schedules).filter { $0.owner == .dot }.count
         guard let threadID = veraThreadID else { return summary }
         summary.messages = ((try? repository?.messages(conversationID: threadID)) ?? []).count
@@ -187,7 +187,9 @@ extension ChatStore {
                 }
             }
         }
+        if let threadID { _ = try? artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keep) }
         discardVeraThread()
+        reloadArtifacts()
         suspendsTurnScheduling = false
         scheduleConversationTurns()
         do { try nativeDotProfileStore?.reset() } catch {

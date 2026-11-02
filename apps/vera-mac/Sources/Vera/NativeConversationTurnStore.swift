@@ -283,6 +283,8 @@ extension ChatStore {
             chatConfigurationError = "This answer couldn't be stopped. Try again."
             return
         }
+        recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
+                              revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         resolveTurnConfirmation(messageID, approved: false)
         clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)
