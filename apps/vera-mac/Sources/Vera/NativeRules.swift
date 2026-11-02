@@ -420,7 +420,7 @@ enum NativeCommandClassifier {
             let name = executable.split(separator: "/").last.map(String.init) ?? executable
             if keywords.contains(name) || wrappers.contains(name) { return false }
             if launchers.contains(name) && name != executable { return false }
-            if name == "git" && tokens.dropFirst().contains(where: { $0 == "-c" || $0.hasPrefix("--config") }) { return false }
+            if name == "git" && tokens.dropFirst().contains(where: { let token = stripOuterQuotes($0); return token == "-c" || token.hasPrefix("--config") }) { return false }
             if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return false }
             guard launchers.contains(name) else { break }
             tokens = tokens.dropFirst()
@@ -429,7 +429,7 @@ enum NativeCommandClassifier {
                 tokens = tokens.dropFirst()
             }
         }
-        return !tokens.dropFirst().contains { keywords.contains($0) }
+        return !tokens.dropFirst().contains { keywords.contains(stripOuterQuotes($0)) }
     }
 
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {

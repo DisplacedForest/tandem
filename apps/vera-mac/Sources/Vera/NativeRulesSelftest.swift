@@ -103,7 +103,7 @@ extension SelfTest {
         for bypass in ["env </dev/null rm -rf /Volumes/Other/old", "rm>out=log ../victim", "env FOO=bar rm>out=log ../victim", "scp>out=log out host:", "arch -arm64 rm ../victim", "timeout 30 rm ../victim",
                        "sh -xc 'rm ../victim'", "bash -lc 'rm ../victim'", "GIT_WORK_TREE=../Other git clean -fdx", "CFLAGS=\"-O2 $X\" make", "sh \"-c\" \"rm -rf ../Other\"",
                        "if true; then rm -rf ../Other; fi", "for f in *.o; do rm ../Other/$f; done", "echo `scp out host:upload`", "echo $(date)", "r\"\"m ../victim", "cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim",
-                       "make && scp out host:", "printf ready & git push origin trunk", "eval 'rm x'", "xargs rm", "make > out.log", "./scripts/run.sh 2>&1", "./tools/env rm -rf ../Other", "/usr/bin/env scp out host:", "git -c alias.publish=push publish origin trunk"] {
+                       "make && scp out host:", "printf ready & git push origin trunk", "eval 'rm x'", "xargs rm", "make > out.log", "./scripts/run.sh 2>&1", "./tools/env rm -rf ../Other", "/usr/bin/env scp out host:", "git -c alias.publish=push publish origin trunk", "git \"-c\" color.ui=false status", "echo \"if\"", "make 'then' rm x"] {
             try require(!plain(bypass), "Nothing with shell structure is plain: \(bypass)")
         }
         for everyday in ["make", "swift build -c release", "xcrun swift build", "CFLAGS=\"-O2 -g\" make", "CC=clang make", "sh -e ./scripts/build.sh", "npm run build", "./scripts/build.sh", "python3 build.py", "git status", "rm -rf build"] {
