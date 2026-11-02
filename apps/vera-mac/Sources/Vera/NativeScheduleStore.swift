@@ -61,7 +61,21 @@ final class NativeScheduleStore: Sendable {
     }
 
     static func migrateCheckIns(_ db: Database) throws {
-        try db.execute(sql: "ALTER TABLE native_schedule_runs ADD COLUMN check_in_key TEXT")
+        try db.execute(sql: """
+            ALTER TABLE native_schedule_runs ADD COLUMN check_in_key TEXT;
+            CREATE TABLE native_task_card_mirrors (
+                message_id TEXT PRIMARY KEY NOT NULL,
+                reference_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL
+            );
+            CREATE INDEX native_task_card_mirrors_reference ON native_task_card_mirrors(reference_id);
+            """)
+    }
+
+    static func claimCheckIn(_ db: Database, runID: String, key: String) throws -> Bool {
+        try db.execute(sql: "UPDATE native_schedule_runs SET check_in_key = ? WHERE id = ? AND (check_in_key IS NULL OR check_in_key != ?)",
+                       arguments: [key, runID, key])
+        return db.changesCount == 1
     }
 
     private static func run(_ row: Row) -> NativeScheduleRun {
@@ -166,8 +180,10 @@ final class NativeScheduleStore: Sendable {
     func runs(scheduleID: String, limit: Int = 50) throws -> [NativeScheduleRun] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT * FROM native_schedule_runs WHERE schedule_id = ? ORDER BY scheduled_for DESC, rowid DESC LIMIT ?
-                """, arguments: [scheduleID, max(1, min(limit, 200))]).map(Self.run)
+                SELECT * FROM native_schedule_runs WHERE schedule_id = ? AND (outcome IN ('running', 'waiting', 'blocked') OR id IN (
+                    SELECT id FROM native_schedule_runs WHERE schedule_id = ? ORDER BY scheduled_for DESC, rowid DESC LIMIT ?))
+                ORDER BY scheduled_for DESC, rowid DESC
+                """, arguments: [scheduleID, scheduleID, max(1, min(limit, 200))]).map(Self.run)
         }
     }
 

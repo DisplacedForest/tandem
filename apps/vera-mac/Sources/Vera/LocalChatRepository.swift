@@ -448,6 +448,17 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID) throws -> Bool {
+        try database.write { db in
+            guard try NativeScheduleStore.claimCheckIn(db, runID: runID, key: key) else { return false }
+            let ordinal = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE conversation_id = ?", arguments: [conversationID]) ?? 0
+            try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)
+            try db.execute(sql: "INSERT OR REPLACE INTO native_task_card_mirrors(message_id, reference_id, conversation_id) VALUES(?, ?, ?)",
+                           arguments: [message.id.uuidString, referenceID.uuidString, conversationID])
+            return true
+        }
+    }
+
     func appendDisplayBlock(_ block: NativeDisplayBlock, messageID: UUID) throws -> [NativeDisplayBlock]? {
         try database.write { db in
             guard let row = try Row.fetchOne(db, sql: "SELECT display_blocks_json FROM messages WHERE id = ?", arguments: [messageID.uuidString]) else { return nil }

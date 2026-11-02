@@ -19,6 +19,7 @@ struct NativeTaskMessageUpdate: Sendable {
     let conversationID: String
     let messageID: UUID
     let blocks: [NativeDisplayBlock]
+    var mirrors: [UUID] = []
 }
 
 protocol NativeTaskProjectionRepository: NativeTaskRepository {
@@ -198,10 +199,12 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
                previous.connectionNote == connectionNote, oldBlocks == envelope.displayBlocks,
                reference.snapshot == canonical {
                 return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
-                    messageID: reference.origin.assistantMessageID, blocks: envelope.displayBlocks)
+                    messageID: reference.origin.assistantMessageID, blocks: envelope.displayBlocks,
+                    mirrors: try Self.taskCardMirrorIDs(db, referenceID: id))
             }
             try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
                 arguments: [try nativeTaskEncoded(envelope.displayBlocks), reference.origin.assistantMessageID.uuidString])
+            let mirrors = try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: display.artifact)
             let snapshotBytes = try canonical.map { try nativeTaskEncoded($0) }
             try db.execute(sql: """
                 INSERT INTO native_task_projections(reference_id, message_id, snapshot_json, cursor, connection_note)
@@ -224,8 +227,35 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             }
             return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
                                            messageID: reference.origin.assistantMessageID,
-                                           blocks: envelope.displayBlocks)
+                                           blocks: envelope.displayBlocks, mirrors: mirrors)
         }
+    }
+
+    static func taskCardMirrorIDs(_ db: Database, referenceID: UUID) throws -> [UUID] {
+        guard try db.tableExists("native_task_card_mirrors") else { return [] }
+        return try String.fetchAll(db, sql: "SELECT message_id FROM native_task_card_mirrors WHERE reference_id = ?",
+                                   arguments: [referenceID.uuidString]).compactMap(UUID.init(uuidString:))
+    }
+
+    static func refreshTaskCardMirrors(_ db: Database, referenceID: UUID, card: NativeTaskCardPresentation,
+                                       artifact: NativeResearchArtifact?) throws -> [UUID] {
+        let ids = try taskCardMirrorIDs(db, referenceID: referenceID)
+        var refreshed: [UUID] = []
+        for uuid in ids {
+            let id = uuid.uuidString
+            guard let row = try Row.fetchOne(db, sql: "SELECT spoken_text, display_blocks_json FROM messages WHERE id = ?", arguments: [id]) else { continue }
+            let bytes: Data? = row["display_blocks_json"]
+            var envelope = NativeMessageEnvelope(spokenText: row["spoken_text"] ?? "",
+                displayBlocks: try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? [])
+            let before = envelope.displayBlocks
+            envelope.reconcile(card: card, artifact: artifact)
+            if before != envelope.displayBlocks {
+                try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
+                               arguments: [try nativeTaskEncoded(envelope.displayBlocks), id])
+            }
+            refreshed.append(uuid)
+        }
+        return refreshed
     }
 
     func prepareTaskRetry(id: UUID, decisionID: String) throws -> NativeTaskDecisionIntent {

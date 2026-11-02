@@ -23,6 +23,7 @@ struct NativeTaskEngineHarness {
 
     static func make(repository: LocalChatRepository, counter: NativeTaskEngineCounter,
                      search customSearch: NativeResearchSearch? = nil,
+                     onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                      generate: @escaping @Sendable (NativeTaskGenerationJob) async throws -> String) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -39,7 +40,7 @@ struct NativeTaskEngineHarness {
         let base: @Sendable () -> URL? = { NativeTaskLocalEngine.identity.base }
         let service = NativeTaskHandoffService(repository: repository, client: engine.client, configuredBase: base)
         let tracker = NativeTaskTracker(repository: repository, client: engine.client, service: service,
-                                        transport: engine.transport, configuredBase: base)
+                                        transport: engine.transport, configuredBase: base, onUpdate: onUpdate)
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
             savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
@@ -129,7 +130,7 @@ extension SelfTest {
         try await taskScheduledRun()
         try await taskScheduleCheckIns()
         try await taskArbiterContract()
-        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, admission)")
+        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission)")
     }
 
     private static func researchPayload(_ query: String = "What color is the fictional moon Luma?") throws -> Data {
@@ -661,6 +662,60 @@ extension SelfTest {
         reopenedStore.reloadSchedules()
         reopenedStore.postScheduleCheckIns()
         try require(try reopened.messages(conversationID: conversationID).count == before + 1, "A relaunch never posts the same check-in again")
+        let mirrored = try await repository.database.read { db in
+            try String.fetchAll(db, sql: "SELECT message_id FROM native_task_card_mirrors WHERE reference_id = ?", arguments: [reference.id.uuidString])
+        }
+        try require(mirrored == [checkIn.id.uuidString], "The posted check-in is registered as a card mirror: \(mirrored)")
+
+        let atomicRun = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date().addingTimeInterval(60), startedAt: Date(), outcome: .running,
+                                          conversationID: conversationID, taskReferenceID: reference.id.uuidString)
+        try scheduleStore.saveRun(atomicRun)
+        var draft = Message(role: .assistant, text: "A fixture check-in", state: .complete)
+        draft.displayBlocks = checkIn.displayBlocks
+        let atomic = draft
+        let firstPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key", referenceID: reference.id)
+        let secondPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key", referenceID: reference.id)
+        try require(firstPost && !secondPost, "The same check-in key posts once and then refuses")
+        let afterAtomic = try repository.messages(conversationID: conversationID)
+        try require(afterAtomic.count == before + 2 && afterAtomic.filter { $0.id == atomic.id }.count == 1, "A refused post adds no message")
+        let atomicMirror = try await repository.database.read { db in
+            try String.fetchOne(db, sql: "SELECT reference_id FROM native_task_card_mirrors WHERE message_id = ?", arguments: [atomic.id.uuidString])
+        }
+        try require(atomicMirror == reference.id.uuidString, "The posted message is registered as a mirror of the task")
+
+        store.select(conversationID)
+        try require(store.conversations.first { $0.id == conversationID }?.messages.contains { $0.id == checkIn.id } == true,
+                    "The store holds the check-in in memory")
+        let resumed = try NativeTaskEngineHarness.make(repository: repository, counter: counter,
+                                                       onUpdate: { updates in store.applyNativeTaskUpdates(updates) }) { job in
+            job.phase == "plan" ? "{\"subquestions\": [\"Q\"]}" : "Blue [1].\n\nSources\n[1] guide"
+        }
+        try await resumed.start()
+        await resumed.tracker.retry(reference.id)
+        try require(try await resumed.wait { try resumed.state(reference) == .completed }, "Answering the check-in finishes the task")
+        await resumed.stop()
+        let cardStatus: (Message) -> NativeTaskCardPresentation.Status? = { message in
+            for block in message.displayBlocks { if case .taskCard(let card) = block { return card.status } }
+            return nil
+        }
+        let storedCheckIn = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
+        try require(storedCheckIn.flatMap(cardStatus) == .completed, "The stored check-in card shows the finished task")
+        let liveCheckIn = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == checkIn.id }
+        try require(liveCheckIn.flatMap(cardStatus) == .completed, "The check-in card in memory shows the finished task")
+
+        var answered = try NativeSchedule(owner: .conversation, workerType: "research", title: "Answered check",
+                                          instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)
+        answered.advance(after: Date(), from: nil)
+        try scheduleStore.save(answered)
+        let stale = NativeScheduleRun(scheduleID: answered.id, scheduledFor: Date(), startedAt: Date(), outcome: .waiting, detail: decision.prompt,
+                                      conversationID: conversationID, messageID: reference.origin.assistantMessageID.uuidString,
+                                      taskReferenceID: reference.id.uuidString)
+        try scheduleStore.saveRun(stale)
+        let beforeStale = try repository.messages(conversationID: conversationID).count
+        store.reloadSchedules()
+        store.postScheduleCheckIns()
+        try require(try repository.messages(conversationID: conversationID).count == beforeStale, "A waiting run whose task already moved on posts nothing")
+        try require(try scheduleStore.run(stale.id)?.checkInKey == nil, "The stale run claims no check-in")
     }
 
     private static func taskDocumentEndToEnd() async throws {

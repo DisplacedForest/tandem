@@ -252,7 +252,8 @@ extension SelfTest {
         let goneRuns = try store.runs(scheduleID: schedule.id)
         try require(gone == nil && goneRuns.isEmpty, "Deleting a schedule removes its history")
         try await runWaitingRuns(zone: zone, start: monday, cadence: daily)
-        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting)")
+        try runOpenRunWindow(zone: zone, start: monday, cadence: daily)
+        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting, open runs outside the window, claim a check-in once)")
     }
 
     private static func reachNextRun(_ store: NativeScheduleStore, _ clock: NativeSchedulerClock, _ scheduler: NativeScheduler, _ id: String) async throws {
@@ -336,5 +337,41 @@ extension SelfTest {
         _ = await scheduler.tick()
         let failed = try store.run(manual!.id)!
         try require(failed.outcome == .failed && failed.finishedAt == clock.now, "A blocked run settles as failed when its task fails")
+    }
+
+    private static func runOpenRunWindow(zone: TimeZone, start: Date, cadence: NativeScheduleCadence) throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = NativeScheduleStore(database: repository.database)
+        let busy = try NativeSchedule(owner: .conversation, workerType: "research", title: "Busy check",
+                                      instruction: "Look into the fictional moon", cadence: cadence, timeZone: zone, createdAt: start)
+        let settled = try NativeSchedule(owner: .conversation, workerType: "research", title: "Settled check",
+                                         instruction: "Look into the fictional moon", cadence: cadence, timeZone: zone, createdAt: start)
+        try store.save(busy)
+        try store.save(settled)
+        for index in 0..<60 {
+            let when = start.addingTimeInterval(Double(index) * 3600)
+            try store.saveRun(NativeScheduleRun(scheduleID: busy.id, scheduledFor: when, startedAt: when, outcome: .waiting, detail: "Retry this step?"))
+            try store.saveRun(NativeScheduleRun(scheduleID: settled.id, scheduledFor: when, startedAt: when, finishedAt: when, outcome: .completed))
+        }
+        for index in 0..<5 {
+            let when = start.addingTimeInterval(Double(60 + index) * 3600)
+            try store.saveRun(NativeScheduleRun(scheduleID: busy.id, scheduledFor: when, startedAt: when, finishedAt: when, outcome: .completed))
+        }
+        let busyRuns = try store.runs(scheduleID: busy.id)
+        try require(busyRuns.count == 65 && busyRuns.filter { $0.outcome == .waiting }.count == 60,
+                    "Every open run is listed beside the recent window: \(busyRuns.count)")
+        try require(busyRuns.first?.outcome == .completed && busyRuns.last?.outcome == .waiting
+                    && zip(busyRuns, busyRuns.dropFirst()).allSatisfy { $0.scheduledFor >= $1.scheduledFor }, "Runs stay newest first")
+        try require(try store.runs(scheduleID: settled.id).count == 50, "Settled runs alone keep the default window")
+
+        let target = busyRuns.last!.id
+        let claims = try repository.database.write { db in
+            [try NativeScheduleStore.claimCheckIn(db, runID: target, key: "first-key"),
+             try NativeScheduleStore.claimCheckIn(db, runID: target, key: "first-key"),
+             try NativeScheduleStore.claimCheckIn(db, runID: target, key: "second-key")]
+        }
+        try require(claims == [true, false, true], "A check-in key claims once and a new question claims again: \(claims)")
+        try require(try store.run(target)?.checkInKey == "second-key", "The run keeps the latest claimed key")
     }
 }

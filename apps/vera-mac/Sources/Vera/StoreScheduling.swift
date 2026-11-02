@@ -58,27 +58,23 @@ extension ChatStore {
     }
 
     func postScheduleCheckIns() {
-        guard let store = nativeScheduleStore, let repository,
+        guard nativeScheduleStore != nil, let repository, let local = repository as? LocalChatRepository,
               let projectionRepository = repository as? any NativeTaskProjectionRepository else { return }
         var posted = false
         for run in scheduleRuns.values.flatMap({ $0 }) where run.outcome == .waiting {
             guard let referenceID = run.taskReferenceID, let uuid = UUID(uuidString: referenceID),
                   let conversationID = run.conversationID,
-                  let reference = try? projectionRepository.taskReference(id: uuid) else { continue }
-            let projection = try? projectionRepository.taskProjection(id: uuid)
-            let decision = projection?.snapshot?.decision
+                  let reference = try? projectionRepository.taskReference(id: uuid),
+                  let snapshot = (try? projectionRepository.taskProjection(id: uuid))?.snapshot,
+                  snapshot.state == .needsDecision, let decision = snapshot.decision else { continue }
             let key = Self.checkInKey(taskReferenceID: referenceID, decision: decision)
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
-            guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: projection?.snapshot) else { continue }
-            let prompt = decision?.prompt ?? run.detail
+            guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(prompt)",
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(decision.prompt)",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
-            do {
-                let ordinal = try repository.messages(conversationID: conversationID).count
-                try repository.saveMessage(message, conversationID: conversationID, ordinal: ordinal)
-            } catch { continue }
+            guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid)) == true else { continue }
             if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
                 if !conversations[index].messages.isEmpty || selectedID == conversationID {
                     conversations[index].messages.append(message)
@@ -89,9 +85,6 @@ extension ChatStore {
             } else if let stored = try? repository.listConversations().first(where: { $0.id == conversationID }) {
                 conversations.insert(stored, at: 0)
             }
-            var saved = run
-            saved.checkInKey = key
-            try? store.saveRun(saved)
             posted = true
         }
         if posted { reloadSchedules() }
@@ -134,7 +127,6 @@ extension ChatStore {
         })
         nativeScheduler = scheduler
         reloadSchedules()
-        postScheduleCheckIns()
         nativeSchedulerLoop = Task { [weak self] in
             while !Task.isCancelled {
                 let changed = await scheduler.tick()

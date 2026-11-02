@@ -208,7 +208,7 @@ private struct ScheduleDetail: View {
                     ForEach(runs) { run in
                         ScheduleRunRow(run: run, timeZone: schedule.timeZone,
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
-                                       onStop: run.outcome == .running && run.taskReferenceID != nil ? { store.stopScheduleRun(run) } : nil,
+                                       onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
                                        onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
