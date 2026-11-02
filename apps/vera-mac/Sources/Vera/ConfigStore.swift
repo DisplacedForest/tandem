@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// Reads and writes `~/.vera/config.json` — the single on-disk config the app and its clients
@@ -849,11 +850,17 @@ final class ConfigStore: ObservableObject {
         self[CompanionShortcut.configKey] = shortcut?.configValue ?? ""
     }
 
-    var voiceBase: URL? {
+    var voiceBase: URL? { Self.voiceBase(in: raw) }
+
+    nonisolated static func voiceBase(in raw: [String: Any]) -> URL? {
         let env = ProcessInfo.processInfo.environment["VERA_VOICE_BASE"]
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["voice_base"] as? String)
         let trimmed = v?.trimmingCharacters(in: .whitespaces)
         return (trimmed?.isEmpty == false) ? URL(string: trimmed!) : nil
+    }
+
+    var voiceBasePublisher: AnyPublisher<URL?, Never> {
+        $raw.map { Self.voiceBase(in: $0) }.eraseToAnyPublisher()
     }
 
     var voiceConfigured: Bool { !(voiceBase?.host ?? "").isEmpty }

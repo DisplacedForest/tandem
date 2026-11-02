@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AVFoundation
 import AppKit
 
@@ -22,7 +23,7 @@ final class VoiceSession: ObservableObject {
     @Published private(set) var isDictating = false
     @Published var entryError: String?
 
-    private let client: VoiceClient
+    private var client: VoiceClient
     private let socket: VeraSocket?
     private unowned let store: ChatStore
 
@@ -33,7 +34,9 @@ final class VoiceSession: ObservableObject {
     private var streamTask: Task<Void, Never>?
     private var sttStream: (any VoiceTranscript)?
     private let capture: any VoiceCaptureDevice
-    private let openTranscription: @Sendable () async throws -> any VoiceTranscript
+    private var openTranscription: @Sendable () async throws -> any VoiceTranscript
+    private let fixedTranscription: Bool
+    private var configSubscription: AnyCancellable?
     private var opening = false
     private var advancing = false
     private var dictationGeneration = 0
@@ -50,6 +53,10 @@ final class VoiceSession: ObservableObject {
 
     var supportsVoiceChat: Bool { supportsDictation && socket != nil }
 
+    var voiceHost: String { client.host }
+
+    var hasPendingDictation: Bool { dictationTail != nil }
+
     init(client: VoiceClient, socket: VeraSocket?, store: ChatStore,
          capture: (any VoiceCaptureDevice)? = nil,
          transcription: (@Sendable () async throws -> any VoiceTranscript)? = nil) {
@@ -60,8 +67,45 @@ final class VoiceSession: ObservableObject {
         self.mic = mic
         self.queue = AudioQueue(engine: engine)
         self.capture = capture ?? MicEngineCapture(engine: engine, mic: mic)
-        self.openTranscription = transcription ?? { [client] in try await client.startTranscription() }
+        self.openTranscription = transcription ?? Self.transcription(for: client)
+        self.fixedTranscription = transcription != nil
         configureCallbacks()
+    }
+
+    private static func transcription(for client: VoiceClient) -> @Sendable () async throws -> any VoiceTranscript {
+        { try await client.startTranscription() }
+    }
+
+    func observe(_ config: ConfigStore) {
+        configSubscription = config.voiceBasePublisher
+            .map { $0?.host ?? "" }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self, weak config] _ in
+                Task { @MainActor in
+                    guard let self, let config else { return }
+                    self.configure(voiceBase: config.voiceBase)
+                }
+            }
+    }
+
+    func configure(voiceBase: URL?) {
+        let next = VoiceClient(base: voiceBase)
+        guard next.host != client.host else { return }
+        var interrupted = false
+        if isDictating {
+            finishDictation(nil)
+            interrupted = true
+        }
+        if state != .idle {
+            stop()
+            interrupted = true
+        }
+        objectWillChange.send()
+        client = next
+        warmed = false
+        if !fixedTranscription { openTranscription = Self.transcription(for: next) }
+        if interrupted { entryError = VoiceEntryFailure.settingsChanged.message }
     }
 
     private func configureCallbacks() {
@@ -261,10 +305,20 @@ final class VoiceSession: ObservableObject {
         let previous = dictationTail
         dictationTail = Task {
             await previous?.value
-            let text = (try? await stream.finish()) ?? ""
             guard generation == dictationGeneration else { return }
-            dictationText = ComposerDictation.merge(base: dictationText, text)
-            if isDictating { dictationHandler?(dictationText, false) }
+            do {
+                let text = try await stream.finish()
+                guard generation == dictationGeneration else { return }
+                dictationText = ComposerDictation.merge(base: dictationText, text)
+                if isDictating { dictationHandler?(dictationText, false) }
+            } catch {
+                guard generation == dictationGeneration else { return }
+                if isDictating {
+                    finishDictation(.serviceUnreachable)
+                } else {
+                    entryError = VoiceEntryFailure.serviceUnreachable.message
+                }
+            }
         }
     }
 
@@ -446,13 +500,14 @@ struct PlaybackEventFilter: Sendable {
 }
 
 enum VoiceEntryFailure: Equatable, Sendable {
-    case microphoneDenied, microphoneUnavailable, serviceUnreachable
+    case microphoneDenied, microphoneUnavailable, serviceUnreachable, settingsChanged
 
     var message: String {
         switch self {
         case .microphoneDenied: "Microphone access is off. Allow it in System Settings, Privacy and Security."
         case .microphoneUnavailable: "The microphone didn't start. Check your input device in System Settings."
         case .serviceUnreachable: "The voice service didn't answer. Check its address in Settings."
+        case .settingsChanged: "Voice stopped because its address changed in Settings. Start it again when you're ready."
         }
     }
 }

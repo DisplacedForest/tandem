@@ -186,6 +186,15 @@ private struct ChatPane: View {
     @State private var highlightVisible = false
     @State private var showingWork = false
     @State private var openedWorkReport: NativeResearchArtifact?
+    @State private var revealTask: Task<Void, Never>?
+    @State private var revealConversationID: String?
+
+    private func cancelTaskReveal() {
+        revealTask?.cancel()
+        revealTask = nil
+        revealConversationID = nil
+        store.highlightedTaskID = nil
+    }
 
     private func revealPendingTask(_ proxy: ScrollViewProxy) {
         guard let taskID = store.pendingTaskReveal, let convo = conversation, !convo.messages.isEmpty,
@@ -195,18 +204,31 @@ private struct ChatPane: View {
         guard let owner = OngoingWork.owningMessageID(taskID: taskID, fallback: reference.origin.assistantMessageID,
                                                       in: convo.messages) else { return }
         let artifact = OngoingWork.item(reference).artifact
-        Task { @MainActor in
+        let origin = convo.id
+        let generation = store.taskRevealGeneration
+        cancelTaskReveal()
+        revealConversationID = origin
+        revealTask = Task { @MainActor in
+            @MainActor func applies() -> Bool {
+                OngoingWork.revealApplies(origin: origin, selectedConversationID: store.selectedID, generation: generation,
+                                          latestGeneration: store.taskRevealGeneration, cancelled: Task.isCancelled)
+            }
             try? await Task.sleep(for: .milliseconds(120))
+            guard applies() else { return }
             withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(owner, anchor: .center) }
             store.highlightedTaskID = taskID
             var remaining = Duration.seconds(2)
             if let artifact {
                 try? await Task.sleep(for: .milliseconds(350))
+                guard applies() else { return }
                 remaining -= .milliseconds(350)
                 openedWorkReport = artifact
             }
             try? await Task.sleep(for: remaining)
+            guard applies() else { return }
             if store.highlightedTaskID == taskID { store.highlightedTaskID = nil }
+            revealTask = nil
+            revealConversationID = nil
         }
     }
 
@@ -316,6 +338,9 @@ private struct ChatPane: View {
             }
         }
         .background(Theme.conversationBackground)
+        .onChange(of: store.selectedID) {
+            if let revealConversationID, revealConversationID != store.selectedID { cancelTaskReveal() }
+        }
         .overlay(alignment: .topTrailing) {
             if workCollapsed {
                 OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: conversation?.id)) {
@@ -1043,13 +1068,17 @@ struct ComposerField: View {
     @State private var mentionSelectionID: String?
     @State private var dismissedDraft: String?
     @State private var showingFolderUnsupported = false
+    @State private var dictation = ComposerDictationController()
     @Environment(\.openSettings) private var openSettings
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
         Binding(get: { route.draft }, set: { route.draft = $0 })
     }
-    private func submit() { route.send() }
+    private func submit() {
+        if canSend { dictation.detach(voice) }
+        route.send()
+    }
     private var voiceAvailability: ComposerVoiceAvailability {
         ComposerVoiceAvailability(dictation: voice.supportsDictation, voiceChat: voice.supportsVoiceChat)
     }
@@ -1059,11 +1088,11 @@ struct ComposerField: View {
             voice.stopDictation()
             return
         }
-        let base = route.draft
-        voice.startDictation { text, isFinal in
-            route.draft = ComposerDictation.merge(base: base, text)
-            if isFinal { focused = true }
-        }
+        let route = route
+        let store = store
+        dictation.start(voice: voice, conversationID: store.selectedID,
+                        read: { route.draft }, write: { route.draft = $0 },
+                        selected: { store.selectedID }, onFinal: { focused = true })
     }
 
     private func openVoiceSettings() {
@@ -1240,8 +1269,9 @@ struct ComposerField: View {
         }
         .onDisappear {
             removePasteMonitor()
-            voice.stopDictation()
+            dictation.detach(voice)
         }
+        .onChange(of: store.selectedID) { _, _ in dictation.detach(voice) }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .onChange(of: store.grantConsentTick) { _, _ in
             let missing = [NativeFolderTools.toolID, NativeCommandTools.toolID].filter { !config.nativeSettings.enabledToolIDs.contains($0) }

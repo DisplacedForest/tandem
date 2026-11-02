@@ -11,6 +11,9 @@ enum VoiceEntrySelftest {
         try await requireUnreachableService(require)
         try await requireMidSessionFailure(require)
         try await requireVoiceChatFailure(require)
+        try await requireFinishFailures(require)
+        try await requireDraftBinding(require)
+        try await requireLiveConfiguration(require)
         print("VOICE ENTRY OK")
     }
 
@@ -127,6 +130,104 @@ enum VoiceEntrySelftest {
                   artifactPersistenceEnabled: false)
     }
 
+    private static func requireFinishFailures(_ require: (Bool, String) throws -> Void) async throws {
+        let midCapture = FakeCapture()
+        let mid = makeSession(midCapture, FakeTranscriptSource(["hello", nil, nil]))
+        let midEvents = DictationRecorder()
+        mid.startDictation(onText: midEvents.record)
+        try await waitFor { midCapture.listening }
+        mid.utteranceEnded()
+        try await waitFor { midEvents.events.count == 1 }
+        mid.utteranceEnded()
+        try await waitFor { midEvents.events.last?.isFinal == true }
+        try require(midEvents.events.last?.text == "hello", "A failed phrase keeps the text heard before it")
+        try require(mid.entryError == VoiceEntryFailure.serviceUnreachable.message, "A failed phrase is reported")
+        try require(!mid.isDictating && !midCapture.listening && midCapture.ended >= 1, "A failed phrase stops recording")
+
+        let finalCapture = FakeCapture()
+        let last = makeSession(finalCapture, FakeTranscriptSource(["hello", nil]))
+        let lastEvents = DictationRecorder()
+        last.startDictation(onText: lastEvents.record)
+        try await waitFor { finalCapture.listening }
+        last.utteranceEnded()
+        try await waitFor { lastEvents.events.count == 1 }
+        last.stopDictation()
+        try await waitFor { lastEvents.events.last?.isFinal == true }
+        try require(lastEvents.events.last?.text == "hello", "A failed last phrase keeps the earlier text")
+        try require(last.entryError == VoiceEntryFailure.serviceUnreachable.message, "A failed last phrase is reported")
+        try require(!last.isDictating && !finalCapture.listening, "A failed last phrase leaves nothing recording")
+    }
+
+    private static func requireDraftBinding(_ require: (Bool, String) throws -> Void) async throws {
+        var binding = DictationDraftBinding(conversationID: "a", draft: "Hi")
+        var draft = binding.apply("hello", to: "Hi")
+        try require(draft == "Hi hello", "Dictation lands after the starting draft")
+        draft += " there"
+        draft = binding.apply("hello world", to: draft)
+        try require(draft == "Hi hello world there", "Typing after dictation started survives a later partial")
+        draft = binding.apply("hello world again", to: "Rewritten")
+        try require(draft == "Rewritten hello world again", "A moved segment is appended instead of overwriting edits")
+
+        let capture = FakeCapture()
+        let session = makeSession(capture, FakeTranscriptSource(["one", "two", "three", "four", "five", "six"]))
+        let box = DraftBox()
+        let controller = ComposerDictationController()
+        func start() {
+            controller.start(voice: session, conversationID: box.selected, read: { box.draft },
+                             write: { box.draft = $0 }, selected: { box.selected })
+        }
+        box.draft = "Start"
+        start()
+        try await waitFor { capture.listening }
+        session.utteranceEnded()
+        try await waitFor { box.draft == "Start one" }
+        box.draft += " typed"
+        session.utteranceEnded()
+        try await waitFor { box.draft == "Start one two typed" }
+        box.selected = "b"
+        box.draft = "Other conversation"
+        session.utteranceEnded()
+        try await waitFor { !session.isDictating && !session.hasPendingDictation }
+        try require(box.draft == "Other conversation", "A conversation switch leaves the other draft untouched")
+        try require(!capture.listening && !controller.isBound, "A conversation switch stops capture")
+
+        box.draft = ""
+        start()
+        try await waitFor { capture.listening }
+        session.utteranceEnded()
+        try await waitFor { box.draft == "five" }
+        controller.detach(session)
+        box.draft = ""
+        try await waitFor { !session.isDictating && !session.hasPendingDictation }
+        try require(box.draft.isEmpty, "A final delivery after Send does not repopulate the field")
+        try require(!capture.listening, "Sending stops capture")
+    }
+
+    private static func requireLiveConfiguration(_ require: (Bool, String) throws -> Void) async throws {
+        guard (ProcessInfo.processInfo.environment["VERA_VOICE_BASE"] ?? "").isEmpty else { return }
+        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+        let capture = FakeCapture()
+        let session = VoiceSession(client: VoiceClient(base: config.voiceBase), socket: nil, store: fixtureStore(),
+                                   capture: capture, transcription: { try FakeTranscriptSource(["live"]).open() })
+        session.observe(config)
+        try require(!session.supportsDictation, "No address starts without dictation")
+        config["voice_base"] = "http://first.test:8131"
+        try await waitFor { session.supportsDictation }
+        try require(session.voiceHost == "first.test", "Configuring from nothing enables dictation")
+        config["voice_base"] = "http://second.test:8131"
+        try await waitFor { session.voiceHost == "second.test" }
+        try require(session.supportsDictation && session.entryError == nil, "Replacing an idle address is silent")
+        session.startDictation(onText: DictationRecorder().record)
+        try await waitFor { capture.listening }
+        config["voice_base"] = "http://third.test:8131"
+        try await waitFor { session.voiceHost == "third.test" }
+        try require(!session.isDictating && !capture.listening, "Changing the address ends an active dictation")
+        try require(session.entryError == VoiceEntryFailure.settingsChanged.message, "An interrupted dictation explains why")
+        config["voice_base"] = ""
+        try await waitFor { !session.supportsDictation }
+        try require(!session.supportsVoiceChat && session.voiceHost.isEmpty, "Removing the address hides voice")
+    }
+
     private static func makeSession(_ capture: FakeCapture, _ source: FakeTranscriptSource) -> VoiceSession {
         VoiceSession(client: VoiceClient(host: "voice.test"), socket: nil, store: fixtureStore(),
                      capture: capture, transcription: { try source.open() })
@@ -172,12 +273,18 @@ private final class FakeCapture: VoiceCaptureDevice {
     }
 }
 
+@MainActor
+private final class DraftBox {
+    var draft = ""
+    var selected: String? = "a"
+}
+
 private final class FakeTranscriptSource: @unchecked Sendable {
     private let lock = NSLock()
-    private var texts: [String]
+    private var texts: [String?]
     private(set) var opened = 0
 
-    init(_ texts: [String]) { self.texts = texts }
+    init(_ texts: [String?]) { self.texts = texts }
 
     func open() throws -> any VoiceTranscript {
         lock.lock(); defer { lock.unlock() }
@@ -188,11 +295,14 @@ private final class FakeTranscriptSource: @unchecked Sendable {
 }
 
 private final class FakeTranscript: VoiceTranscript, @unchecked Sendable {
-    private let text: String
+    private let text: String?
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String?) { self.text = text }
 
     func send(_ pcm16k: Data) {}
 
-    func finish() async throws -> String { text }
+    func finish() async throws -> String {
+        guard let text else { throw VoiceError.notConfigured }
+        return text
+    }
 }

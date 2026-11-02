@@ -55,5 +55,35 @@ extension SelfTest {
                     "The originating reply owns a task with no card yet")
         try require(OngoingWork.owningMessageID(taskID: taskID, fallback: UUID(), in: [origin]) == nil,
                     "Missing messages own nothing")
+
+        try require(OngoingWork.revealApplies(origin: here, selectedConversationID: here, generation: 4, latestGeneration: 4),
+                    "A reveal applies while its chat is selected and it is the latest selection")
+        try require(!OngoingWork.revealApplies(origin: here, selectedConversationID: there, generation: 4, latestGeneration: 4),
+                    "A reveal stops once another chat is selected")
+        try require(!OngoingWork.revealApplies(origin: here, selectedConversationID: here, generation: 4, latestGeneration: 5),
+                    "A newer selection supersedes an older reveal")
+        try require(!OngoingWork.revealApplies(origin: here, selectedConversationID: here, generation: 4, latestGeneration: 4, cancelled: true),
+                    "A cancelled reveal does nothing")
+
+        let store = OngoingWorkFixture.store()
+        let shotConversation = try store.selectedID ?? { throw NativeTaskFixture.Failure.assertion("The fixture selects a chat") }()
+        store.conversations.append(Conversation(id: there, title: "Market watch", messages: [], updatedAt: Date()))
+        let other = try fixture.reference(conversationID: there, title: "Elsewhere", state: "running")
+        store.nativeTaskReferences.append(other)
+        let first = try store.nativeTaskReferences.first ?? { throw NativeTaskFixture.Failure.assertion("The fixture has work") }()
+        store.revealOngoingWork(first)
+        let firstGeneration = store.taskRevealGeneration
+        try require(store.pendingTaskReveal == first.id.uuidString && store.selectedID == shotConversation,
+                    "Selecting work in the open chat queues its reveal")
+        store.revealOngoingWork(other)
+        try require(store.selectedID == there && store.pendingTaskReveal == other.id.uuidString,
+                    "Selecting work in another chat opens that chat and queues its reveal")
+        try require(!OngoingWork.revealApplies(origin: shotConversation, selectedConversationID: store.selectedID,
+                                               generation: firstGeneration, latestGeneration: store.taskRevealGeneration),
+                    "The first chat's delayed reveal no longer applies after switching")
+        let unknownGeneration = store.taskRevealGeneration
+        store.revealOngoingWork(orphan)
+        try require(store.taskRevealGeneration == unknownGeneration && store.selectedID == there,
+                    "Work from an unknown chat changes nothing")
     }
 }

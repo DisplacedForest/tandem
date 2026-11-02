@@ -80,6 +80,11 @@ enum OngoingWork {
         return result
     }
 
+    static func revealApplies(origin: String, selectedConversationID: String?, generation: Int,
+                              latestGeneration: Int, cancelled: Bool = false) -> Bool {
+        !cancelled && generation == latestGeneration && selectedConversationID == origin
+    }
+
     static func owningMessageID(taskID: String, fallback: UUID?, in messages: [Message]) -> UUID? {
         let block = "task:" + taskID
         if let owner = messages.first(where: { $0.displayBlocks.contains { $0.id == block } }) { return owner.id }
@@ -92,6 +97,7 @@ extension ChatStore {
     func revealOngoingWork(_ reference: NativeTaskReference) {
         let target = reference.origin.conversationID
         guard conversations.contains(where: { $0.id == target }) else { return }
+        taskRevealGeneration &+= 1
         if selectedID != target || !(section == .chat || section == .vera) { select(target) }
         pendingTaskReveal = reference.id.uuidString
     }
