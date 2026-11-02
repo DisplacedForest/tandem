@@ -83,7 +83,10 @@ struct NativeWorkerIdentity: Sendable {
     var assistantName: String
     var ownerName: String?
 
-    var audience: String { ownerName?.isEmpty == false ? ownerName! : "the person you assist" }
+    var audience: String { ownerName?.isEmpty == false ? ownerName! : NativeWorkerIdentity.neutralAudience }
+    var planningAudience: String { NativeWorkerIdentity.neutralAudience }
+
+    static let neutralAudience = "the person you assist"
 
     static func live(assistantName: @escaping @Sendable () -> String, ownerName: @escaping @Sendable () -> String?) -> @Sendable () -> NativeWorkerIdentity {
         { NativeWorkerIdentity(assistantName: assistantName(), ownerName: ownerName()) }
@@ -138,7 +141,7 @@ enum NativeResearchWorker {
     static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given.\n- At the step limit, give your final answer from what is established, never from guesses."
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
-        "You are \(identity.assistantName), planning web research for \(identity.audience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else."
+        "You are \(identity.assistantName), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else."
     }
 
     static func synthesisPrompt(identity: NativeWorkerIdentity) -> String {
