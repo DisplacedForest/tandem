@@ -59,10 +59,12 @@ extension ChatStore {
                 default: return false
                 }
             }
+            if update.blocks.contains(where: { if case .artifact = $0 { true } else { false } }) {
+                recordTaskArtifacts(update.blocks, conversationID: update.conversationID, messageID: update.messageID.uuidString)
+            }
             let merged = update.blocks + kept
             guard conversations[conversation].messages[message].displayBlocks != merged else { continue }
             conversations[conversation].messages[message].displayBlocks = merged
-            recordTaskArtifacts(merged, conversationID: update.conversationID, messageID: update.messageID.uuidString)
             changed = true
         }
         if changed { reloadNativeTaskReferences() }

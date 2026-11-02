@@ -43,9 +43,8 @@ extension ChatStore {
     }
 
     @discardableResult
-    func recordArtifact(_ draft: ArtifactDraft) -> ArtifactVersion? {
+    func recordArtifact(_ draft: ArtifactDraft, revising target: String? = nil) -> ArtifactVersion? {
         guard let artifactRepository else { return nil }
-        let target = draft.conversationID.flatMap { artifactRevisionTargets[$0] }
         guard let version = try? artifactRepository.recordArtifact(draft, revising: target) else { return nil }
         reloadArtifacts()
         return version
@@ -87,19 +86,21 @@ extension ChatStore {
             details: ArtifactDetails(canvasType: artifact.type, language: language.isEmpty ? nil : language))
     }
 
-    func recordCanvasArtifacts(_ artifacts: [Artifact], conversationID: String, messageID: String) {
+    func recordCanvasArtifacts(_ artifacts: [Artifact], conversationID: String, messageID: String, revising target: String? = nil) {
         guard let artifactRepository, !artifacts.isEmpty else { return }
         let origin = conversations.first(where: { $0.id == conversationID })?.title
-        let revisingDocument = artifactRevisionTargets[conversationID]
-            .flatMap { try? artifactRepository.artifact($0) }?.kind == .document
-        for artifact in artifacts {
+        let revisingDocument = target.flatMap { try? artifactRepository.artifact($0) }?.kind == .document
+        for (index, artifact) in artifacts.enumerated() {
             recordArtifact(Self.canvasArtifactDraft(
-                artifact, sourceKey: "canvas:\(messageID):\(artifact.id)", conversationID: conversationID,
-                originTitle: origin, messageID: messageID, asDocument: revisingDocument))
+                artifact, sourceKey: "canvas:\(messageID):\(index):\(artifact.id)", conversationID: conversationID,
+                originTitle: origin, messageID: messageID, asDocument: revisingDocument), revising: target)
         }
     }
 
-    func recordImageArtifact(_ image: MessageAttachment, activity: NativeToolActivity, conversationID: String, messageID: String) {
+    func recordImageArtifact(
+        _ image: MessageAttachment, activity: NativeToolActivity, conversationID: String, messageID: String,
+        revising target: String? = nil
+    ) {
         guard artifactRepository != nil, let fileName = image.fileName, let data = attachmentStore.data(for: fileName) else { return }
         let request = activity.request.data(using: .utf8)
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
@@ -116,40 +117,55 @@ extension ChatStore {
             kind: .image, title: stem.isEmpty ? "Image" : stem, conversationID: conversationID,
             originTitle: conversations.first(where: { $0.id == conversationID })?.title, messageID: messageID,
             sourceKey: "image:\(fileName)", data: data, mime: image.mime ?? "image/png", fileExtension: ext,
-            details: ArtifactDetails(prompt: text("prompt"), imageSize: text("size"))))
+            details: ArtifactDetails(prompt: text("prompt"), imageSize: text("size"))), revising: target)
     }
 
-    func recordFileChangeArtifact(_ change: NativeFileChange, conversationID: String, messageID: String) {
-        guard artifactRepository != nil, change.kind != .directory else { return }
+    func recordFileChangeArtifact(
+        _ change: NativeFileChange, conversationID: String, messageID: String, revising target: String? = nil
+    ) {
+        guard artifactRepository != nil, change.kind != .directory,
+              let content = change.after ?? change.before else { return }
         let ext = (change.path as NSString).pathExtension.lowercased()
         recordArtifact(ArtifactDraft(
             kind: .fileChange, title: change.title, conversationID: conversationID,
             originTitle: conversations.first(where: { $0.id == conversationID })?.title, messageID: messageID,
-            sourceKey: "file:\(change.id)", data: Data((change.after ?? "").utf8), mime: "text/plain",
+            sourceKey: "file:\(change.id)", data: Data(content.utf8), mime: "text/plain",
             fileExtension: ext.isEmpty ? "txt" : ext,
             details: ArtifactDetails(
                 filePath: change.path, changeKind: change.kind, movedFrom: change.movedFrom,
-                beforeText: change.before, truncated: change.truncated)))
+                beforeText: change.before, truncated: change.truncated)), revising: target)
     }
 
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
         guard artifactRepository != nil else { return }
         let origin = conversations.first(where: { $0.id == conversationID })?.title
+        let target = artifactRevisionTargets[messageID]
         for block in blocks {
             guard case .artifact(let artifact) = block,
                   !artifact.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            recordArtifact(ArtifactDraft(
+            let sourceKey = "task:\(artifact.id)"
+            guard !recordedArtifactSourceKeys.contains(sourceKey) else { continue }
+            let draft = ArtifactDraft(
                 kind: .document, title: artifact.title, conversationID: conversationID, originTitle: origin,
-                messageID: messageID, sourceKey: "task:\(artifact.id)", data: Data(artifact.report.utf8),
-                mime: "text/markdown", fileExtension: "md", details: ArtifactDetails(sources: artifact.sources)))
+                messageID: messageID, sourceKey: sourceKey, data: Data(artifact.report.utf8),
+                mime: "text/markdown", fileExtension: "md", details: ArtifactDetails(sources: artifact.sources))
+            if recordArtifact(draft, revising: target) != nil { recordedArtifactSourceKeys.insert(sourceKey) }
+        }
+    }
+
+    func reconcileTaskArtifacts(conversationID: String) {
+        guard artifactRepository != nil,
+              let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
+        for message in conversation.messages where message.role == .assistant {
+            guard message.displayBlocks.contains(where: { if case .artifact = $0 { true } else { false } }) else { continue }
+            recordTaskArtifacts(message.displayBlocks, conversationID: conversationID, messageID: message.id.uuidString)
         }
     }
 
     static let revisionContentCap = 24_000
 
-    func artifactRevisionNote(conversationID: String) -> String? {
-        guard let target = artifactRevisionTargets[conversationID],
-              let record = try? artifactRepository?.artifact(target),
+    func artifactRevisionNote(target: String) -> String? {
+        guard let record = try? artifactRepository?.artifact(target),
               let latest = artifactVersions(target).last else { return nil }
         switch record.kind {
         case .document, .canvas:
@@ -174,21 +190,22 @@ extension ChatStore {
         }
     }
 
-    func clearArtifactRevisionTarget(conversationID: String, matching target: String?) {
-        guard let target, artifactRevisionTargets[conversationID] == target else { return }
-        artifactRevisionTargets[conversationID] = nil
-    }
-
     func reviseArtifact(_ record: ArtifactRecord, change: String) {
         let trimmed = change.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let conversationID = record.conversationID,
               conversations.contains(where: { $0.id == conversationID }) else { return }
         select(conversationID)
-        artifactRevisionTargets[conversationID] = record.id
-        if !sendText("Revise \"\(record.title)\": \(trimmed)") {
-            artifactRevisionTargets[conversationID] = nil
+        let wasSuspended = suspendsTurnScheduling
+        suspendsTurnScheduling = true
+        defer {
+            suspendsTurnScheduling = wasSuspended
+            scheduleConversationTurns()
+            focusTick &+= 1
         }
-        focusTick &+= 1
+        guard sendText("Revise \"\(record.title)\": \(trimmed)"),
+              let user = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .user })
+        else { return }
+        artifactRevisionTargets[user.id.uuidString] = record.id
     }
 
     @discardableResult

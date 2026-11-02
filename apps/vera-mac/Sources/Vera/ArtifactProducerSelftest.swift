@@ -65,6 +65,15 @@ enum ArtifactProducerSelftest {
         try check(fileVersion.flatMap { store.artifactText($0) } == "# New", "The file change stores the new text")
         try check(fileVersion?.sourceKey == "file:change-1" && fileVersion?.fileName.hasSuffix(".md") == true,
                   "The file change uses its change id and extension")
+        store.attachDisplayBlock(
+            .fileChange(NativeFileChange(id: "change-3", path: "/tmp/notes/blank.md", kind: .edited)), turn: turn)
+        try check(store.artifactRecords.filter { $0.kind == .fileChange }.count == 1,
+                  "A file change with no captured text records nothing")
+        store.attachDisplayBlock(
+            .fileChange(NativeFileChange(id: "change-4", path: "/tmp/notes/old.txt", kind: .trashed, before: "Old notes")), turn: turn)
+        let trashed = store.artifactRecords.first { $0.title == "Moved old.txt to the Trash" }
+        try check(trashed.flatMap { store.artifactVersions($0.id).first }.flatMap { store.artifactText($0) } == "Old notes",
+                  "A trashed file records its earlier text")
 
         let research = NativeResearchArtifact(
             id: "research-1", title: "Lisbon guide", report: "# Lisbon",
@@ -79,6 +88,15 @@ enum ArtifactProducerSelftest {
         let documentVersion = store.artifactVersions(document.id).first
         try check(documentVersion?.details.sources.first?.url == "https://example.com/lisbon"
                   && documentVersion?.mime == "text/markdown", "The document keeps its sources")
+        let unchanged = NativeResearchArtifact(id: "research-2", title: "Porto guide", report: "# Porto", sources: [])
+        if let ci = store.conversations.firstIndex(where: { $0.id == conversationID }),
+           let mi = store.conversations[ci].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) {
+            store.conversations[ci].messages[mi].displayBlocks = [.artifact(unchanged)]
+        }
+        store.applyNativeTaskUpdates([NativeTaskMessageUpdate(
+            conversationID: conversationID, messageID: turn.assistantMessageID, blocks: [.artifact(unchanged)])])
+        try check(store.artifactRecords.contains { $0.kind == .document && $0.title == "Porto guide" },
+                  "A task artifact records even when the visible blocks did not change")
 
         let imageName = "sunset-image.png"
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: directory.appendingPathComponent(imageName))
@@ -106,20 +124,26 @@ enum ArtifactProducerSelftest {
         try check(ChatStore.codeExtension("swift") == "swift" && ChatStore.codeExtension("objective c") == "txt",
                   "Code canvas pieces use a short language as the extension")
 
-        store.artifactRevisionTargets[conversationID] = document.id
-        let revisionNote = store.artifactRevisionNote(conversationID: conversationID) ?? ""
+        let revisionNote = store.artifactRevisionNote(target: document.id) ?? ""
         try check(revisionNote.contains("revising the document titled \"Lisbon guide\"") && revisionNote.hasSuffix("# Lisbon"),
                   "The revision note names the document and carries its content")
         store.recordCanvasArtifacts(
             [Artifact(id: "lisbon-guide", title: "Lisbon guide, revised", type: .markdown, language: "", content: "# Lisbon v2")],
-            conversationID: conversationID, messageID: "revision-message")
+            conversationID: conversationID, messageID: "revision-message", revising: document.id)
         let revised = store.artifactRecords.first { $0.id == document.id }
         try check(revised?.versionCount == 2 && revised?.title == "Lisbon guide, revised" && revised?.kind == .document,
                   "A canvas block during a document revision becomes the next document version")
         try check(store.artifactRecords.filter { $0.kind == .canvas }.count == 1, "The revision adds no canvas piece")
         try check(store.artifactVersions(document.id).last.flatMap { store.artifactText($0) } == "# Lisbon v2",
                   "The new version stores the revised text")
-        store.artifactRevisionTargets[conversationID] = nil
+        try check(store.artifactVersions(document.id).last?.sourceKey == "canvas:revision-message:0:lisbon-guide",
+                  "Canvas source keys carry the block position")
+        store.recordCanvasArtifacts(
+            [Artifact(id: "twin", title: "Twin A", type: .markdown, language: "", content: "A"),
+             Artifact(id: "twin", title: "Twin B", type: .markdown, language: "", content: "B")],
+            conversationID: conversationID, messageID: "twin-message")
+        try check(store.artifactRecords.filter { $0.title.hasPrefix("Twin") }.count == 2,
+                  "Two blocks with the same id in one reply both record")
 
         guard let revisedRecord = revised else { throw Failure(description: "The revised document is missing") }
         store.reviseArtifact(revisedRecord, change: "  Add a day trip to Sintra  ")
@@ -129,9 +153,31 @@ enum ArtifactProducerSelftest {
         try check(sentPrompt.contains("The user is revising the document titled \"Lisbon guide, revised\"")
                   && sentPrompt.contains("# Lisbon v2"), "The revision turn carries the revision note")
         try check(sentRequest == "Revise \"Lisbon guide, revised\": Add a day trip to Sintra", "The revision request is plain text")
-        try check(store.artifactRevisionTargets[conversationID] == nil, "The revision target clears when the turn finishes")
+        guard let revisionTurn = try repository.conversationTurns().last(where: { $0.conversationID == conversationID }) else {
+            throw Failure(description: "The revision turn is missing")
+        }
+        try check(store.artifactRevisionTargets[revisionTurn.userMessageID.uuidString] == nil,
+                  "The revision request target clears when the turn finishes")
+        try check(store.artifactRevisionTargets[revisionTurn.assistantMessageID.uuidString] == document.id,
+                  "The revision reply keeps its target for late task results")
         try check(store.artifactRecords.first { $0.id == document.id }?.versionCount == 2,
                   "A reply without a revised block adds no version")
+        store.applyNativeTaskUpdates([NativeTaskMessageUpdate(
+            conversationID: conversationID, messageID: revisionTurn.assistantMessageID,
+            blocks: [.artifact(NativeResearchArtifact(id: "research-3", title: "Lisbon guide, with Sintra", report: "# Lisbon v3", sources: []))])])
+        try check(store.artifactRecords.first { $0.id == document.id }?.versionCount == 3,
+                  "A late task result on the revision reply becomes the next version")
+
+        let pending = NativeResearchArtifact(id: "research-4", title: "Braga guide", report: "# Braga", sources: [])
+        _ = try repository.appendDisplayBlock(.artifact(pending), messageID: turn.assistantMessageID)
+        let relaunched = ChatStore(
+            nativeConfig: nil, nativeTransport: nil, repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        await relaunched.connect()
+        relaunched.select(conversationID)
+        try check(relaunched.artifactRecords.contains { $0.kind == .document && $0.title == "Braga guide" },
+                  "A task artifact saved before a relaunch records when its chat loads")
+        store.reloadArtifacts()
 
         store.renameConversation(conversationID, title: "Lisbon trip")
         try check(store.artifactRecords.filter { $0.conversationID == conversationID }.allSatisfy { $0.originTitle == "Lisbon trip" },

@@ -69,6 +69,7 @@ final class ChatStore: ObservableObject {
     @Published var artifactRecords: [ArtifactRecord] = []
     @Published var pendingConversationDeletion: PendingConversationDeletion?
     var artifactRevisionTargets: [String: String] = [:]
+    var recordedArtifactSourceKeys: Set<String> = []
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
@@ -250,6 +251,9 @@ final class ChatStore: ObservableObject {
             }
         }
         reloadArtifacts()
+        for conversation in conversations where !conversation.messages.isEmpty {
+            reconcileTaskArtifacts(conversationID: conversation.id)
+        }
 
         if sweepOrphanedAttachments, let repository,
            let referenced = try? repository.referencedAttachmentFileNames() {
@@ -284,13 +288,6 @@ final class ChatStore: ObservableObject {
     }
 
     func closeCanvas() { showCanvas = false }
-
-    func updateActiveArtifact(content: String) {
-        guard var a = activeArtifact else { return }
-        a.content = content
-        a.updatedAt = Date()
-        activeArtifact = a
-    }
 
     deinit {
         conversationTurnLoop?.cancel()
@@ -429,6 +426,9 @@ final class ChatStore: ObservableObject {
             newConversation()
         }
         resumeConversationTurns()
+        for conversation in conversations where !conversation.messages.isEmpty {
+            reconcileTaskArtifacts(conversationID: conversation.id)
+        }
         startNativeTaskRecovery()
         startNativeScheduler()
         await refreshPulse()
@@ -707,6 +707,7 @@ final class ChatStore: ObservableObject {
         if !isVeraThread(id) { lastFocusedConversationID = id }
         draft = drafts[id] ?? ""
         loadMessagesIfNeeded(id)
+        reconcileTaskArtifacts(conversationID: id)
     }
 
     func openChats() {
@@ -2170,12 +2171,14 @@ final class ChatStore: ObservableObject {
             guard self?.turnExecutions[turn.id]?.record.attempt == turn.attempt else { return }
             self?.stopAnswer(turn.assistantMessageID, reason: "This answer reached its time limit. You can ask a follow-up.")
         }
-        let revisionTarget = artifactRevisionTargets[id]
-        let revisionNote = artifactRevisionNote(conversationID: id)
         turnExecutions[turn.id]?.task = Task {
+            let revisionKey = turn.userMessageID.uuidString
+            let revisionTarget = artifactRevisionTargets[revisionKey]
+            if let revisionTarget { artifactRevisionTargets[turn.assistantMessageID.uuidString] = revisionTarget }
+            let revisionNote = revisionTarget.flatMap { artifactRevisionNote(target: $0) }
             defer {
                 turnMemorySelections[turn.attempt ?? turn.id] = nil
-                clearArtifactRevisionTarget(conversationID: id, matching: revisionTarget)
+                artifactRevisionTargets[revisionKey] = nil
                 finishTurnExecution(turn)
             }
             var lastCheckpoint = Date.distantPast
@@ -2318,7 +2321,8 @@ final class ChatStore: ObservableObject {
                               !conversations[i].messages[replyIndex].attachments.contains(where: { $0.fileName == image.fileName }) else { continue }
                         conversations[i].messages[replyIndex].attachments.append(image)
                         recordImageArtifact(image, activity: activity, conversationID: id,
-                                            messageID: conversations[i].messages[replyIndex].id.uuidString)
+                                            messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                            revising: revisionTarget)
                     }
                     let lifted = NativeResearchSources.lift(snapshot.activities)
                     if !lifted.isEmpty {
@@ -2350,10 +2354,9 @@ final class ChatStore: ObservableObject {
                     try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
                         message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try repository.saveConversation(conversations[i])
-                    if !partialAnswer {
-                        recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
-                                              messageID: conversations[i].messages[replyIndex].id.uuidString)
-                    }
+                    recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
+                                          messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          revising: revisionTarget)
                     if !partialAnswer, conversations[i].messages[replyIndex].id
                         == conversations[i].messages.first(where: { $0.role == .assistant })?.id {
                         generateTitleIfNeeded(conversationID: id)
@@ -2401,6 +2404,9 @@ final class ChatStore: ObservableObject {
                     try? turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: .interrupted,
                         message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                     try? repository.saveConversation(conversations[i])
+                    recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
+                                          messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          revising: revisionTarget)
                 }
             }
         }
