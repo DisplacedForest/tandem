@@ -99,6 +99,7 @@ struct VeraApp: App {
         _companion = StateObject(wrappedValue: CompanionCoordinator(store: storeInstance, config: configInstance))
         let voiceInstance = VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
                                          socket: socket, store: storeInstance)
+        voiceInstance.observe(configInstance)
         _voice = StateObject(wrappedValue: voiceInstance)
         _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance, voice: voiceInstance))
         _companionPresence = StateObject(wrappedValue: CompanionPresence(store: storeInstance, voice: voiceInstance))
