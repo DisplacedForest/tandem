@@ -128,6 +128,7 @@ protocol NativeConversationTurnRepository: Sendable {
     func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws
     func finishTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int) throws
+    func releaseTurn(_ id: UUID, attempt: UUID) throws
     func retryTurn(_ id: UUID, profile: String) throws
 }
 
@@ -339,6 +340,19 @@ extension LocalChatRepository: NativeConversationTurnRepository {
                   (attempt == nil ? turn.state == .pending : turn.attempt == attempt) else { throw CancellationError() }
             turn.state = state
             try Self.saveMessage(message, conversationID: turn.conversationID, ordinal: ordinal, db: db)
+            try Self.writeTurn(turn, db: db)
+        }
+    }
+
+    func releaseTurn(_ id: UUID, attempt: UUID) throws {
+        try database.write { db in
+            guard var turn = try Self.readTurn(id, db: db), turn.state == .running, turn.attempt == attempt else {
+                throw CancellationError()
+            }
+            turn.state = .pending
+            turn.attempt = nil
+            turn.ownerPID = nil
+            turn.ownerBirth = nil
             try Self.writeTurn(turn, db: db)
         }
     }

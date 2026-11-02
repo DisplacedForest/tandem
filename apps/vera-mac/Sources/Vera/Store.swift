@@ -2379,15 +2379,18 @@ final class ChatStore: ObservableObject {
                 try await ensureTurnCurrent(turn)
                 setTurnStatus(nil, turn: turn)
                 if let location = turnLocation(turn) {
-                    let i = location.conversation
-                    let replyIndex = location.reply
-                    conversations[i].messages[replyIndex].state = partialAnswer ? .interrupted : .complete
-                    conversations[i].messages[replyIndex].failure = partialAnswer
+                    conversations[location.conversation].messages[location.reply].state = partialAnswer ? .interrupted : .complete
+                    conversations[location.conversation].messages[location.reply].failure = partialAnswer
                         ? "This answer is unfinished. You can ask a follow-up or retry the answer." : nil
-                    conversations[i].updatedAt = Date()
+                    conversations[location.conversation].updatedAt = Date()
+                    let finalMessage = conversations[location.conversation].messages[location.reply]
+                    let finalConversation = conversations[location.conversation]
                     await awaitTurnCheckpoint(turn)
                     try await finishTurnOffMain(turn, state: partialAnswer ? .interrupted : .complete,
-                        message: conversations[i].messages[replyIndex], ordinal: replyIndex, conversation: conversations[i])
+                        message: finalMessage, ordinal: location.reply, conversation: finalConversation)
+                    guard let settled = turnLocation(turn) else { throw CancellationError() }
+                    let i = settled.conversation
+                    let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
                                           revising: revisionTarget)
@@ -2399,7 +2402,7 @@ final class ChatStore: ObservableObject {
                     if repository is any NativeMemoryRepository {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded
-                        let userIndex = location.user
+                        let userIndex = settled.user
                         let sourceDate = conversations[i].messages.indices.contains(userIndex)
                             ? conversations[i].messages[userIndex].createdAt : Date()
                         Task {

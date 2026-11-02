@@ -11,6 +11,8 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var historyReads = 0
     var transcriptReads = 0
     var polledRecords = 0
+    var claimHold: TimeInterval = 0
+    let claimLanded = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
     func messages(conversationID: String) throws -> [Message] {
@@ -41,7 +43,15 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         lock.withLock { failReads = failReadsAfterAcceptance }
     }
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws { try base.enrollLegacyTurn(turn) }
-    func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? { try base.claimTurn(id, attempt: attempt) }
+    func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? {
+        let claimed = try base.claimTurn(id, attempt: attempt)
+        if claimed != nil {
+            claimLanded.raise()
+            let hold = lock.withLock { claimHold }
+            if hold > 0 { Thread.sleep(forTimeInterval: hold) }
+        }
+        return claimed
+    }
     func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
         let failing = lock.withLock {
             if failCurrencyReads { currencyReadFailures += 1 }
@@ -59,6 +69,7 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic final state failure") }
         try base.finishTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal)
     }
+    func releaseTurn(_ id: UUID, attempt: UUID) throws { try base.releaseTurn(id, attempt: attempt) }
     func retryTurn(_ id: UUID, profile: String) throws { try base.retryTurn(id, profile: profile) }
 }
 

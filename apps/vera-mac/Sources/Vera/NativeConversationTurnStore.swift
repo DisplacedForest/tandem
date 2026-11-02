@@ -61,7 +61,8 @@ extension ChatStore {
 
     func prepareTurnDispatch(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
         guard await turnCurrency(turn) == .current, turnAllowsDispatch(turn, activity: activity) else { return false }
-        return await markTurnDispatchOffMain(activity, turn: turn)
+        guard await markTurnDispatchOffMain(activity, turn: turn) else { return false }
+        return turnAllowsDispatch(turn, activity: activity)
     }
 
     func markTurnDispatchOffMain(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
@@ -310,45 +311,74 @@ extension ChatStore {
             if let ci = conversations.firstIndex(where: { $0.id == turn.conversationID }), conversations[ci].messages.isEmpty {
                 conversations[ci].messages = (try? repository.messages(conversationID: turn.conversationID)) ?? []
             }
-            guard let location = turnLocation(turn) else { continue }
-            let currentProfile = turnProfile(for: turn.history.last?.routeNote)
-            let missing = turn.history.filter { $0.routeNote?.route != .withheld }.flatMap(\.attachments).contains {
-                $0.isImage && attachmentStore.requestDataURL(for: $0) == nil
-            }
-            if turn.profile != currentProfile || !isLive || !pendingProfileAvailable || missing {
-                var message = conversations[location.conversation].messages[location.reply]
-                message.state = .interrupted
-                message.failure = missing ? "An attachment is missing. Restore it before retrying this answer."
-                    : "This saved message needs its original settings. Send a new message to use the current settings."
-                let interrupted = message
-                let turnID = turn.id
-                let ordinal = location.reply
-                do {
-                    try await Task.detached(priority: .userInitiated) {
-                        try turnRepository.finishTurn(turnID, attempt: nil, state: .interrupted, message: interrupted, ordinal: ordinal)
-                    }.value
-                    guard !suspendsTurnScheduling, let current = turnLocation(turn) else { continue }
-                    conversations[current.conversation].messages[current.reply] = interrupted
-                    if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .interrupted }
-                } catch { chatConfigurationError = "The saved answer couldn't update. Try again." }
+            guard turnLocation(turn) != nil else { continue }
+            if let failure = pendingTurnFailure(turn) {
+                await interruptPendingTurn(turn, failure: failure)
                 continue
             }
             let turnID = turn.id
             let attempt = UUID()
+            let claimed: NativeConversationTurn?
             do {
-                let claimed = try await Task.detached(priority: .userInitiated) {
+                claimed = try await Task.detached(priority: .userInitiated) {
                     try turnRepository.claimTurn(turnID, attempt: attempt)
                 }.value
-                guard let claimed, !suspendsTurnScheduling, turnExecutions[claimed.id] == nil,
-                      turnExecutions.count < NativeConversationTurn.maximumActive else { continue }
-                if let index = conversationTurns.firstIndex(where: { $0.id == claimed.id }) { conversationTurns[index] = claimed }
-                turnExecutions[claimed.id] = NativeTurnExecution(claimed)
-                generating = true
-                performTurn(claimed)
             } catch {
                 chatConfigurationError = "The saved answer couldn't start. Try again."
+                continue
             }
+            guard let claimed else { continue }
+            if let failure = pendingTurnFailure(claimed) {
+                await interruptPendingTurn(claimed, failure: failure)
+                continue
+            }
+            guard !suspendsTurnScheduling, turnExecutions[claimed.id] == nil,
+                  turnExecutions.count < NativeConversationTurn.maximumActive, turnLocation(claimed) != nil else {
+                await releaseTurnClaim(claimed)
+                continue
+            }
+            if let index = conversationTurns.firstIndex(where: { $0.id == claimed.id }) { conversationTurns[index] = claimed }
+            turnExecutions[claimed.id] = NativeTurnExecution(claimed)
+            generating = true
+            performTurn(claimed)
         }
+    }
+
+    private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {
+        let missing = turn.history.filter { $0.routeNote?.route != .withheld }.flatMap(\.attachments).contains {
+            $0.isImage && attachmentStore.requestDataURL(for: $0) == nil
+        }
+        if missing { return "An attachment is missing. Restore it before retrying this answer." }
+        if turn.profile != turnProfile(for: turn.history.last?.routeNote) || !isLive || !pendingProfileAvailable {
+            return "This saved message needs its original settings. Send a new message to use the current settings."
+        }
+        return nil
+    }
+
+    private func interruptPendingTurn(_ turn: NativeConversationTurn, failure: String) async {
+        guard let turnRepository, let location = turnLocation(turn) else { return }
+        var message = conversations[location.conversation].messages[location.reply]
+        message.state = .interrupted
+        message.failure = failure
+        let interrupted = message
+        let turnID = turn.id
+        let attempt = turn.attempt
+        let ordinal = location.reply
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try turnRepository.finishTurn(turnID, attempt: attempt, state: .interrupted, message: interrupted, ordinal: ordinal)
+            }.value
+            guard !suspendsTurnScheduling, let current = turnLocation(turn) else { return }
+            conversations[current.conversation].messages[current.reply] = interrupted
+            if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .interrupted }
+        } catch is CancellationError {
+        } catch { chatConfigurationError = "The saved answer couldn't update. Try again." }
+    }
+
+    private func releaseTurnClaim(_ turn: NativeConversationTurn) async {
+        guard let turnRepository, let attempt = turn.attempt else { return }
+        let turnID = turn.id
+        try? await Task.detached(priority: .userInitiated) { try turnRepository.releaseTurn(turnID, attempt: attempt) }.value
     }
 
     func finishTurnExecution(_ turn: NativeConversationTurn) {

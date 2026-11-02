@@ -47,7 +47,10 @@ enum NativeTurnCurrencyFixture {
         try await checkpointContention()
         try await finalizationContention()
         try await dispatchContention()
-        print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization and dispatch writes off main)")
+        try await dispatchRevocation()
+        try await claimContention()
+        try await completionRelocation()
+        print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization, dispatch and claim writes off main with their gates re-checked afterwards)")
     }
 
     static func lockedRepository() throws -> (URL, LocalChatRepository, ChatStore, NativeConversationTurn) {
@@ -60,18 +63,18 @@ enum NativeTurnCurrencyFixture {
         return (url, repository, store, turn)
     }
 
-    static func holdExclusive(_ url: URL, seconds: TimeInterval) async throws -> Task<Void, Error> {
+    static func holdExclusive(_ url: URL, seconds: TimeInterval, exclusive: Bool = true) async throws -> Task<Void, Error> {
         let other = try DatabaseQueue(path: url.path)
         let held = NativeTurnCurrencyFlag()
         let holder = Task.detached {
             try other.writeWithoutTransaction { db in
-                try db.execute(sql: "BEGIN EXCLUSIVE")
+                try db.execute(sql: exclusive ? "BEGIN EXCLUSIVE" : "BEGIN IMMEDIATE")
                 held.raise()
                 Thread.sleep(forTimeInterval: seconds)
                 try db.execute(sql: "ROLLBACK")
             }
         }
-        try await NativeSessionFixture.eventually("Another connection holds an exclusive lock") { held.value }
+        try await NativeSessionFixture.eventually("Another connection holds the lock") { held.value }
         return holder
     }
 
@@ -198,6 +201,113 @@ enum NativeTurnCurrencyFixture {
         store.turnExecutions[turn.id] = nil
         let gone = await store.markTurnDispatchOffMain(activity, turn: turn)
         try require(!gone, "A marker for a turn no longer owned is declined after the write")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func fileRepository() throws -> (URL, LocalChatRepository) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = directory.appendingPathComponent("chat.sqlite")
+        return (url, try LocalChatRepository(url: url))
+    }
+
+    static func dispatchRevocation() async throws {
+        let require = NativeTaskFixture.require
+        let (url, repository) = try fileRepository()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = NativeSessionFixture.store(repository, transport: NativeSessionFixtureTransport(), gate: NativeSessionGate())
+        store.suspendsTurnScheduling = true
+        store.sendText("check the reference")
+        let pending = try repository.conversationTurns()[0]
+        guard let turn = try repository.claimTurn(pending.id, attempt: UUID()) else {
+            throw NativeTaskFixture.Failure.assertion("The pending turn can be claimed")
+        }
+        store.turnExecutions[turn.id] = NativeTurnExecution(turn)
+        guard let location = store.turnLocation(turn) else { throw NativeTaskFixture.Failure.assertion("The claimed turn has a location") }
+        let consented = NativeToolActivity(id: "dispatch-consented", toolID: "hold", name: "hold", title: "Check the reference",
+            round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false)
+        let allowed = await store.prepareTurnDispatch(consented, turn: turn)
+        try require(allowed, "A consented tool dispatches once its marker lands")
+        let revoked = NativeToolActivity(id: "dispatch-revoked", toolID: "hold", name: "hold", title: "Check the reference",
+            round: 2, request: "{}", result: nil, state: .pending, confirmationRequired: false)
+        let holder = try await holdExclusive(url, seconds: 0.2, exclusive: false)
+        let marking = Task { await store.prepareTurnDispatch(revoked, turn: turn) }
+        try await Task.sleep(for: .milliseconds(20))
+        store.updateNativeToolConsent([])
+        let dispatched = await marking.value
+        try await holder.value
+        let activities = try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities
+        try require(activities.contains { $0.id == revoked.id }, "The marker landed after storage freed")
+        try require(!dispatched, "A tool whose consent was revoked while its marker waited never runs")
+        store.turnExecutions = [:]
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func claimContention() async throws {
+        let require = NativeTaskFixture.require
+        let base = try LocalChatRepository(inMemory: true)
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.failReadsAfterAcceptance = false
+        repository.claimHold = 0.2
+        let transport = NativeSessionFixtureTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.newConversation()
+        store.suspendsTurnScheduling = true
+        store.sendText("saved with original model")
+        let pending = try base.conversationTurns()[0]
+        store.suspendsTurnScheduling = false
+        store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The claim is written and waiting to return") { repository.claimLanded.value }
+        try require(try base.conversationTurns()[0].state == .running, "The claim has landed while the tick waits for it")
+        store.applyNativeOptions(.init(baseURL: NativeSessionFixture.config.baseURL, apiKey: nil,
+            model: "changed-model", chatTemplateKwargs: nil))
+        try await NativeSessionFixture.eventually("The claim tick settles") {
+            !store.isSchedulingTurns && store.conversationTurns.first?.state == .interrupted
+        }
+        let saved = try base.conversationTurns().first { $0.id == pending.id }
+        try require(transport.histories.isEmpty && store.turnExecutions.isEmpty,
+                    "A turn claimed while its settings change never sends under the new settings")
+        try require(saved?.state == .interrupted && saved?.attempt != nil, "The rejected claim is finalized instead of left running")
+        try require(store.selected?.messages.last?.failure?.contains("original settings") == true,
+                    "The rejected claim explains that the saved message needs its original settings")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func completionRelocation() async throws {
+        let require = NativeTaskFixture.require
+        let (url, repository) = try fileRepository()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let transport = NativeSteppedTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.newConversation()
+        store.sendText("finish while another chat opens")
+        guard let conversationID = store.selectedID else { throw NativeTaskFixture.Failure.assertion("The sent message has a conversation") }
+        try await NativeSessionFixture.eventually("The answer streams") { transport.reached >= 1 }
+        await transport.first.release()
+        try await NativeSessionFixture.eventually("The second part streams") { transport.reached >= 2 }
+        let holder = try await holdExclusive(url, seconds: 0.2, exclusive: false)
+        await transport.second.release()
+        try await NativeSessionFixture.eventually("The final part streams") { transport.reached >= 3 }
+        try await Task.sleep(for: .milliseconds(30))
+        store.newConversation()
+        let front = store.conversations.first
+        try require(front?.id != conversationID && front?.messages.isEmpty == true,
+                    "A new chat opens at the front while the answer waits to save")
+        try await holder.value
+        try await NativeSessionFixture.eventually("The answer completes after storage frees") {
+            let original = store.conversations.first(where: { $0.id == conversationID })
+            return original?.messages.last?.state == .complete && store.turnExecutions.isEmpty
+        }
+        let original = store.conversations.first(where: { $0.id == conversationID })
+        let opened = store.conversations.first(where: { $0.id != conversationID })
+        let fullAnswer = "Part one. Part two. Part three."
+        try require(original?.messages.last?.text == fullAnswer, "The relocated conversation keeps its finished answer")
+        try require(opened?.messages.isEmpty == true, "The chat opened during the save is untouched by the finishing answer")
+        let savedTurn = try repository.conversationTurns().first
+        try require(savedTurn?.state == .complete, "The finished turn is saved")
+        let savedMessages = try repository.messages(conversationID: conversationID)
+        try require(savedMessages.last?.text == fullAnswer, "The full answer is saved to its own conversation")
         store.conversationTurnLoop?.cancel()
     }
 
