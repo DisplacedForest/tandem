@@ -17,8 +17,8 @@ extension ChatStore {
             do {
                 dotProfile = try store.load() ?? NativeDotProfile()
             } catch {
-                dotProfile = NativeDotProfile()
-                chatConfigurationError = "\(assistantName)'s goal and settings couldn't load: \(error.localizedDescription)"
+                dotProfile = NativeDotProfile(connectedToolIDs: [], state: .paused, setupCompleted: true)
+                chatConfigurationError = "\(assistantName)'s goal and settings couldn't load: \(error.localizedDescription) Scheduled work is paused and no services are connected until the settings are saved again."
             }
         } else {
             nativeDotProfileStore = nil
@@ -55,7 +55,55 @@ extension ChatStore {
 
     func setDotState(_ state: NativeDotState) {
         guard dotProfile.state != state else { return }
+        if dotProfile.state == .paused && state == .active {
+            skipMissedDotRuns(now: Date())
+        }
         saveDotProfile { $0.state = state }
+    }
+
+    func skipMissedDotRuns(now: Date) {
+        guard let store = nativeScheduleStore else { return }
+        for var schedule in (try? store.all()) ?? [] where schedule.owner == .dot && schedule.enabled {
+            guard let due = schedule.nextRunAt, due <= now else { continue }
+            schedule.advance(after: now, from: due)
+            do { try store.save(schedule) } catch {
+                scheduleError = "A schedule couldn't move to its next time: \(error.localizedDescription)"
+            }
+        }
+        reloadSchedules()
+    }
+
+    func turnConsentedToolIDs(conversationID: String, mentions: Set<String>) -> Set<String> {
+        let enabled = enabledNativeToolIDs
+        guard isVeraThread(conversationID) else { return enabled.union(mentions) }
+        var global = enabled
+        for server in nativeMCP?.servers ?? [] {
+            for tool in server.tools where nativeMCP?.authority.access.allowed(tool, scope: "focused") == true {
+                global.insert(tool.id)
+            }
+        }
+        return dotToolIDs(base: enabled.union(mentions.intersection(global)))
+    }
+
+    func turnDotContext(_ turn: NativeConversationTurn) -> String? {
+        if let stored = turn.dotContext { return stored }
+        guard isVeraThread(turn.conversationID) else { return nil }
+        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
+        return dotContext(for: turn.conversationID, requestText: text)
+    }
+
+    var dotHeaderRules: String {
+        NativeDotContext.headerSummary(resolver: ruleResolver(for: veraThreadID ?? "", requestText: ""))
+    }
+
+    func memorySourceIsLive(_ source: NativeMemoryTurnSource?, generation: Int, wasVeraThread: Bool) -> Bool {
+        guard let source else { return true }
+        if wasVeraThread && generation != dotResetGeneration { return false }
+        if conversations.contains(where: { $0.id == source.conversationID }) { return true }
+        if let local = repository as? LocalChatRepository {
+            return (try? local.conversationExists(source.conversationID)) ?? false
+        }
+        return ((try? repository?.listConversations()) ?? []).contains { $0.id == source.conversationID }
     }
 
     func dotToolIDs(base: Set<String>) -> Set<String> {
@@ -98,7 +146,7 @@ extension ChatStore {
     }
 
     func dotRemovalSummary() -> NativeDotRemovalSummary {
-        var summary = NativeDotRemovalSummary(hasGoal: dotProfile.hasGoal)
+        var summary = NativeDotRemovalSummary(hasGoal: dotProfile.hasGoal, services: dotProfile.connectedToolIDs != nil)
         summary.artifacts = artifactLibrary.count
         summary.schedules = ((try? nativeScheduleStore?.all()) ?? schedules).filter { $0.owner == .dot }.count
         guard let threadID = veraThreadID else { return summary }
@@ -115,6 +163,7 @@ extension ChatStore {
     func resetDot() {
         let threadID = veraThreadID
         let wasShowing = threadID != nil && selectedID == threadID
+        dotResetGeneration += 1
         suspendsTurnScheduling = true
         if let threadID {
             for turn in conversationTurns where turn.conversationID == threadID {

@@ -195,7 +195,15 @@ extension ChatStore {
         select(conversationID)
     }
 
+    static let removedScheduleReason = "This schedule was removed."
+
+    func scheduleIsLive(_ id: String) -> Bool {
+        guard let store = nativeScheduleStore else { return true }
+        return ((try? store.get(id)) ?? nil) != nil
+    }
+
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
+        guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
         guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
@@ -211,6 +219,12 @@ extension ChatStore {
         }
         let user = Message(role: .user, text: schedule.instruction)
         let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
+        await bind(conversationID, reply.id.uuidString)
+        guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
+        if schedule.owner == .dot && !isVeraThread(conversationID) {
+            return .skipped("\(assistantName) started over before this ran.")
+        }
         do {
             let ordinal = try repository.messages(conversationID: conversationID).count
             try repository.saveMessage(user, conversationID: conversationID, ordinal: ordinal)
@@ -226,7 +240,6 @@ extension ChatStore {
             conversations[index].isPersisted = true
             try? repository.saveConversation(conversations[index])
         }
-        await bind(conversationID, reply.id.uuidString)
         let origin = NativeTaskOrigin(conversationID: conversationID, userMessageID: user.id, assistantMessageID: reply.id)
         do {
             let reference = try await service.submit(origin: origin, request: request, profile: profile)

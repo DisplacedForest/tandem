@@ -7,6 +7,7 @@ struct DotSettingsView: View {
     @State private var name = ""
     @State private var goal = ""
     @State private var selected: Set<String> = []
+    @State private var rules: [NativeActionClass: NativeRuleChoice] = [:]
     @State private var options: [NativeDotServiceOption] = []
     @State private var problem: String?
     @State private var confirmingReset = false
@@ -22,7 +23,7 @@ struct DotSettingsView: View {
             Text(displayName).font(.system(size: 17, weight: .semibold)).padding(.bottom, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    DotProfileForm(name: $name, goal: $goal, selected: $selected, options: options)
+                    DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, options: options)
                     stateSection
                     startOverSection
                 }
@@ -92,6 +93,7 @@ struct DotSettingsView: View {
         goal = store.dotProfile.goal
         options = store.dotServiceOptions()
         selected = store.dotSelectedServices(options)
+        rules = DotProfileCopy.draftRules(store)
     }
 
     private func save() {
@@ -106,6 +108,7 @@ struct DotSettingsView: View {
             $0.connectedToolIDs = connected
             $0.setupCompleted = true
         }
+        DotProfileCopy.commitRules(rules, store: store)
         dismiss()
     }
 }

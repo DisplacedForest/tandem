@@ -309,6 +309,12 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func conversationExists(_ id: String) throws -> Bool {
+        try database.read { db in
+            try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)", arguments: [id]) ?? false
+        }
+    }
+
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in
             try Row.fetchOne(db, sql: """

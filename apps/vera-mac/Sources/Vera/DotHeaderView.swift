@@ -3,6 +3,7 @@ import SwiftUI
 struct DotHeaderBar: View {
     let name: String
     let goal: String
+    let rules: String
     let paused: Bool
     var onToggle: () -> Void = {}
     var onSettings: () -> Void = {}
@@ -11,9 +12,14 @@ struct DotHeaderBar: View {
         HStack(spacing: 10) {
             VeraMark(size: 18).frame(width: 18, height: 18)
             Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
-            Text(goal.isEmpty ? "No standing goal yet" : goal.replacingOccurrences(of: "\n", with: " "))
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .lineLimit(1).truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(goal.isEmpty ? "No standing goal yet" : goal.replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).truncationMode(.tail)
+                Text(rules)
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).truncationMode(.tail)
+            }
             if paused {
                 Text("Paused").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 2)
@@ -54,7 +60,7 @@ struct DotHeaderView: View {
     @State private var showingSettings = false
 
     var body: some View {
-        DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, paused: store.isDotPaused,
+        DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused,
                      onToggle: { store.setDotState(store.isDotPaused ? .active : .paused) },
                      onSettings: { showingSettings = true })
             .sheet(isPresented: $showingSettings) {

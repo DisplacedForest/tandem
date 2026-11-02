@@ -14,6 +14,20 @@ enum DotProfileCopy {
     static let noServices = "Nothing is turned on in Settings yet. Tools you turn on there show up here."
     static let rulesNote = "These can only ask more than your defaults in Settings, never less."
 
+    @MainActor
+    static func draftRules(_ store: ChatStore) -> [NativeActionClass: NativeRuleChoice] {
+        guard let id = store.veraThreadID else { return [:] }
+        return store.conversationRules(for: id).choices
+    }
+
+    @MainActor
+    static func commitRules(_ rules: [NativeActionClass: NativeRuleChoice], store: ChatStore) {
+        guard let id = store.veraThreadID else { return }
+        for action in NativeActionClass.allCases where !action.isFixed {
+            store.tightenConversationRule(rules[action] ?? store.nativeRules.choice(for: action), for: action, conversationID: id)
+        }
+    }
+
     static func counter(_ count: Int) -> String? {
         guard count > NativeDotProfile.goalLimit - 300 else { return nil }
         return "\(count.formatted()) of \(NativeDotProfile.goalLimit.formatted()) characters"
@@ -39,6 +53,7 @@ struct DotProfileForm: View {
     @Binding var name: String
     @Binding var goal: String
     @Binding var selected: Set<String>
+    @Binding var rules: [NativeActionClass: NativeRuleChoice]
     let options: [NativeDotServiceOption]
 
     private var goalBinding: Binding<String> {
@@ -84,7 +99,7 @@ struct DotProfileForm: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("What asks first")
                 Text(DotProfileCopy.rulesNote).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                ConversationRulesEditor(conversationID: store.veraThreadID, embedded: true)
+                ConversationRulesEditor(conversationID: store.veraThreadID, embedded: true, draft: $rules)
             }
             .padding(.top, 6)
         }
@@ -99,6 +114,7 @@ struct DotSetupView: View {
     @State private var name = ""
     @State private var goal = ""
     @State private var selected: Set<String> = []
+    @State private var rules: [NativeActionClass: NativeRuleChoice] = [:]
     @State private var options: [NativeDotServiceOption] = []
     @State private var problem: String?
 
@@ -115,7 +131,7 @@ struct DotSetupView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4).padding(.bottom, 14)
             ScrollView {
-                DotProfileForm(name: $name, goal: $goal, selected: $selected, options: options)
+                DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, options: options)
                     .padding(.trailing, 6)
             }
             .frame(minHeight: 260, maxHeight: 460)
@@ -143,6 +159,7 @@ struct DotSetupView: View {
         goal = store.dotProfile.goal
         options = store.dotServiceOptions()
         selected = store.dotSelectedServices(options)
+        rules = DotProfileCopy.draftRules(store)
     }
 
     private func start() {
@@ -151,6 +168,7 @@ struct DotSetupView: View {
             return
         }
         store.completeDotSetup(goal: goal, connectedToolIDs: store.dotConnectedToolIDs(selected: selected, options: options))
+        DotProfileCopy.commitRules(rules, store: store)
         dismiss()
     }
 }

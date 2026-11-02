@@ -128,6 +128,7 @@ struct ConversationRulesEditor: View {
     @EnvironmentObject private var store: ChatStore
     var conversationID: String? = nil
     var embedded = false
+    var draft: Binding<[NativeActionClass: NativeRuleChoice]>? = nil
 
     private var rules: NativeConversationRules {
         conversationID.map { store.conversationRules(for: $0) } ?? store.selectedConversationRules
@@ -139,7 +140,12 @@ struct ConversationRulesEditor: View {
     }
 
     private func binding(for action: NativeActionClass) -> Binding<NativeRuleChoice> {
-        Binding(
+        if let draft {
+            return Binding(
+                get: { NativeRuleChoice.stricter(store.nativeRules.choice(for: action), draft.wrappedValue[action] ?? .act) },
+                set: { draft.wrappedValue[action] = $0 })
+        }
+        return Binding(
             get: { NativeRuleChoice.stricter(store.nativeRules.choice(for: action), rules.choices[action] ?? .act) },
             set: { store.tightenConversationRule($0, for: action, conversationID: conversationID) })
     }

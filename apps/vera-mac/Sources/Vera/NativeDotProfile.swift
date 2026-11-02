@@ -37,8 +37,16 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         goal = Self.clean((try? container.decodeIfPresent(String.self, forKey: .goal)) ?? "")
-        connectedToolIDs = (try? container.decodeIfPresent([String].self, forKey: .connectedToolIDs)).flatMap { $0.map(Set.init) }
-        state = ((try? container.decodeIfPresent(String.self, forKey: .state)) ?? nil).flatMap(NativeDotState.init(rawValue:)) ?? .active
+        if !container.contains(.connectedToolIDs) || ((try? container.decodeNil(forKey: .connectedToolIDs)) ?? false) {
+            connectedToolIDs = nil
+        } else {
+            connectedToolIDs = (try? container.decode([String].self, forKey: .connectedToolIDs)).map(Set.init) ?? []
+        }
+        if container.contains(.state) {
+            state = ((try? container.decodeIfPresent(String.self, forKey: .state)) ?? nil).flatMap(NativeDotState.init(rawValue:)) ?? .paused
+        } else {
+            state = .active
+        }
         setupCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .setupCompleted)) ?? false
         updatedAt = ((try? container.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil).map(Date.init(timeIntervalSince1970:)) ?? Date()
     }
@@ -114,6 +122,7 @@ struct NativeDotRemovalSummary: Equatable, Sendable {
     var schedules = 0
     var artifacts = 0
     var hasGoal = false
+    var services = false
 
     private static func count(_ value: Int, _ one: String, _ many: String) -> String {
         "\(value) \(value == 1 ? one : many)"
@@ -126,6 +135,7 @@ struct NativeDotRemovalSummary: Equatable, Sendable {
         if proposals > 0 { parts.append(Self.count(proposals, "suggested memory", "suggested memories")) }
         if schedules > 0 { parts.append(Self.count(schedules, "schedule", "schedules")) }
         if hasGoal { parts.append("the goal") }
+        if services { parts.append("the service choices") }
         var text: String
         switch parts.count {
         case 0: text = "This starts a fresh conversation."
@@ -152,6 +162,36 @@ enum NativeDotContext {
         case .ask: return "ask the user before acting"
         case .handOff: return "hand off to the user"
         }
+    }
+
+    static func headerNoun(_ action: NativeActionClass) -> String {
+        switch action {
+        case .fileEdits: return "file edits"
+        case .commands: return "commands"
+        case .trash: return "Trash"
+        case .networkSends: return "sending"
+        case .sensitive: return "sensitive actions"
+        }
+    }
+
+    static func list(_ items: [String]) -> String {
+        guard items.count > 1 else { return items.first ?? "" }
+        return items.dropLast().joined(separator: ", ") + " and " + items[items.count - 1]
+    }
+
+    static func headerSummary(resolver: NativeRuleResolver) -> String {
+        let actions = NativeActionClass.allCases.filter { !$0.isFixed }
+        func nouns(_ choice: NativeRuleChoice) -> [String] {
+            actions.filter { resolver.choice(for: $0) == choice }.map(headerNoun)
+        }
+        var sentences: [String] = []
+        let asks = nouns(.ask)
+        if !asks.isEmpty { sentences.append("Asks first for \(list(asks)).") }
+        let preapproved = nouns(.actIfPreapproved)
+        if !preapproved.isEmpty { sentences.append("Needs your go-ahead in the request for \(list(preapproved)).") }
+        let handed = nouns(.handOff)
+        if !handed.isEmpty { sentences.append("Hands off \(list(handed)).") }
+        return sentences.isEmpty ? "Acts without asking" : sentences.joined(separator: " ")
     }
 
     static func render(name: String, goal: String, resolver: NativeRuleResolver) -> String {

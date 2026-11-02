@@ -214,9 +214,10 @@ enum NativeRequestPreapproval {
         "just do it", "don't check with me", "do not check with me", "no confirmation needed", "skip the confirmation",
     ]
 
-    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after"]
+    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
+                            "if ", "when ", "once ", "after ", "later", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
-    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»"]
+    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">"]
 
     static func grants(_ text: String) -> Bool {
         let lowered = text.lowercased()
@@ -234,6 +235,11 @@ enum NativeCommandClassifier {
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
     static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
     static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "npm", "pnpm", "yarn", "cargo", "pip", "twine", "gem", "docker", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let wrappers: Set<String> = ["eval", "xargs", "source", "."]
+    static let interpreters: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "perl", "ruby", "node", "swift", "php", "lua"]
+    static let findEffects: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]
+    static let destructiveGit: Set<String> = ["clean", "reset", "rm", "restore", "checkout", "switch", "stash", "worktree", "branch", "filter-branch", "gc", "prune", "reflog"]
+    static let unsafeCharacters: Set<Character> = ["\"", "'", "`", "$", "\\"]
     static let sensitiveFragments = ["/.ssh", "/.aws", "/.gnupg", "/.config/gh", "/library/keychains", "/etc/", "/private/etc/", "/system/", "/usr/", "/bin/", "/sbin/", "/var/", "/library/", "/applications/", "/.vera", "/.tandem", ".pem", ".p12", "keychain", "id_rsa", "id_ed25519"]
 
     static func segments(of command: String) -> [[String]] {
@@ -252,21 +258,55 @@ enum NativeCommandClassifier {
             while let next = tokens.first, next.hasPrefix("-") || next.contains("=") { tokens = tokens.dropFirst() }
         }
         guard let first = tokens.first else { return ("", []) }
-        let unquoted = first.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
-        if unquoted.contains(where: { "\\$`".contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+        let unquoted = stripOuterQuotes(first)
+        if unquoted.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
         let name = unquoted.split(separator: "/").last.map(String.init) ?? unquoted
         return (name, Array(tokens.dropFirst()))
+    }
+
+    static func stripOuterQuotes(_ token: String) -> String {
+        guard token.count >= 2, let first = token.first, let last = token.last, first == last, first == "\"" || first == "'" else { return token }
+        return String(token.dropFirst().dropLast())
+    }
+
+    static func hasInlineCode(_ name: String, _ arguments: [String]) -> Bool {
+        if wrappers.contains(name) { return true }
+        if interpreters.contains(name) && arguments.contains(where: { $0 == "-c" || $0 == "-e" || $0 == "--eval" || $0.hasPrefix("-c") && $0.count > 2 || $0.hasPrefix("-e") && $0.count > 2 }) { return true }
+        return false
     }
 
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
         var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
         if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
+        let subshells = command.contains { "(){}".contains($0) }
         var network = false
         for segment in segments(of: command) {
-            let (name, arguments) = executable(segment)
+            var (name, arguments) = executable(segment)
             if name == "?" { return .sensitive }
             if privileged.contains(name) { return .sensitive }
+            if hasInlineCode(name, arguments) { return .sensitive }
+            var segmentWorking = working
+            if name == "git" {
+                var index = 0
+                while index < arguments.count {
+                    let token = arguments[index]
+                    if token == "-C", index + 1 < arguments.count {
+                        let target = arguments[index + 1]
+                        if pathLeavesGrants(target, grants: grants, working: segmentWorking) { return .sensitive }
+                        segmentWorking = resolved(target, working: segmentWorking)
+                        index += 2
+                        continue
+                    }
+                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .sensitive }
+                    if !token.hasPrefix("-") {
+                        if destructiveGit.contains(token) { name = "rm"; arguments = Array(arguments[(index + 1)...]) }
+                        break
+                    }
+                    index += 1
+                }
+            }
+            if name == "find" && arguments.contains(where: { findEffects.contains($0) }) { name = "rm" }
             if ["cd", "pushd", "popd", "chdir"].contains(name) {
                 if name == "popd" { working = nil; continue }
                 guard let target = arguments.first(where: { !$0.hasPrefix("-") }) else { working = nil; continue }
@@ -274,8 +314,8 @@ enum NativeCommandClassifier {
                 continue
             }
             if destructive.contains(name) {
-                guard let working else { return .sensitive }
-                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: working) }) { return .sensitive }
+                guard let segmentWorking, !subshells else { return .sensitive }
+                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .sensitive }
             }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
             if name == "curl" && arguments.contains(where: { ["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-X", "--request"].contains($0) || $0.hasPrefix("--data") || $0.hasPrefix("-d") && $0.count > 2 || $0.hasPrefix("-F") && $0.count > 2 || $0.hasPrefix("-T") && $0.count > 2 || $0.hasPrefix("-X") && $0.count > 2 }) { network = true }
@@ -286,8 +326,9 @@ enum NativeCommandClassifier {
     }
 
     static func pathLeavesGrants(_ token: String, grants: [FolderGrant], working: String?) -> Bool {
-        var path = token.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        var path = stripOuterQuotes(token)
         if path.hasPrefix("-") { return false }
+        if path.contains(where: { unsafeCharacters.contains($0) }) { return true }
         if path.hasPrefix("~") || path.hasPrefix("$") { return true }
         if path.split(separator: "/").contains("..") { return true }
         if !path.hasPrefix("/") {
@@ -299,7 +340,7 @@ enum NativeCommandClassifier {
     }
 
     static func resolved(_ token: String, working: String?) -> String? {
-        var path = token.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        var path = stripOuterQuotes(token)
         if !path.hasPrefix("/") {
             guard let working else { return nil }
             path = working + "/" + path

@@ -54,6 +54,9 @@ extension SelfTest {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
         try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
+        for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?"] {
+            try require(!NativeRequestPreapproval.grants(wording), "Explanatory, conditional or quoted text never grants: \(wording)")
+        }
 
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
         let classify: (String) -> NativeActionClass = { NativeCommandClassifier.classify($0, grants: sample) }
@@ -61,6 +64,16 @@ extension SelfTest {
         try require(classify("rm -rf ../Other") == .sensitive && classify("rm -rf build/../../Other") == .sensitive && classify("mv notes.txt /Volumes/Elsewhere/") == .sensitive, "Relative paths that leave the grant are sensitive")
         try require(classify("printf ready & git push origin main") == .networkSends && classify("make & scp out host:") == .networkSends, "A single ampersand still separates commands")
         try require(classify("cd /Volumes/Other && rm -rf documents") == .sensitive && classify("cd sub && rm -rf old") == .commands && classify("popd && rm x") == .sensitive && classify("cd .. && rm x") == .sensitive, "Directory changes are tracked before destructive commands")
+        try require(classify("r\"\"m /Volumes/Other/doc.txt") == .sensitive && classify("g''it push origin main") == .sensitive && classify("rm -rf \"/Volumes/Other\"/x") == .sensitive
+                    && classify("rm -rf \"build\"") == .commands && classify("rm -rf $HOME/x") == .sensitive, "Quotes or variables inside a word never slip past classification")
+        try require(classify("cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim") == .sensitive && classify("(cd sub && rm -rf old)") == .sensitive && classify("(make)") == .commands,
+                    "Subshells remove directory trust for destructive commands")
+        try require(classify("find /Volumes/Other -delete") == .sensitive && classify("find . -name '*.o' -delete") == .commands && classify("find /Volumes/Other -name x") == .commands && classify("find . -exec rm {} \\;") == .sensitive,
+                    "find with an effect is destructive")
+        try require(classify("git -C /Volumes/Other clean -fdx") == .sensitive && classify("git clean -fdx") == .commands && classify("git -C sub reset --hard") == .commands && classify("git --git-dir=/Volumes/Other/.git status") == .sensitive && classify("git status") == .commands,
+                    "git repository paths follow the grant")
+        try require(classify("eval 'rm /Volumes/Other/doc.txt'") == .sensitive && classify("xargs rm") == .sensitive && classify("bash -c 'make'") == .sensitive && classify("python3 -c 'import shutil'") == .sensitive && classify("python3 build.py") == .commands && classify("sh ./setup.sh") == .commands,
+                    "Inline code and shell wrappers are sensitive")
         try require(classify("\"git\" push origin main") == .networkSends && classify("'rm' /Volumes/Other/doc.txt") == .sensitive && classify("g\\it push") == .sensitive && classify("$SHELL -c x") == .sensitive, "Quoted or escaped executable names never slip past classification")
         try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
                     && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,

@@ -123,6 +123,7 @@ final class ChatStore: ObservableObject {
     var nativeScheduleStore: NativeScheduleStore?
     @Published var dotProfile = NativeDotProfile()
     @Published var dotProfileLoaded = false
+    var dotResetGeneration = 0
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
     var nativeSchedulerLoop: Task<Void, Never>?
@@ -1341,7 +1342,12 @@ final class ChatStore: ObservableObject {
               NativeMemoryExtractionPolicy.disposition(
                 user: user, assistant: assistant, conversationExcluded: conversationExcluded,
                 sensitiveHandling: live.sensitiveHandling) == .eligible else { return }
-        let allowed = { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats }
+        let generation = dotResetGeneration
+        let wasVeraThread = source.map { isVeraThread($0.conversationID) } ?? false
+        let allowed = {
+            self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats
+                && self.memorySourceIsLive(source, generation: generation, wasVeraThread: wasVeraThread)
+        }
         do {
             let extraction = try await memoryService.extraction(
                 user: user, assistant: assistant.text,
@@ -1947,10 +1953,11 @@ final class ChatStore: ObservableObject {
         conversation.updatedAt = Date()
         conversation.isPersisted = true
         let scopes = resolvePromptScopes(conversationID: id)
-        let baseToolIDs = turnToolIDs(for: text)
+        let mentions = mentionedToolIDs(in: text)
+        let baseToolIDs = NativeTurnToolAuthority(text, mentions: mentions).filter(turnConsentedToolIDs(conversationID: id, mentions: mentions))
         var turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
-            profile: turnProfile(for: user.routeNote), enabledToolIDs: isVeraThread(id) ? dotToolIDs(base: baseToolIDs) : baseToolIDs,
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: baseToolIDs,
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
@@ -2043,8 +2050,7 @@ final class ChatStore: ObservableObject {
     func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         let mentions = mentionedToolIDs(in: text)
-        let consented = nativeEnabledToolIDs.union(mentions)
-        return (NativeTurnToolAuthority(text, mentions: mentions), isVeraThread(turn.conversationID) ? dotToolIDs(base: consented) : consented)
+        return (NativeTurnToolAuthority(text, mentions: mentions), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
     }
 
     var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
@@ -2311,7 +2317,7 @@ final class ChatStore: ObservableObject {
                     contracts: contracts,
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
-                    assistantProfile: turn.dotContext))
+                    assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + (grantNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
