@@ -16,6 +16,9 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var completeHold: TimeInterval = 0
     var completeFailGate: DispatchSemaphore?
     let completeLanded = NativeTurnCurrencyFlag()
+    var checkpointFailGate: DispatchSemaphore?
+    var checkpointHold: TimeInterval = 0
+    let checkpointLanded = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
     func messages(conversationID: String) throws -> [Message] {
@@ -65,8 +68,20 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     }
     func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws { try base.markTurnDispatch(id, attempt: attempt, activity: activity) }
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws {
+        let gate = lock.withLock { () -> DispatchSemaphore? in
+            let taken = checkpointFailGate
+            checkpointFailGate = nil
+            return taken
+        }
+        if let gate {
+            gate.wait()
+            throw NativeToolError.failed("synthetic stale checkpoint failure")
+        }
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic checkpoint failure") }
         try base.checkpointTurn(turn, message: message, ordinal: ordinal)
+        checkpointLanded.raise()
+        let hold = lock.withLock { checkpointHold }
+        if hold > 0 { Thread.sleep(forTimeInterval: hold) }
     }
     func finishTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic final state failure") }

@@ -94,8 +94,9 @@ extension ChatStore {
     }
 
     private func flushTurnCheckpoints(_ turn: NativeConversationTurn) async {
-        defer { turnExecutions[turn.id]?.checkpoint = nil }
-        while turnOwned(turn), let execution = turnExecutions[turn.id], let pending = execution.pendingCheckpoint,
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { return }
+        defer { execution.checkpoint = nil }
+        while turnOwned(turn), turnExecutions[turn.id] === execution, let pending = execution.pendingCheckpoint,
               let turnRepository {
             execution.pendingCheckpoint = nil
             let outcome = await Task.detached(priority: .utility) { () -> NativeTurnCheckpointOutcome in
@@ -103,16 +104,16 @@ extension ChatStore {
                 catch is CancellationError { return .superseded }
                 catch { return .failed }
             }.value
-            guard turnOwned(turn), let live = turnExecutions[turn.id] else { return }
+            guard turnOwned(turn), turnExecutions[turn.id] === execution else { return }
             switch outcome {
             case .saved:
-                live.checkpointFailingSince = nil
+                execution.checkpointFailingSince = nil
             case .failed:
-                if live.checkpointFailingSince == nil { live.checkpointFailingSince = Date() }
-                if live.pendingCheckpoint == nil { live.pendingCheckpoint = pending }
+                if execution.checkpointFailingSince == nil { execution.checkpointFailingSince = Date() }
+                if execution.pendingCheckpoint == nil { execution.pendingCheckpoint = pending }
                 return
             case .superseded:
-                live.pendingCheckpoint = nil
+                execution.pendingCheckpoint = nil
                 return
             }
         }

@@ -53,6 +53,7 @@ enum NativeTurnCurrencyFixture {
         try await completionRelocation()
         try await completionReconciliation()
         try await completionReplacement()
+        try await checkpointReplacement()
         print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization, dispatch and claim writes off main with their gates re-checked afterwards)")
     }
 
@@ -376,6 +377,44 @@ enum NativeTurnCurrencyFixture {
         }
         try await NativeSessionFixture.eventually("The replacement execution is released") { store.turnExecutions.isEmpty }
         try require(try base.conversationTurns().first?.state == .complete, "The replacement turn is saved complete")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func checkpointReplacement() async throws {
+        let require = NativeTaskFixture.require
+        let base = try LocalChatRepository(inMemory: true)
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.failReadsAfterAcceptance = false
+        let staleFailure = DispatchSemaphore(value: 0)
+        repository.checkpointFailGate = staleFailure
+        repository.checkpointHold = 0.4
+        let transport = NativeSteppedTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.newConversation()
+        store.sendText("replace the attempt while its checkpoint is stale")
+        guard let conversationID = store.selectedID else { throw NativeTaskFixture.Failure.assertion("The sent message has a conversation") }
+        try await NativeSessionFixture.eventually("The first attempt's checkpoint is in flight") {
+            store.turnExecutions.values.contains { $0.checkpoint != nil }
+        }
+        guard let messageID = store.selected?.messages.last?.id else { throw NativeTaskFixture.Failure.assertion("The answer exists") }
+        store.stopAnswer(messageID)
+        store.retryAnswer(messageID)
+        try await NativeSessionFixture.eventually("The replacement attempt's checkpoint commits and holds") { repository.checkpointLanded.value }
+        guard let replacement = store.turnExecutions.values.first, let handle = replacement.checkpoint else {
+            throw NativeTaskFixture.Failure.assertion("The replacement attempt owns an active checkpoint")
+        }
+        staleFailure.signal()
+        try await Task.sleep(for: .milliseconds(80))
+        try require(store.turnExecutions.values.first === replacement && replacement.checkpoint == handle,
+                    "A stale attempt's late checkpoint return leaves the replacement's checkpoint handle alone")
+        await transport.first.release()
+        await transport.second.release()
+        try await NativeSessionFixture.eventually("The replacement completes after its checkpoint") {
+            store.conversations.first(where: { $0.id == conversationID })?.messages.last?.state == .complete && store.turnExecutions.isEmpty
+        }
+        try require(try base.messages(conversationID: conversationID).last?.text == "Part one. Part two. Part three.",
+                    "The replacement's full answer is saved in order")
         store.conversationTurnLoop?.cancel()
     }
 
