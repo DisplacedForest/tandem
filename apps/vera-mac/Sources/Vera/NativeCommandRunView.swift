@@ -126,8 +126,12 @@ struct ConversationRulesButton: View {
 
 struct ConversationRulesEditor: View {
     @EnvironmentObject private var store: ChatStore
+    var conversationID: String? = nil
+    var embedded = false
 
-    private var rules: NativeConversationRules { store.selectedConversationRules }
+    private var rules: NativeConversationRules {
+        conversationID.map { store.conversationRules(for: $0) } ?? store.selectedConversationRules
+    }
 
     private func choices(for action: NativeActionClass) -> [NativeRuleChoice] {
         let base = store.nativeRules.choice(for: action)
@@ -137,14 +141,24 @@ struct ConversationRulesEditor: View {
     private func binding(for action: NativeActionClass) -> Binding<NativeRuleChoice> {
         Binding(
             get: { NativeRuleChoice.stricter(store.nativeRules.choice(for: action), rules.choices[action] ?? .act) },
-            set: { store.tightenConversationRule($0, for: action) })
+            set: { store.tightenConversationRule($0, for: action, conversationID: conversationID) })
     }
 
     var body: some View {
+        if embedded {
+            content
+        } else {
+            content.padding(14).frame(width: 360)
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-            Text("A chat can only ask more than your defaults in Settings, Rules, never less.")
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            if !embedded {
+                Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
+                Text("A chat can only ask more than your defaults in Settings, Rules, never less.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
             ForEach(NativeActionClass.allCases.filter { !$0.isFixed }, id: \.self) { action in
                 Picker(action.title, selection: binding(for: action)) {
                     ForEach(choices(for: action), id: \.self) { choice in
@@ -152,6 +166,13 @@ struct ConversationRulesEditor: View {
                     }
                 }
                 .font(.system(size: 12))
+            }
+            if embedded {
+                HStack {
+                    Text(NativeActionClass.sensitive.title).font(.system(size: 12))
+                    Spacer()
+                    Text("Always handed to you").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
             }
             if !rules.approvedCommandPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
@@ -161,7 +182,7 @@ struct ConversationRulesEditor: View {
                         Text(prefix).font(.system(size: 11, design: .monospaced))
                         Spacer(minLength: 8)
                         Button {
-                            store.revokeCommandPrefix(prefix)
+                            store.revokeCommandPrefix(prefix, conversationID: conversationID)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                         }
@@ -171,7 +192,5 @@ struct ConversationRulesEditor: View {
                 }
             }
         }
-        .padding(14)
-        .frame(width: 360)
     }
 }

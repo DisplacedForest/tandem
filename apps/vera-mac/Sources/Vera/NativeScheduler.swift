@@ -3,6 +3,7 @@ import Foundation
 enum NativeScheduleFireResult: Sendable, Equatable {
     case started(taskReferenceID: String)
     case failed(String)
+    case skipped(String)
 }
 
 enum NativeScheduleTaskStatus: Sendable, Equatable {
@@ -154,6 +155,10 @@ actor NativeScheduler {
             saved.taskReferenceID = taskReferenceID
         case .failed(let reason):
             saved.outcome = .couldNotStart
+            saved.detail = reason
+            saved.finishedAt = now()
+        case .skipped(let reason):
+            saved.outcome = .skipped
             saved.detail = reason
             saved.finishedAt = now()
         }

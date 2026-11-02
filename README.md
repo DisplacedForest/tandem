@@ -92,6 +92,10 @@ The app has a compact icon rail beside a contextual sidebar. The rail lists Vera
 
 Each answer has its own Stop control and tool approvals. Stopping an answer does not cancel a separate research task; use the task card's Stop research control for that. Accepted messages are saved before the composer clears. After a restart, unsent messages can resume with their original settings, while interrupted requests stay available for explicit review or retry. An uncertain action is never automatically replayed. Ephemeral keyed configurations without a stable saved profile require a new message after restart.
 
+### The dot
+
+The persistent **Vera** conversation is one named assistant working on a standing goal. Its profile holds the name, a standing goal, the connected services it can reach and rules that can only be stricter than the defaults in Settings, Rules. The first time you open the Vera thread a short setup asks for these, and you can skip it. A header above the conversation shows the name and goal, with Pause and a settings button. Pause holds the schedules that deliver to the Vera thread. Their runs are recorded as skipped and nothing catches up after you resume, while chat keeps working. The goal and rules are added only to requests in the Vera thread, never to focused chats or background workers. A service turned off for the Vera thread stays off there even when it is on in Settings. Start over, in the same settings, removes the conversation, the memories and pending suggestions that came from it, its schedules and the goal, then opens a fresh thread with setup again. Memories from other chats and everything in Artifacts stay.
+
 ### Durable background task storage
 
 In the persistent **Vera** conversation, task cards stay with the message that started them. Updates arrive from the task event stream, and reopening the app refreshes saved work before resuming that stream. Stop and decision replies go to the task engine. Completed file outputs open only from the configured task workspace; task details and output links are excluded from spoken replies.

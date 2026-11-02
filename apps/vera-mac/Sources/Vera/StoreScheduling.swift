@@ -196,6 +196,7 @@ extension ChatStore {
     }
 
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
         }

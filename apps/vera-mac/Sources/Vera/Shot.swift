@@ -330,6 +330,24 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "vera-setup" || view == "vera-settings" {
+            NativeDotShotFixture.populate(store, paused: false, setupCompleted: view == "vera-settings")
+            content = AnyView(
+                ShotView(store: store, chrome: .dotSheet(settings: view == "vera-settings"))
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "vera-header" {
+            NativeDotShotFixture.populate(store, paused: true, setupCompleted: true)
+            content = AnyView(
+                ShotView(store: store, section: .vera, dotHeader: true)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "veins" || view == "vein-browse" || view == "vein-import"
                     || view == "settings-plugins" {
             let chrome: ShotView.ShotChrome = view == "veins" ? .veinsSheet
