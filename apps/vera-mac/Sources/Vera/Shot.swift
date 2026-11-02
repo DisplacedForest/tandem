@@ -21,7 +21,8 @@ enum Shot {
         let artifactSeed = view.hasPrefix("artifacts") ? ArtifactShotFixture.store(variant: view) : nil
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
         let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
-        let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? ChatStore()
+        let workSeed = view == "conversation-work" || view == "conversation-narrow" ? OngoingWorkFixture.store() : nil
+        let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -37,8 +38,12 @@ enum Shot {
             size = CGSize(width: 640, height: 560)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 520)
+        } else if view == "companion-thread" {
+            size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" {
             size = CompanionPanelController.size
+        } else if view == "conversation-narrow" {
+            size = CGSize(width: 1000, height: 760)
         } else {
             size = CGSize(width: 1180, height: 760)
         }
@@ -393,6 +398,25 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-thread" || view == "companion-thread-empty" {
+            let populated = view == "companion-thread"
+            NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
+            if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
+                store.conversations[index].messages = []
+            }
+            let model = populated ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
+                : CompanionOverviewModel.build(name: NativeDotShotFixture.name, profile: store.dotProfile, services: "Can reach every service that is turned on.",
+                                               rules: store.dotHeaderRules, activity: [], results: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: true, companionPanel: model,
+                         companionSelection: populated ? CompanionOverviewFixture.visitID.uuidString : nil, height: size.height)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .environmentObject(config)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "vera-header" {
             NativeDotShotFixture.populate(store, paused: true, setupCompleted: true)
             content = AnyView(
@@ -419,7 +443,8 @@ enum Shot {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
             case "vera": section = .vera
-            case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
+            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
+                 "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled", "scheduled-paused": section = .scheduled
@@ -440,7 +465,12 @@ enum Shot {
                          mentions: view == "chats-mentions",
                          artifactSelection: artifactSeed?.selection,
                          projectSelection: projectSeed?.selection,
-                         integrationsSeed: integrationsSeed)
+                         integrationsSeed: integrationsSeed,
+                         workColumn: view == "conversation-work",
+                         workCollapsed: view == "conversation-narrow",
+                         voiceAvailability: ComposerVoiceAvailability(dictation: true, voiceChat: true),
+                         dictating: view == "chats-dictating",
+                         width: size.width)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .environmentObject(integrationsSeed?.config ?? ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in }))
