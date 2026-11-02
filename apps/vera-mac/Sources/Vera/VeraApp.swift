@@ -156,6 +156,10 @@ struct MenuBarStatusMenu: View {
         if running > 0 {
             Text(running == 1 ? "1 scheduled run in progress" : "\(running) scheduled runs in progress")
         }
+        let waiting = store.waitingScheduledWorkCount
+        if waiting > 0 {
+            Text(waiting == 1 ? "1 scheduled run is waiting for you" : "\(waiting) scheduled runs are waiting for you")
+        }
         Divider()
         Button("Open Tandem") {
             openWindow(id: "main")

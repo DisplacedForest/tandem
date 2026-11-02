@@ -266,6 +266,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(sql: "ALTER TABLE conversations ADD COLUMN rules_json TEXT")
         }
         migrator.registerMigration("artifactsV24") { db in try Self.migrateArtifacts(db) }
+        migrator.registerMigration("nativeScheduleCheckInsV25") { db in try NativeScheduleStore.migrateCheckIns(db) }
         try migrator.migrate(database)
     }
 
