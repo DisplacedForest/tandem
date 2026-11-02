@@ -60,19 +60,19 @@ struct ShotView: View {
                 case .vera, .chat:
                     if emptyChat {
                         emptyChatShot
-                    } else if dotHeader {
-                        VStack(spacing: 0) {
-                            DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused)
-                            chat
-                        }
-                    } else if workColumn {
-                        HStack(spacing: 0) {
-                            chat
-                            OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
-                                .frame(width: OngoingWorkMetrics.panelWidth)
-                        }
                     } else {
-                        chat
+                        HStack(spacing: 0) {
+                            VStack(spacing: 0) {
+                                if dotHeader {
+                                    DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused)
+                                }
+                                chat
+                            }
+                            if workColumn {
+                                OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
+                                    .frame(width: OngoingWorkMetrics.panelWidth)
+                            }
+                        }
                     }
                 }
             }
@@ -623,7 +623,9 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            ConversationHeader(name: store.assistantName, status: shotStatusLine)
+            if !dotHeader {
+                ConversationHeader(name: store.assistantName, status: shotStatusLine)
+            }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
