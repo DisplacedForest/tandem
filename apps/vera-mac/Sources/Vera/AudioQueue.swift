@@ -16,6 +16,8 @@ final class AudioQueue: @unchecked Sendable {
 
     /// Fired (on the main queue) when the queue empties after `markTurnComplete()`.
     var onDrained: (@Sendable () -> Void)?
+    var onPlayback: (@Sendable (Int, Bool) -> Void)?
+    private var playbackSequence = 0
 
     init(engine: AVAudioEngine) {
         self.engine = engine
@@ -29,7 +31,10 @@ final class AudioQueue: @unchecked Sendable {
     /// Decode a WAV blob and schedule it after any already-queued audio.
     func enqueue(wav: Data) {
         guard let buffer = Self.decode(wav) else { return }
-        lock.lock(); outstanding += 1; turnComplete = false; lock.unlock()
+        lock.lock()
+        outstanding += 1; turnComplete = false
+        if outstanding == 1 { firePlayback(true) }
+        lock.unlock()
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             self?.bufferFinished()
         }
@@ -47,15 +52,27 @@ final class AudioQueue: @unchecked Sendable {
     /// Stop and flush everything (session teardown; future barge-in).
     func stop() {
         player.stop()
-        lock.lock(); outstanding = 0; turnComplete = false; lock.unlock()
+        lock.lock()
+        if outstanding > 0 { firePlayback(false) }
+        outstanding = 0; turnComplete = false
+        lock.unlock()
     }
 
     private func bufferFinished() {
-        let drained: Bool = { lock.lock(); defer { lock.unlock() }
-            outstanding = max(0, outstanding - 1)
-            return outstanding == 0 && turnComplete
-        }()
+        lock.lock()
+        let before = outstanding
+        outstanding = max(0, outstanding - 1)
+        if before > 0 && outstanding == 0 { firePlayback(false) }
+        let drained = outstanding == 0 && turnComplete
+        lock.unlock()
         if drained { fireDrained() }
+    }
+
+    private func firePlayback(_ playing: Bool) {
+        playbackSequence += 1
+        let sequence = playbackSequence
+        let cb = onPlayback
+        DispatchQueue.main.async { cb?(sequence, playing) }
     }
 
     private func fireDrained() {
