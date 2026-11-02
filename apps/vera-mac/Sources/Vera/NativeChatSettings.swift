@@ -317,7 +317,7 @@ enum ModelDiscoveryState: Equatable {
                 return status == 401 || status == 403 ? .authenticationFailed : .failed(client.localizedDescription)
             case .invalidResponse, .malformedEvent: return .malformed
             case .noUsableModels: return .noUsableModels
-            case .server, .interrupted: return .failed(client.localizedDescription)
+            case .server, .provider, .interrupted: return .failed(client.localizedDescription)
             }
         }
         if error is URLError { return .networkFailed }

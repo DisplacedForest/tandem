@@ -494,7 +494,7 @@ enum ModelParameterRejectionClassifier {
         case .http(let status, let detail):
             guard (400..<500).contains(status) else { return nil }
             return classify(detail: detail, options: options)
-        case .server(let detail):
+        case .server(let detail), .provider(let detail, _):
             return classify(detail: detail, options: options)
         case .invalidResponse, .malformedEvent, .noUsableModels, .interrupted:
             return nil
