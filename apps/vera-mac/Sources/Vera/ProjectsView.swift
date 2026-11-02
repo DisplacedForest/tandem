@@ -45,6 +45,9 @@ struct ProjectsView: View {
 
     private var listColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if selected == nil, let error = store.projectError {
+                ProjectErrorLine(text: error) { store.clearProjectError() }
+            }
             if creating && !renderSafe {
                 nameField
             } else {
@@ -124,7 +127,13 @@ struct ProjectsView: View {
         if store.projects.isEmpty {
             DestinationPlaceholder(section: .projects)
         } else if let selected {
-            ProjectDetail(project: selected) { selectedID = nil }.id(selected.id)
+            VStack(spacing: 0) {
+                if let error = store.projectError {
+                    ProjectErrorLine(text: error) { store.clearProjectError() }
+                        .padding(.horizontal, 24).padding(.top, 16)
+                }
+                ProjectDetail(project: selected) { selectedID = nil }.id(selected.id)
+            }
         } else {
             Text("Select a project").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -365,6 +374,32 @@ private struct ProjectDetail: View {
         panel.prompt = "Add"
         guard panel.runModal() == .OK else { return }
         for url in panel.urls { store.addProjectFile(project.id, url: url) }
+    }
+}
+
+private struct ProjectErrorLine: View {
+    @Environment(\.renderSafe) private var renderSafe
+    let text: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(Theme.accent)
+            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if renderSafe {
+                Text("Dismiss").font(.system(size: 12)).foregroundStyle(Theme.accent)
+            } else {
+                Button("Dismiss", action: onDismiss)
+                    .buttonStyle(.borderless).font(.system(size: 12))
+                    .accessibilityLabel("Dismiss")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+        .accessibilityElement(children: .contain)
     }
 }
 

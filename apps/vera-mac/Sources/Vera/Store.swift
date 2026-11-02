@@ -23,6 +23,7 @@ final class ChatStore: ObservableObject {
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memoryRecords: [NativeMemoryRecord] = []
+    @Published var projectError: String?
     @Published var memoryLibraryRevision = 0
     var nativeMemoryNow: () -> Date = { Date() }
     private var reloadingNativeMemory = false
@@ -856,7 +857,8 @@ final class ChatStore: ObservableObject {
             guard queuedTurnStillAllowed(turn) else { continue }
             await learnFromCompletedTurn(
                 user: turn.user, assistant: turn.assistant, source: turn.source,
-                turnKey: turn.turnKey, conversationExcluded: turn.conversationExcluded, projectID: turn.projectID)
+                turnKey: turn.turnKey, conversationExcluded: turn.conversationExcluded,
+                projectID: turn.projectID, resolveProject: false)
             if queuedMemoryTurns.contains(where: { $0.turnKey == turn.turnKey }) {
                 for rest in pending[(offset + 1)...] { enqueueMemoryTurn(rest) }
                 return
@@ -973,7 +975,8 @@ final class ChatStore: ObservableObject {
                                 messageID: messages[index].id.uuidString, date: messages[index].createdAt),
                             sourceText: messages[index].text,
                             turnKey: conversation.id + "|" + messages[index].id.uuidString,
-                            flagged: flagged, allowed: { self.pastChatScanAllowed })
+                            flagged: flagged, projectID: conversation.projectID.flatMap { project($0)?.id },
+                            allowed: { self.pastChatScanAllowed })
                         reviewedTurns += 1
                         reviewedBytes += turnBytes
                     }
@@ -1334,7 +1337,7 @@ final class ChatStore: ObservableObject {
 
     func learnFromCompletedTurn(
         user: String, assistant: Message, source: NativeMemoryTurnSource?, turnKey: String, conversationExcluded: Bool,
-        projectID: String? = nil
+        projectID: String? = nil, resolveProject: Bool = true
     ) async {
         let live = nativeMemorySettings
         guard live.enabled, live.generateFromChats,
@@ -1344,7 +1347,7 @@ final class ChatStore: ObservableObject {
                 user: user, assistant: assistant, conversationExcluded: conversationExcluded,
                 sensitiveHandling: live.sensitiveHandling) == .eligible else { return }
         let allowed = { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats }
-        let projectID = projectID ?? source.flatMap { projectForConversation($0.conversationID)?.id }
+        let projectID = resolveProject ? projectID ?? source.flatMap { projectForConversation($0.conversationID)?.id } : projectID
         do {
             let extraction = try await memoryService.extraction(
                 user: user, assistant: assistant.text,
@@ -1356,7 +1359,7 @@ final class ChatStore: ObservableObject {
                 extraction.proposals, service: memoryService, repository: memoryRepository,
                 flagged: flagged, sourceText: source == nil ? nil : user, allowed: allowed)
             stageDomainCandidates(extraction, source: source, sourceText: user, turnKey: turnKey,
-                                  flagged: flagged, allowed: allowed)
+                                  flagged: flagged, projectID: projectID, allowed: allowed)
             reloadNativeMemory()
         } catch let error as NativeMemoryServiceError where error.isEndpointOutage {
             memoryEndpointStatus = .unreachable(error.localizedDescription)
@@ -1370,7 +1373,7 @@ final class ChatStore: ObservableObject {
 
     private func stageDomainCandidates(
         _ extraction: NativeMemoryExtraction, source: NativeMemoryTurnSource?, sourceText: String,
-        turnKey: String, flagged: Bool, allowed: () -> Bool
+        turnKey: String, flagged: Bool, projectID: String? = nil, allowed: () -> Bool
     ) {
         guard let local = repository as? LocalChatRepository, !flagged else { return }
         func skip(_ reason: String, _ index: Int) {
@@ -1389,7 +1392,7 @@ final class ChatStore: ObservableObject {
             do {
                 _ = try local.stageExtractedDomainEntry(
                     candidate, conversationID: source.conversationID, messageID: source.messageID,
-                    sourceText: sourceText, fallbackDate: source.date)
+                    sourceText: sourceText, fallbackDate: source.date, projectID: projectID)
             } catch let error as NativeDomainExtractionSkip {
                 skip(error.reason, index)
             } catch {
@@ -1443,7 +1446,9 @@ final class ChatStore: ObservableObject {
     func newConversation() {
         stashDraft()
         section = .chat
-        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty && !isVeraThread($0.id) }) {
+        if let existing = conversations.first(where: {
+            $0.title == "New chat" && $0.messages.isEmpty && $0.projectID == nil && !isVeraThread($0.id)
+        }) {
             selectedID = existing.id
             draft = drafts[existing.id] ?? ""
         } else {

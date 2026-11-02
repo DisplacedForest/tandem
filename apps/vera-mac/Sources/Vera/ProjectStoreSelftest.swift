@@ -20,6 +20,7 @@ enum ProjectStoreSelftest {
         let repository = try LocalChatRepository(inMemory: true, artifactDirectory: artifacts, projectsDirectory: projects)
         try checkStore(repository, base: base, projects: projects)
         try checkReadOnlyFolderTools(base: base)
+        try checkNestedGrants(base: base)
         try checkMemoryProjectTag()
     }
 
@@ -53,6 +54,9 @@ enum ProjectStoreSelftest {
         try check(folder == projects.appendingPathComponent("project-a/files", isDirectory: true), "Project files live under the projects directory")
         try check(file.name == "Planting Notes.MD" && file.fileName == "\(file.id).md" && file.byteSize == bytes.count, "The file entry records name, stored name and size")
         try check(try Data(contentsOf: folder.appendingPathComponent(file.fileName)) == bytes, "The bytes are copied into the project folder")
+        let permissions = try manager.attributesOfItem(atPath: folder.appendingPathComponent(file.fileName).path)[.posixPermissions] as? NSNumber
+        try check(permissions?.intValue == 0o444, "The copied file is read-only")
+        try check(!manager.isWritableFile(atPath: folder.appendingPathComponent(file.fileName).path), "The copied file can't be written")
         listed = try repository.listProjects()
         try check(listed[0].files == [file], "The project lists its file")
         do {
@@ -89,6 +93,7 @@ enum ProjectStoreSelftest {
         try check(Set(ungrouped) == ["conversation-a", "conversation-b"], "Deleting a project returns the conversations it ungrouped")
         try check(try repository.project("project-a") == nil && (try repository.listProjects()).isEmpty, "The project row is gone")
         try check(!manager.fileExists(atPath: projects.appendingPathComponent("project-a").path), "The project folder is removed")
+        try check(!manager.fileExists(atPath: folder.appendingPathComponent(second.fileName).path), "A read-only project file is removed with its project")
         let remaining = try repository.listConversations()
         try check(remaining.count == 3 && remaining.allSatisfy { $0.projectID == nil }, "Conversations survive with no project")
     }
@@ -139,6 +144,34 @@ enum ProjectStoreSelftest {
         let legacy = Data(#"[{"id":"legacy","path":"/Volumes/Archive/notes","name":"notes"}]"#.utf8)
         let decoded = try JSONDecoder().decode([FolderGrant].self, from: legacy)
         try check(decoded.count == 1 && !decoded[0].readOnly && decoded[0].path == "/Volumes/Archive/notes", "A grant saved before read-only decodes as writable")
+    }
+
+    static func checkNestedGrants(base: URL) throws {
+        let manager = FileManager.default
+        let outer = base.appendingPathComponent("home", isDirectory: true)
+        let inner = outer.appendingPathComponent("attachments", isDirectory: true)
+        try manager.createDirectory(at: inner, withIntermediateDirectories: true)
+        let writable = try FolderGrant.make(url: outer)
+        var readOnly = try FolderGrant.make(url: inner)
+        readOnly.readOnly = true
+        for (index, grants) in [[writable, readOnly], [readOnly, writable]].enumerated() {
+            let access = NativeFolderAccess(grants: grants)
+            let ledger = NativeFileChangeLedger()
+            let nested = try access.locate(readOnly.path + "/note-\(index).txt")
+            try check(nested.root.id == readOnly.id && nested.components == ["note-\(index).txt"], "The nested grant wins for a path inside it (order \(index))")
+            try check(try access.locate(readOnly.path).root.id == readOnly.id, "The nested folder itself resolves to its own grant (order \(index))")
+            do {
+                _ = try NativeFolderTools.write(nested, content: "blocked", ledger: ledger)
+                throw Failure(description: "Writing inside a nested read-only grant must be refused (order \(index))")
+            } catch let error as NativeFolderAccessError {
+                try check(error == .readOnly(nested.path), "The nested write reports read-only (order \(index))")
+            }
+            try check(!manager.fileExists(atPath: inner.appendingPathComponent("note-\(index).txt").path), "Nothing was written inside the read-only grant (order \(index))")
+            let beside = try access.locate(writable.path + "/beside-\(index).txt")
+            try check(beside.root.id == writable.id, "A path beside the nested grant resolves to the outer grant (order \(index))")
+            _ = try NativeFolderTools.write(beside, content: "allowed", ledger: ledger)
+            try check(try String(contentsOf: outer.appendingPathComponent("beside-\(index).txt"), encoding: .utf8) == "allowed", "Writing beside the nested grant succeeds (order \(index))")
+        }
     }
 
     static func checkMemoryProjectTag() throws {

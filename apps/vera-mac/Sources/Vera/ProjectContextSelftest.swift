@@ -3,10 +3,31 @@ import Foundation
 final class ProjectContextMemoryService: NativeMemoryServing, @unchecked Sendable {
     private let lock = NSLock()
     private var down = false
+    private var typed: [NativeDomainCandidate] = []
 
     var failing: Bool {
         get { lock.lock(); defer { lock.unlock() }; return down }
         set { lock.lock(); down = newValue; lock.unlock() }
+    }
+
+    var domainEntries: [NativeDomainCandidate] {
+        get { lock.lock(); defer { lock.unlock() }; return typed }
+        set { lock.lock(); typed = newValue; lock.unlock() }
+    }
+
+    func extraction(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> NativeMemoryExtraction {
+        let entries = domainEntries
+        if !entries.isEmpty {
+            if failing { throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached") }
+            return NativeMemoryExtraction(proposals: [], domainEntries: entries)
+        }
+        return NativeMemoryExtraction(proposals: try await proposals(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, existing: existing, now: now))
     }
 
     func embed(_ text: String) async throws -> [Double] { [1, 0] }
@@ -96,6 +117,8 @@ enum ProjectContextSelftest {
                   "Moving back restores the project folders")
 
         try await checkProposalTagging(store, service: service, chat: chat, projectID: project.id)
+        try await checkTypedTagging(store, service: service, repository: repository, projectID: project.id)
+        try await checkNewChatAndReplayScope(store, service: service, projectChat: chat, projectID: project.id)
 
         store.recordCanvasArtifacts([Artifact(id: "plan", title: "Bed plan", type: .markdown, language: "", content: "Bed two")],
                                     conversationID: chat, messageID: "plan-message")
@@ -109,7 +132,7 @@ enum ProjectContextSelftest {
 
         try checkPreferProject()
         try await checkProjectRecall(store, repository: repository)
-        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, queued replay, recall preference)")
+        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, typed tagging, queued replay, replay scope, new chat reuse, recall preference)")
     }
 
     @MainActor
@@ -137,6 +160,69 @@ enum ProjectContextSelftest {
         try check(!replayed.isEmpty && replayed.allSatisfy { $0.projectID == projectID }, "A replayed turn tags its proposals with the project")
         for pending in store.memoryProposals { store.dismissMemoryProposal(pending) }
         store.reloadNativeMemory()
+    }
+
+    @MainActor
+    static func checkTypedTagging(_ store: ChatStore, service: ProjectContextMemoryService, repository: LocalChatRepository,
+                                  projectID: String) async throws {
+        store.newConversation(inProject: projectID)
+        guard let chat = store.selectedID, let index = store.conversations.firstIndex(where: { $0.id == chat }) else {
+            throw Failure(description: "No typed fixture chat")
+        }
+        let text = "The greenhouse heater is set to twelve degrees"
+        let user = Message(role: .user, text: text)
+        store.conversations[index].isPersisted = true
+        try repository.saveConversation(store.conversations[index])
+        try repository.saveMessage(user, conversationID: chat, ordinal: 0)
+        try repository.saveMessage(Message(role: .assistant, text: "Noted."), conversationID: chat, ordinal: 1)
+        service.domainEntries = [NativeDomainCandidate(
+            subject: "Greenhouse heater", scope: "personal",
+            payload: .fact(predicate: "setting", value: "twelve degrees", quantity: nil),
+            occurredAt: nil, evidence: .asserted, supersedes: nil, span: "set to twelve degrees")]
+        defer { service.domainEntries = [] }
+        await store.learnFromCompletedTurn(
+            user: text, assistant: Message(role: .assistant, text: "Noted."),
+            source: NativeMemoryTurnSource(conversationID: chat, messageID: user.id.uuidString, date: Date()),
+            turnKey: chat + "|" + user.id.uuidString, conversationExcluded: false)
+        store.reloadNativeMemory()
+        guard let proposal = store.memoryProposals.first(where: { $0.domain?.label == "Greenhouse heater" }) else {
+            throw Failure(description: "No typed proposal was staged")
+        }
+        try check(proposal.projectID == projectID, "A typed proposal from a project chat carries the project")
+        try check(store.acceptMemoryProposal(proposal), "The typed proposal is accepted")
+        let projected = store.memoryRecords.first { $0.domainEntityID == proposal.domain?.entry.entityID }
+        try check(projected?.projectID == projectID, "The projected typed record carries the project, got \(String(describing: projected?.projectID))")
+        try repository.refreshDomainProjections()
+        let refreshed = try repository.approvedMemories().first { $0.domainEntityID == proposal.domain?.entry.entityID }
+        try check(refreshed?.projectID == projectID, "A projection refresh keeps the project")
+    }
+
+    @MainActor
+    static func checkNewChatAndReplayScope(_ store: ChatStore, service: ProjectContextMemoryService,
+                                           projectChat: String, projectID: String) async throws {
+        store.newConversation(inProject: projectID)
+        guard let emptyProjectChat = store.selectedID else { throw Failure(description: "No empty project chat") }
+        store.newConversation()
+        guard let plain = store.selectedID else { throw Failure(description: "No plain chat") }
+        try check(plain != emptyProjectChat && plain != projectChat, "New chat does not reuse an empty project chat")
+        try check(store.conversations.first { $0.id == plain }.map { $0.projectID == nil } == true, "New chat starts outside any project")
+
+        service.failing = true
+        let reply = Message(role: .assistant, text: "Noted, mulch in autumn.")
+        await store.learnFromCompletedTurn(
+            user: "Mulch the beds in autumn", assistant: reply,
+            source: NativeMemoryTurnSource(conversationID: plain, messageID: "outside-turn", date: Date()),
+            turnKey: plain + "|outside-turn", conversationExcluded: false)
+        let queued = store.queuedMemoryTurns.first { $0.turnKey == plain + "|outside-turn" }
+        try check(queued != nil && queued?.projectID == nil, "A turn queued outside a project has no project")
+        store.moveConversation(plain, toProject: projectID)
+        service.failing = false
+        let before = Set(store.memoryProposals.map(\.id))
+        await store.drainQueuedMemoryTurns()
+        let replayed = store.memoryProposals.filter { !before.contains($0.id) }
+        try check(!replayed.isEmpty && replayed.allSatisfy { $0.projectID == nil }, "Replay keeps the scope captured when the turn ran")
+        for pending in store.memoryProposals { store.dismissMemoryProposal(pending) }
+        store.moveConversation(plain, toProject: nil)
     }
 
     static func candidate(_ id: String, project: String?) -> NativeMemoryCandidate {

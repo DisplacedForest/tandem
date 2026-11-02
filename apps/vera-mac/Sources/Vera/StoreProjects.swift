@@ -4,7 +4,13 @@ extension ChatStore {
     var projectRepository: (any ProjectRepository)? { repository as? any ProjectRepository }
 
     func reloadProjects() {
-        projects = (try? projectRepository?.listProjects()) ?? []
+        guard let projectRepository else { projects = []; return }
+        do { projects = try projectRepository.listProjects() }
+        catch { projectError = "Projects couldn't load: \(error.localizedDescription)" }
+    }
+
+    func clearProjectError() {
+        projectError = nil
     }
 
     func project(_ id: String) -> ProjectRecord? {
@@ -23,7 +29,7 @@ extension ChatStore {
         let record = ProjectRecord(id: UUID().uuidString.lowercased(), name: trimmed, instructions: "", grants: [], files: [],
                                    createdAt: now, updatedAt: now)
         do { try projectRepository.saveProject(record) }
-        catch { chatConfigurationError = "The project couldn't be created: \(error.localizedDescription)"; return nil }
+        catch { projectError = "The project couldn't be created: \(error.localizedDescription)"; return nil }
         reloadProjects()
         return project(record.id)
     }
@@ -32,7 +38,7 @@ extension ChatStore {
         guard let projectRepository, var record = project(id) else { return }
         change(&record)
         do { try projectRepository.saveProject(record) }
-        catch { chatConfigurationError = "\(failure): \(error.localizedDescription)" }
+        catch { projectError = "\(failure): \(error.localizedDescription)" }
         reloadProjects()
     }
 
@@ -45,14 +51,14 @@ extension ChatStore {
     func setProjectInstructions(_ id: String, _ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         do { try NativePromptValidation.validateInstructions(trimmed) }
-        catch { chatConfigurationError = error.localizedDescription; return }
+        catch { projectError = error.localizedDescription; return }
         updateProject(id, failure: "The project instructions couldn't save") { $0.instructions = trimmed }
     }
 
     func addProjectFolder(_ id: String, url: URL) {
         let grant: FolderGrant
         do { grant = try FolderGrant.make(url: url) }
-        catch { chatConfigurationError = error.localizedDescription; return }
+        catch { projectError = error.localizedDescription; return }
         updateProject(id, failure: "The folder couldn't be added") { record in
             guard !record.grants.contains(where: { $0.path == grant.path }) else { return }
             record.grants.append(grant)
@@ -68,7 +74,7 @@ extension ChatStore {
     func addProjectFile(_ id: String, url: URL) {
         guard let projectRepository else { return }
         do { _ = try projectRepository.addProjectFile(id, from: url) }
-        catch { chatConfigurationError = error.localizedDescription }
+        catch { projectError = error.localizedDescription }
         reloadProjects()
         refreshProjectGrants(id)
     }
@@ -76,7 +82,7 @@ extension ChatStore {
     func removeProjectFile(_ id: String, fileID: String) {
         guard let projectRepository else { return }
         do { try projectRepository.removeProjectFile(id, fileID: fileID) }
-        catch { chatConfigurationError = error.localizedDescription }
+        catch { projectError = error.localizedDescription }
         reloadProjects()
         refreshProjectGrants(id)
     }
@@ -85,7 +91,7 @@ extension ChatStore {
         guard let projectRepository else { return }
         let released: [String]
         do { released = try projectRepository.deleteProject(id) }
-        catch { chatConfigurationError = "The project couldn't be deleted: \(error.localizedDescription)"; return }
+        catch { projectError = "The project couldn't be deleted: \(error.localizedDescription)"; return }
         for index in conversations.indices where released.contains(conversations[index].id) || conversations[index].projectID == id {
             conversations[index].projectID = nil
         }
@@ -113,7 +119,7 @@ extension ChatStore {
         conversations[index].projectID = projectID
         if conversations[index].isPersisted {
             do { try projectRepository?.setConversationProject(conversationID, projectID: projectID) }
-            catch { chatConfigurationError = "The chat couldn't be moved: \(error.localizedDescription)" }
+            catch { projectError = "The chat couldn't be moved: \(error.localizedDescription)" }
         }
         refreshConversationGrants(conversationID)
     }

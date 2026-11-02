@@ -128,12 +128,13 @@ struct NativeFolderAccess: Sendable {
         }
         let candidates = [URL(fileURLWithPath: absolute).standardizedFileURL.path,
                           URL(fileURLWithPath: absolute).standardizedFileURL.resolvingSymlinksInPath().path]
-        for candidate in candidates {
-            for root in roots where Self.contains(root: root.path, path: candidate) {
-                let relative = String(candidate.dropFirst(root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-                guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
-                return NativeFolderLocation(root: root, components: relative)
-            }
+        let matches = candidates.flatMap { candidate in
+            roots.filter { Self.contains(root: $0.path, path: candidate) }.map { (root: $0, path: candidate) }
+        }
+        if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
+            let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
+            return NativeFolderLocation(root: best.root, components: relative)
         }
         throw NativeFolderAccessError.outsideGrants(requested)
     }

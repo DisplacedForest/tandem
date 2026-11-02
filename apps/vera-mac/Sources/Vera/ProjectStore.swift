@@ -138,7 +138,18 @@ extension LocalChatRepository: ProjectRepository {
         } catch {
             throw ProjectStoreError.unreadable(name)
         }
-        let file = ProjectFile(id: id, name: name, fileName: fileName, byteSize: size, addedAt: Date())
+        let copied: Int
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+            guard let stored = (attributes[.size] as? NSNumber)?.intValue else { throw ProjectStoreError.unreadable(name) }
+            guard stored <= Self.projectFileByteLimit else { throw ProjectStoreError.fileTooLarge(name) }
+            try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: destination.path)
+            copied = stored
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+        let file = ProjectFile(id: id, name: name, fileName: fileName, byteSize: copied, addedAt: Date())
         do {
             try database.write { db in
                 guard var stored = try Self.fetchProject(projectID, db: db) else { throw ProjectStoreError.notFound }
