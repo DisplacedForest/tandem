@@ -377,14 +377,14 @@ struct ShotView: View {
 
     private var shotGrants: [FolderGrant] { [FolderGrant(id: "shot-grant", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)] }
 
-    // Render-safe mirror of the empty-chat welcome (ImageRenderer can't draw the live TextField).
     private var emptyChatShot: some View {
         VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 22) {
-                HStack(spacing: 12) {
-                    VeraMark(size: 30)
+                HStack(spacing: 14) {
+                    CompanionAvatar(size: 56)
                     Text("Good afternoon, Jordan").font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Theme.warmTextPrimary)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if attachDemo {
@@ -398,18 +398,10 @@ struct ShotView: View {
                             shotSkeletonCard
                         }
                     }
-                    Text(attachDemo ? "What do you make of these?" : "Message Vera…")
-                        .font(.system(size: 14)).foregroundStyle(attachDemo ? Theme.textPrimary : Theme.textSecondary)
-                    HStack(spacing: 8) {
-                        ComposerControlGlyph(kind: .plus)
-                        Spacer()
-                        ComposerControlGlyph(kind: .voice)
-                        ComposerControlGlyph(kind: .send(active: attachDemo, generating: false))
-                    }
+                    shotComposerRow(text: attachDemo ? "What do you make of these?" : "Message \(store.assistantName)",
+                                    typed: attachDemo, active: attachDemo, stop: false)
                 }
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+                .modifier(ShotComposerPill())
                 HStack(spacing: 8) {
                     ForEach(["What's on today?", "Check the kitchen", "What's the weather?", "Research a topic for me"], id: \.self) { s in
                         StarterChipLabel(title: s)
@@ -420,6 +412,29 @@ struct ShotView: View {
             Spacer(); Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.conversationBackground)
+    }
+
+    private func shotComposerRow(text: String, typed: Bool, active: Bool, stop: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            ComposerControlGlyph(kind: .plus).padding(.bottom, 1)
+            Text(text).font(.system(size: ConversationMetrics.bodySize))
+                .foregroundStyle(typed ? Theme.warmTextPrimary : Theme.warmTextSecondary)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: ComposerControlGlyph.sendSize, alignment: .leading)
+            ComposerControlGlyph(kind: .voice).padding(.bottom, 2)
+            if stop {
+                ComposerControlGlyph(kind: .stop(enabled: true))
+            } else {
+                ComposerControlGlyph(kind: .send(active: active, generating: false))
+            }
+        }
+    }
+
+    private var shotStatusLine: String {
+        if streaming { return "Working on your answer" }
+        if command || schedule { return "Waiting for your approval" }
+        return "Ready"
     }
 
     private func shotFileCard(title: String, badge: String) -> some View {
@@ -562,15 +577,16 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
+            ConversationHeader(name: store.assistantName, status: shotStatusLine)
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
                         : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
                 }
             }
-            .padding(.horizontal, 28).padding(.vertical, 26)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)
+            .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command {
@@ -580,25 +596,13 @@ struct ShotView: View {
                     ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                 }
-                Text(mentions ? "@" : "Message Vera…").font(.system(size: 14))
-                    .foregroundStyle(mentions ? Theme.textPrimary : Theme.textSecondary)
-                HStack(spacing: 8) {
-                    ComposerControlGlyph(kind: .plus)
-                    Spacer()
-                    ComposerControlGlyph(kind: .voice)
-                    if streaming {
-                        ComposerControlGlyph(kind: .stop(enabled: true))
-                    } else {
-                        ComposerControlGlyph(kind: .send(active: false, generating: false))
-                    }
-                }
+                shotComposerRow(text: mentions ? "@" : "Message \(store.assistantName)", typed: mentions, active: false, stop: streaming)
             }
-            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
-            .frame(maxWidth: 760)
+            .modifier(ShotComposerPill())
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
+            .frame(maxWidth: ConversationMetrics.columnWidth)
         }
+        .background(Theme.conversationBackground)
     }
 
     private var shotMentionCatalog: ComposerMentionCatalog {
@@ -906,3 +910,12 @@ struct ShotView: View {
 
 }
 
+private struct ShotComposerPill: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: ConversationMetrics.composerRadius, style: .continuous).fill(Theme.cardFill))
+            .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.composerRadius, style: .continuous)
+                .stroke(Theme.cardStroke, lineWidth: 1))
+    }
+}

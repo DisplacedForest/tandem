@@ -82,21 +82,7 @@ struct NativeDisplayBlocksView: View {
                     NativeCommandRunCard(run: run)
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "doc.text").foregroundStyle(Theme.accent)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(artifact.title).font(.system(size: 13, weight: .medium)).lineLimit(3)
-                                Text(artifact.openTitle).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                        }
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(12)
-                        .frame(maxWidth: 480, alignment: .leading)
-                        .background(Theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+                        ConversationResultRow(title: artifact.title, action: artifact.openTitle)
                     }
                     .buttonStyle(.plain)
                 }

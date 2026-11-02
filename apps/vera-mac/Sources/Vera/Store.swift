@@ -46,7 +46,6 @@ final class ChatStore: ObservableObject {
     static let queuedMemoryTurnLimit = 20
     @Published var pendingHighlightMessageID: UUID?
     @Published var memoryGroomOutcome: NativeMemoryGroomOutcome?
-    @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
     @Published var groundingStatus: [String: KnowledgeGroundingStatus] = [:]
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
@@ -738,6 +737,18 @@ final class ChatStore: ObservableObject {
     var selected: Conversation? {
         guard let id = selectedID else { return nil }
         return conversations.first { $0.id == id }
+    }
+
+    var conversationStatusLine: String {
+        guard let id = selectedID else { return "Ready" }
+        let turns = conversationTurns.filter { $0.conversationID == id }
+        if let status = turns.filter({ $0.state == .running }).lazy.compactMap({ self.turnStatuses[$0.assistantMessageID] }).first {
+            let trimmed = status.trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespaces))
+            return trimmed.isEmpty ? "Working on your answer" : trimmed
+        }
+        if turnExecutions.values.contains(where: { $0.record.conversationID == id }) { return "Working on your answer" }
+        if turns.contains(where: { turnConfirmations[$0.assistantMessageID] != nil }) { return "Waiting for your approval" }
+        return "Ready"
     }
 
     // MARK: - Memory actions

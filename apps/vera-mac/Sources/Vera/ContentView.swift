@@ -172,7 +172,6 @@ struct SidebarRow: View {
 private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     private var conversation: Conversation? { store.selected }
-    private var generating: Bool { store.generating }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
 
@@ -193,8 +192,16 @@ private struct ChatPane: View {
         }
     }
 
+    private var showsHeader: Bool {
+        guard let convo = conversation else { return false }
+        return !convo.messages.isEmpty || (convo.isPersisted && !store.isVeraThread(convo.id))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if showsHeader {
+                ConversationHeader(name: store.assistantName, status: store.conversationStatusLine)
+            }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
@@ -207,8 +214,8 @@ private struct ChatPane: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
-                .frame(maxWidth: 760)
-                .padding(.horizontal, 28).padding(.top, 10)
+                .frame(maxWidth: ConversationMetrics.columnWidth)
+                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
                 .accessibilityElement(children: .contain)
             }
             if let convo = conversation, !convo.messages.isEmpty {
@@ -233,17 +240,12 @@ private struct ChatPane: View {
                                             .padding(-8))
                                     .id(msg.id)
                             }
-                            VeraMark(size: 27, animated: generating)
-                                .frame(width: 27, height: 27)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, 2)
                             Color.clear.frame(height: 1).id("bottom")
                         }
-                        .padding(.horizontal, 28).padding(.top, 44).padding(.bottom, 26)
-                        .frame(maxWidth: 760, alignment: .leading)
+                        .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)
+                        .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
-                    // Follow the text as it streams in, and on new turns / chat switches.
                     .onChange(of: convo.messages.last?.text ?? "") { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: convo.messages.count) { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
                     .onChange(of: store.selectedID) {
@@ -256,33 +258,56 @@ private struct ChatPane: View {
                         revealPendingSource(proxy)
                     }
                 }
-                if let status = store.streamStatus {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        Spacer()
-                    }
-                    .frame(maxWidth: 760)
-                    .padding(.horizontal, 28).padding(.bottom, 2)
-                }
                 if convo.isPersisted, store.isPulseConfigured {
                     HStack(spacing: 12) {
                         KnowledgeGroundingChip(conversation: convo)
                         Spacer()
                     }
-                    .frame(maxWidth: 760)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
                     .padding(.horizontal, 28).padding(.top, 4)
                 }
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
-                    .frame(maxWidth: 760)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
             } else if let convo = conversation, convo.isPersisted, !store.isVeraThread(convo.id) {
                 ChatLoadingSkeleton()
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
-                    .frame(maxWidth: 760)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
             } else {
                 EmptyChatView()
             }
         }
+        .background(Theme.conversationBackground)
+    }
+}
+
+struct ConversationHeader: View {
+    let name: String
+    let status: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CompanionAvatar(size: ConversationMetrics.avatarSize)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .font(.system(size: ConversationMetrics.headerNameSize, weight: .semibold))
+                    .foregroundStyle(Theme.warmTextPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Circle().fill(Theme.statusGreen).frame(width: 7, height: 7)
+                    Text(status)
+                        .font(.system(size: ConversationMetrics.metaSize))
+                        .foregroundStyle(Theme.warmTextSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 36).padding(.bottom, 12)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
     }
 }
 
@@ -307,8 +332,6 @@ private struct ChatLoadingSkeleton: View {
     }
 }
 
-/// Centered welcome shown for an empty chat — greeting, centered composer, and starter prompts.
-/// When the app isn't connected, offers the setup sheet instead of pretending to work.
 private struct EmptyChatView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
@@ -329,9 +352,10 @@ private struct EmptyChatView: View {
         VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 22) {
-                HStack(spacing: 12) {
-                    VeraMark(size: 30)
+                HStack(spacing: 14) {
+                    CompanionAvatar(size: 56)
                     Text(greeting).font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Theme.warmTextPrimary)
                 }
                 ComposerField()
                 if let error = store.chatConfigurationError {
@@ -355,7 +379,7 @@ private struct EmptyChatView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
+        .background(Theme.conversationBackground)
     }
 }
 
@@ -376,10 +400,11 @@ private struct FlowChips: View {
 struct StarterChipLabel: View {
     let title: String
     var body: some View {
-        Text(title).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+        Text(title).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(Theme.surface).clipShape(Capsule())
+            .background(Capsule().fill(Theme.cardFill))
+            .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
     }
 }
 
@@ -454,21 +479,31 @@ extension Array {
 struct ComposerControlGlyph: View {
     let kind: ComposerControlKind
     static let size: CGFloat = 28
+    static let plusSize: CGFloat = 30
+    static let sendSize: CGFloat = 32
 
     private var fill: Color {
         switch kind {
-        case .plus: .clear
+        case .plus: Theme.assistantBubble
         case .voice: Theme.surfaceHover
-        case .send(let active, let generating): generating ? Theme.accentGlow : (active ? Theme.accent : Theme.surfaceHover)
-        case .stop(let enabled): enabled ? Theme.accent : Theme.surfaceHover
+        case .send(let active, let generating): generating || active ? Theme.sage : Theme.sage.opacity(0.35)
+        case .stop(let enabled): enabled ? Theme.sage : Theme.sage.opacity(0.35)
         }
     }
 
     private var tint: Color {
         switch kind {
-        case .plus, .voice: Theme.textSecondary
-        case .send(let active, let generating): active || generating ? Theme.onAccent : Theme.textSecondary
-        case .stop(let enabled): enabled ? Theme.onAccent : Theme.textSecondary
+        case .plus: Theme.warmTextSecondary
+        case .voice: Theme.textSecondary
+        case .send, .stop: Theme.onSage
+        }
+    }
+
+    private var diameter: CGFloat {
+        switch kind {
+        case .plus: Self.plusSize
+        case .voice: Self.size
+        case .send, .stop: Self.sendSize
         }
     }
 
@@ -483,9 +518,9 @@ struct ComposerControlGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: { if case .stop = kind { 12 } else { 15 } }(), weight: .medium))
+            .font(.system(size: { if case .stop = kind { 12 } else { 15 } }(), weight: { if case .send = kind { .semibold } else { .medium } }()))
             .foregroundStyle(tint)
-            .frame(width: Self.size, height: Self.size)
+            .frame(width: diameter, height: diameter)
             .background(Circle().fill(fill))
             .contentShape(Circle())
     }
@@ -501,13 +536,17 @@ struct MessageRow: View {
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
     var onToolDecision: ((NativeToolDecision) -> Void)? = nil
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
             if message.role == .assistant {
+                CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
+                    .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 8) {
+                    AssistantBody(message: message, section: .bubble, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
+                        let awaiting = pendingConfirmation?.id == activity.id
                         switch NativeToolActivityPresentation.forActivity(activity) {
                         case .chip:
-                            NativeToolActivityChip(activity: activity,
+                            NativeToolActivityChip(activity: activity, awaitingDecision: awaiting,
                                 onCancel: nativeActions && activity.isCancelableRun ? { store.cancelToolRun(message.id) } : nil)
                         case .imagePlaceholder:
                             ImageGenerationPlaceholder(activity: activity,
@@ -515,7 +554,7 @@ struct MessageRow: View {
                         case .hidden:
                             EmptyView()
                         }
-                        if let pendingConfirmation, pendingConfirmation.id == activity.id {
+                        if let pendingConfirmation, awaiting {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
@@ -524,7 +563,7 @@ struct MessageRow: View {
                                 onApproveSimilar: NativeToolConfirmationBar.similarPrefix(for: pendingConfirmation).map { _ in { onToolDecision?(.approveSimilar) } })
                         }
                     }
-                    AssistantBody(message: message, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     ForEach(message.attachments.filter(\.isImage)) { attachment in
                         GeneratedImageView(attachment: attachment, store: attachmentStore)
                     }
@@ -537,15 +576,17 @@ struct MessageRow: View {
                         NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
                                              onStop: { store.stopAnswer(message.id, reason: "Canceled.") })
                     } else if nativeActions, let note = store.answerNote(message.id) {
-                        Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        Text(note).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))
                     }
+                    AssistantBody(message: message, section: .actions, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                 }
+                Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 60)
                 VStack(alignment: .trailing, spacing: 8) {
@@ -554,11 +595,12 @@ struct MessageRow: View {
                     }
                     if !message.text.isEmpty {
                         Text(message.text)
-                            .font(.system(size: 14)).textSelection(.enabled)
-                            .foregroundStyle(Theme.textPrimary)
-                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .font(.system(size: ConversationMetrics.bodySize)).textSelection(.enabled)
+                            .foregroundStyle(Theme.warmTextPrimary)
+                            .padding(.horizontal, ConversationMetrics.bubblePaddingH)
+                            .padding(.vertical, ConversationMetrics.bubblePaddingV)
                             .background(Theme.userBubble)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
                     }
                     if let note = message.routeNote {
                         AttachmentRouteBadge(
@@ -630,10 +672,21 @@ struct AttachmentRouteBadge: View {
 
 struct NativeToolActivityChip: View {
     let activity: NativeToolActivity
+    var awaitingDecision = false
     var onCancel: (() -> Void)? = nil
     @State private var expanded = false
 
+    static let declineMarkers = ["The user did not approve this call", "The user already declined"]
+
+    static func isDeclined(_ activity: NativeToolActivity) -> Bool {
+        guard activity.state == .failed, let result = activity.result else { return false }
+        return declineMarkers.contains { result.contains($0) }
+    }
+
+    private var declined: Bool { Self.isDeclined(activity) }
+
     private var icon: String {
+        if declined { return "hand.raised.slash" }
         switch activity.state {
         case .pending: return "clock"
         case .succeeded: return "checkmark.circle.fill"
@@ -643,6 +696,7 @@ struct NativeToolActivityChip: View {
     }
 
     private var status: String {
+        if declined { return "Declined" }
         switch activity.state {
         case .pending: return activity.progress?.label ?? "Working"
         case .succeeded: return "Done"
@@ -652,11 +706,16 @@ struct NativeToolActivityChip: View {
     }
 
     private var iconColor: Color {
+        if declined { return Theme.warmTextSecondary }
         switch activity.state {
         case .failed: return Color.orange
-        case .pending: return Theme.accent
-        default: return Theme.textSecondary
+        case .pending: return Theme.sage
+        default: return Theme.warmTextSecondary
         }
+    }
+
+    private var showsConfirmationTag: Bool {
+        activity.confirmationRequired && activity.state == .pending && awaitingDecision
     }
 
     var body: some View {
@@ -674,8 +733,8 @@ struct NativeToolActivityChip: View {
                     Image(systemName: icon).foregroundStyle(iconColor)
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
-                Text(status).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                if activity.confirmationRequired {
+                Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
+                if showsConfirmationTag {
                     Text("Confirmation required")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.orange)
@@ -693,14 +752,14 @@ struct NativeToolActivityChip: View {
                         .accessibilityLabel("Cancel \(activity.title)")
                 }
             }
-            .foregroundStyle(Theme.textPrimary)
+            .foregroundStyle(Theme.warmTextPrimary)
         }
         .disclosureGroupStyle(.automatic)
         .padding(.horizontal, 11).padding(.vertical, 8)
         .frame(maxWidth: 480, alignment: .leading)
-        .background(Theme.surface)
+        .background(Theme.cardFill)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.cardStroke, lineWidth: 1))
     }
 
     private func inspected(_ title: String, _ value: String) -> some View {
@@ -768,70 +827,153 @@ struct NativeToolConfirmationBar: View {
     private var lines: [String] { (prompt ?? "Run \(request.title)?").components(separatedBy: "\n") }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "hand.raised")
-                .font(.system(size: 13)).foregroundStyle(Color.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(lines[0])
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                if lines.count > 1 {
-                    ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
-                        Text(lines.dropFirst().joined(separator: "\n"))
-                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
-                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sage)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Theme.sage.opacity(0.16)))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(lines[0])
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if lines.count > 1 {
+                        ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
+                            Text(lines.dropFirst().joined(separator: "\n"))
+                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: renderSafe ? nil : 180)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.conversationBackground))
                     }
-                    .frame(maxHeight: renderSafe ? nil : 180)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(detail ?? "This tool runs only after your decision.")
+                        .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(detail ?? "This tool runs only after your decision.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 8)
-            Button("Decline") { onDecision(false) }.disabled(!allowDecline)
-            if let onApproveSimilar, let prefix = Self.similarPrefix(for: request) {
-                Button("Approve similar") { onApproveSimilar() }.disabled(!allowApprove)
-                    .help("Also run later commands in this chat that start with \"\(prefix)\" without asking")
-            }
-            if defaultApproval {
-                Button("Approve") { onDecision(true) }.keyboardShortcut(.defaultAction).disabled(!allowApprove)
-            } else {
-                Button("Approve") { onDecision(true) }.disabled(!allowApprove)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Decline") { onDecision(false) }
+                    .buttonStyle(ConversationButtonStyle(kind: .secondary))
+                    .disabled(!allowDecline)
+                if let onApproveSimilar, let prefix = Self.similarPrefix(for: request) {
+                    Button("Approve similar") { onApproveSimilar() }
+                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
+                        .disabled(!allowApprove)
+                        .help("Also run later commands in this chat that start with \"\(prefix)\" without asking")
+                }
+                if defaultApproval {
+                    Button("Approve") { onDecision(true) }
+                        .buttonStyle(ConversationButtonStyle(kind: .primary))
+                        .keyboardShortcut(.defaultAction).disabled(!allowApprove)
+                } else {
+                    Button("Approve") { onDecision(true) }
+                        .buttonStyle(ConversationButtonStyle(kind: .primary))
+                        .disabled(!allowApprove)
+                }
             }
         }
-        .padding(.horizontal, 11).padding(.vertical, 9)
+        .padding(14)
         .frame(maxWidth: 560, alignment: .leading)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke(Color.orange.opacity(0.5), lineWidth: 1))
+        .background(Theme.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous)
+            .stroke(Theme.cardStroke, lineWidth: 1))
     }
 }
 
-/// A tappable reference to an artifact, shown inline under Vera's message.
+struct ConversationButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary }
+    var kind: Kind
+
+    func makeBody(configuration: Configuration) -> some View {
+        ConversationButtonBody(kind: kind, label: configuration.label, pressed: configuration.isPressed)
+    }
+}
+
+private struct ConversationButtonBody: View {
+    let kind: ConversationButtonStyle.Kind
+    let label: ButtonStyleConfiguration.Label
+    let pressed: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(kind == .primary ? Theme.onSage : Theme.warmTextPrimary)
+            .padding(.horizontal, 14).frame(height: 28)
+            .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
+            .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
+    }
+}
+
+struct SageCapsuleLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.onSage)
+            .padding(.horizontal, 14).frame(height: 28)
+            .background(Capsule().fill(Theme.sage))
+    }
+}
+
 struct ArtifactChip: View {
     let artifact: Artifact
     var detail: String? = nil
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "rectangle.on.rectangle.angled").font(.system(size: 13)).foregroundStyle(Theme.accent)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(artifact.title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text(detail ?? "\(artifact.type.rawValue) · open in Canvas").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-            }
-            Spacer(minLength: 8)
-            Image(systemName: "arrow.up.right.square").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+
+    static func displayTitle(_ artifact: Artifact) -> String {
+        let title = artifact.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        switch artifact.type {
+        case .markdown: return "Document"
+        case .code: return "Code"
+        case .html: return "Web page"
+        case .svg: return "Image"
+        case .mermaid: return "Diagram"
+        case .unknown: return "Result"
         }
-        .padding(10).frame(maxWidth: 360, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    var body: some View {
+        ConversationResultRow(title: Self.displayTitle(artifact), action: detail ?? "Open")
+    }
+}
+
+struct ConversationResultRow: View {
+    let title: String
+    var action: String = "Open"
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+                .frame(width: 22)
+            Text(title)
+                .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 12)
+            SageCapsuleLabel(title: action)
+        }
+        .padding(.leading, 14).padding(.trailing, 10).padding(.vertical, 10)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(Theme.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous)
+            .stroke(Theme.cardStroke, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous))
     }
 }
 
 // MARK: - Composer
 
-/// The rounded chat input box (text field + send), reused by the bottom bar and the empty state.
-/// Moves the cursor into the field whenever `store.focusTick` changes (new chat, starter tap).
 struct ComposerField: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var voice: VoiceSession
@@ -917,32 +1059,7 @@ struct ComposerField: View {
                                     onHover: { mentionSelectionID = mentionRows[safe: $0]?.id }, onPick: pickMention)
                 Rectangle().fill(Theme.hairline).frame(height: 1)
             }
-            TextField("Message \(store.assistantName)…", text: draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .lineLimit(1...8)
-                .focused($focused)
-                .onChange(of: route.draft) { _, _ in mentionSelectionID = nil }
-                .onKeyPress(.upArrow) { moveMentionSelection(-1) }
-                .onKeyPress(.downArrow) { moveMentionSelection(1) }
-                .onKeyPress(.escape) {
-                    guard pickerVisible else { return .ignored }
-                    dismissedDraft = route.draft
-                    return .handled
-                }
-                .onKeyPress(.return, phases: .down) { press in
-                    if press.modifiers.contains(.shift) {
-                        draft.wrappedValue += "\n"
-                        return .handled
-                    }
-                    if pickerVisible {
-                        pickMention(mentionRows[mentionIndex])
-                        return .handled
-                    }
-                    submit()
-                    return .handled
-                }
-            HStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 Menu {
                     Button("Add files or photos") { pickFiles() }
                     Button("Work in a folder…") { pickFolder() }
@@ -961,11 +1078,40 @@ struct ComposerField: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Add files, grant a folder, or insert a saved prompt")
-                Spacer()
+                .padding(.bottom, 1)
+                TextField("Message \(store.assistantName)", text: draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: ConversationMetrics.bodySize))
+                    .foregroundStyle(Theme.warmTextPrimary)
+                    .lineLimit(1...8)
+                    .focused($focused)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: ComposerControlGlyph.sendSize)
+                    .onChange(of: route.draft) { _, _ in mentionSelectionID = nil }
+                    .onKeyPress(.upArrow) { moveMentionSelection(-1) }
+                    .onKeyPress(.downArrow) { moveMentionSelection(1) }
+                    .onKeyPress(.escape) {
+                        guard pickerVisible else { return .ignored }
+                        dismissedDraft = route.draft
+                        return .handled
+                    }
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) {
+                            draft.wrappedValue += "\n"
+                            return .handled
+                        }
+                        if pickerVisible {
+                            pickMention(mentionRows[mentionIndex])
+                            return .handled
+                        }
+                        submit()
+                        return .handled
+                    }
                 Button(action: {}) { ComposerControlGlyph(kind: .voice) }
                     .buttonStyle(.plain)
                     .disabled(true)
                     .help("Voice is not available in native chat yet")
+                    .padding(.bottom, 2)
                 if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
                     Button { store.stopAnswer(stoppable) } label: {
                         ComposerControlGlyph(kind: .stop(enabled: true))
@@ -982,13 +1128,15 @@ struct ComposerField: View {
                     .accessibilityLabel("Send")
                 }
             }
+        }
+        .background {
             Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
-        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .stroke(dropTargeted ? Theme.accent : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
+        .padding(.horizontal, 8).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: ConversationMetrics.composerRadius, style: .continuous).fill(Theme.cardFill))
+        .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.composerRadius, style: .continuous)
+            .stroke(dropTargeted ? Theme.accent : Theme.cardStroke, lineWidth: dropTargeted ? 2 : 1))
         .onAppear {
             focused = true
             installPasteMonitor()
