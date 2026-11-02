@@ -129,9 +129,23 @@ struct ConversationRulesEditor: View {
     var conversationID: String? = nil
     var embedded = false
     var draft: Binding<[NativeActionClass: NativeRuleChoice]>? = nil
+    var revokedPrefixes: Binding<Set<String>>? = nil
 
     private var rules: NativeConversationRules {
         conversationID.map { store.conversationRules(for: $0) } ?? store.selectedConversationRules
+    }
+
+    private var shownPrefixes: [String] {
+        guard let revokedPrefixes else { return rules.approvedCommandPrefixes }
+        return rules.approvedCommandPrefixes.filter { !revokedPrefixes.wrappedValue.contains($0) }
+    }
+
+    private func revoke(_ prefix: String) {
+        if let revokedPrefixes {
+            revokedPrefixes.wrappedValue.insert(prefix)
+        } else {
+            store.revokeCommandPrefix(prefix, conversationID: conversationID)
+        }
     }
 
     private func choices(for action: NativeActionClass) -> [NativeRuleChoice] {
@@ -180,15 +194,15 @@ struct ConversationRulesEditor: View {
                     Text("Always handed to you").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
-            if !rules.approvedCommandPrefixes.isEmpty {
+            if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 Text("Commands approved for this chat").font(.system(size: 12, weight: .medium))
-                ForEach(rules.approvedCommandPrefixes, id: \.self) { prefix in
+                ForEach(shownPrefixes, id: \.self) { prefix in
                     HStack(spacing: 8) {
                         Text(prefix).font(.system(size: 11, design: .monospaced))
                         Spacer(minLength: 8)
                         Button {
-                            store.revokeCommandPrefix(prefix, conversationID: conversationID)
+                            revoke(prefix)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                         }

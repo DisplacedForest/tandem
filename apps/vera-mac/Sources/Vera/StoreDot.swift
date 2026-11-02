@@ -55,10 +55,15 @@ extension ChatStore {
 
     func setDotState(_ state: NativeDotState) {
         guard dotProfile.state != state else { return }
-        if dotProfile.state == .paused && state == .active {
-            skipMissedDotRuns(now: Date())
+        let now = Date()
+        let resuming = dotProfile.state == .paused && state == .active
+        if resuming {
+            skipMissedDotRuns(now: now)
         }
-        saveDotProfile { $0.state = state }
+        saveDotProfile {
+            $0.state = state
+            if resuming { $0.resumedAt = now }
+        }
     }
 
     func skipMissedDotRuns(now: Date) {

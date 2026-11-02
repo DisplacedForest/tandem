@@ -21,10 +21,13 @@ enum DotProfileCopy {
     }
 
     @MainActor
-    static func commitRules(_ rules: [NativeActionClass: NativeRuleChoice], store: ChatStore) {
+    static func commitRules(_ rules: [NativeActionClass: NativeRuleChoice], revokedPrefixes: Set<String> = [], store: ChatStore) {
         guard let id = store.veraThreadID else { return }
         for action in NativeActionClass.allCases where !action.isFixed {
             store.tightenConversationRule(rules[action] ?? store.nativeRules.choice(for: action), for: action, conversationID: id)
+        }
+        for prefix in revokedPrefixes.sorted() {
+            store.revokeCommandPrefix(prefix, conversationID: id)
         }
     }
 
@@ -54,6 +57,7 @@ struct DotProfileForm: View {
     @Binding var goal: String
     @Binding var selected: Set<String>
     @Binding var rules: [NativeActionClass: NativeRuleChoice]
+    @Binding var revokedPrefixes: Set<String>
     let options: [NativeDotServiceOption]
 
     private var goalBinding: Binding<String> {
@@ -99,7 +103,7 @@ struct DotProfileForm: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("What asks first")
                 Text(DotProfileCopy.rulesNote).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                ConversationRulesEditor(conversationID: store.veraThreadID, embedded: true, draft: $rules)
+                ConversationRulesEditor(conversationID: store.veraThreadID, embedded: true, draft: $rules, revokedPrefixes: $revokedPrefixes)
             }
             .padding(.top, 6)
         }
@@ -115,6 +119,7 @@ struct DotSetupView: View {
     @State private var goal = ""
     @State private var selected: Set<String> = []
     @State private var rules: [NativeActionClass: NativeRuleChoice] = [:]
+    @State private var revokedPrefixes: Set<String> = []
     @State private var options: [NativeDotServiceOption] = []
     @State private var problem: String?
 
@@ -131,7 +136,7 @@ struct DotSetupView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4).padding(.bottom, 14)
             ScrollView {
-                DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, options: options)
+                DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, revokedPrefixes: $revokedPrefixes, options: options)
                     .padding(.trailing, 6)
             }
             .frame(minHeight: 260, maxHeight: 460)
@@ -160,6 +165,7 @@ struct DotSetupView: View {
         options = store.dotServiceOptions()
         selected = store.dotSelectedServices(options)
         rules = DotProfileCopy.draftRules(store)
+        revokedPrefixes = []
     }
 
     private func start() {
@@ -168,7 +174,7 @@ struct DotSetupView: View {
             return
         }
         store.completeDotSetup(goal: goal, connectedToolIDs: store.dotConnectedToolIDs(selected: selected, options: options))
-        DotProfileCopy.commitRules(rules, store: store)
+        DotProfileCopy.commitRules(rules, revokedPrefixes: revokedPrefixes, store: store)
         dismiss()
     }
 }

@@ -266,6 +266,18 @@ extension SelfTest {
         try require(resolver.choice(for: .trash) == .handOff, "Saving a stricter draft tightens the thread")
         DotProfileCopy.commitRules(before.choices, store: store)
         try require(store.conversationRules(for: veraID).choices == before.choices, "Committing the original draft restores the rules")
+        store.approveCommandPrefix("git status", conversationID: veraID)
+        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"), "The fixture prefix is approved on the thread")
+        var revoked: Set<String> = []
+        revoked.insert("git status")
+        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
+                    "Removing a prefix in the draft keeps it approved until saved")
+        DotProfileCopy.commitRules(before.choices, store: store)
+        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
+                    "Saving without draft removals keeps approved prefixes")
+        DotProfileCopy.commitRules(before.choices, revokedPrefixes: revoked, store: store)
+        try require(!store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
+                    "Saving a draft removal revokes the prefix")
     }
 
     private static func checkHeaderSummary() throws {
@@ -332,12 +344,45 @@ extension SelfTest {
         try require(try repository.messages(conversationID: threadID).count == messagesBefore
                     && (try repository.taskReferences(conversationID: threadID)).isEmpty, "A run skipped mid-start saves nothing and submits nothing")
         store.setDotState(.active)
-        let removedMidway = await store.fireSchedule(schedule, run: probe, bind: { _, _ in
+        let freshProbe = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date().addingTimeInterval(1), outcome: .running)
+        let removedMidway = await store.fireSchedule(schedule, run: freshProbe, bind: { _, _ in
             await MainActor.run { store.deleteSchedule(schedule.id) }
         })
         try require(removedMidway == .skipped(ChatStore.removedScheduleReason), "Removing a schedule while it starts skips it: \(removedMidway)")
         try require(try repository.messages(conversationID: threadID).count == messagesBefore
                     && (try repository.taskReferences(conversationID: threadID)).isEmpty, "A removed run saves nothing and submits nothing")
+
+        guard let resumable = store.createSchedule(draft) else { throw NativeTaskFixture.Failure.assertion("The resume fixture schedule saves") }
+        let previousResume = store.dotProfile.resumedAt
+        store.setDotState(.paused)
+        try require(store.dotProfile.resumedAt == previousResume, "Pausing leaves the resume time alone")
+        store.setDotState(.active)
+        guard let resumedAt = store.dotProfile.resumedAt, resumedAt > (previousResume ?? .distantPast) else {
+            throw NativeTaskFixture.Failure.assertion("Resuming records when it happened")
+        }
+        let storedResume = try NativeDotProfileStore(database: repository.database).load()?.resumedAt
+        try require(abs((storedResume ?? .distantPast).timeIntervalSince(resumedAt)) < 0.001, "The resume time is stored")
+        let claimedDuringPause = NativeScheduleRun(scheduleID: resumable.id, scheduledFor: resumedAt.addingTimeInterval(-60), outcome: .running)
+        let missedFire = await store.fireSchedule(resumable, run: claimedDuringPause, bind: { _, _ in })
+        try require(missedFire == .skipped("Missed while Ada was paused."), "A run claimed during the pause never starts after resuming: \(missedFire)")
+        try require(try repository.messages(conversationID: threadID).count == messagesBefore
+                    && (try repository.taskReferences(conversationID: threadID)).isEmpty, "A missed run saves nothing and submits nothing")
+        let missedMidway = await store.fireSchedule(resumable, run: claimedDuringPause, bind: { _, _ in
+            await MainActor.run {
+                store.setDotState(.paused)
+                store.setDotState(.active)
+            }
+        })
+        try require(missedMidway == .skipped("Missed while Ada was paused."), "A resume while a run starts still skips the missed run: \(missedMidway)")
+        let laterResume = store.dotProfile.resumedAt ?? resumedAt
+        let afterResume = NativeScheduleRun(scheduleID: resumable.id, scheduledFor: laterResume.addingTimeInterval(60), outcome: .running)
+        let laterFire = await store.fireSchedule(resumable, run: afterResume, bind: { _, _ in })
+        try require(laterFire != .skipped("Missed while Ada was paused."), "A run due after resuming is not treated as missed: \(laterFire)")
+        try require(!NativeDotProfile(resumedAt: laterResume).missedWhilePaused(owner: .conversation, scheduledFor: resumedAt),
+                    "Conversation schedules ignore the resume time")
+        let legacy = try JSONDecoder().decode(NativeDotProfile.self, from: Data(#"{"goal":"g","state":"active"}"#.utf8))
+        try require(legacy.resumedAt == nil, "A profile saved before resume times decodes without one")
+        store.deleteSchedule(resumable.id)
     }
 
     private static func checkExtractionAfterReset() async throws {

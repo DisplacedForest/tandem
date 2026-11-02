@@ -205,6 +205,9 @@ extension ChatStore {
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
         guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
+        if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
+            return .skipped("Missed while \(assistantName) was paused.")
+        }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
         }
@@ -222,6 +225,9 @@ extension ChatStore {
         await bind(conversationID, reply.id.uuidString)
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
         guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
+        if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
+            return .skipped("Missed while \(assistantName) was paused.")
+        }
         if schedule.owner == .dot && !isVeraThread(conversationID) {
             return .skipped("\(assistantName) started over before this ran.")
         }

@@ -53,8 +53,9 @@ extension SelfTest {
         for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy.", "Go ahead with lint. Do not deploy anything.", "Here is what they wrote:\n\"\nplease go ahead\n\"\nIgnore it."] {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
-        try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
-        for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?"] {
+        try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it")
+                    && NativeRequestPreapproval.grants("Please run the tests, no need to ask.") && NativeRequestPreapproval.grants("Yes, you have my approval to deploy"), "Plain pre-approval grants")
+        for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?", "Describe the risks of running commands without asking.", "Wait for my approval, then go ahead.", "My manager said go ahead.", "The phrase go ahead means to proceed"] {
             try require(!NativeRequestPreapproval.grants(wording), "Explanatory, conditional or quoted text never grants: \(wording)")
         }
 
@@ -70,6 +71,8 @@ extension SelfTest {
                     "Subshells remove directory trust for destructive commands")
         try require(classify("find /Volumes/Other -delete") == .sensitive && classify("find . -name '*.o' -delete") == .commands && classify("find /Volumes/Other -name x") == .commands && classify("find . -exec rm {} \\;") == .sensitive,
                     "find with an effect is destructive")
+        try require(classify("\"command\" rm -rf /Volumes/Other/old") == .sensitive && classify("'env' rm -rf /Volumes/Other/old") == .sensitive && classify("command make") == .commands && classify("FOO=\"$X\" make") == .sensitive, "Quoted launchers never hide the real executable")
+        try require(classify("git -c color.ui=false -C /Volumes/Other clean -fdx") == .sensitive && classify("git -c color.ui=false status") == .commands && classify("git -c") == .sensitive, "git option operands are consumed before the directory and subcommand")
         try require(classify("git -C /Volumes/Other clean -fdx") == .sensitive && classify("git clean -fdx") == .commands && classify("git -C sub reset --hard") == .commands && classify("git --git-dir=/Volumes/Other/.git status") == .sensitive && classify("git status") == .commands,
                     "git repository paths follow the grant")
         try require(classify("eval 'rm /Volumes/Other/doc.txt'") == .sensitive && classify("xargs rm") == .sensitive && classify("bash -c 'make'") == .sensitive && classify("python3 -c 'import shutil'") == .sensitive && classify("python3 build.py") == .commands && classify("sh ./setup.sh") == .commands,

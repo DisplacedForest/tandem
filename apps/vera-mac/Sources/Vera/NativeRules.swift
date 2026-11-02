@@ -219,6 +219,8 @@ enum NativeRequestPreapproval {
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">"]
 
+    static let openers = ["please", "yes", "yes,", "ok", "ok,", "okay", "okay,", "sure", "sure,", "just", "you can", "you may", "feel free", "go", "run", "do", "fix", "build", "make", "deploy", "install", "update", "apply", "proceed", "skip", "no need", "and"]
+
     static func grants(_ text: String) -> Bool {
         let lowered = text.lowercased()
         guard phrases.contains(where: { lowered.contains($0) }) else { return false }
@@ -226,7 +228,13 @@ enum NativeRequestPreapproval {
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
         if remainder.contains(where: { quoteCharacters.contains($0) }) { return false }
         let padded = " " + remainder.replacingOccurrences(of: "\n", with: " ") + " "
-        return !negations.contains { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }
+        if negations.contains(where: { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }) { return false }
+        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).map { $0.trimmingCharacters(in: .whitespaces) }
+        return sentences.contains { sentence in
+            guard phrases.contains(where: { sentence.contains($0) }) else { return false }
+            if phrases.contains(where: { sentence.hasPrefix($0) }) { return true }
+            return openers.contains { sentence.hasPrefix($0 + " ") }
+        }
     }
 }
 
@@ -252,8 +260,13 @@ enum NativeCommandClassifier {
 
     static func executable(_ segment: [String]) -> (name: String, arguments: [String]) {
         var tokens = segment[...]
-        while let first = tokens.first, first.contains("="), !first.hasPrefix("-"), !first.hasPrefix("/") { tokens = tokens.dropFirst() }
-        while let first = tokens.first, ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"].contains(first) {
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-"), !first.hasPrefix("/") {
+            if first.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+            tokens = tokens.dropFirst()
+        }
+        let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"]
+        while let first = tokens.first, launchers.contains(stripOuterQuotes(first)) {
+            if stripOuterQuotes(first) != first { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
             while let next = tokens.first, next.hasPrefix("-") || next.contains("=") { tokens = tokens.dropFirst() }
         }
@@ -299,6 +312,11 @@ enum NativeCommandClassifier {
                         continue
                     }
                     if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .sensitive }
+                    if token == "-c" || token == "--config-env" || token == "--namespace" || token == "--exec-path" || token == "--super-prefix" {
+                        guard index + 1 < arguments.count else { return .sensitive }
+                        index += 2
+                        continue
+                    }
                     if !token.hasPrefix("-") {
                         if destructiveGit.contains(token) { name = "rm"; arguments = Array(arguments[(index + 1)...]) }
                         break

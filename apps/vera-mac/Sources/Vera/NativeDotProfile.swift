@@ -13,6 +13,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
     var state: NativeDotState = .active
     var setupCompleted: Bool = false
     var updatedAt: Date = Date()
+    var resumedAt: Date? = nil
 
     var hasGoal: Bool { !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var isPaused: Bool { state == .paused }
@@ -23,15 +24,17 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         case state
         case setupCompleted = "setup_completed"
         case updatedAt = "updated_at"
+        case resumedAt = "resumed_at"
     }
 
     init(goal: String = "", connectedToolIDs: Set<String>? = nil, state: NativeDotState = .active,
-         setupCompleted: Bool = false, updatedAt: Date = Date()) {
+         setupCompleted: Bool = false, updatedAt: Date = Date(), resumedAt: Date? = nil) {
         self.goal = Self.clean(goal)
         self.connectedToolIDs = connectedToolIDs
         self.state = state
         self.setupCompleted = setupCompleted
         self.updatedAt = updatedAt
+        self.resumedAt = resumedAt
     }
 
     init(from decoder: any Decoder) throws {
@@ -49,6 +52,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         }
         setupCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .setupCompleted)) ?? false
         updatedAt = ((try? container.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil).map(Date.init(timeIntervalSince1970:)) ?? Date()
+        resumedAt = ((try? container.decodeIfPresent(Double.self, forKey: .resumedAt)) ?? nil).map(Date.init(timeIntervalSince1970:))
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -58,6 +62,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         try container.encode(state.rawValue, forKey: .state)
         try container.encode(setupCompleted, forKey: .setupCompleted)
         try container.encode(updatedAt.timeIntervalSince1970, forKey: .updatedAt)
+        try container.encodeIfPresent(resumedAt?.timeIntervalSince1970, forKey: .resumedAt)
     }
 
     static func clean(_ goal: String) -> String {
@@ -72,6 +77,11 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
 
     func allowsScheduledRun(owner: NativeScheduleOwner) -> Bool {
         !(owner == .dot && state == .paused)
+    }
+
+    func missedWhilePaused(owner: NativeScheduleOwner, scheduledFor: Date) -> Bool {
+        guard owner == .dot, let resumedAt else { return false }
+        return scheduledFor <= resumedAt
     }
 }
 
