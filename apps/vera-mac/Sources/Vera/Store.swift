@@ -25,6 +25,7 @@ final class ChatStore: ObservableObject {
     @Published var memoryRecords: [NativeMemoryRecord] = []
     @Published var memoryLibraryRevision = 0
     var nativeMemoryNow: () -> Date = { Date() }
+    var nativeMemorySelectionTransform: (([NativeMemoryRanked]) -> [NativeMemoryRanked])?
     private var reloadingNativeMemory = false
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var inspectedMemoryRevision: Int?
@@ -2259,6 +2260,8 @@ final class ChatStore: ObservableObject {
                     }
                     memoryRetrievalTraces[id] = finalTrace
                 }
+                let admittedMemories = selectedMemories
+                if let transform = nativeMemorySelectionTransform { selectedMemories = transform(selectedMemories) }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
                     contracts.insert(.citations)
@@ -2284,7 +2287,7 @@ final class ChatStore: ObservableObject {
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
-                turnMemorySelections[turn.attempt ?? turn.id] = selectedMemories
+                turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {

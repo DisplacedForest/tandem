@@ -109,7 +109,7 @@ Each answer is scored against what the scenario expects. These count as errors:
 * the decisive source, usually the correcting message, not cited
 * an expected memory not recalled
 
-The fixture run fails on any error or when it takes longer than its declared 20 second budget. It then runs again with retrieval deliberately broken so that removed and replaced memories come back, and fails unless that run is caught.
+The fixture run fails on any error or when it takes longer than its declared 20 second budget. Scores come from the memory block in the request the model actually received, not from the citations saved on the reply. The long chat is folded with a fixed context limit, and the run fails if the request carried the whole chat. It then runs again with retrieval deliberately broken just before the request is put together, so removed and replaced memories really reach the model, and fails unless that run is caught.
 
 `Vera --memory-gate-live` runs the same scenarios against the chat profile and memory endpoint saved in Settings. It uses a throwaway database in a temporary folder, never your own history or memory, and writes `memory-gate-<date>.json` and `.md` to `~/Library/Application Support/Vera/reports`. The reports hold scenario names, counts, timings, the model name and endpoint hosts, never memory text or keys. A live run fails only on resurrections or work described as done when it wasn't. The other counts are recorded so model quality can be tracked over time. If no chat profile or memory endpoint is set, it says so and exits.
 
