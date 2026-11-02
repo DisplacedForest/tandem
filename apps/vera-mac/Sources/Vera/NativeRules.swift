@@ -219,7 +219,8 @@ enum NativeRequestPreapproval {
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
-    static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"]
+    static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
+    static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "correct", "review", "phrase", "sentence", "wording", "text", "message", "email", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "here is", "here's", "this is", "like this", "such as"]
 
     static func words(_ text: String) -> [String] {
         text.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
@@ -238,15 +239,11 @@ enum NativeRequestPreapproval {
     static func sentenceGrants(_ sentence: String) -> Bool {
         var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
         if phrases.contains(where: { rest.hasSuffix(", " + $0) || rest.hasSuffix(" and " + $0) || rest.hasSuffix(", and " + $0) }) { return true }
-        var stripped = true
-        while stripped {
-            stripped = false
-            for opener in openers where rest.hasPrefix(opener + " ") || rest.hasPrefix(opener + ",") {
-                rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-                stripped = true
-            }
+        while true {
+            if phrases.contains(where: { rest.hasPrefix($0) }) { return true }
+            guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
+            rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
         }
-        return phrases.contains { rest.hasPrefix($0) }
     }
 
     static func grants(_ text: String) -> Bool {
@@ -256,7 +253,10 @@ enum NativeRequestPreapproval {
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
         if remainder.contains(where: { quoteCharacters.contains($0) }) { return false }
         if negated(remainder) { return false }
-        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!?;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
+        if lowered.contains("?") { return false }
+        let wordList = " " + words(lowered).joined(separator: " ") + " "
+        if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
         return sentences.contains { sentenceGrants($0) }
     }
 }
@@ -299,7 +299,7 @@ enum NativeCommandClassifier {
         }
         guard let first = tokens.first else { return ("", []) }
         let unquoted = stripOuterQuotes(first)
-        if unquoted.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+        if unquoted.isEmpty || unquoted.contains(where: { !($0.isLetter || $0.isNumber || "._+-/~".contains($0)) }) { return ("?", Array(tokens.dropFirst())) }
         let name = unquoted.split(separator: "/").last.map(String.init) ?? unquoted
         return (name, Array(tokens.dropFirst()))
     }
