@@ -70,8 +70,8 @@ enum NativeDiagnosticRedaction {
         return output.replacingOccurrences(of: credentialAssignment, with: "$1$2" + placeholder, options: .regularExpression)
     }
 
-    static func isToken(_ token: Substring, exact: Bool) -> Bool {
-        token.contains(where: \.isNumber) && (exact || token.count >= minimumTokenLength)
+    static func isToken(_ token: Substring, exact: Bool, requiresDigit: Bool = true) -> Bool {
+        (!requiresDigit || token.contains(where: \.isNumber)) && (exact || token.count >= minimumTokenLength)
     }
 
     private static func maskKeyShape(_ input: String, _ expression: NSRegularExpression) -> String {
@@ -79,7 +79,8 @@ enum NativeDiagnosticRedaction {
         for match in expression.matches(in: input, range: NSRange(input.startIndex..., in: input)).reversed() {
             guard let whole = Range(match.range, in: output), let token = Range(match.range(at: 1), in: output) else { continue }
             let exact = expression.pattern.contains("AKIA") || expression.pattern.contains("AIza")
-            guard isToken(output[token], exact: exact) else { continue }
+            let scheme = expression.pattern.contains("(?i:bearer)") || expression.pattern.contains("(?i:basic)")
+            guard isToken(output[token], exact: exact, requiresDigit: !scheme) else { continue }
             output.replaceSubrange(whole, with: placeholder)
         }
         return output

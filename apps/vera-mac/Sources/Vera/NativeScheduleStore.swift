@@ -60,13 +60,32 @@ final class NativeScheduleStore: Sendable {
             createdAt: Date(timeIntervalSince1970: row["created_at"]))
     }
 
+    static func migrateCheckIns(_ db: Database) throws {
+        try db.execute(sql: """
+            ALTER TABLE native_schedule_runs ADD COLUMN check_in_key TEXT;
+            CREATE TABLE native_task_card_mirrors (
+                message_id TEXT PRIMARY KEY NOT NULL,
+                reference_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL
+            );
+            CREATE INDEX native_task_card_mirrors_reference ON native_task_card_mirrors(reference_id);
+            """)
+    }
+
+    static func claimCheckIn(_ db: Database, runID: String, key: String) throws -> Bool {
+        try db.execute(sql: "UPDATE native_schedule_runs SET check_in_key = ? WHERE id = ? AND (check_in_key IS NULL OR check_in_key != ?)",
+                       arguments: [key, runID, key])
+        return db.changesCount == 1
+    }
+
     private static func run(_ row: Row) -> NativeScheduleRun {
         NativeScheduleRun(
             id: row["id"], scheduleID: row["schedule_id"], scheduledFor: Date(timeIntervalSince1970: row["scheduled_for"]),
             startedAt: (row["started_at"] as Double?).map(Date.init(timeIntervalSince1970:)),
             finishedAt: (row["finished_at"] as Double?).map(Date.init(timeIntervalSince1970:)),
             outcome: NativeScheduleOutcome(rawValue: row["outcome"]) ?? .failed, detail: row["detail"],
-            conversationID: row["conversation_id"], messageID: row["message_id"], taskReferenceID: row["task_reference_id"])
+            conversationID: row["conversation_id"], messageID: row["message_id"], taskReferenceID: row["task_reference_id"],
+            checkInKey: row["check_in_key"])
     }
 
     func all() throws -> [NativeSchedule] {
@@ -145,14 +164,14 @@ final class NativeScheduleStore: Sendable {
     private static func write(_ run: NativeScheduleRun, db: Database) throws {
         try db.execute(sql: """
             INSERT INTO native_schedule_runs(id, schedule_id, scheduled_for, started_at, finished_at, outcome, detail,
-                conversation_id, message_id, task_reference_id)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+                conversation_id, message_id, task_reference_id, check_in_key)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET started_at = excluded.started_at, finished_at = excluded.finished_at,
                 outcome = excluded.outcome, detail = excluded.detail, conversation_id = excluded.conversation_id,
-                message_id = excluded.message_id, task_reference_id = excluded.task_reference_id
+                message_id = excluded.message_id, task_reference_id = excluded.task_reference_id, check_in_key = excluded.check_in_key
             """, arguments: [run.id, run.scheduleID, run.scheduledFor.timeIntervalSince1970, run.startedAt?.timeIntervalSince1970,
                              run.finishedAt?.timeIntervalSince1970, run.outcome.rawValue, run.detail, run.conversationID,
-                             run.messageID, run.taskReferenceID])
+                             run.messageID, run.taskReferenceID, run.checkInKey])
         try db.execute(sql: """
             UPDATE native_schedules SET last_run_at = ?, last_outcome = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)
             """, arguments: [run.scheduledFor.timeIntervalSince1970, run.outcome.rawValue, run.scheduleID, run.scheduledFor.timeIntervalSince1970])
@@ -161,12 +180,20 @@ final class NativeScheduleStore: Sendable {
     func runs(scheduleID: String, limit: Int = 50) throws -> [NativeScheduleRun] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT * FROM native_schedule_runs WHERE schedule_id = ? ORDER BY scheduled_for DESC, rowid DESC LIMIT ?
-                """, arguments: [scheduleID, max(1, min(limit, 200))]).map(Self.run)
+                SELECT * FROM native_schedule_runs WHERE schedule_id = ? AND (outcome IN ('running', 'waiting', 'blocked') OR id IN (
+                    SELECT id FROM native_schedule_runs WHERE schedule_id = ? ORDER BY scheduled_for DESC, rowid DESC LIMIT ?))
+                ORDER BY scheduled_for DESC, rowid DESC
+                """, arguments: [scheduleID, scheduleID, max(1, min(limit, 200))]).map(Self.run)
         }
     }
 
     func activeRuns() throws -> [NativeScheduleRun] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM native_schedule_runs WHERE outcome IN ('running', 'waiting', 'blocked') ORDER BY scheduled_for").map(Self.run)
+        }
+    }
+
+    func runningRuns() throws -> [NativeScheduleRun] {
         try database.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM native_schedule_runs WHERE outcome = 'running' ORDER BY scheduled_for").map(Self.run)
         }

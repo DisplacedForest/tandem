@@ -105,7 +105,7 @@ struct ScheduledView: View {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
                                 ownerLabel: schedule.owner == .dot ? store.assistantName : "its own chat",
-                                running: (store.scheduleRuns[schedule.id] ?? []).contains { $0.outcome == .running })
+                                openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome)
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
                         .contextMenu { actions(for: schedule) }
@@ -139,7 +139,7 @@ private struct ScheduleRow: View {
     let schedule: NativeSchedule
     let selected: Bool
     let ownerLabel: String
-    let running: Bool
+    let openOutcome: NativeScheduleOutcome?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -161,7 +161,12 @@ private struct ScheduleRow: View {
     }
 
     private var statusLine: String {
-        if running { return "Running now" }
+        switch openOutcome {
+        case .running: return "Running now"
+        case .waiting: return "Waiting for you"
+        case .blocked: return "Blocked"
+        default: break
+        }
         guard schedule.enabled else { return "Paused" }
         var parts: [String] = []
         if let next = schedule.nextRunAt {
@@ -203,7 +208,9 @@ private struct ScheduleDetail: View {
                     ForEach(runs) { run in
                         ScheduleRunRow(run: run, timeZone: schedule.timeZone,
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
-                                       onStop: run.outcome == .running && run.taskReferenceID != nil ? { store.stopScheduleRun(run) } : nil)
+                                       onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
+                                       choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
+                                       onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
                 }
             }
@@ -218,6 +225,8 @@ private struct ScheduleRunRow: View {
     let timeZone: TimeZone
     let onOpen: (() -> Void)?
     let onStop: (() -> Void)?
+    let choices: [String]
+    let onChoose: ((String) -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -233,11 +242,23 @@ private struct ScheduleRunRow: View {
             Spacer(minLength: 8)
             if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)) }
             if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)) }
+            ForEach(choices, id: \.self) { choice in
+                Button(Self.title(for: choice)) { onChoose?(choice) }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
         }
         .padding(10)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .combine)
+    }
+
+    private static func title(for choice: String) -> String {
+        switch choice.lowercased() {
+        case "retry": return "Retry"
+        case "stop", "cancel": return "Stop"
+        default: return choice.prefix(1).uppercased() + choice.dropFirst()
+        }
     }
 }
 

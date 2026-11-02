@@ -51,8 +51,20 @@ extension ChatStore {
     func applyNativeTaskUpdates(_ updates: [NativeTaskMessageUpdate]) {
         var changed = false
         for update in updates {
-            guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }),
-                  let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
+            guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }) else { continue }
+            for mirror in update.mirrors {
+                guard let index = conversations[conversation].messages.firstIndex(where: { $0.id == mirror }) else { continue }
+                let cards = update.blocks.filter { if case .taskCard = $0 { return true }; if case .artifact = $0 { return true }; return false }
+                var blocks = conversations[conversation].messages[index].displayBlocks
+                for card in cards {
+                    if let existing = blocks.firstIndex(where: { $0.id == card.id }) { blocks[existing] = card } else { blocks.append(card) }
+                }
+                if blocks != conversations[conversation].messages[index].displayBlocks {
+                    conversations[conversation].messages[index].displayBlocks = blocks
+                    changed = true
+                }
+            }
+            guard let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
             let kept = conversations[conversation].messages[message].displayBlocks.filter { block in
                 switch block {
                 case .fileChange, .commandRun: return !update.blocks.contains(where: { $0.id == block.id })

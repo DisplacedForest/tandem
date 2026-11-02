@@ -17,12 +17,14 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
     var attempt = "initial"
     var nativeUnavailable: String?
     var failureReason: String?
+    var automaticRetryStep: String?
 
     private enum CodingKeys: String, CodingKey {
         case phase, subquestions, sources, errors, retry, attempt
         case nextQuery = "next_query"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
+        case automaticRetryStep = "automatic_retry_step"
     }
 
     init() {}
@@ -38,6 +40,7 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
         attempt = try container.decodeIfPresent(String.self, forKey: .attempt) ?? "initial"
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+        automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
     }
 
     func encoded() throws -> Data {
@@ -122,6 +125,13 @@ enum NativeTaskWorkerFailures {
         }
     }
 
+    static let unsafeToRetryCodes: Set<String> = ["previous_request_uncertain", "canceled", "provider_auth", "credential_unavailable"]
+    static let automaticRetryNote = "The model request did not complete. Trying once more."
+
+    static func retriesAutomatically(_ code: String) -> Bool {
+        !terminalCodes.contains(code) && !unsafeToRetryCodes.contains(code)
+    }
+
     static func pauseMessage(_ code: String) -> String {
         switch code {
         case "request_timeout": return "The model request reached its time limit."
@@ -174,6 +184,13 @@ enum NativeResearchWorker {
                 checkpoint.failureReason = failure.code
                 return NativeTaskStepResult(state: .failed, checkpoint: try checkpoint.encoded(), event: "failed",
                     data: try NativeTaskStore.canonical(["message": NativeTaskWorkerFailures.terminalMessage(failure.code, work: "research")]))
+            }
+            if NativeTaskWorkerFailures.retriesAutomatically(failure.code), checkpoint.automaticRetryStep != checkpoint.phase {
+                checkpoint.automaticRetryStep = checkpoint.phase
+                checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                checkpoint.note([NativeTaskWorkerFailures.automaticRetryNote])
+                return NativeTaskStepResult(state: .queued, checkpoint: try checkpoint.encoded(), event: "progress",
+                    data: try NativeTaskStore.canonical(["message": NativeTaskWorkerFailures.automaticRetryNote, "phase": checkpoint.phase]))
             }
             return try pause(&checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code))
         }
