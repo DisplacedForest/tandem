@@ -146,7 +146,10 @@ struct VeraSidebar: View {
     }
 
     private var column: some View {
-        VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
+        let groups = store.sidebarGroups(search: search)
+        let showingConversation = !collapsed && store.section == .chat
+            && store.selectedID.map { id in groups.contains { $0.convos.contains { $0.id == id } } } == true
+        return VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
             header
                 .padding(.top, Self.topInset)
                 .padding(.bottom, 10)
@@ -169,7 +172,7 @@ struct VeraSidebar: View {
             }
 
             companionRow.padding(.top, 6)
-            ForEach(SidebarDestination.primary) { destinationRow($0) }
+            ForEach(SidebarDestination.primary) { destinationRow($0, showingConversation: showingConversation) }
             if collapsed {
                 collapsedMoreRow
             }
@@ -179,7 +182,7 @@ struct VeraSidebar: View {
             } else {
                 Group {
                     divider
-                    history
+                    history(groups)
                 }
                 .transition(.opacity)
             }
@@ -233,15 +236,18 @@ struct VeraSidebar: View {
             secondaryItems
         } label: {
             Image(systemName: "ellipsis").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(secondarySelected ? Theme.accent : Theme.textSecondary)
                 .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+            .fill(SidebarRowStyle.fill(selected: secondarySelected, hovering: false, pressed: false)))
         .help("More")
         .accessibilityLabel("More destinations")
+        .accessibilityAddTraits(secondarySelected ? [.isSelected] : [])
     }
 
     private var collapsedMoreRow: some View {
@@ -319,13 +325,8 @@ struct VeraSidebar: View {
         Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
     }
 
-    private var showingConversationRow: Bool {
-        guard !collapsed, store.section == .chat, let id = store.selectedID else { return false }
-        return store.sidebarGroups(search: search).contains { $0.convos.contains { $0.id == id } }
-    }
-
-    private func destinationRow(_ destination: SidebarDestination) -> some View {
-        let selected = destination.isSelected(section: store.section, pane: store.agenticPane, showingConversation: showingConversationRow)
+    private func destinationRow(_ destination: SidebarDestination, showingConversation: Bool) -> some View {
+        let selected = destination.isSelected(section: store.section, pane: store.agenticPane, showingConversation: showingConversation)
         return Button { go(destination) } label: {
             SidebarRowLabel(icon: Image(systemName: destination.icon), title: destination.title, selected: selected, collapsed: collapsed)
         }
@@ -380,10 +381,10 @@ struct VeraSidebar: View {
         }
     }
 
-    private var history: some View {
+    private func history(_ groups: [ChatStore.SidebarGroup]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-                ForEach(store.sidebarGroups(search: search)) { group in
+                ForEach(groups) { group in
                     SidebarSectionHeader(title: group.title)
                     ForEach(group.convos) { convo in
                         let selected = store.section == .chat && store.selectedID == convo.id

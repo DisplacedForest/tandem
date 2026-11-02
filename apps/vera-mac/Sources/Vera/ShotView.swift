@@ -471,7 +471,7 @@ struct ShotView: View {
                         TandemLogoMark(size: 22)
                         Text("Tandem").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         Spacer(minLength: 0)
-                        shotGlyph("ellipsis")
+                        shotGlyph("ellipsis", active: shotSecondarySelected)
                         shotGlyph("sidebar.left")
                     }
                     .padding(.leading, SidebarMetrics.inset - 2)
@@ -494,7 +494,7 @@ struct ShotView: View {
                         active: destination.isSelected(section: section, pane: .canvas, showingConversation: !collapsedSidebar && !emptyChat))
             }
             if collapsedSidebar {
-                shotNav("More", "ellipsis", active: SidebarDestination.secondary.contains { $0.isSelected(section: section, pane: .canvas) })
+                shotNav("More", "ellipsis", active: shotSecondarySelected)
             }
             if !collapsedSidebar {
                 shotDivider
@@ -515,10 +515,16 @@ struct ShotView: View {
         .padding(.horizontal, SidebarMetrics.inset)
     }
 
-    private func shotGlyph(_ icon: String) -> some View {
+    private func shotGlyph(_ icon: String, active: Bool = false) -> some View {
         Image(systemName: icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
+            .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
             .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
+            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+                .fill(SidebarRowStyle.fill(selected: active, hovering: false, pressed: false)))
+    }
+
+    private var shotSecondarySelected: Bool {
+        SidebarDestination.secondary.contains { $0.isSelected(section: section, pane: .canvas) }
     }
 
     private func shotTile(_ icon: String) -> some View {
