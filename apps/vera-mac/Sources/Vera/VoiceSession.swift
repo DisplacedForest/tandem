@@ -38,6 +38,7 @@ final class VoiceSession: ObservableObject {
     private let fixedTranscription: Bool
     private var configSubscription: AnyCancellable?
     private var opening = false
+    private var chatGeneration = 0
     private var advancing = false
     private var dictationGeneration = 0
     private var dictationText = ""
@@ -56,6 +57,8 @@ final class VoiceSession: ObservableObject {
     var voiceHost: String { client.host }
 
     var hasPendingDictation: Bool { dictationTail != nil }
+
+    var isOpening: Bool { opening }
 
     init(client: VoiceClient, socket: VeraSocket?, store: ChatStore,
          capture: (any VoiceCaptureDevice)? = nil,
@@ -97,7 +100,7 @@ final class VoiceSession: ObservableObject {
             finishDictation(nil)
             interrupted = true
         }
-        if state != .idle {
+        if state != .idle || opening {
             stop()
             interrupted = true
         }
@@ -157,15 +160,32 @@ final class VoiceSession: ObservableObject {
         lastError = nil
         entryError = nil
         opening = true
+        chatGeneration &+= 1
+        let generation = chatGeneration
         Task {
             defer { opening = false }
-            if let failure = await openCapture() {
+            let failure = await openCapture()
+            guard generation == chatGeneration else {
+                if failure == nil { releaseStaleStart() }
+                return
+            }
+            if let failure {
                 entryError = failure.message
                 return
             }
             queue.start()
             await prewarm()
-            guard let stream = await openTranscript() else {
+            guard generation == chatGeneration else {
+                releaseStaleStart()
+                return
+            }
+            let stream = await openTranscript()
+            guard generation == chatGeneration else {
+                if let stream { Task { _ = try? await stream.finish() } }
+                releaseStaleStart()
+                return
+            }
+            guard let stream else {
                 queue.stop()
                 capture.end()
                 entryError = VoiceEntryFailure.serviceUnreachable.message
@@ -175,7 +195,14 @@ final class VoiceSession: ObservableObject {
         }
     }
 
+    private func releaseStaleStart() {
+        guard state == .idle, !isDictating else { return }
+        queue.stop()
+        capture.end()
+    }
+
     func stop() {
+        chatGeneration &+= 1
         if isDictating { finishDictation(nil) }
         streamTask?.cancel(); streamTask = nil
         sttStream = nil
@@ -192,7 +219,15 @@ final class VoiceSession: ObservableObject {
         statusLine = nil
         sttStream = stream
         if stream == nil {
-            Task { sttStream = await openTranscript() }
+            let generation = chatGeneration
+            Task {
+                let opened = await openTranscript()
+                guard generation == chatGeneration, state == .listening else {
+                    if let opened { Task { _ = try? await opened.finish() } }
+                    return
+                }
+                sttStream = opened
+            }
         }
         capture.listen(true)
     }
@@ -326,7 +361,7 @@ final class VoiceSession: ObservableObject {
     /// throwaway phrase (Kokoro) and transcribe a short silent clip (Whisper). The heavy one-time
     /// model load also happens eagerly in the service at startup; this primes the per-session path.
     private func prewarm() async {
-        guard !warmed else { return }
+        guard !warmed, !fixedTranscription else { return }
         warmed = true
         async let tts: Data? = try? client.synthesize("Ready.", voice: nil)
         // Warm the streaming STT path: open a connection, push a short silent chunk, finalise.
@@ -346,9 +381,11 @@ final class VoiceSession: ObservableObject {
         state = .transcribing
         guard let stream = sttStream else { beginListening(); return }
         sttStream = nil
+        let generation = chatGeneration
         Task {
             do {
                 let text = try await stream.finish()
+                guard generation == chatGeneration else { return }
                 guard !text.isEmpty else { beginListening(); return }
                 guard let socket, let turn = store.beginVoiceTurn(userText: text) else {
                     lastError = "Voice chat isn't set up. Check Settings."
@@ -356,56 +393,58 @@ final class VoiceSession: ObservableObject {
                 }
                 state = .thinking
                 NSSound(named: "Tink")?.play()
-                streamReply(socket: socket, chatID: turn.chatID, messages: turn.messages)
+                streamReply(socket: socket, chatID: turn.chatID, messages: turn.messages, generation: generation)
             } catch {
+                guard generation == chatGeneration else { return }
                 lastError = error.localizedDescription
                 beginListening()
             }
         }
     }
 
-    private func streamReply(socket: VeraSocket, chatID: String, messages: [[String: Any]]) {
+    private func streamReply(socket: VeraSocket, chatID: String, messages: [[String: Any]], generation: Int) {
         let messageID = UUID().uuidString
         var content = ""
         var spokenUpTo = 0   // character cursor into `content` already sent to TTS
         streamTask = Task {
             do {
                 for try await event in socket.streamReply(chatID: chatID, messageID: messageID, messages: messages) {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || generation != chatGeneration { return }
                     switch event {
                     case .sources:
                         break  // voice replies aren't rendered with chips
                     case .content(let raw):
                         content = raw
                         store.updateVoiceReply(chatID: chatID, text: content)
-                        spokenUpTo = await flushSentences(content, from: spokenUpTo)
+                        spokenUpTo = await flushSentences(content, from: spokenUpTo, generation: generation)
                     case .status(let s):
                         statusLine = s.replacingOccurrences(of: "_", with: " ")
                     case .done:
                         let chars = Array(content)
                         if spokenUpTo < chars.count {
                             let tail = String(chars[spokenUpTo...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !tail.isEmpty { await speak(tail) }
+                            if !tail.isEmpty { await speak(tail, generation: generation) }
                             spokenUpTo = chars.count
                         }
+                        guard generation == chatGeneration else { return }
                         queue.markTurnComplete()
                     }
                 }
             } catch {
+                guard generation == chatGeneration else { return }
                 if !Task.isCancelled {
                     lastError = error.localizedDescription
                     if state == .speaking { queue.markTurnComplete() }
                 }
             }
-            // Empty/failed reply that never produced speech → resume listening directly.
-            if state == .thinking { beginListening() }
+            if generation == chatGeneration, state == .thinking { beginListening() }
         }
     }
 
     /// Flush speakable text beyond `from`. For the FIRST chunk of a turn (`from == 0`) we break at
     /// the first clause boundary (`,`/`;`/`:` as well as `.`/`!`/`?`) past a short minimum so audio
     /// starts fast; after that we batch on full sentence endings. Returns the new cursor.
-    private func flushSentences(_ text: String, from: Int) async -> Int {
+    private func flushSentences(_ text: String, from: Int, generation: Int) async -> Int {
         let chars = Array(text)
         guard from < chars.count else { return from }
         let minLen = 12
@@ -437,17 +476,18 @@ final class VoiceSession: ObservableObject {
 
         if lastBoundary > from {
             let sentence = String(chars[from..<lastBoundary]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sentence.isEmpty { await speak(sentence) }
+            if !sentence.isEmpty { await speak(sentence, generation: generation) }
             return lastBoundary
         }
         return from
     }
 
-    private func speak(_ text: String) async {
+    private func speak(_ text: String, generation: Int) async {
         let spoken = VoiceSession.speechText(text)
-        guard !spoken.isEmpty else { return }
+        guard !spoken.isEmpty, generation == chatGeneration else { return }
         if state != .speaking { state = .speaking }
-        if let wav = try? await client.synthesize(spoken, voice: nil) { queue.enqueue(wav: wav) }
+        guard let wav = try? await client.synthesize(spoken, voice: nil), generation == chatGeneration else { return }
+        queue.enqueue(wav: wav)
     }
 
     /// Convert markdown to plain spoken text — Kokoro otherwise pronounces "**" as "asterisk",

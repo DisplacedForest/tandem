@@ -13,6 +13,8 @@ struct DictationDraftBinding {
     let conversationID: String?
     private(set) var anchor: Int
     private(set) var inserted = ""
+    private(set) var delivered = ""
+    private var segmentStart = ""
 
     init(conversationID: String?, draft: String) {
         self.conversationID = conversationID
@@ -22,16 +24,24 @@ struct DictationDraftBinding {
     mutating func apply(_ text: String, to draft: String) -> String {
         var chars = Array(draft)
         let previous = Array(inserted)
-        if anchor <= chars.count, anchor + previous.count <= chars.count,
+        if anchor + previous.count <= chars.count,
            Array(chars[anchor..<(anchor + previous.count)]) == previous {
             chars.removeSubrange(anchor..<(anchor + previous.count))
         } else {
             anchor = chars.count
+            segmentStart = delivered
         }
-        let segment = Array(ComposerDictation.merge(base: String(chars[..<anchor]), text).dropFirst(anchor))
+        delivered = text
+        let portion = Self.remainder(of: text, after: segmentStart)
+        let segment = Array(ComposerDictation.merge(base: String(chars[..<anchor]), portion).dropFirst(anchor))
         chars.insert(contentsOf: segment, at: anchor)
         inserted = String(segment)
         return String(chars)
+    }
+
+    private static func remainder(of text: String, after prefix: String) -> String {
+        let shared = zip(text, prefix).prefix { $0 == $1 }.count
+        return String(text.dropFirst(shared))
     }
 }
 

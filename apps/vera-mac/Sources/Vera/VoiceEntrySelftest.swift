@@ -14,6 +14,9 @@ enum VoiceEntrySelftest {
         try await requireFinishFailures(require)
         try await requireDraftBinding(require)
         try await requireLiveConfiguration(require)
+        try requireEditedSegments(require)
+        try await requireTransportEnd(require)
+        try await requireStaleVoiceChat(require)
         print("VOICE ENTRY OK")
     }
 
@@ -166,7 +169,7 @@ enum VoiceEntrySelftest {
         draft = binding.apply("hello world", to: draft)
         try require(draft == "Hi hello world there", "Typing after dictation started survives a later partial")
         draft = binding.apply("hello world again", to: "Rewritten")
-        try require(draft == "Rewritten hello world again", "A moved segment is appended instead of overwriting edits")
+        try require(draft == "Rewritten again", "A rewritten draft only gains the new phrase")
 
         let capture = FakeCapture()
         let session = makeSession(capture, FakeTranscriptSource(["one", "two", "three", "four", "five", "six"]))
@@ -228,6 +231,106 @@ enum VoiceEntrySelftest {
         try require(!session.supportsVoiceChat && session.voiceHost.isEmpty, "Removing the address hides voice")
     }
 
+    private static func requireEditedSegments(_ require: (Bool, String) throws -> Void) throws {
+        var corrected = DictationDraftBinding(conversationID: "a", draft: "")
+        var draft = corrected.apply("buy flower", to: "")
+        draft = draft.replacingOccurrences(of: "flower", with: "flour")
+        draft = corrected.apply("buy flower tomorrow", to: draft)
+        try require(draft == "buy flour tomorrow", "A correction survives the next phrase without repeating the transcript")
+        draft = corrected.apply("buy flower tomorrow", to: draft)
+        try require(draft == "buy flour tomorrow", "An unchanged delivery after a correction changes nothing")
+
+        var unchanged = DictationDraftBinding(conversationID: "a", draft: "")
+        draft = unchanged.apply("buy flower", to: "")
+        draft = unchanged.apply("buy flower", to: "buy flour")
+        try require(draft == "buy flour", "An unchanged final delivery after a correction appends nothing")
+
+        var shrunk = DictationDraftBinding(conversationID: "a", draft: "Note:")
+        draft = shrunk.apply("buy flower", to: "Note:")
+        try require(draft == "Note: buy flower", "Dictation follows the starting draft")
+        draft = shrunk.apply("buy flower milk", to: "No")
+        try require(draft == "No milk", "Deleted transcript text is never brought back")
+    }
+
+    private static func requireTransportEnd(_ require: (Bool, String) throws -> Void) async throws {
+        let ended = AsyncStream<WyomingEvent> { $0.finish() }
+        var failed = false
+        do { _ = try await TranscriptionStream.transcript(from: ended) } catch VoiceError.noTranscript { failed = true }
+        try require(failed, "A connection that ends without a transcript is an error")
+        let silent = AsyncStream<WyomingEvent> { continuation in
+            continuation.yield(WyomingEvent(type: "transcript", data: ["text": ""], payload: nil))
+            continuation.finish()
+        }
+        let silence = try await TranscriptionStream.transcript(from: silent)
+        try require(silence.isEmpty, "An empty transcript is silence, not an error")
+
+        let midCapture = FakeCapture()
+        let mid = makeSession(midCapture, FakeTranscriptSource(replies: [.text("hello"), .endsWithoutTranscript, .endsWithoutTranscript]))
+        let midEvents = DictationRecorder()
+        mid.startDictation(onText: midEvents.record)
+        try await waitFor { midCapture.listening }
+        mid.utteranceEnded()
+        try await waitFor { midEvents.events.count == 1 }
+        mid.utteranceEnded()
+        try await waitFor { midEvents.events.last?.isFinal == true }
+        try require(midEvents.events.last?.text == "hello", "A dropped connection keeps the earlier text")
+        try require(mid.entryError == VoiceEntryFailure.serviceUnreachable.message, "A dropped connection is reported")
+        try require(!mid.isDictating && !midCapture.listening, "A dropped connection stops capture")
+
+        let lastCapture = FakeCapture()
+        let last = makeSession(lastCapture, FakeTranscriptSource(replies: [.text("hello"), .endsWithoutTranscript]))
+        let lastEvents = DictationRecorder()
+        last.startDictation(onText: lastEvents.record)
+        try await waitFor { lastCapture.listening }
+        last.utteranceEnded()
+        try await waitFor { lastEvents.events.count == 1 }
+        last.stopDictation()
+        try await waitFor { lastEvents.events.last?.isFinal == true }
+        try require(lastEvents.events.last?.text == "hello", "A dropped final connection keeps the earlier text")
+        try require(last.entryError == VoiceEntryFailure.serviceUnreachable.message, "A dropped final connection is reported")
+        try require(!last.isDictating && !lastCapture.listening, "A dropped final connection leaves nothing recording")
+    }
+
+    private static func requireStaleVoiceChat(_ require: (Bool, String) throws -> Void) async throws {
+        let startGate = FakeGate()
+        let startCapture = FakeCapture()
+        startCapture.authorizeGate = startGate
+        let starting = makeSession(startCapture, FakeTranscriptSource(["unused"]))
+        starting.start()
+        try await waitFor { starting.isOpening }
+        starting.configure(voiceBase: URL(string: "http://elsewhere.test:8131"))
+        try require(starting.entryError == VoiceEntryFailure.settingsChanged.message, "Reconfiguring during startup is announced")
+        startGate.open()
+        try await waitFor { !starting.isOpening }
+        try require(starting.state == .idle && !startCapture.listening, "A startup that finishes after reconfiguration never listens")
+
+        let socket = VeraSocket(config: VoiceSocketConfig(baseURL: URL(string: "http://chat.test")!, apiKey: "fixture", model: "fixture"))
+        for (label, reply) in [("text", "hello"), ("silence", "")] {
+            let gate = FakeGate()
+            let capture = FakeCapture()
+            let source = FakeTranscriptSource(replies: [.delayed(reply, gate)])
+            let store = fixtureStore()
+            let before = store.conversations.count
+            let session = VoiceSession(client: VoiceClient(host: "voice.test"), socket: socket, store: store,
+                                       capture: capture, transcription: { try source.open() })
+            session.start()
+            try await waitFor { session.state == .listening }
+            session.utteranceEnded()
+            try await waitFor { session.state == .transcribing }
+            if label == "text" {
+                session.stop()
+            } else {
+                session.configure(voiceBase: URL(string: "http://elsewhere.test:8131"))
+            }
+            gate.open()
+            try await waitFor { source.completed == 1 }
+            try await Task.sleep(for: .milliseconds(60))
+            try require(store.conversations.count == before, "A late \(label) transcript never begins a turn")
+            try require(session.state == .idle && !capture.listening && source.opened == 1,
+                        "A late \(label) transcript never re-enters listening")
+        }
+    }
+
     private static func makeSession(_ capture: FakeCapture, _ source: FakeTranscriptSource) -> VoiceSession {
         VoiceSession(client: VoiceClient(host: "voice.test"), socket: nil, store: fixtureStore(),
                      capture: capture, transcription: { try source.open() })
@@ -259,11 +362,15 @@ private final class DictationRecorder {
 @MainActor
 private final class FakeCapture: VoiceCaptureDevice {
     var authorized = true
+    var authorizeGate: FakeGate?
     var listening = false
     var begun = 0
     var ended = 0
 
-    func authorize() async -> Bool { authorized }
+    func authorize() async -> Bool {
+        await authorizeGate?.wait()
+        return authorized
+    }
     func begin() throws { begun += 1 }
     func listen(_ on: Bool) { listening = on }
 
@@ -279,30 +386,93 @@ private final class DraftBox {
     var selected: String? = "a"
 }
 
+private final class FakeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if opened {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        let pending = waiters
+        waiters = []
+        lock.unlock()
+        pending.forEach { $0.resume() }
+    }
+}
+
+private enum FakeReply: @unchecked Sendable {
+    case text(String)
+    case fails
+    case endsWithoutTranscript
+    case delayed(String, FakeGate)
+}
+
 private final class FakeTranscriptSource: @unchecked Sendable {
     private let lock = NSLock()
-    private var texts: [String?]
-    private(set) var opened = 0
+    private var replies: [FakeReply]
+    private var openedCount = 0
+    private var completedCount = 0
 
-    init(_ texts: [String?]) { self.texts = texts }
+    init(_ texts: [String?]) { self.replies = texts.map { $0.map(FakeReply.text) ?? .fails } }
+
+    init(replies: [FakeReply]) { self.replies = replies }
+
+    var opened: Int {
+        lock.lock(); defer { lock.unlock() }
+        return openedCount
+    }
+
+    var completed: Int {
+        lock.lock(); defer { lock.unlock() }
+        return completedCount
+    }
 
     func open() throws -> any VoiceTranscript {
         lock.lock(); defer { lock.unlock() }
-        guard !texts.isEmpty else { throw VoiceError.notConfigured }
-        opened += 1
-        return FakeTranscript(texts.removeFirst())
+        guard !replies.isEmpty else { throw VoiceError.notConfigured }
+        openedCount += 1
+        return FakeTranscript(replies.removeFirst(), source: self)
+    }
+
+    func markCompleted() {
+        lock.lock(); completedCount += 1; lock.unlock()
     }
 }
 
 private final class FakeTranscript: VoiceTranscript, @unchecked Sendable {
-    private let text: String?
+    private let reply: FakeReply
+    private let source: FakeTranscriptSource
 
-    init(_ text: String?) { self.text = text }
+    init(_ reply: FakeReply, source: FakeTranscriptSource) {
+        self.reply = reply
+        self.source = source
+    }
 
     func send(_ pcm16k: Data) {}
 
     func finish() async throws -> String {
-        guard let text else { throw VoiceError.notConfigured }
-        return text
+        defer { source.markCompleted() }
+        switch reply {
+        case .text(let text): return text
+        case .fails: throw VoiceError.notConfigured
+        case .endsWithoutTranscript: return try await TranscriptionStream.transcript(from: AsyncStream<WyomingEvent> { $0.finish() })
+        case .delayed(let text, let gate):
+            await gate.wait()
+            return text
+        }
     }
 }
