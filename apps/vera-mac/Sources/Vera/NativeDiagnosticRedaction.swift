@@ -6,8 +6,8 @@ enum NativeDiagnosticRedaction {
     static let textPatterns = [
         #"(?i)\bbearer\s+[A-Za-z0-9._~+/=\-]+"#,
         #"\bsk-[A-Za-z0-9_\-]{8,}"#,
-        #"[A-Za-z0-9+/=_\-]{24,}"#,
     ]
+    static let consolePatterns = [#"[A-Za-z0-9+/=_\-]{24,}"#]
 
     static func isSensitiveKey(_ key: String) -> Bool {
         let lowered = key.lowercased()
@@ -30,7 +30,15 @@ enum NativeDiagnosticRedaction {
     }
 
     static func text(_ input: String) -> String {
-        textPatterns.reduce(input) { current, pattern in
+        masked(input, textPatterns)
+    }
+
+    static func console(_ input: String) -> String {
+        masked(text(input), consolePatterns)
+    }
+
+    private static func masked(_ input: String, _ patterns: [String]) -> String {
+        patterns.reduce(input) { current, pattern in
             current.replacingOccurrences(of: pattern, with: placeholder, options: .regularExpression)
         }
     }

@@ -560,14 +560,14 @@ enum NativeMemoryGate {
     static func consoleLine(_ id: String, error: Error, diagnostic: String?) -> String {
         let failure = (error as? NativeMemoryGateError)?.failure ?? .setupFailed
         let detail = diagnostic.map { " Provider said: " + $0 } ?? ""
-        return "memory-gate: \(id): \(failure.rawValue). " + NativeDiagnosticRedaction.text(error.localizedDescription) + "." + detail
+        return "memory-gate: \(id): \(failure.rawValue). " + NativeDiagnosticRedaction.console(error.localizedDescription) + "." + detail
     }
 
     static func diagnostic(_ error: Error) -> String {
         let text: String = switch error as? NativeChatClient.ClientError {
-        case .http(let status, let detail)?: "HTTP \(status): " + NativeDiagnosticRedaction.text(detail)
-        case .provider(_, let raw)?: "provider error " + NativeDiagnosticRedaction.text(raw)
-        default: NativeDiagnosticRedaction.text(error.localizedDescription)
+        case .http(let status, let detail)?: "HTTP \(status): " + NativeDiagnosticRedaction.console(detail)
+        case .provider(_, let raw)?: "provider error " + NativeDiagnosticRedaction.console(raw)
+        default: NativeDiagnosticRedaction.console(error.localizedDescription)
         }
         return String(text.prefix(diagnosticLimit + 32))
     }
@@ -709,13 +709,19 @@ enum NativeMemoryGate {
             "attempts": [["session_token": "short-value", "headers": ["Authorization": "Basic short"]]], "provider_name": "fixture"]])
         let inline = NativeChatClient.ClientError.provider(["message": "Invalid key \(secret) and Bearer abc.def-ghi supplied"])
         let ordinary = "Provider returned error: rate limit exceeded, try again in 20 seconds"
+        let longModel = "vendor/name-2025-preview-instruct"
+        let modelMessage = "model \(longModel) is not available"
+        let longRun = String(repeating: "q7Z", count: 10)
         let printed = [echoed, nested, inline].map { error in
             consoleLine("probe", error: NativeMemoryGateError.request("probe", error.localizedDescription, .requestFailed), diagnostic: diagnostic(error))
         }
         guard !printed.contains(where: { $0.contains(secret) || $0.contains("short-value") || $0.contains("Basic short") || $0.contains("abc.def-ghi") }),
               printed[0].contains("429"), printed[0].contains("Rate limited"), printed[1].contains("provider_name"),
               printed[2].contains("Invalid key"), printed.allSatisfy({ $0.contains(NativeDiagnosticRedaction.placeholder) }),
-              NativeDiagnosticRedaction.text(ordinary) == ordinary,
+              NativeDiagnosticRedaction.text(ordinary) == ordinary, NativeDiagnosticRedaction.console(ordinary) == ordinary,
+              NativeChatClient.ClientError.provider(["message": modelMessage]).localizedDescription == modelMessage,
+              !consoleLine("probe", error: NativeMemoryGateError.request("probe", modelMessage, .requestFailed), diagnostic: nil).contains(longModel),
+              NativeDiagnosticRedaction.console("opaque " + longRun).contains(NativeDiagnosticRedaction.placeholder),
               NativeChatClient.ClientError.provider(["message": "Provider returned error", "code": 429]).localizedDescription == "Provider returned error" else {
             throw NativeMemoryGateError.setup("redaction", "a credential reached the console or an ordinary message was changed")
         }
