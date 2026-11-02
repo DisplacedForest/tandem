@@ -146,6 +146,7 @@ final class ChatStore: ObservableObject {
     static let turnProcessIdentity = UUID().uuidString
     var suspendsTurnScheduling = false
     var isSchedulingTurns = false
+    var turnSchedulingRerun = false
     var conversationTurnLoop: Task<Void, Never>?
     var conversationTurnToken: [Int64]?
     var dirtyTurnConversations: Set<String> = []
@@ -1960,6 +1961,11 @@ final class ChatStore: ObservableObject {
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
             conversation.messages = stored.map { live[$0.id] ?? $0 }
             conversations[index] = conversation
+            if !conversationTurns.contains(where: { $0.id == turn.id }) {
+                conversationTurns.append(turn)
+                conversationTurns.sort { $0.createdAt < $1.createdAt }
+            }
+            generating = true
             chatConfigurationError = nil
         } catch {
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
@@ -2360,10 +2366,9 @@ final class ChatStore: ObservableObject {
                         openArtifact(latest)
                     }
                     setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
-                        .map { "Using \($0.title)…" }, turn: turn)
+                        .map { "Using \($0.title)…" } ?? (turnCheckpointStalled(turn) ? Self.saveWaitingStatus : nil), turn: turn)
                     if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
-                        try turnRepository?.checkpointTurn(turn,
-                            message: conversations[i].messages[replyIndex], ordinal: replyIndex)
+                        scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                         recordCanvasArtifacts(arts, conversationID: id,
                                               messageID: conversations[i].messages[replyIndex].id.uuidString,
                                               revising: revisionTarget)
@@ -2374,15 +2379,18 @@ final class ChatStore: ObservableObject {
                 try await ensureTurnCurrent(turn)
                 setTurnStatus(nil, turn: turn)
                 if let location = turnLocation(turn) {
-                    let i = location.conversation
-                    let replyIndex = location.reply
-                    conversations[i].messages[replyIndex].state = partialAnswer ? .interrupted : .complete
-                    conversations[i].messages[replyIndex].failure = partialAnswer
+                    conversations[location.conversation].messages[location.reply].state = partialAnswer ? .interrupted : .complete
+                    conversations[location.conversation].messages[location.reply].failure = partialAnswer
                         ? "This answer is unfinished. You can ask a follow-up or retry the answer." : nil
-                    conversations[i].updatedAt = Date()
-                    try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
-                        message: conversations[i].messages[replyIndex], ordinal: replyIndex)
-                    try repository.saveConversation(conversations[i])
+                    conversations[location.conversation].updatedAt = Date()
+                    let finalMessage = conversations[location.conversation].messages[location.reply]
+                    let completedAt = conversations[location.conversation].updatedAt
+                    await awaitTurnCheckpoint(turn)
+                    try await finishTurnOffMain(turn, state: partialAnswer ? .interrupted : .complete,
+                        message: finalMessage, ordinal: location.reply, updatedAt: completedAt)
+                    guard let settled = turnLocation(turn) else { throw CancellationError() }
+                    let i = settled.conversation
+                    let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
                                           revising: revisionTarget)
@@ -2394,7 +2402,7 @@ final class ChatStore: ObservableObject {
                     if repository is any NativeMemoryRepository {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded
-                        let userIndex = location.user
+                        let userIndex = settled.user
                         let sourceDate = conversations[i].messages.indices.contains(userIndex)
                             ? conversations[i].messages[userIndex].createdAt : Date()
                         Task {

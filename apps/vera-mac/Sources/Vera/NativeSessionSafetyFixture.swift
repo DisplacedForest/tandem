@@ -11,6 +11,14 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var historyReads = 0
     var transcriptReads = 0
     var polledRecords = 0
+    var claimHold: TimeInterval = 0
+    let claimLanded = NativeTurnCurrencyFlag()
+    var completeHold: TimeInterval = 0
+    var completeFailGate: DispatchSemaphore?
+    let completeLanded = NativeTurnCurrencyFlag()
+    var checkpointFailGate: DispatchSemaphore?
+    var checkpointHold: TimeInterval = 0
+    let checkpointLanded = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
     func messages(conversationID: String) throws -> [Message] {
@@ -41,7 +49,15 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         lock.withLock { failReads = failReadsAfterAcceptance }
     }
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws { try base.enrollLegacyTurn(turn) }
-    func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? { try base.claimTurn(id, attempt: attempt) }
+    func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn? {
+        let claimed = try base.claimTurn(id, attempt: attempt)
+        if claimed != nil {
+            claimLanded.raise()
+            let hold = lock.withLock { claimHold }
+            if hold > 0 { Thread.sleep(forTimeInterval: hold) }
+        }
+        return claimed
+    }
     func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool {
         let failing = lock.withLock {
             if failCurrencyReads { currencyReadFailures += 1 }
@@ -52,12 +68,44 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     }
     func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws { try base.markTurnDispatch(id, attempt: attempt, activity: activity) }
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws {
+        let gate = lock.withLock { () -> DispatchSemaphore? in
+            let taken = checkpointFailGate
+            checkpointFailGate = nil
+            return taken
+        }
+        if let gate {
+            gate.wait()
+            throw NativeToolError.failed("synthetic stale checkpoint failure")
+        }
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic checkpoint failure") }
         try base.checkpointTurn(turn, message: message, ordinal: ordinal)
+        checkpointLanded.raise()
+        let hold = lock.withLock { checkpointHold }
+        if hold > 0 { Thread.sleep(forTimeInterval: hold) }
     }
     func finishTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic final state failure") }
         try base.finishTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal)
+    }
+    func completeTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int, updatedAt: Date) throws {
+        let gate = lock.withLock { () -> DispatchSemaphore? in
+            let taken = completeFailGate
+            completeFailGate = nil
+            return taken
+        }
+        if let gate {
+            gate.wait()
+            throw NativeToolError.failed("synthetic stale completion failure")
+        }
+        if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic completion failure") }
+        try base.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
+        completeLanded.raise()
+        let hold = lock.withLock { completeHold }
+        if hold > 0 { Thread.sleep(forTimeInterval: hold) }
+    }
+    func releaseTurn(_ id: UUID, attempt: UUID) throws {
+        if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic release failure") }
+        try base.releaseTurn(id, attempt: attempt)
     }
     func retryTurn(_ id: UUID, profile: String) throws { try base.retryTurn(id, profile: profile) }
 }
@@ -118,8 +166,8 @@ enum NativeSessionSafetyFixture {
         try await finalizationRecovery()
         try await finalizationReplaced()
         try await idleHistory()
-        try terminalRefreshRetry()
-        try fastExternalCompletion()
+        try await terminalRefreshRetry()
+        try await fastExternalCompletion()
         try await foregroundOverrideCredential()
         try await NativeTurnCurrencyFixture.run()
         print("NATIVE SESSION SAFETY FIXTURE OK")
@@ -214,6 +262,7 @@ enum NativeSessionSafetyFixture {
             }
             repository.lock.withLock { repository.failTurnWrites = false }
             store.scheduleConversationTurns()
+            try await NativeSessionFixture.eventually("The finalization tick settles") { !store.isSchedulingTurns }
             try NativeTaskFixture.require(store.turnExecutions.isEmpty,
                 "Deleted or superseded attempts must release stale local finalization ownership")
             let records = try base.conversationTurns()
@@ -229,7 +278,9 @@ enum NativeSessionSafetyFixture {
         writer.newConversation()
         for index in 0..<40 {
             writer.sendText("Completed history \(index)")
-            try await NativeSessionFixture.eventually("Fixture history must complete") { writer.turnExecutions.isEmpty }
+            try await NativeSessionFixture.eventually("Fixture history must complete") {
+                writer.selected?.messages.last?.state == .complete && writer.turnExecutions.isEmpty && !writer.isSchedulingTurns
+            }
         }
         let repository = NativeSessionReadFailureRepository(base)
         repository.lock.withLock { repository.failReadsAfterAcceptance = false }
@@ -237,16 +288,21 @@ enum NativeSessionSafetyFixture {
             repository: repository, artifactPersistenceEnabled: false)
         reader.reloadConversationTurns()
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The first tick settles") { !reader.isSchedulingTurns }
         let before = repository.lock.withLock { (repository.historyReads, repository.transcriptReads, repository.polledRecords) }
-        for _ in 0..<8 { reader.scheduleConversationTurns() }
+        for _ in 0..<8 {
+            reader.scheduleConversationTurns()
+            try await NativeSessionFixture.eventually("An idle tick settles") { !reader.isSchedulingTurns }
+        }
         try base.saveConversation(writer.selected!)
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The unrelated-write tick settles") { !reader.isSchedulingTurns }
         let after = repository.lock.withLock { (repository.historyReads, repository.transcriptReads, repository.polledRecords) }
         try NativeTaskFixture.require(before == after,
             "Idle and unrelated-write ticks must not decode completed turn histories or reload old transcripts")
     }
 
-    static func terminalRefreshRetry() throws {
+    static func terminalRefreshRetry() async throws {
         let base = try LocalChatRepository(inMemory: true)
         let writer = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(),
             repository: base, artifactPersistenceEnabled: false)
@@ -259,26 +315,30 @@ enum NativeSessionSafetyFixture {
         let reader = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(),
             repository: repository, artifactPersistenceEnabled: false)
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         var reply = try base.messages(conversationID: running.conversationID)[1]
         reply.text = "The remote answer completed."
         reply.state = .complete
         try base.finishTurn(running.id, attempt: running.attempt, state: .complete, message: reply, ordinal: 1)
         repository.lock.withLock { repository.failReads = true }
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         try NativeTaskFixture.require(reader.dirtyTurnConversations.contains(running.conversationID),
             "A failed terminal transcript refresh must remain dirty after its turn becomes inactive")
         repository.lock.withLock { repository.failReads = false }
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         let restored = reader.conversations.first { $0.id == running.conversationID }?.messages.last
         try NativeTaskFixture.require(reader.dirtyTurnConversations.isEmpty && restored?.state == .complete
             && restored?.text == reply.text, "An unchanged idle tick must retry the failed visible terminal refresh")
         let reads = repository.lock.withLock { repository.transcriptReads }
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         try NativeTaskFixture.require(reads == repository.lock.withLock { repository.transcriptReads },
             "Successful terminal refresh must restore the zero-reload idle path")
     }
 
-    static func fastExternalCompletion() throws {
+    static func fastExternalCompletion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("fast-completion.sqlite")
@@ -287,6 +347,7 @@ enum NativeSessionSafetyFixture {
         let reader = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(),
             repository: original, artifactPersistenceEnabled: false)
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         let writer = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(),
             repository: other, artifactPersistenceEnabled: false)
         writer.newConversation()
@@ -299,6 +360,7 @@ enum NativeSessionSafetyFixture {
         reply.state = .complete
         try other.finishTurn(running.id, attempt: running.attempt, state: .complete, message: reply, ordinal: 1)
         reader.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The tick settles") { !reader.isSchedulingTurns }
         let visible = reader.conversations.first { $0.id == running.conversationID }?.messages
         try NativeTaskFixture.require(visible?.count == 2 && visible?.last?.state == .complete && visible?.last?.text == reply.text,
             "A task completed entirely between another instance's polls must still restore its messages and new conversation")
@@ -333,6 +395,9 @@ enum NativeSessionSafetyFixture {
             model: "changed-model", chatTemplateKwargs: nil))
         store.suspendsTurnScheduling = false
         store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The changed-model tick settles") {
+            !store.isSchedulingTurns && store.conversationTurns.first?.state == .interrupted
+        }
         try NativeTaskFixture.require(transport.histories.isEmpty && store.conversationTurns.first?.state == .interrupted,
                                       "Pending messages must not silently use a changed model")
     }
