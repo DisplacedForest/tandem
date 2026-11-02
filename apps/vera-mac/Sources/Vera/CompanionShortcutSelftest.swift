@@ -64,6 +64,42 @@ extension SelfTest {
         try check(editable[CompanionShortcut.configKey].isEmpty && editable.companionShortcut == standard, "Clearing returns to the default")
         try check(editable.companionShortcutProblem == nil, "No registration problem is reported by default")
 
-        print("  companion shortcut: PASS (\(checks) checks)")
+        let system = CompanionShortcut.enabledSystemShortcuts()
+        try check(system.allSatisfy { $0.isValid || $0.modifiers & ~four == 0 },
+                  "System shortcuts read back as shortcuts with supported modifiers")
+
+        guard let accepted = CompanionShortcut(configValue: "control+option+j"),
+              let taken = CompanionShortcut(configValue: "control+option+k"),
+              let reserved = CompanionShortcut(configValue: "control+option+l"),
+              let broken = CompanionShortcut(configValue: "control+option+m") else {
+            throw NativeTaskFixture.Failure.assertion("registration fixtures parse")
+        }
+        var fired = 0
+        var attempts: [CompanionShortcut] = []
+        let hotkey = CompanionHotkey { fired += 1 }
+        hotkey.systemShortcuts = { [reserved] }
+        hotkey.attempt = { shortcut, _ in
+            attempts.append(shortcut)
+            switch shortcut {
+            case accepted: return (noErr, OpaquePointer(bitPattern: 1))
+            case taken: return (OSStatus(eventHotKeyExistsErr), nil)
+            default: return (OSStatus(paramErr), nil)
+            }
+        }
+        try check(hotkey.current == nil, "Nothing is registered before the first attempt")
+        try check(hotkey.register(accepted) == nil && hotkey.current == accepted, "A free shortcut registers")
+        try check(hotkey.register(accepted) == nil && attempts == [accepted], "Registering the same shortcut again is a no-op")
+        try check(hotkey.register(taken) == CompanionHotkey.conflictMessage, "A shortcut another app holds reports a conflict")
+        try check(hotkey.current == accepted, "A conflict keeps the previous shortcut")
+        try check(hotkey.register(reserved) == CompanionHotkey.conflictMessage, "A system shortcut reports a conflict")
+        try check(hotkey.current == accepted && !attempts.contains(reserved), "A system shortcut is never attempted")
+        try check(hotkey.register(broken) == CompanionHotkey.failureMessage, "Any other registration error reports a failure")
+        try check(hotkey.current == accepted, "A failure keeps the previous shortcut")
+        let invalid = CompanionShortcut(keyCode: UInt32(kVK_Space), modifiers: UInt32(shiftKey))
+        try check(hotkey.register(invalid) == CompanionHotkey.failureMessage, "An invalid shortcut reports a failure")
+        try check(hotkey.current == accepted && !attempts.contains(invalid), "An invalid shortcut is never attempted")
+        try check(fired == 0, "Registering never fires the handler")
+
+        print("  companion shortcut: PASS (\(checks) checks, parsing, config, system shortcuts, registration)")
     }
 }

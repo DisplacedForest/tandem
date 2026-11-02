@@ -23,7 +23,7 @@ extension SelfTest {
         store.companionDefaults = defaults
         await store.connect()
 
-        try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionLastSeen == nil,
+        try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionSeenReplyID == nil,
                                       "unread is zero before the panel has ever been seen")
 
         store.newConversation()
@@ -58,25 +58,84 @@ extension SelfTest {
         let other = store.conversations.first { $0.id == otherID }
         try NativeTaskFixture.require(other?.messages.isEmpty == true, "the main conversation gets no message")
 
-        for _ in 0..<500 {
-            if let reply = thread()?.messages.last(where: { $0.role == .assistant }), reply.state != .streaming { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        let streamingReplies = thread()?.messages.filter { $0.role == .assistant && $0.state == .complete }.count ?? 0
+        store.markCompanionSeen()
+        try NativeTaskFixture.require(streamingReplies == 0 && store.companionSeenReplyID == "",
+                                      "showing the panel mid-reply acknowledges only what had finished")
+
+        func completed() -> [Message] {
+            thread()?.messages.filter { $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty } ?? []
         }
+        func settle() async throws {
+            for _ in 0..<500 {
+                if thread()?.messages.contains(where: { $0.role == .assistant && $0.state == .streaming }) == false { return }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            throw NativeTaskFixture.Failure.assertion("the assistant reply settles")
+        }
+        try await settle()
         guard let reply = thread()?.messages.last(where: { $0.role == .assistant }) else {
             throw NativeTaskFixture.Failure.assertion("an assistant reply exists")
         }
         try NativeTaskFixture.require(reply.state == .complete && !reply.text.isEmpty, "the reply completes with text")
-
-        store.setCompanionLastSeenForTesting(reply.createdAt.addingTimeInterval(-1))
-        try NativeTaskFixture.require(store.companionUnreadCount == 1, "a reply after the last look counts as new")
+        try NativeTaskFixture.require(store.companionUnreadCount == 1,
+                                      "a reply that finishes after the panel was shown counts as new")
         store.markCompanionSeen()
-        try NativeTaskFixture.require(store.companionUnreadCount == 0, "looking again clears the new count")
-        try NativeTaskFixture.require(defaults.object(forKey: ChatStore.companionLastSeenKey) is Date,
-                                      "the last look is saved")
+        try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionSeenReplyID == reply.id.uuidString,
+                                      "looking again acknowledges the finished reply")
 
-        store.setCompanionLastSeenForTesting(nil)
-        try NativeTaskFixture.require(store.companionUnreadCount == 0, "no last look means nothing is new")
+        store.setCompanionSeenReplyForTesting(nil)
+        try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionSeenReplyID == nil,
+                                      "a panel never seen shows nothing new even with a finished reply")
 
-        print("  companion: PASS (thread prep, draft isolation, panel send, unread count)")
+        store.setCompanionSeenReplyForTesting("")
+        try NativeTaskFixture.require(store.companionUnreadCount == completed().count && completed().count == 1,
+                                      "seen with no replies yet counts every finished reply")
+        try NativeTaskFixture.require(defaults.string(forKey: ChatStore.companionSeenKey) == "",
+                                      "the empty marker is saved")
+
+        let rebuilt = ChatStore(
+            nativeConfig: config, nativeTransport: SelfTestNativeTransport(), repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: artifacts))
+        rebuilt.companionDefaults = defaults
+        await rebuilt.connect()
+        rebuilt.prepareCompanionThread()
+        try NativeTaskFixture.require(rebuilt.veraThreadID == threadID, "a rebuilt store finds the same assistant thread")
+        try NativeTaskFixture.require(rebuilt.companionSeenReplyID == "" && rebuilt.companionUnreadCount == 1,
+                                      "a rebuilt store reads the saved marker and the same new count")
+
+        store.markCompanionSeen()
+        try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionSeenReplyID == reply.id.uuidString,
+                                      "acknowledging marks the last finished reply")
+        try NativeTaskFixture.require(defaults.string(forKey: ChatStore.companionSeenKey) == reply.id.uuidString,
+                                      "the acknowledged reply is saved")
+        let reread = ChatStore(
+            nativeConfig: config, nativeTransport: SelfTestNativeTransport(), repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: artifacts))
+        reread.companionDefaults = defaults
+        await reread.connect()
+        reread.prepareCompanionThread()
+        try NativeTaskFixture.require(reread.companionSeenReplyID == reply.id.uuidString && reread.companionUnreadCount == 0,
+                                      "a rebuilt store keeps the acknowledged reply")
+
+        guard let otherID else { throw NativeTaskFixture.Failure.assertion("main conversation id") }
+        store.setCompanionSeenReplyForTesting("")
+        store.select(threadID)
+        try NativeTaskFixture.require(store.companionSeenReplyID == reply.id.uuidString,
+                                      "opening the thread in the main window acknowledges it")
+        try NativeTaskFixture.require(store.sendText("while open", conversationID: threadID), "a reply arrives while the thread is open")
+        try await settle()
+        store.select(otherID)
+        try NativeTaskFixture.require(store.companionSeenReplyID == completed().last?.id.uuidString,
+                                      "leaving the thread acknowledges the reply that arrived while it was open")
+        try NativeTaskFixture.require(store.sendText("after leaving", conversationID: threadID), "a reply arrives after leaving")
+        try await settle()
+        try NativeTaskFixture.require(completed().count == 3 && store.companionUnreadCount == 1,
+                                      "only the reply after leaving the thread counts as new")
+        try NativeTaskFixture.require(store.selectedID == otherID, "replies in the thread keep the main selection")
+
+        try NativeTaskFixture.require(!store.companionAwaitingApproval, "nothing awaits approval without a pending tool turn")
+
+        print("  companion: PASS (thread prep, draft isolation, panel send, acknowledgement, rebuild, main window, approval)")
     }
 }

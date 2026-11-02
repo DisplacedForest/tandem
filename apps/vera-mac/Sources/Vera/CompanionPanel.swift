@@ -90,7 +90,8 @@ final class CompanionPanelController: ObservableObject {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handle(event) ?? event
+            guard let self else { return event }
+            return self.handle(event)
         }
     }
 
@@ -239,28 +240,78 @@ struct CompanionPanelView: View {
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
 
-    private var transcript: some View {
-        ShotSafeScroll(renderSafe: renderSafe) {
-            VStack(alignment: .leading, spacing: 10) {
-                if recent.isEmpty {
-                    Text("Ask anything. It goes to the \(store.assistantName) thread.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 40)
-                } else {
-                    ForEach(recent) { message in
-                        CompanionMessageRow(message: message)
-                    }
+    private static let bottomAnchor = "companion-bottom"
+
+    private var transcriptContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if recent.isEmpty {
+                Text("Ask anything. It goes to the \(store.assistantName) thread.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 40)
+            } else {
+                ForEach(recent) { message in
+                    CompanionMessageRow(message: message, onOpen: openInMain)
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private var transcript: some View {
+        if renderSafe {
+            ShotSafeScroll(renderSafe: true) { transcriptContent }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    transcriptContent
+                    Color.clear.frame(height: 1).id(Self.bottomAnchor)
+                }
+                .onAppear { scrollToBottom(proxy) }
+                .onChange(of: recent.last?.id) { _, _ in scrollToBottom(proxy) }
+                .onChange(of: recent.last?.text) { _, _ in scrollToBottom(proxy) }
+                .onChange(of: store.companionFocusTick) { _, _ in scrollToBottom(proxy) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+    }
+
+    private var approvalBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "hand.raised")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.orange)
+            Text("Waiting for your approval in Tandem.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer(minLength: 0)
+            Button(action: openInMain) {
+                Text("Open in Tandem")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open in Tandem to approve")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
+        .accessibilityElement(children: .contain)
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if store.companionAwaitingApproval {
+                approvalBanner
+            }
             if !store.companionAttachments.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(store.companionAttachments) { attachment in
@@ -362,6 +413,11 @@ struct CompanionPanelView: View {
 
 private struct CompanionMessageRow: View {
     let message: Message
+    let onOpen: () -> Void
+
+    private var failed: Bool {
+        message.text.isEmpty && message.state != .streaming && message.failure != nil
+    }
 
     var body: some View {
         if message.role == .user {
@@ -374,6 +430,26 @@ private struct CompanionMessageRow: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
             }
+        } else if failed {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Couldn't reply.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                if let failure = message.failure, !failure.isEmpty {
+                    Text(failure)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(3)
+                }
+                Button(action: onOpen) {
+                    Text("Open in Tandem")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open in Tandem to see the failed reply")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else if message.state == .streaming && message.text.isEmpty {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)

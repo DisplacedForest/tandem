@@ -1335,7 +1335,7 @@ enum CompanionShotFixture {
             Message(role: .assistant, text: "We agreed to open them at 24 degrees and close them at dusk. The group wanted a short note so everyone follows the same routine.", createdAt: now.addingTimeInterval(-540)),
             Message(role: .user, text: "Draft the note for the group", createdAt: now.addingTimeInterval(-60)),
         ]
-        store.setCompanionLastSeenForTesting(now.addingTimeInterval(-570))
+        store.setCompanionSeenReplyForTesting("")
         store.companionDraft = "Keep it to three lines"
         return store
     }

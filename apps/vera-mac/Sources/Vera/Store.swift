@@ -64,9 +64,9 @@ final class ChatStore: ObservableObject {
     @Published var companionAttachments: [Attachment] = []
     @Published var companionError: String?
     @Published var companionFocusTick = 0
-    static let companionLastSeenKey = "companion_last_seen"
+    static let companionSeenKey = "companion_last_seen_reply"
     var companionDefaults: UserDefaults = .standard
-    private var companionLastSeenStorage: Date??
+    private var companionSeenStorage: String??
     @Published var pendingSendDecision: PendingSendDecision?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
@@ -713,6 +713,7 @@ final class ChatStore: ObservableObject {
     }
 
     func select(_ id: String) {
+        if let current = selectedID, isVeraThread(current), !isVeraThread(id) { markCompanionSeen() }
         if isVeraThread(id) { markCompanionSeen() }
         stashDraft()
         section = isVeraThread(id) ? .vera : .chat
@@ -1852,37 +1853,54 @@ final class ChatStore: ObservableObject {
         return (imported, failure)
     }
 
-    var companionLastSeen: Date? {
-        if let cached = companionLastSeenStorage { return cached }
-        let stored = companionDefaults.object(forKey: Self.companionLastSeenKey) as? Date
-        companionLastSeenStorage = .some(stored)
+    private var companionReplies: [Message] {
+        guard let veraThreadID, let thread = conversations.first(where: { $0.id == veraThreadID }) else { return [] }
+        return thread.messages.filter { $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty }
+    }
+
+    var companionSeenReplyID: String? {
+        if let cached = companionSeenStorage { return cached }
+        let stored = companionDefaults.string(forKey: Self.companionSeenKey)
+        companionSeenStorage = .some(stored)
         return stored
     }
 
     func markCompanionSeen() {
-        setCompanionLastSeen(Date())
+        setCompanionSeenReply(companionReplies.last?.id.uuidString ?? "")
     }
 
-    func setCompanionLastSeenForTesting(_ date: Date?) {
-        setCompanionLastSeen(date)
+    func setCompanionSeenReplyForTesting(_ id: String?) {
+        setCompanionSeenReply(id)
     }
 
-    private func setCompanionLastSeen(_ date: Date?) {
+    private func setCompanionSeenReply(_ id: String?) {
+        guard companionSeenReplyID != id else { return }
         objectWillChange.send()
-        companionLastSeenStorage = .some(date)
-        if let date {
-            companionDefaults.set(date, forKey: Self.companionLastSeenKey)
+        companionSeenStorage = .some(id)
+        if let id {
+            companionDefaults.set(id, forKey: Self.companionSeenKey)
         } else {
-            companionDefaults.removeObject(forKey: Self.companionLastSeenKey)
+            companionDefaults.removeObject(forKey: Self.companionSeenKey)
         }
     }
 
+    var mainWindowShowsCompanionThread: Bool {
+        guard let veraThreadID, selectedID == veraThreadID else { return false }
+        return NSApp.windows.contains { $0.isVisible && !($0 is CompanionPanel) && $0.level == .normal }
+    }
+
     var companionUnreadCount: Int {
-        guard let lastSeen = companionLastSeen, let veraThreadID,
-              let thread = conversations.first(where: { $0.id == veraThreadID }) else { return 0 }
-        return thread.messages.filter {
-            $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty && $0.createdAt > lastSeen
-        }.count
+        guard let marker = companionSeenReplyID else { return 0 }
+        if mainWindowShowsCompanionThread { return 0 }
+        let replies = companionReplies
+        if marker.isEmpty { return replies.count }
+        guard let index = replies.firstIndex(where: { $0.id.uuidString == marker }) else { return 0 }
+        return replies.count - index - 1
+    }
+
+    var companionAwaitingApproval: Bool {
+        guard let veraThreadID else { return false }
+        return conversationTurns.contains { $0.conversationID == veraThreadID && turnConfirmations[$0.assistantMessageID] != nil }
     }
 
     func prepareCompanionThread() {

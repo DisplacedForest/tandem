@@ -87,6 +87,17 @@ struct CompanionShortcut: Equatable, Hashable, Codable, Sendable {
         (Self.modifierTokens.filter { modifiers & $0.1 != 0 }.map(\.2) + [Self.keyNames.first { $0.1 == keyCode }?.2 ?? "Space"]).joined(separator: " ")
     }
 
+    static func enabledSystemShortcuts() -> [CompanionShortcut] {
+        var unmanaged: Unmanaged<CFArray>?
+        guard CopySymbolicHotKeys(&unmanaged) == noErr, let entries = unmanaged?.takeRetainedValue() as? [[String: Any]] else { return [] }
+        return entries.compactMap { entry in
+            guard (entry[kHISymbolicHotKeyEnabled as String] as? Bool) == true,
+                  let code = entry[kHISymbolicHotKeyCode as String] as? Int,
+                  let modifiers = entry[kHISymbolicHotKeyModifiers as String] as? Int, code >= 0 else { return nil }
+            return CompanionShortcut(keyCode: UInt32(code), modifiers: UInt32(truncatingIfNeeded: modifiers))
+        }
+    }
+
     var symbols: String {
         var parts: [String] = []
         if modifiers & UInt32(controlKey) != 0 { parts.append("⌃") }
@@ -111,6 +122,13 @@ final class CompanionHotkey {
     private var reference: EventHotKeyRef?
     private var identifier: UInt32 = 0
     private(set) var current: CompanionShortcut?
+    var systemShortcuts: () -> [CompanionShortcut] = { CompanionShortcut.enabledSystemShortcuts() }
+    var attempt: (CompanionShortcut, EventHotKeyID) -> (OSStatus, EventHotKeyRef?) = { shortcut, hotKeyID in
+        var candidate: EventHotKeyRef?
+        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(),
+                                         OptionBits(kEventHotKeyExclusive), &candidate)
+        return (status, candidate)
+    }
 
     init(handler: @escaping @MainActor () -> Void) {
         self.handler = handler
@@ -119,12 +137,12 @@ final class CompanionHotkey {
     func register(_ shortcut: CompanionShortcut) -> String? {
         guard shortcut.isValid else { return Self.failureMessage }
         if current == shortcut { return nil }
+        if systemShortcuts().contains(shortcut) { return Self.conflictMessage }
         Self.installDispatcherIfNeeded()
         let id = Self.nextID
         Self.nextID += 1
-        var candidate: EventHotKeyRef?
         let hotKeyID = EventHotKeyID(signature: OSType(0x54444D43), id: id)
-        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &candidate)
+        let (status, candidate) = attempt(shortcut, hotKeyID)
         guard status == noErr, let candidate else {
             return status == OSStatus(eventHotKeyExistsErr) ? Self.conflictMessage : Self.failureMessage
         }

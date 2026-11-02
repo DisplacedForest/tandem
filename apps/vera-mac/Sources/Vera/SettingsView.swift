@@ -915,6 +915,8 @@ struct CompanionShortcutRecorder: View {
     @State private var recording = false
     @State private var rejected = false
     @State private var monitor: Any?
+    @State private var resignObserver: NSObjectProtocol?
+    @State private var host = RecorderWindowBox()
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
@@ -938,6 +940,7 @@ struct CompanionShortcutRecorder: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }
+        .background(WorkflowCanvasWindowReader { [host] window in host.window = window })
         .onDisappear(perform: stop)
     }
 
@@ -947,9 +950,17 @@ struct CompanionShortcutRecorder: View {
 
     private func start() {
         stop()
+        guard let window = host.window ?? NSApp.keyWindow else { return }
+        host.window = window
         recording = true
         rejected = false
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { stop() }
+        }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak window] event in
+            guard let window, event.window === window else { return event }
             if event.keyCode == UInt16(kVK_Escape) && event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty {
                 stop()
                 return nil
@@ -969,9 +980,16 @@ struct CompanionShortcutRecorder: View {
     private func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
         recording = false
         rejected = false
     }
+}
+
+@MainActor
+private final class RecorderWindowBox {
+    weak var window: NSWindow?
 }
 
 private struct AboutTab: View {
