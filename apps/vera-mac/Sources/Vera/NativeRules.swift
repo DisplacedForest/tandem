@@ -215,7 +215,7 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
@@ -288,7 +288,9 @@ enum NativeCommandClassifier {
     static let separators = ["&&", "||", ";", "|"]
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
     static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
-    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "npm", "pnpm", "yarn", "cargo", "pip", "twine", "gem", "docker", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let packageManagers: Set<String> = ["npm", "pnpm", "yarn", "cargo", "pip", "pip3", "twine", "gem", "docker", "bun", "poetry", "uv"]
+    static let publishing: Set<String> = ["publish", "deploy", "push", "login", "upload", "release"]
     static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf", "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!"]
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
     static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua"]
@@ -437,7 +439,7 @@ enum NativeCommandClassifier {
             if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .sensitive }
             if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .sensitive }
             if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .sensitive }
-            if senders.contains(name) || name == "push" { sends = true }
+            if senders.contains(name) || publishing.contains(name) { sends = true }
         }
         return sends ? .networkSends : .commands
     }
@@ -500,17 +502,19 @@ enum NativeCommandClassifier {
             }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
             if name == "curl" && arguments.contains(where: { argument in
-                if argument.hasPrefix("--") { return argument.hasPrefix("--data") || ["--form", "--form-string", "--upload-file", "--request", "--json"].contains(argument) }
-                return argument.hasPrefix("-") && argument.dropFirst().contains(where: { "dFTX".contains($0) })
+                if argument.hasPrefix("@") { return true }
+                if argument.hasPrefix("--") { return argument.hasPrefix("--data") || ["--form", "--form-string", "--upload-file", "--request", "--json", "--url-query", "--config", "--variable"].contains(argument) }
+                return argument.hasPrefix("-") && argument.dropFirst().contains(where: { "dFTXK".contains($0) })
             }) { network = true }
             if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
             if senders.contains(name) { network = true }
+            if packageManagers.contains(name) && arguments.contains(where: { publishing.contains($0) }) { network = true }
         }
         return network ? .networkSends : .commands
     }
 
     static func pathLeavesGrants(_ token: String, grants: [FolderGrant], working: String?) -> Bool {
-        var path = stripOuterQuotes(token)
+        var path = stripOuterQuotes(assignmentValue(token))
         if path.hasPrefix("-") { return false }
         if path.contains(where: { unsafeCharacters.contains($0) }) { return true }
         if path.hasPrefix("~") || path.hasPrefix("$") { return true }
