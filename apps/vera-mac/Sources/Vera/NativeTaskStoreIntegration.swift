@@ -62,6 +62,7 @@ extension ChatStore {
             let merged = update.blocks + kept
             guard conversations[conversation].messages[message].displayBlocks != merged else { continue }
             conversations[conversation].messages[message].displayBlocks = merged
+            recordTaskArtifacts(merged, conversationID: update.conversationID, messageID: update.messageID.uuidString)
             changed = true
         }
         if changed { reloadNativeTaskReferences() }

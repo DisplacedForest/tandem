@@ -1,0 +1,206 @@
+import Foundation
+
+enum ArtifactProducerSelftest {
+    struct Failure: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    static func check(_ condition: Bool, _ message: String) throws {
+        if !condition { throw Failure(description: message) }
+    }
+
+    @MainActor
+    static func waitForReply(_ store: ChatStore, conversationID: String) async throws {
+        for _ in 0..<500 {
+            if let reply = store.conversations.first(where: { $0.id == conversationID })?.messages.last,
+               reply.role == .assistant, reply.state == .complete || reply.state == .interrupted {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw Failure(description: "The reply never finished")
+    }
+
+    @MainActor
+    static func run() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vera-artifact-producers-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
+        let transport = SelfTestNativeTransport()
+        let config = NativeChatConfig(
+            baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
+            model: "local-model", chatTemplateKwargs: nil)
+        let store = ChatStore(
+            nativeConfig: config, nativeTransport: transport, repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+
+        func fileExists(_ version: ArtifactVersion) -> Bool {
+            FileManager.default.fileExists(atPath: directory.appendingPathComponent(version.fileName).path)
+        }
+
+        store.newConversation()
+        try check(store.sendText("Plan the trip"), "The first message sends")
+        guard let conversationID = store.selectedID else { throw Failure(description: "No conversation is selected") }
+        try await waitForReply(store, conversationID: conversationID)
+        try check(store.artifactRecords.isEmpty, "A plain reply records no artifact")
+        guard let turn = try repository.conversationTurns().last(where: { $0.conversationID == conversationID }) else {
+            throw Failure(description: "The accepted turn is missing")
+        }
+        let messageID = turn.assistantMessageID.uuidString
+
+        let edited = NativeFileChange(
+            id: "change-1", path: "/tmp/notes/plan.md", kind: .edited, before: "# Old", after: "# New")
+        store.attachDisplayBlock(.fileChange(edited), turn: turn)
+        store.attachDisplayBlock(
+            .fileChange(NativeFileChange(id: "change-2", path: "/tmp/notes/drafts", kind: .directory)), turn: turn)
+        let fileRecords = store.artifactRecords.filter { $0.kind == .fileChange }
+        try check(fileRecords.count == 1, "Only the edited file records an artifact")
+        try check(fileRecords[0].title == "Edited plan.md" && fileRecords[0].conversationID == conversationID,
+                  "The file change keeps its title and chat")
+        let fileVersion = store.artifactVersions(fileRecords[0].id).first
+        try check(fileVersion?.details.filePath == "/tmp/notes/plan.md" && fileVersion?.details.beforeText == "# Old"
+                  && fileVersion?.details.changeKind == .edited, "The file change keeps its path and earlier text")
+        try check(fileVersion.flatMap { store.artifactText($0) } == "# New", "The file change stores the new text")
+        try check(fileVersion?.sourceKey == "file:change-1" && fileVersion?.fileName.hasSuffix(".md") == true,
+                  "The file change uses its change id and extension")
+
+        let research = NativeResearchArtifact(
+            id: "research-1", title: "Lisbon guide", report: "# Lisbon",
+            sources: [PulseSource(n: 1, title: "Guide", url: "https://example.com/lisbon")])
+        let update = NativeTaskMessageUpdate(
+            conversationID: conversationID, messageID: turn.assistantMessageID, blocks: [.artifact(research)])
+        store.applyNativeTaskUpdates([update])
+        store.applyNativeTaskUpdates([update])
+        let documents = store.artifactRecords.filter { $0.kind == .document }
+        try check(documents.count == 1 && documents[0].versionCount == 1, "A research report records one document version")
+        guard let document = documents.first else { throw Failure(description: "The document is missing") }
+        let documentVersion = store.artifactVersions(document.id).first
+        try check(documentVersion?.details.sources.first?.url == "https://example.com/lisbon"
+                  && documentVersion?.mime == "text/markdown", "The document keeps its sources")
+
+        let imageName = "sunset-image.png"
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: directory.appendingPathComponent(imageName))
+        let image = MessageAttachment(
+            name: "sunset-over-water-1024x1024.png", ext: "PNG", isImage: true, fileName: imageName, mime: "image/png")
+        let activity = NativeToolActivity(
+            id: "call-1", toolID: "image", name: NativeImageTools.toolName, title: "Image generation", round: 0,
+            request: "{\"prompt\":\"A sunset over water\",\"size\":\"1024x1024\"}", result: nil,
+            state: .succeeded, confirmationRequired: false)
+        store.recordImageArtifact(image, activity: activity, conversationID: conversationID, messageID: messageID)
+        store.recordImageArtifact(image, activity: activity, conversationID: conversationID, messageID: messageID)
+        let images = store.artifactRecords.filter { $0.kind == .image }
+        try check(images.count == 1 && images[0].title == "sunset-over-water-1024x1024", "An image records once, titled without its extension")
+        let imageVersion = images.first.flatMap { store.artifactVersions($0.id).first }
+        try check(imageVersion?.details.prompt == "A sunset over water" && imageVersion?.details.imageSize == "1024x1024"
+                  && imageVersion?.fileName.hasSuffix(".png") == true, "The image keeps its prompt and size")
+
+        store.recordCanvasArtifacts(
+            [Artifact(id: "sketch", title: "Sketch", type: .html, language: "", content: "<p>Hi</p>")],
+            conversationID: conversationID, messageID: messageID)
+        let canvas = store.artifactRecords.first { $0.kind == .canvas }
+        let canvasVersion = canvas.flatMap { store.artifactVersions($0.id).first }
+        try check(canvasVersion?.mime == "text/html" && canvasVersion?.fileName.hasSuffix(".html") == true
+                  && canvasVersion?.details.canvasType == .html, "A canvas block records with its format")
+        try check(ChatStore.codeExtension("swift") == "swift" && ChatStore.codeExtension("objective c") == "txt",
+                  "Code canvas pieces use a short language as the extension")
+
+        store.artifactRevisionTargets[conversationID] = document.id
+        let revisionNote = store.artifactRevisionNote(conversationID: conversationID) ?? ""
+        try check(revisionNote.contains("revising the document titled \"Lisbon guide\"") && revisionNote.hasSuffix("# Lisbon"),
+                  "The revision note names the document and carries its content")
+        store.recordCanvasArtifacts(
+            [Artifact(id: "lisbon-guide", title: "Lisbon guide, revised", type: .markdown, language: "", content: "# Lisbon v2")],
+            conversationID: conversationID, messageID: "revision-message")
+        let revised = store.artifactRecords.first { $0.id == document.id }
+        try check(revised?.versionCount == 2 && revised?.title == "Lisbon guide, revised" && revised?.kind == .document,
+                  "A canvas block during a document revision becomes the next document version")
+        try check(store.artifactRecords.filter { $0.kind == .canvas }.count == 1, "The revision adds no canvas piece")
+        try check(store.artifactVersions(document.id).last.flatMap { store.artifactText($0) } == "# Lisbon v2",
+                  "The new version stores the revised text")
+        store.artifactRevisionTargets[conversationID] = nil
+
+        guard let revisedRecord = revised else { throw Failure(description: "The revised document is missing") }
+        store.reviseArtifact(revisedRecord, change: "  Add a day trip to Sintra  ")
+        try await waitForReply(store, conversationID: conversationID)
+        let sentPrompt = transport.histories.last?.first?.content ?? ""
+        let sentRequest = transport.histories.last?.last?.content ?? ""
+        try check(sentPrompt.contains("The user is revising the document titled \"Lisbon guide, revised\"")
+                  && sentPrompt.contains("# Lisbon v2"), "The revision turn carries the revision note")
+        try check(sentRequest == "Revise \"Lisbon guide, revised\": Add a day trip to Sintra", "The revision request is plain text")
+        try check(store.artifactRevisionTargets[conversationID] == nil, "The revision target clears when the turn finishes")
+        try check(store.artifactRecords.first { $0.id == document.id }?.versionCount == 2,
+                  "A reply without a revised block adds no version")
+
+        store.renameConversation(conversationID, title: "Lisbon trip")
+        try check(store.artifactRecords.filter { $0.conversationID == conversationID }.allSatisfy { $0.originTitle == "Lisbon trip" },
+                  "Renaming the chat updates the origin title")
+
+        let keptCount = store.artifactRecords.filter { $0.conversationID == conversationID }.count
+        let keptVersions = store.artifactRecords.flatMap { store.artifactVersions($0.id) }
+        store.deleteConversation(conversationID)
+        try check(store.pendingConversationDeletion?.id == conversationID
+                  && store.pendingConversationDeletion?.artifactCount == keptCount, "Deleting a chat with artifacts asks first")
+        try check(store.conversations.contains { $0.id == conversationID }, "The chat stays until the choice is made")
+        try check(ContentView.deletionMessage(1).contains("an artifact. You can keep it")
+                  && ContentView.deletionMessage(keptCount).contains("\(keptCount) artifacts"), "The choice message pluralizes")
+        store.confirmDeleteConversation(.keep)
+        try check(!store.conversations.contains { $0.id == conversationID }, "Keeping artifacts still deletes the chat")
+        try check(store.artifactRecords.count == keptCount
+                  && store.artifactRecords.allSatisfy { $0.conversationID == nil && $0.originTitle == "Lisbon trip" },
+                  "Kept artifacts lose the chat link and keep the origin title")
+        try check(keptVersions.allSatisfy(fileExists), "Kept artifact files stay on disk")
+
+        store.newConversation()
+        try check(store.sendText("Draw a chart"), "The second message sends")
+        guard let secondID = store.selectedID, secondID != conversationID else { throw Failure(description: "No second chat") }
+        try await waitForReply(store, conversationID: secondID)
+        store.recordCanvasArtifacts(
+            [Artifact(id: "chart", title: "Chart", type: .svg, language: "", content: "<svg/>")],
+            conversationID: secondID, messageID: "chart-message")
+        let doomed = store.artifactRecords.filter { $0.conversationID == secondID }
+        try check(doomed.count == 1, "The second chat has one artifact")
+        let doomedVersions = doomed.flatMap { store.artifactVersions($0.id) }
+        store.requestDeleteConversation(secondID)
+        try check(store.pendingConversationDeletion?.artifactCount == 1, "The request names one artifact")
+        store.confirmDeleteConversation(.delete)
+        try check(!store.conversations.contains { $0.id == secondID }, "The second chat is deleted")
+        try check(!store.artifactRecords.contains { $0.id == doomed[0].id }, "Deleted artifacts leave the list")
+        try check(!doomedVersions.contains(where: fileExists), "Deleted artifact files leave the disk")
+        try check(store.artifactRecords.count == keptCount, "Kept artifacts survive the second deletion")
+
+        store.newConversation()
+        _ = store.sendText("Hello")
+        guard let plainID = store.selectedID else { throw Failure(description: "No third chat") }
+        try await waitForReply(store, conversationID: plainID)
+        store.deleteConversation(plainID)
+        try check(store.pendingConversationDeletion == nil && !store.conversations.contains { $0.id == plainID },
+                  "A chat without artifacts deletes without asking")
+
+        let legacyDirectory = directory.appendingPathComponent("legacy", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        let legacyURL = legacyDirectory.appendingPathComponent("artifacts.json")
+        let backupURL = legacyDirectory.appendingPathComponent("artifacts-migrated.json")
+        try Data("stale".utf8).write(to: backupURL)
+        let legacy = [
+            Artifact(id: "landing", title: "Landing page", type: .html, language: "", content: "<h1>Hi</h1>"),
+            Artifact(id: "parser", title: "Parser", type: .code, language: "swift", content: "let x = 1"),
+        ]
+        try JSONEncoder().encode(legacy).write(to: legacyURL)
+        let legacyRepository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
+        let imported = try ChatStore.importLegacyCanvasLibrary(from: legacyURL, into: legacyRepository)
+        try check(imported == 2, "Both legacy canvas pieces import")
+        let importedRecords = try legacyRepository.listArtifacts()
+        try check(importedRecords.count == 2 && importedRecords.allSatisfy { $0.kind == .canvas && $0.conversationID == nil },
+                  "Legacy pieces land as canvas artifacts with no chat")
+        try check(Set(importedRecords.map(\.title)) == ["Landing page", "Parser"], "Legacy titles carry over")
+        let parser = try legacyRepository.artifactVersion(sourceKey: "canvas-library:parser")
+        try check(parser?.fileName.hasSuffix(".swift") == true && parser?.details.language == "swift", "Legacy code keeps its language")
+        try check(!FileManager.default.fileExists(atPath: legacyURL.path), "The legacy library file moves away")
+        try check((try? JSONDecoder().decode([Artifact].self, from: Data(contentsOf: backupURL)))?.count == 2,
+                  "The backup replaces an older one")
+        try check(try ChatStore.importLegacyCanvasLibrary(from: legacyURL, into: legacyRepository) == 0,
+                  "A missing legacy library imports nothing")
+    }
+}
