@@ -409,7 +409,7 @@ enum Shot {
                                                rules: store.dotHeaderRules, activity: [], results: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
-                ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: true, companionPanel: model,
+                ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
                          companionSelection: populated ? CompanionOverviewFixture.visitID.uuidString : nil, height: size.height)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)

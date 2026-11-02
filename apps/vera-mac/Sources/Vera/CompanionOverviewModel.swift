@@ -46,7 +46,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     static let noTaskRules = "No task rules yet."
     static let selectWorkHint = "Select a row in Recent activity to see which task these rules would cover."
-    static let noGoal = "No standing goal yet."
+    static let noGoal = "No goal set yet."
     static let noActivity = "Nothing yet. Research, documents and scheduled work show up here as they happen."
     static let noOutputs = "Documents and other results collect here."
     static let thisMac = "This Mac"

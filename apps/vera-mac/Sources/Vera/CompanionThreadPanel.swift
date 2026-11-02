@@ -5,6 +5,16 @@ enum CompanionThreadPanelMetrics {
     static let minimumWindowWidth = OngoingWorkMetrics.minimumWindowWidth
 }
 
+enum CompanionPanelPlacement: Equatable, Sendable {
+    case beside, header, none
+
+    static func decide(isCompanionThread: Bool, windowWidth: CGFloat, canvasShowing: Bool) -> CompanionPanelPlacement {
+        guard isCompanionThread else { return .none }
+        if canvasShowing || windowWidth < CompanionThreadPanelMetrics.minimumWindowWidth { return .header }
+        return .beside
+    }
+}
+
 struct CompanionThreadPanel: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
@@ -16,6 +26,7 @@ struct CompanionThreadPanel: View {
     @State private var selectedID: String?
     @State private var showingAllActivity = false
     @State private var editingProfile = false
+    @State private var editingAppearance = false
 
     init(fixed: CompanionOverviewModel? = nil, selectedID: String? = nil, onClose: (() -> Void)? = nil) {
         self.fixed = fixed
@@ -55,6 +66,9 @@ struct CompanionThreadPanel: View {
         .sheet(isPresented: $editingProfile) {
             DotSettingsView().environmentObject(store).environmentObject(config)
         }
+        .sheet(isPresented: $editingAppearance) {
+            CompanionAppearancePicker(config: config, store: ConfigCompanionAppearanceStore(config: config), chat: store)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(current.name)'s panel")
     }
@@ -77,55 +91,65 @@ struct CompanionThreadPanel: View {
     }
 
     private var identity: some View {
-        HStack(spacing: 14) {
-            CompanionAvatar(size: 56)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(current.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                HStack(spacing: 6) {
-                    Circle().fill(current.paused ? Theme.warmTextSecondary : Theme.statusGreen).frame(width: 7, height: 7)
-                    Text(stateLine).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+        card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    CompanionAvatar(size: 56)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(current.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
+                        HStack(spacing: 6) {
+                            Circle().fill(current.paused ? Theme.warmTextSecondary : Theme.statusGreen).frame(width: 7, height: 7)
+                            Text(stateLine).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(current.name), \(stateLine)")
+                Text(current.goal.isEmpty ? CompanionOverviewModel.noGoal : current.goal)
+                    .font(.system(size: 13)).foregroundStyle(current.goal.isEmpty ? Theme.warmTextSecondary : Theme.warmTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button {
+                        store.setDotState(current.paused ? .active : .paused)
+                    } label: {
+                        Label(current.paused ? "Resume" : "Pause", systemImage: current.paused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help(DotProfileCopy.pausedNote)
+                    .accessibilityLabel(CompanionOverviewModel.pauseTitle(name: current.name, paused: current.paused))
+                    Button("Appearance") { editingAppearance = true }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.sage)
+                        .help("Change \(current.name)'s name, shape and color")
+                    Spacer(minLength: 0)
+                    Button { editingProfile = true } label: {
+                        Image(systemName: "gearshape").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+                            .frame(width: 26, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(current.name)'s goal, services, rules and start over")
+                    .accessibilityLabel("Settings for \(current.name)")
+                }
+                if current.paused {
+                    Text(DotProfileCopy.pausedNote).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(current.name), \(stateLine)")
     }
 
     private var thisMac: some View {
         card {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label(CompanionOverviewModel.thisMac, systemImage: "desktopcomputer")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                    Spacer()
-                    Button("Edit") { editingProfile = true }
-                        .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sage)
-                        .help("Change \(current.name)'s name, goal, services and rules")
-                        .accessibilityLabel("Edit \(current.name)'s profile")
-                }
-                Text(current.goal.isEmpty ? CompanionOverviewModel.noGoal : current.goal)
-                    .font(.system(size: 13)).foregroundStyle(current.goal.isEmpty ? Theme.warmTextSecondary : Theme.warmTextPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(current.services).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Label(CompanionOverviewModel.thisMac, systemImage: "desktopcomputer")
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
+                Text(current.services).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !current.rules.isEmpty {
                     Text(current.rules).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Button {
-                    store.setDotState(current.paused ? .active : .paused)
-                } label: {
-                    Label(CompanionOverviewModel.pauseTitle(name: current.name, paused: current.paused),
-                          systemImage: current.paused ? "play.fill" : "pause.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .help(DotProfileCopy.pausedNote)
-                if current.paused {
-                    Text(DotProfileCopy.pausedNote).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

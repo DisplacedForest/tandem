@@ -110,11 +110,31 @@ extension SelfTest {
         store.adoptAssistantName("Ada")
         store.dotProfile = NativeDotProfile(goal: "Keep the greenhouse on track.", state: .active, setupCompleted: true)
         let live = store.companionOverviewModel()
-        try require(live.name == "Ada" && live.goal == "Keep the greenhouse on track." && live.activity.isEmpty && live.outputs.isEmpty,
+        try require(live.name == "Ada" && live.goal == "Keep the greenhouse on track." && !live.paused && live.activity.isEmpty && live.outputs.isEmpty,
                     "A store with no work builds an honest empty overview")
         store.openCompanionOutputs()
         try require(store.section == .artifacts && store.pendingLibraryConversationID == store.veraThreadID,
                     "Show more hands the companion's thread to the Library filter")
-        print("  companion overview OK (activity, runs, selection, rules title, pause and stop labels, services line, empty states, routing)")
+        for width in [CGFloat(700), 1119, 1120, 1600] {
+            for canvas in [false, true] {
+                try require(CompanionPanelPlacement.decide(isCompanionThread: false, windowWidth: width, canvasShowing: canvas) == .none,
+                            "A focused chat never gets the companion panel or its Details button at \(Int(width)) points")
+            }
+        }
+        try require(CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1600, canvasShowing: false) == .beside
+                    && CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1119, canvasShowing: false) == .header
+                    && CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1600, canvasShowing: true) == .header,
+                    "The companion thread shows the panel beside it when wide and folds it into the header when narrow or the canvas is open")
+        let focused = CompanionShotFixture.store()
+        focused.newConversation()
+        try require(!focused.isVeraThread(focused.selectedID) && focused.section == .chat
+                    && CompanionPanelPlacement.decide(isCompanionThread: focused.section == .vera && focused.isVeraThread(focused.selectedID),
+                                                      windowWidth: 1600, canvasShowing: false) == .none,
+                    "A new focused chat in the store resolves to no companion panel")
+        focused.openVeraThread()
+        try require(CompanionPanelPlacement.decide(isCompanionThread: focused.section == .vera && focused.isVeraThread(focused.selectedID),
+                                                   windowWidth: 1600, canvasShowing: false) == .beside,
+                    "Opening the companion thread resolves to the panel")
+        print("  companion overview OK (activity, runs, selection, rules title, pause and stop labels, services line, empty states, routing, placement)")
     }
 }

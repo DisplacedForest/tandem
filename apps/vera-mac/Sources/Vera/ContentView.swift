@@ -27,7 +27,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     Group {
                         switch store.section {
-                        case .vera: ChatPane(workCollapsed: !wideEnoughForWork || store.showCanvas)
+                        case .vera: ChatPane(workCollapsed: companionPlacement == .header)
                         case .chat: ChatPane(workCollapsed: hasWork && (!wideEnoughForWork || store.showCanvas))
                         case .pulse: PulseView()
                         case .memory: MemoryView()
@@ -42,7 +42,7 @@ struct ContentView: View {
                     if store.showCanvas, chatSection {
                         Divider()
                         CanvasPanel().frame(width: 480)
-                    } else if store.section == .vera, wideEnoughForWork {
+                    } else if companionPlacement == .beside {
                         CompanionThreadPanel()
                             .frame(width: CompanionThreadPanelMetrics.width)
                     } else if chatSection, hasWork, wideEnoughForWork {
@@ -81,6 +81,10 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
+    private var companionPlacement: CompanionPanelPlacement {
+        CompanionPanelPlacement.decide(isCompanionThread: store.section == .vera && store.isVeraThread(store.selectedID),
+                                       windowWidth: windowWidth, canvasShowing: store.showCanvas)
+    }
     private var hasWork: Bool { !store.nativeTaskReferences.isEmpty }
     private var wideEnoughForWork: Bool { windowWidth >= OngoingWorkMetrics.minimumWindowWidth }
 
@@ -272,9 +276,7 @@ private struct ChatPane: View {
     var body: some View {
         VStack(spacing: 0) {
             if store.isVeraThread(conversation?.id) {
-                DotHeaderView(trailing: workCollapsed ? AnyView(Button("Details") { showingWork = true }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    .help("\(store.assistantName)'s state, goal, activity and results")) : nil)
+                EmptyView()
             } else if showsHeader {
                 ConversationHeader(name: store.assistantName, status: store.conversationStatusLine)
             }
@@ -362,7 +364,23 @@ private struct ChatPane: View {
             refreshDotSetup()
         }
         .overlay(alignment: .topTrailing) {
-            if workCollapsed, !store.isVeraThread(conversation?.id) {
+            if workCollapsed, store.isVeraThread(conversation?.id) {
+                Button { showingWork = true } label: {
+                    HStack(spacing: 8) {
+                        CompanionAvatar(size: 18)
+                        Text("Details").font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.warmTextPrimary)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(Theme.cardFill))
+                    .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("\(store.assistantName)'s state, activity and results")
+                .accessibilityLabel("Details for \(store.assistantName)")
+                .padding(.top, 44).padding(.trailing, 20)
+            } else if workCollapsed {
                 OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: conversation?.id)) {
                     showingWork = true
                 }

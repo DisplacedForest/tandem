@@ -322,7 +322,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
-        if dotHeader { return store.selected?.messages ?? [] }
+        if dotHeader || companionPanel != nil { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
         if folder { return folderMessages }
@@ -631,7 +631,7 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            if !dotHeader {
+            if !dotHeader, companionPanel == nil {
                 ConversationHeader(name: store.assistantName, status: shotStatusLine)
             }
             VStack(alignment: .leading, spacing: 22) {
