@@ -16,10 +16,14 @@ enum NativeJSONValue: Codable, Equatable, Hashable, Sendable {
             self = .array(try value.map { try NativeJSONValue(any: $0) })
         case let value as String:
             self = .string(value)
+        case let value as NSNumber:
+            if CFGetTypeID(value) == CFBooleanGetTypeID() {
+                self = .bool(value.boolValue)
+            } else {
+                self = .number(value.doubleValue)
+            }
         case let value as Bool:
             self = .bool(value)
-        case let value as NSNumber:
-            self = .number(value.doubleValue)
         case is NSNull:
             self = .null
         default:
