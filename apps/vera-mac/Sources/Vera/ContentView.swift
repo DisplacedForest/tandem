@@ -731,6 +731,8 @@ struct MessageRow: View {
                                              onStop: { store.stopAnswer(message.id, reason: "Canceled.") })
                     } else if nativeActions, let note = store.answerNote(message.id) {
                         Text(note).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                    } else if nativeActions, let status = store.replyStatus(message.id) {
+                        Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")

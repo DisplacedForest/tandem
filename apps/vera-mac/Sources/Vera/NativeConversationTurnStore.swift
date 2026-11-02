@@ -521,6 +521,14 @@ extension ChatStore {
         turnStatuses[messageID] == Self.savePendingStatus ? Self.savePendingStatus : nil
     }
 
+    func replyStatus(_ messageID: UUID) -> String? {
+        guard turnConfirmations[messageID] == nil, let status = turnStatuses[messageID],
+              status != Self.savePendingStatus, status != Self.saveWaitingStatus,
+              conversationTurns.contains(where: { $0.assistantMessageID == messageID && $0.state == .running }) else { return nil }
+        let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func isQueuedAnswer(_ messageID: UUID) -> Bool {
         conversationTurns.contains { $0.assistantMessageID == messageID && $0.state == .pending }
     }
