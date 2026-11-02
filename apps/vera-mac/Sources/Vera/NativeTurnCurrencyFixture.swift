@@ -51,6 +51,7 @@ enum NativeTurnCurrencyFixture {
         try await claimContention()
         try await releaseContention()
         try await completionRelocation()
+        try await completionReconciliation()
         print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization, dispatch and claim writes off main with their gates re-checked afterwards)")
     }
 
@@ -312,6 +313,32 @@ enum NativeTurnCurrencyFixture {
             !store.isSchedulingTurns && (try? base.conversationTurns().first { $0.id == pending.id }?.state) == .complete
         }
         try require(transport.histories.count == 1 && store.turnExecutions.isEmpty, "The released turn ran exactly once")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func completionReconciliation() async throws {
+        let require = NativeTaskFixture.require
+        let base = try LocalChatRepository(inMemory: true)
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.failReadsAfterAcceptance = false
+        repository.completeHold = 0.3
+        let transport = NativeSessionFixtureTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.generatesConversationTitles = true
+        store.newConversation()
+        store.sendText("finish while the scheduler reconciles")
+        guard let conversationID = store.selectedID else { throw NativeTaskFixture.Failure.assertion("The sent message has a conversation") }
+        try await NativeSessionFixture.eventually("The completion has committed and is held open") { repository.completeLanded.value }
+        store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("A scheduler tick runs while the completion is held") { !store.isSchedulingTurns }
+        try require(store.turnExecutions.count == 1, "Reconciliation keeps the execution that committed its own completion")
+        try await NativeSessionFixture.eventually("The completion effects run after the commit returns") {
+            store.conversations.first(where: { $0.id == conversationID })?.titleSource == .generated
+        }
+        try await NativeSessionFixture.eventually("The finished execution is released") { store.turnExecutions.isEmpty }
+        try require(transport.histories.count == 2, "The answer and its title request each ran exactly once")
+        try require(try base.conversationTurns().first?.state == .complete, "The finished turn is saved")
         store.conversationTurnLoop?.cancel()
     }
 

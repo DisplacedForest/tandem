@@ -13,6 +13,8 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var polledRecords = 0
     var claimHold: TimeInterval = 0
     let claimLanded = NativeTurnCurrencyFlag()
+    var completeHold: TimeInterval = 0
+    let completeLanded = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
     func messages(conversationID: String) throws -> [Message] {
@@ -72,6 +74,9 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     func completeTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int, updatedAt: Date) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic completion failure") }
         try base.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
+        completeLanded.raise()
+        let hold = lock.withLock { completeHold }
+        if hold > 0 { Thread.sleep(forTimeInterval: hold) }
     }
     func releaseTurn(_ id: UUID, attempt: UUID) throws {
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic release failure") }

@@ -34,6 +34,7 @@ final class NativeTurnExecution {
     var checkpoint: Task<Void, Never>?
     var pendingCheckpoint: (message: Message, ordinal: Int)?
     var checkpointFailingSince: Date?
+    var completing: NativeConversationTurn.State?
 
     init(_ record: NativeConversationTurn) { self.record = record }
 }
@@ -297,6 +298,7 @@ extension ChatStore {
         conversationTurns.sort { $0.createdAt < $1.createdAt }
         for (id, execution) in turnExecutions {
             let saved = conversationTurns.first(where: { $0.id == id })
+            if let completing = execution.completing, saved?.attempt == execution.record.attempt, saved?.state == completing { continue }
             if saved?.state != .running || saved?.attempt != execution.record.attempt {
                 resolveTurnConfirmation(execution.record.assistantMessageID, approved: false)
                 execution.task?.cancel()
@@ -592,9 +594,15 @@ extension ChatStore {
         guard let turnRepository else { return }
         let id = turn.id
         let attempt = turn.attempt
-        try await Task.detached(priority: .userInitiated) {
-            try turnRepository.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
-        }.value
+        turnExecutions[id]?.completing = state
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try turnRepository.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
+            }.value
+        } catch {
+            turnExecutions[id]?.completing = nil
+            throw error
+        }
         guard turnOwned(turn) else { throw CancellationError() }
     }
 }
