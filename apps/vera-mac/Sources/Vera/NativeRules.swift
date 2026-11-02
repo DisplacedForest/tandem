@@ -215,7 +215,7 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "do nothing", "on second thought", "actually", "instead", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
@@ -412,6 +412,8 @@ enum NativeCommandClassifier {
             guard let executable = tokens.first, isPlainWord(executable), !executable.hasPrefix("-") else { return false }
             let name = executable.split(separator: "/").last.map(String.init) ?? executable
             if keywords.contains(name) || wrappers.contains(name) { return false }
+            if launchers.contains(name) && name != executable { return false }
+            if name == "git" && tokens.dropFirst().contains(where: { $0 == "-c" || $0.hasPrefix("--config") }) { return false }
             if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return false }
             guard launchers.contains(name) else { break }
             tokens = tokens.dropFirst()
@@ -467,6 +469,14 @@ enum NativeCommandClassifier {
                     if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .sensitive }
                     if token == "-c" || token == "--config-env" || token == "--namespace" || token == "--exec-path" || token == "--super-prefix" {
                         guard index + 1 < arguments.count else { return .sensitive }
+                        let operand = arguments[index + 1].lowercased()
+                        if token == "-c" || token == "--config-env" {
+                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) { return .sensitive }
+                            if let equals = operand.firstIndex(of: "=") {
+                                let value = String(operand[operand.index(after: equals)...])
+                                if (value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..")) && pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                            }
+                        }
                         index += 2
                         continue
                     }
@@ -489,7 +499,10 @@ enum NativeCommandClassifier {
                 if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .sensitive }
             }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
-            if name == "curl" && arguments.contains(where: { ["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-X", "--request"].contains($0) || $0.hasPrefix("--data") || $0.hasPrefix("-d") && $0.count > 2 || $0.hasPrefix("-F") && $0.count > 2 || $0.hasPrefix("-T") && $0.count > 2 || $0.hasPrefix("-X") && $0.count > 2 }) { network = true }
+            if name == "curl" && arguments.contains(where: { argument in
+                if argument.hasPrefix("--") { return argument.hasPrefix("--data") || ["--form", "--form-string", "--upload-file", "--request", "--json"].contains(argument) }
+                return argument.hasPrefix("-") && argument.dropFirst().contains(where: { "dFTX".contains($0) })
+            }) { network = true }
             if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
             if senders.contains(name) { network = true }
         }
