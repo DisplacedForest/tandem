@@ -1,13 +1,13 @@
 import Foundation
 import GRDB
 
-private actor NativeTaskEngineCounter {
+actor NativeTaskEngineCounter {
     private var counts: [String: Int] = [:]
     func bump(_ key: String) { counts[key, default: 0] += 1 }
     func count(_ key: String) -> Int { counts[key] ?? 0 }
 }
 
-private struct NativeTaskEngineHarness {
+struct NativeTaskEngineHarness {
     let repository: LocalChatRepository
     let engine: NativeTaskLocalEngine
     let service: NativeTaskHandoffService
@@ -117,7 +117,7 @@ private struct NativeTaskEngineHarness {
 @MainActor
 extension SelfTest {
     static func runTaskEngine() async throws {
-        try workerAudienceContract()
+        try await workerAudienceContract()
         try await taskStoreContract()
         try await taskDispatcherContract()
         try await taskExchangeContract()
