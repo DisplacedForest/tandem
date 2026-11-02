@@ -14,6 +14,7 @@ struct ShotView: View {
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
+    var dotHeader: Bool = false
     var artifactSelection: String? = nil
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
@@ -24,7 +25,7 @@ struct ShotView: View {
     var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
-    enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab) }
+    enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab), dotSheet(settings: Bool) }
 
     var body: some View {
         Group {
@@ -34,6 +35,7 @@ struct ShotView: View {
             case .veinBrowse: veinBrowseShot
             case .veinImport: veinImportShot
             case .settings(let tab): settingsShot(tab)
+            case .dotSheet(let settings): dotSheetShot(settings: settings)
             }
         }
         .frame(width: width, height: 760)
@@ -58,6 +60,11 @@ struct ShotView: View {
                 case .vera, .chat:
                     if emptyChat {
                         emptyChatShot
+                    } else if dotHeader {
+                        VStack(spacing: 0) {
+                            DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused)
+                            chat
+                        }
                     } else if workColumn {
                         HStack(spacing: 0) {
                             chat
@@ -89,6 +96,18 @@ struct ShotView: View {
             .background(Theme.bg)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private func dotSheetShot(settings: Bool) -> some View {
+        ZStack {
+            ShotView(store: store, section: .vera, dotHeader: true).opacity(0.5)
+            Color.black.opacity(0.35)
+            DotSheetShot(settings: settings, options: NativeDotShotFixture.options, selected: NativeDotShotFixture.selected,
+                         goal: NativeDotShotFixture.goal)
+                .environmentObject(store)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
@@ -295,6 +314,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if dotHeader { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
         if folder { return folderMessages }

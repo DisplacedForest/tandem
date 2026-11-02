@@ -89,6 +89,7 @@ struct NativeContextInput: Sendable {
     var tools: [NativeToolDefinition]
     var contracts: Set<NativePresentationContract>
     var unavailableNotes: [String]
+    var assistantProfile: String?
 
     init(
         persona: String, userScope: String = "", conversationInstructions: String = "",
@@ -97,7 +98,8 @@ struct NativeContextInput: Sendable {
         knowledgeGrounding: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
         contracts: Set<NativePresentationContract> = NativePresentationContract.chatDefaults,
-        unavailableNotes: [String] = []
+        unavailableNotes: [String] = [],
+        assistantProfile: String? = nil
     ) {
         self.persona = persona
         self.userScope = userScope
@@ -113,6 +115,7 @@ struct NativeContextInput: Sendable {
         self.tools = tools
         self.contracts = contracts
         self.unavailableNotes = unavailableNotes
+        self.assistantProfile = assistantProfile
     }
 }
 
@@ -143,6 +146,7 @@ enum NativeContextAssembler {
         static let persona = 6_000
         static let user = 4_000
         static let conversation = 2_400
+        static let assistant = 1_400
         static let session = 400
         static let memory = 4_800
         static let world = 4_800
@@ -153,7 +157,7 @@ enum NativeContextAssembler {
     }
 
     static var totalBudget: Int {
-        Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.session
+        Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.assistant + Caps.session
             + Caps.memory + Caps.world + Caps.knowledge + Caps.tools + Caps.unavailable
             + NativePresentationContract.allCases.count * Caps.contract
     }
@@ -170,6 +174,7 @@ enum NativeContextAssembler {
         add("persona", input.persona, cap: Caps.persona)
         add("user", userSection(input.userScope), cap: Caps.user)
         add("conversation", conversationSection(input.conversationInstructions), cap: Caps.conversation)
+        add("assistant", assistantSection(input.assistantProfile ?? ""), cap: Caps.assistant)
         add("session", session(for: input), cap: Caps.session)
         if let memory = NativeMemoryPromptAssembler.section(selected: input.memories) {
             add("memory", memory, cap: Caps.memory)
@@ -202,6 +207,12 @@ enum NativeContextAssembler {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         return "CONVERSATION INSTRUCTIONS\n\(trimmed)"
+    }
+
+    private static func assistantSection(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return "STANDING ASSISTANT\n\(trimmed)"
     }
 
     private static func session(for input: NativeContextInput) -> String {

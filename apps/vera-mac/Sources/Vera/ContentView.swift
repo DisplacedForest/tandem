@@ -181,6 +181,7 @@ struct SidebarRow: View {
 private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     var workCollapsed = false
+    @EnvironmentObject var config: ConfigStore
     private var conversation: Conversation? { store.selected }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
@@ -232,6 +233,16 @@ private struct ChatPane: View {
         }
     }
 
+    @State private var showingDotSetup = false
+
+    private var needsDotSetup: Bool {
+        store.isVeraThread(conversation?.id) && store.dotProfileLoaded && !store.dotProfile.setupCompleted
+    }
+
+    private func refreshDotSetup() {
+        if needsDotSetup != showingDotSetup { showingDotSetup = needsDotSetup }
+    }
+
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
         guard let id = store.pendingHighlightMessageID,
               conversation?.messages.contains(where: { $0.id == id }) == true else { return }
@@ -256,7 +267,9 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsHeader {
+            if store.isVeraThread(conversation?.id) {
+                DotHeaderView()
+            } else if showsHeader {
                 ConversationHeader(name: store.assistantName, status: store.conversationStatusLine)
             }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
@@ -340,6 +353,7 @@ private struct ChatPane: View {
         .background(Theme.conversationBackground)
         .onChange(of: store.selectedID) {
             if let revealConversationID, revealConversationID != store.selectedID { cancelTaskReveal() }
+            refreshDotSetup()
         }
         .overlay(alignment: .topTrailing) {
             if workCollapsed {
@@ -356,6 +370,12 @@ private struct ChatPane: View {
             }, onClose: { showingWork = false })
             .frame(width: 420, height: 560)
             .environmentObject(store)
+        }
+        .onAppear(perform: refreshDotSetup)
+        .onChange(of: store.dotProfile) { refreshDotSetup() }
+        .onChange(of: store.dotProfileLoaded) { refreshDotSetup() }
+        .sheet(isPresented: $showingDotSetup) {
+            DotSetupView().environmentObject(store).environmentObject(config)
         }
     }
 }

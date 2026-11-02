@@ -139,6 +139,11 @@ final class ChatStore: ObservableObject {
     @Published var scheduleError: String?
     @Published var menuBarPreference: Bool?
     var nativeScheduleStore: NativeScheduleStore?
+    @Published var dotProfile = NativeDotProfile()
+    @Published var dotProfileLoaded = false
+    var dotResetGeneration = 0
+    var discardedConversationIDs: Set<String> = []
+    var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
     var nativeSchedulerLoop: Task<Void, Never>?
     let attachmentStore: NativeAttachmentStore
@@ -307,6 +312,7 @@ final class ChatStore: ObservableObject {
 
     deinit {
         conversationTurnLoop?.cancel()
+        nativeSchedulerLoop?.cancel()
         nativeTaskRecoveryLoop?.cancel()
         nativeTaskGenerationLoop?.cancel()
         nativeTaskTrackingLoop?.cancel()
@@ -433,6 +439,7 @@ final class ChatStore: ObservableObject {
             conversations.insert(convo, at: 0)
         }
         ensureVeraThread()
+        loadDotProfile()
         syncGrantSource()
         syncRuleSource()
         if let previousSelected, conversations.contains(where: { $0.id == previousSelected }) {
@@ -1376,7 +1383,12 @@ final class ChatStore: ObservableObject {
               NativeMemoryExtractionPolicy.disposition(
                 user: user, assistant: assistant, conversationExcluded: conversationExcluded,
                 sensitiveHandling: live.sensitiveHandling) == .eligible else { return }
-        let allowed = { self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats }
+        let generation = dotResetGeneration
+        let wasVeraThread = source.map { isVeraThread($0.conversationID) } ?? false
+        let allowed = {
+            self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats
+                && self.memorySourceIsLive(source, generation: generation, wasVeraThread: wasVeraThread)
+        }
         let projectID = resolveProject ? projectID ?? source.flatMap { projectForConversation($0.conversationID)?.id } : projectID
         do {
             let extraction = try await memoryService.extraction(
@@ -1649,7 +1661,6 @@ final class ChatStore: ObservableObject {
             stopAnswer(turn.assistantMessageID)
         }
         let idx = conversations.firstIndex { $0.id == id }
-        let stored = (try? repository?.messages(conversationID: id)) ?? []
         conversations.removeAll { $0.id == id }
         drafts.removeValue(forKey: id)
         if lastFocusedConversationID == id { lastFocusedConversationID = nil }
@@ -1661,15 +1672,38 @@ final class ChatStore: ObservableObject {
             if let next { select(next.id) }
         }
         do {
-            try repository?.deleteConversation(id)
-            for message in stored {
-                for attachment in message.attachments { attachmentStore.remove(attachment) }
-            }
+            try purgeConversation(id)
         } catch {
             chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)"
         }
         reloadNativeMemory()
         if selectedID == nil { newConversation() }
+    }
+
+    func purgeConversation(_ id: String) throws {
+        discardedConversationIDs.insert(id)
+        let stored = (try? repository?.messages(conversationID: id)) ?? []
+        try repository?.deleteConversation(id)
+        for message in stored {
+            for attachment in message.attachments { attachmentStore.remove(attachment) }
+        }
+    }
+
+    func discardVeraThread() {
+        guard let id = veraThreadID else { return }
+        do {
+            try purgeConversation(id)
+        } catch {
+            chatConfigurationError = "The conversation couldn't be removed: \(error.localizedDescription)"
+        }
+        conversations.removeAll { $0.id == id }
+        drafts.removeValue(forKey: id)
+        memoryRetrievalTraces[id] = nil
+        if selectedID == id {
+            selectedID = nil
+            draft = ""
+        }
+        veraThreadID = nil
     }
 
     enum PulseContinuationState: Equatable {
@@ -2109,12 +2143,15 @@ final class ChatStore: ObservableObject {
         conversation.updatedAt = Date()
         conversation.isPersisted = true
         let scopes = resolvePromptScopes(conversationID: id)
-        let turn = NativeConversationTurn(id: UUID(), conversationID: id,
+        let mentions = mentionedToolIDs(in: text)
+        let baseToolIDs = NativeTurnToolAuthority(text, mentions: mentions).filter(turnConsentedToolIDs(conversationID: id, mentions: mentions))
+        var turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
-            profile: turnProfile(for: user.routeNote), enabledToolIDs: turnToolIDs(for: text),
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: baseToolIDs,
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
+        turn.dotContext = dotContext(for: id, requestText: text)
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
@@ -2148,12 +2185,14 @@ final class ChatStore: ObservableObject {
             return false
         }
         let scopes = resolvePromptScopes(conversationID: conversation.id)
-        let turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id,
+        let replayable = nativeEnabledToolIDs.intersection(NativeTurnSafety.replayableIDs)
+        var turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
-            profile: turnProfile(for: user.routeNote), enabledToolIDs: nativeEnabledToolIDs.intersection(NativeTurnSafety.replayableIDs),
+            profile: turnProfile(for: user.routeNote), enabledToolIDs: isVeraThread(conversation.id) ? dotToolIDs(base: replayable) : replayable,
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(Array(conversation.messages.prefix(ri - 1)), current: user))
+        turn.dotContext = dotContext(for: conversation.id, requestText: user.text)
         do {
             try turnRepository?.enrollLegacyTurn(turn)
             conversations[ci].messages[ri].state = .streaming
@@ -2206,8 +2245,10 @@ final class ChatStore: ObservableObject {
     func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         let mentions = mentionedToolIDs(in: text)
-        return (NativeTurnToolAuthority(text, mentions: mentions), nativeEnabledToolIDs.union(mentions))
+        return (NativeTurnToolAuthority(text, mentions: mentions), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
     }
+
+    var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
 
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
@@ -2487,7 +2528,8 @@ final class ChatStore: ObservableObject {
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts,
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
-                        + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])))
+                        + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
+                    assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",

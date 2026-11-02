@@ -75,6 +75,7 @@ struct NativeConversationTurn: Codable, Sendable, Identifiable {
     var ownerPID: Int32?
     var ownerBirth: String?
     var mayHaveEffect = false
+    var dotContext: String?
 
     static func processBirth(_ pid: Int32) -> String? {
         var info = kinfo_proc()

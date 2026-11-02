@@ -281,6 +281,7 @@ extension ChatStore {
             guard let execution = turnExecutions[id], execution.record.attempt == result.attempt, execution.finalization != nil else { continue }
             switch result.outcome {
             case .finished, .superseded:
+                clearTurnDecisions(execution.record)
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
             case .unconfirmed:
@@ -304,6 +305,7 @@ extension ChatStore {
                 resolveTurnConfirmation(execution.record.assistantMessageID, approved: false)
                 execution.task?.cancel()
                 execution.deadline?.cancel()
+                clearTurnDecisions(execution.record)
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
             }
@@ -349,6 +351,11 @@ extension ChatStore {
             generating = true
             performTurn(claimed)
         }
+    }
+
+    func clearTurnDecisions(_ turn: NativeConversationTurn) {
+        turnDeclineSource.clear(turn: turn.id)
+        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
     }
 
     private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {
@@ -412,6 +419,7 @@ extension ChatStore {
         execution.deadline?.cancel()
         execution.task = nil
         resolveTurnConfirmation(turn.assistantMessageID, approved: false)
+        clearTurnDecisions(turn)
         if let location = turnLocation(turn) {
             var message = conversations[location.conversation].messages[location.reply]
             if message.state == .streaming {
@@ -458,8 +466,7 @@ extension ChatStore {
         recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
                               revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         resolveTurnConfirmation(messageID, approved: false)
-        turnDeclineSource.clear(turn: turn.id)
-        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+        clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
         execution?.deadline?.cancel()

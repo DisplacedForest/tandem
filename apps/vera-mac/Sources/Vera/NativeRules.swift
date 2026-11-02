@@ -214,22 +214,73 @@ enum NativeRequestPreapproval {
         "just do it", "don't check with me", "do not check with me", "no confirmation needed", "skip the confirmation",
     ]
 
-    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after"]
+    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "revoke", "revoked", "rescind", "rescinded", "retracted", "reverse", "strike that", "belay", "void", "nullify", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
-    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»"]
+    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
+
+    static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
+    static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as",
+                          "permission", "approval", "authorization", "authorisation", "consent", "express", "expresses", "analyze", "analyse", "analysis", "grammar", "grammatical", "parse", "syntax", "language", "linguistic", "imperative", "verb", "noun", "following"]
+    static let subjects: Set<String> = ["i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "its", "our", "their", "the", "a", "an", "this", "that", "these", "those", "someone", "somebody", "everyone", "anyone", "nobody"]
+    static let speech = ["says", "said", "saying", "replied", "replies", "answered", "answers", "told", "tells", "wrote", "writes", "texted", "messaged", "asked", "asks", "mentioned", "mentions", "suggested", "suggests", "noted", "quoted", "quotes", "responded", "responds", "whispered", "whispers", "shouted", "shouts", "yelled", "muttered", "insisted", "added", "remarked"]
+
+    static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
+    }
+
+
+    static func quoted(_ text: String) -> Bool {
+        let characters = Array(text)
+        for (index, character) in characters.enumerated() where quoteCharacters.contains(character) {
+            if character == "'" || character == "’" {
+                let before = index > 0 && characters[index - 1].isLetter
+                let after = index + 1 < characters.count && characters[index + 1].isLetter
+                if before && after { continue }
+            }
+            return true
+        }
+        return false
+    }
+
+    static func words(_ text: String) -> [String] {
+        text.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
+    }
+
+    static func negated(_ text: String) -> Bool {
+        let list = words(text)
+        let joined = " " + list.joined(separator: " ") + " "
+        return negations.contains { negation in
+            let trimmed = negation.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("n't") { return list.contains { $0.hasSuffix("n't") } }
+            return joined.contains(" " + trimmed + " ")
+        }
+    }
+
+    static func sentenceGrants(_ sentence: String) -> Bool {
+        var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+        while true {
+            if phrases.contains(rest) { return true }
+            guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
+            rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+        }
+    }
 
     static func grants(_ text: String) -> Bool {
-        let sentences = text.lowercased().components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
-        var granting = 0
-        var vetoing = 0
-        for sentence in sentences where phrases.contains(where: { sentence.contains($0) }) {
-            var remainder = sentence
-            for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
-            if remainder.contains(where: { quoteCharacters.contains($0) }) { vetoing += 1; continue }
-            let padded = " " + remainder + " "
-            if negations.contains(where: { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }) { vetoing += 1 } else { granting += 1 }
-        }
-        return granting > 0 && vetoing == 0
+        let lowered = normalized(text)
+        guard phrases.contains(where: { lowered.contains($0) }) else { return false }
+        var remainder = lowered
+        for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
+        if quoted(remainder) { return false }
+        if negated(remainder) { return false }
+        if lowered.contains("?") { return false }
+        let wordList = " " + words(remainder).joined(separator: " ") + " "
+        if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
+        return sentences.contains { sentenceGrants($0) }
     }
 }
 
@@ -237,7 +288,19 @@ enum NativeCommandClassifier {
     static let separators = ["&&", "||", ";", "|"]
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
     static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
-    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "npm", "pnpm", "yarn", "cargo", "pip", "twine", "gem", "docker", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let packageManagers: Set<String> = ["npm", "pnpm", "yarn", "cargo", "pip", "pip3", "twine", "gem", "docker", "bun", "poetry", "uv"]
+    static let publishing: Set<String> = ["publish", "deploy", "push", "login", "upload", "release"]
+    static let executing: Set<String> = ["exec", "dlx", "x", "create", "init"]
+    static let executors: Set<String> = ["npx", "bunx", "uvx", "pipx"]
+    static let writers: Set<String> = ["curl", "wget"]
+    static let globCharacters: Set<Character> = ["*", "?", "["]
+    static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf", "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!"]
+    static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+    static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua"]
+    static let findEffects: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]
+    static let destructiveGit: Set<String> = ["clean", "reset", "rm", "restore", "checkout", "switch", "stash", "worktree", "branch", "filter-branch", "gc", "prune", "reflog"]
+    static let unsafeCharacters: Set<Character> = ["\"", "'", "`", "$", "\\"]
     static let sensitiveFragments = ["/.ssh", "/.aws", "/.gnupg", "/.config/gh", "/library/keychains", "/etc/", "/private/etc/", "/system/", "/usr/", "/bin/", "/sbin/", "/var/", "/library/", "/applications/", "/.vera", "/.tandem", ".pem", ".p12", "keychain", "id_rsa", "id_ed25519"]
 
     static func segments(of command: String) -> [[String]] {
@@ -245,49 +308,262 @@ enum NativeCommandClassifier {
         for separator in ["&&", "||", "&", ";", "|", "\n", "(", ")", "{", "}"] {
             spaced = spaced.replacingOccurrences(of: separator, with: " ; ")
         }
-        return spaced.components(separatedBy: " ; ").map { NativeCommandPrefix.tokens(of: $0) }.filter { !$0.isEmpty }
+        return spaced.components(separatedBy: " ; ").map { shellTokens($0) }.filter { !$0.isEmpty }
     }
 
-    static func executable(_ segment: [String]) -> (name: String, arguments: [String]) {
+    static func executable(_ segment: [String], grants: [FolderGrant] = [], working: String? = nil) -> (name: String, arguments: [String]) {
         var tokens = segment[...]
-        while let first = tokens.first, first.contains("="), !first.hasPrefix("-"), !first.hasPrefix("/") { tokens = tokens.dropFirst() }
-        while let first = tokens.first, ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"].contains(first) {
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
+            guard isPlainAssignment(first, grants: grants, working: working) else { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
-            while let next = tokens.first, next.hasPrefix("-") || next.contains("=") { tokens = tokens.dropFirst() }
+        }
+        let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun"]
+        while let first = tokens.first, launchers.contains(stripOuterQuotes(first)) {
+            if stripOuterQuotes(first) != first { return ("?", Array(tokens.dropFirst())) }
+            tokens = tokens.dropFirst()
+            if let next = tokens.first, next.hasPrefix("-") { return ("?", Array(tokens.dropFirst())) }
+            while let next = tokens.first, next.contains("=") {
+                guard isPlainAssignment(next, grants: grants, working: working) else { return ("?", Array(tokens.dropFirst())) }
+                tokens = tokens.dropFirst()
+            }
         }
         guard let first = tokens.first else { return ("", []) }
-        let name = first.split(separator: "/").last.map(String.init) ?? first
-        return (name, Array(tokens.dropFirst()))
+        let unquoted = stripOuterQuotes(first)
+        if unquoted.isEmpty || unquoted.contains(where: { !($0.isLetter || $0.isNumber || "._+-/~".contains($0)) }) { return ("?", Array(tokens.dropFirst())) }
+        let name = unquoted.split(separator: "/").last.map(String.init) ?? unquoted
+        return (name, tokens.dropFirst().map(stripOuterQuotes))
+    }
+
+    static func assignmentValue(_ token: String) -> String {
+        guard let equals = token.firstIndex(of: "="), equals != token.startIndex else { return token }
+        let name = token[token.startIndex..<equals]
+        guard let head = name.first, head.isLetter || head == "_", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return token }
+        return String(token[token.index(after: equals)...])
+    }
+
+    static func isPlainAssignment(_ token: String, grants: [FolderGrant] = [], working: String? = nil) -> Bool {
+        guard let equals = token.firstIndex(of: "=") else { return false }
+        let name = token[token.startIndex..<equals]
+        let value = stripOuterQuotes(String(token[token.index(after: equals)...]))
+        guard let head = name.first, head.isLetter || head == "_", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return false }
+        if name.uppercased().hasPrefix("GIT_") { return false }
+        guard value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " || "._+-/~:,@%=".contains($0) }) else { return false }
+        if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
+            if pathLeavesGrants(value, grants: grants, working: working) { return false }
+        }
+        return true
+    }
+
+    static func shellTokens(_ text: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        for character in text {
+            if let open = quote {
+                current.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                quote = character
+                current.append(character)
+            } else if character.isWhitespace {
+                if !current.isEmpty { tokens.append(current); current = "" }
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
+    }
+
+    static func stripOuterQuotes(_ token: String) -> String {
+        guard token.count >= 2, let first = token.first, let last = token.last, first == last, first == "\"" || first == "'" else { return token }
+        return String(token.dropFirst().dropLast())
+    }
+
+    static func hasInlineCode(_ name: String, _ arguments: [String]) -> Bool {
+        if wrappers.contains(name) || executors.contains(name) { return true }
+        if packageManagers.contains(name), let first = arguments.first(where: { !$0.hasPrefix("-") }), executing.contains(first), name != "cargo" { return true }
+        if shells.contains(name) && arguments.contains(where: { argument in
+            if argument.hasPrefix("--") { return argument.contains("command") }
+            return argument.hasPrefix("-") && argument.dropFirst().contains("c")
+        }) { return true }
+        if interpreters.contains(name) && arguments.contains(where: { argument in
+            if argument.hasPrefix("--") { return argument.contains("eval") || argument.contains("exec") || argument.contains("command") }
+            return argument.hasPrefix("-") && argument.dropFirst().contains(where: { $0 == "c" || $0 == "e" })
+        }) { return true }
+        return false
+    }
+
+    static let metacharacters: Set<Character> = [";", "&", "|", "(", ")", "{", "}", "`", "$", "<", ">", "\\", "\n", "\r"]
+    static let keywords: Set<String> = ["if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!", "time", "coproc"]
+
+    static func isPlainWord(_ token: String) -> Bool {
+        !token.isEmpty && token.allSatisfy { $0.isLetter || $0.isNumber || "._+-/~".contains($0) }
+    }
+
+    static func isPlain(_ command: String, grants: [FolderGrant] = [], directory: String? = nil) -> Bool {
+        if command.contains(where: { metacharacters.contains($0) }) { return false }
+        let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
+        var tokens = shellTokens(command)[...]
+        guard !tokens.isEmpty else { return false }
+        for token in tokens {
+            let inner = stripOuterQuotes(assignmentValue(token))
+            if inner.contains(where: { $0 == "\"" || $0 == "'" }) { return false }
+        }
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
+            guard isPlainAssignment(first, grants: grants, working: working) else { return false }
+            tokens = tokens.dropFirst()
+        }
+        let launchers: Set<String> = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun"]
+        while true {
+            guard let executable = tokens.first, isPlainWord(executable), !executable.hasPrefix("-") else { return false }
+            let name = executable.split(separator: "/").last.map(String.init) ?? executable
+            if keywords.contains(name) || wrappers.contains(name) { return false }
+            if launchers.contains(name) && name != executable { return false }
+            if name == "git" && tokens.dropFirst().contains(where: { let token = stripOuterQuotes($0); return token == "-c" || token.hasPrefix("--config") }) { return false }
+            if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return false }
+            guard launchers.contains(name) else { break }
+            tokens = tokens.dropFirst()
+            while let next = tokens.first, next.contains("="), !next.hasPrefix("-") {
+                guard isPlainAssignment(next, grants: grants, working: working) else { return false }
+                tokens = tokens.dropFirst()
+            }
+        }
+        return !tokens.dropFirst().contains { keywords.contains(stripOuterQuotes($0)) }
     }
 
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        let plain = isPlain(command, grants: grants, directory: directory)
+        let segmented = classifySegments(command, grants: grants, directory: directory)
+        if plain || segmented == .sensitive { return segmented }
         let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
+        var sends = segmented == .networkSends
+        for token in shellTokens(command.replacingOccurrences(of: ";", with: " ").replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "&", with: " ")) {
+            let inner = stripOuterQuotes(assignmentValue(token))
+            let name = inner.split(separator: "/").last.map(String.init) ?? inner
+            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .sensitive }
+            if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .sensitive }
+            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .sensitive }
+            if senders.contains(name) || publishing.contains(name) { sends = true }
+        }
+        return sends ? .networkSends : .commands
+    }
+
+    static func classifySegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
         if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
+        if command.contains("`") || command.contains("$(") { return .sensitive }
+        let subshells = command.contains { "(){}".contains($0) }
         var network = false
         for segment in segments(of: command) {
-            let (name, arguments) = executable(segment)
+            var (name, arguments) = executable(segment, grants: grants, working: working)
+            if name == "?" { return .sensitive }
             if privileged.contains(name) { return .sensitive }
-            if destructive.contains(name) && arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: working) }) { return .sensitive }
+            if hasInlineCode(name, arguments) { return .sensitive }
+            var segmentWorking = working
+            if name == "git" {
+                var index = 0
+                while index < arguments.count {
+                    let token = arguments[index]
+                    if token == "-C", index + 1 < arguments.count {
+                        let target = arguments[index + 1]
+                        if pathLeavesGrants(target, grants: grants, working: segmentWorking) { return .sensitive }
+                        segmentWorking = resolved(target, working: segmentWorking)
+                        index += 2
+                        continue
+                    }
+                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .sensitive }
+                    if token == "-c" || token == "--config-env" || token == "--namespace" || token == "--exec-path" || token == "--super-prefix" {
+                        guard index + 1 < arguments.count else { return .sensitive }
+                        let operand = arguments[index + 1].lowercased()
+                        if token == "-c" || token == "--config-env" {
+                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) { return .sensitive }
+                            if let equals = operand.firstIndex(of: "=") {
+                                let value = String(operand[operand.index(after: equals)...])
+                                if (value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..")) && pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                            }
+                        }
+                        index += 2
+                        continue
+                    }
+                    if !token.hasPrefix("-") {
+                        if destructiveGit.contains(token) { name = "rm"; arguments = Array(arguments[(index + 1)...]) }
+                        break
+                    }
+                    index += 1
+                }
+            }
+            if name == "find" && arguments.contains(where: { findEffects.contains($0) }) {
+                name = "rm"
+                arguments = Array(arguments.prefix(while: { !$0.hasPrefix("-") && !$0.hasPrefix("(") && $0 != "!" }))
+            }
+            if ["cd", "pushd", "popd", "chdir"].contains(name) {
+                if name == "popd" { working = nil; continue }
+                guard let target = arguments.first(where: { !$0.hasPrefix("-") }) else { working = nil; continue }
+                if pathLeavesGrants(target, grants: grants, working: working) { working = nil } else { working = resolved(target, working: working) }
+                continue
+            }
+            if destructive.contains(name) {
+                guard let segmentWorking, !subshells else { return .sensitive }
+                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .sensitive }
+                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .sensitive }
+            }
+            if writers.contains(name) {
+                for argument in arguments where !argument.contains("://") {
+                    let value = argument.hasPrefix("--") && argument.contains("=") ? String(argument[argument.index(after: argument.firstIndex(of: "=")!)...]) : argument
+                    if value.hasPrefix("-") { continue }
+                    if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
+                        if pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                    }
+                }
+            }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
-            if name == "curl" && arguments.contains(where: { ["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "-X", "--request"].contains($0) || $0.hasPrefix("--data") || $0.hasPrefix("-d") && $0.count > 2 || $0.hasPrefix("-F") && $0.count > 2 || $0.hasPrefix("-T") && $0.count > 2 || $0.hasPrefix("-X") && $0.count > 2 }) { network = true }
+            if name == "curl" && arguments.contains(where: { argument in
+                if argument.hasPrefix("@") { return true }
+                if argument.hasPrefix("--") { return argument.hasPrefix("--data") || ["--form", "--form-string", "--upload-file", "--request", "--json", "--url-query", "--config", "--variable"].contains(argument) }
+                return argument.hasPrefix("-") && argument.dropFirst().contains(where: { "dFTXK".contains($0) })
+            }) { network = true }
             if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
             if senders.contains(name) { network = true }
+            if packageManagers.contains(name) && arguments.contains(where: { publishing.contains($0) }) { network = true }
         }
         return network ? .networkSends : .commands
     }
 
     static func pathLeavesGrants(_ token: String, grants: [FolderGrant], working: String?) -> Bool {
-        var path = token.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        var path = stripOuterQuotes(assignmentValue(token))
         if path.hasPrefix("-") { return false }
+        if path.contains(where: { unsafeCharacters.contains($0) }) { return true }
         if path.hasPrefix("~") || path.hasPrefix("$") { return true }
         if path.split(separator: "/").contains("..") { return true }
         if !path.hasPrefix("/") {
-            guard let working else { return path.contains("..") }
+            guard let working else { return true }
             path = working + "/" + path
         }
-        path = URL(fileURLWithPath: path).standardizedFileURL.path
-        return !grants.contains { NativeFolderAccess.contains(root: $0.path, path: path) }
+        guard let real = resolved(path, working: nil) else { return true }
+        return !grants.contains { NativeFolderAccess.contains(root: resolved($0.path, working: nil) ?? $0.path, path: real) }
+    }
+
+    static func resolved(_ token: String, working: String?) -> String? {
+        var path = stripOuterQuotes(token)
+        if !path.hasPrefix("/") {
+            guard let working else { return nil }
+            path = working + "/" + path
+        }
+        var prefix = URL(fileURLWithPath: path).standardizedFileURL.path
+        var rest: [String] = []
+        while !prefix.isEmpty && prefix != "/" {
+            var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+            if realpath(prefix, &buffer) != nil {
+                let base = String(cString: buffer)
+                return rest.reversed().reduce(base) { $0 + "/" + $1 }
+            }
+            let url = URL(fileURLWithPath: prefix)
+            rest.append(url.lastPathComponent)
+            prefix = url.deletingLastPathComponent().path
+        }
+        return nil
     }
 }
 
@@ -297,6 +573,11 @@ enum NativeRuleDecision: Equatable, Hashable, Sendable {
     case handOff
 
     var requiresConfirmation: Bool { self == .ask }
+
+    var atLeastAsk: NativeRuleDecision {
+        if case .act = self { return .ask }
+        return self
+    }
 }
 
 enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {

@@ -273,6 +273,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("artifactsV24") { db in try Self.migrateArtifacts(db) }
         migrator.registerMigration("projectsV25") { db in try Self.migrateProjects(db) }
         migrator.registerMigration("nativeScheduleCheckInsV27") { db in try NativeScheduleStore.migrateCheckIns(db) }
+        migrator.registerMigration("nativeDotProfileV26") { db in try NativeDotProfileStore.migrate(db) }
         try migrator.migrate(database)
     }
 
@@ -318,6 +319,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 """).map(Self.decodeConversation)
         }
     }
+
 
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in

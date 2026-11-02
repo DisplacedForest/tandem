@@ -80,10 +80,15 @@ enum NativeCommandTools {
         let grantedAtStart = grants()
         let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision) = { command, directory in
             let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
+            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
             switch action {
             case .sensitive: return (action, .handOff)
-            case .commands: return (action, live(command, .commands) ?? decision)
-            default: return (action, live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action))
+            case .commands:
+                let current = live(command, .commands) ?? decision
+                return (action, plain ? current : current.atLeastAsk)
+            default:
+                let current = live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
+                return (action, plain ? current : current.atLeastAsk)
             }
         }
         var definition = NativeToolDefinition(
@@ -120,8 +125,12 @@ enum NativeCommandTools {
                 if let requested {
                     location = try folderAccess.locate(requested)
                 } else {
-                    guard folderAccess.roots.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(".") }
-                    location = NativeFolderLocation(root: folderAccess.roots[0], components: [])
+                    guard grantedAtStart.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(".") }
+                    let start = grantedAtStart[0]
+                    guard let still = currentGrants.first(where: { $0.path == start.path && $0.identity == start.identity }) else {
+                        throw NativeToolError.failed("The folder for this command is no longer granted to this chat: \(start.path). It was not run.")
+                    }
+                    location = NativeFolderLocation(root: still, components: [])
                 }
                 try NativeFolderTools.requireWritable(location)
                 let directory = try NativeFolderIO.walk(location, components: location.components)
