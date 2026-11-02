@@ -215,13 +215,25 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "once ", "after ", "later", "pending", "until", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
     static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
     static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as"]
     static let continuations = ["and ", "with ", "to ", "on ", "then ", "now", ","]
+    static let copulas: Set<String> = ["is", "are", "was", "were", "be", "been", "being", "am", "means", "equals", "seems", "sounds"]
+    static let speech = ["say", "says", "said", "saying", "reply", "replied", "replies", "answer", "answered", "tell", "told", "wrote", "write", "writes", "text", "texted", "message", "messaged", "ask", "asked", "mention", "mentioned", "suggest", "suggested", "note", "noted", "quote", "quoted", "respond", "responded", "response"]
+
+    static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
+    }
+
+    static func hasCopula(_ text: String) -> Bool {
+        words(text).contains { copulas.contains($0) }
+    }
 
     static func quoted(_ text: String) -> Bool {
         let characters = Array(text)
@@ -252,11 +264,16 @@ enum NativeRequestPreapproval {
 
     static func sentenceGrants(_ sentence: String) -> Bool {
         var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        if phrases.contains(where: { rest.hasSuffix(", " + $0) }) { return true }
+        if let phrase = phrases.first(where: { rest.hasSuffix(", " + $0) }) {
+            let head = String(rest.dropLast(phrase.count + 2))
+            return !hasCopula(head)
+        }
         while true {
             if let phrase = phrases.first(where: { rest.hasPrefix($0) }) {
                 let after = String(rest.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
-                return after.isEmpty || continuations.contains { after.hasPrefix($0) }
+                if after.isEmpty { return true }
+                guard continuations.contains(where: { after.hasPrefix($0) }) else { return false }
+                return !hasCopula(after)
             }
             guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
             rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
@@ -264,15 +281,16 @@ enum NativeRequestPreapproval {
     }
 
     static func grants(_ text: String) -> Bool {
-        let lowered = text.lowercased()
+        let lowered = normalized(text)
         guard phrases.contains(where: { lowered.contains($0) }) else { return false }
         var remainder = lowered
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
         if quoted(remainder) { return false }
         if negated(remainder) { return false }
         if lowered.contains("?") { return false }
-        let wordList = " " + words(lowered).joined(separator: " ") + " "
+        let wordList = " " + words(remainder).joined(separator: " ") + " "
         if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
         let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
         return sentences.contains { sentenceGrants($0) }
     }
@@ -304,7 +322,7 @@ enum NativeCommandClassifier {
             guard isPlainAssignment(first) else { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
         }
-        let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"]
+        let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun", "stdbuf", "timeout", "gtimeout"]
         while let first = tokens.first, launchers.contains(stripOuterQuotes(first)) {
             if stripOuterQuotes(first) != first { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
