@@ -703,27 +703,53 @@ enum NativeMemoryGate {
     }
 
     static func redactionChecks() throws {
-        let secret = "sk-live-0123456789abcdefABCDEF"
+        let secret = "sk" + "-live-" + String(repeating: "0a9Z", count: 6)
         let echoed = NativeChatClient.ClientError.provider(["message": "Rate limited", "code": 429, "metadata": ["api_key": secret]])
         let nested = NativeChatClient.ClientError.provider(["message": "Upstream refused", "metadata": [
             "attempts": [["session_token": "short-value", "headers": ["Authorization": "Basic short"]]], "provider_name": "fixture"]])
         let inline = NativeChatClient.ClientError.provider(["message": "Invalid key \(secret) and Bearer abc.def-ghi supplied"])
         let ordinary = "Provider returned error: rate limit exceeded, try again in 20 seconds"
         let longModel = "vendor/name-2025-preview-instruct"
+        let longerModel = "vendor/family-name-2025-09-30-preview-instruct-extended"
         let modelMessage = "model \(longModel) is not available"
+        let longerMessage = "model \(longerModel) is not available"
         let longRun = String(repeating: "q7Z", count: 10)
+        let hex = String(repeating: "a1", count: 16)
+        let base64 = String(repeating: "Zq9", count: 14)
+        let configured = "fixture-configured-" + String(repeating: "k", count: 8)
         let printed = [echoed, nested, inline].map { error in
             consoleLine("probe", error: NativeMemoryGateError.request("probe", error.localizedDescription, .requestFailed), diagnostic: diagnostic(error))
         }
-        guard !printed.contains(where: { $0.contains(secret) || $0.contains("short-value") || $0.contains("Basic short") || $0.contains("abc.def-ghi") }),
-              printed[0].contains("429"), printed[0].contains("Rate limited"), printed[1].contains("provider_name"),
-              printed[2].contains("Invalid key"), printed.allSatisfy({ $0.contains(NativeDiagnosticRedaction.placeholder) }),
-              NativeDiagnosticRedaction.text(ordinary) == ordinary, NativeDiagnosticRedaction.console(ordinary) == ordinary,
-              NativeChatClient.ClientError.provider(["message": modelMessage]).localizedDescription == modelMessage,
-              !consoleLine("probe", error: NativeMemoryGateError.request("probe", modelMessage, .requestFailed), diagnostic: nil).contains(longModel),
-              NativeDiagnosticRedaction.console("opaque " + longRun).contains(NativeDiagnosticRedaction.placeholder),
-              NativeChatClient.ClientError.provider(["message": "Provider returned error", "code": 429]).localizedDescription == "Provider returned error" else {
-            throw NativeMemoryGateError.setup("redaction", "a credential reached the console or an ordinary message was changed")
+        let nestedBody = NativeChatClient.ClientError.http(429, NativeChatClient.errorDetail(Data("{\"code\":429,\"detail\":{\"api_key\":\"short\"}}".utf8)))
+        let plainBody = NativeChatClient.errorDetail(Data("upstream said api_key=abc123 for this project".utf8))
+        let queried = NativeChatClient.ClientError.provider(["message": "See https://example.test/v1?api_key=zz9&mode=x for details"]).localizedDescription
+        let opaque = NativeChatClient.ClientError.provider(["message": "tokens \(hex) and \(base64) were rejected"]).localizedDescription
+        let client = NativeChatClient(config: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: configured,
+                                                               model: "fixture-model", chatTemplateKwargs: nil))
+        let echoedKey = client.sanitized(NativeChatClient.ClientError.provider(["message": "the key \(configured) is not allowed"])).localizedDescription
+        let echoedHTTP = client.sanitized(NativeChatClient.ClientError.http(401, "bad credential \(configured)")).localizedDescription
+        let cases: [(String, Bool)] = [
+            ("credential in metadata", !printed.contains { $0.contains(secret) } && printed[0].contains("429") && printed[0].contains("Rate limited")),
+            ("nested short credentials", !printed.contains { $0.contains("short-value") || $0.contains("Basic short") } && printed[1].contains("provider_name")),
+            ("inline credentials", !printed[2].contains(secret) && !printed[2].contains("abc.def-ghi") && printed[2].contains("Invalid key")),
+            ("placeholder present", printed.allSatisfy { $0.contains(NativeDiagnosticRedaction.placeholder) }),
+            ("http body with nested key", !nestedBody.localizedDescription.contains("short") && !diagnostic(nestedBody).contains("short")
+                && nestedBody.localizedDescription.contains("429")),
+            ("non-JSON body assignment", !plainBody.contains("abc123") && plainBody.contains("api_key=") && plainBody.contains("for this project")),
+            ("query parameter", !queried.contains("zz9") && queried.contains("mode=x")),
+            ("opaque tokens", !opaque.contains(hex) && !opaque.contains(base64) && opaque.contains("were rejected")),
+            ("configured key echoed", !echoedKey.contains(configured) && !echoedHTTP.contains(configured) && echoedHTTP.contains("bad credential")),
+            ("ordinary message", NativeDiagnosticRedaction.text(ordinary) == ordinary && NativeDiagnosticRedaction.console(ordinary) == ordinary
+                && NativeChatClient.ClientError.provider(["message": "Provider returned error", "code": 429]).localizedDescription == "Provider returned error"),
+            ("model ids kept", NativeChatClient.ClientError.provider(["message": modelMessage]).localizedDescription == modelMessage
+                && NativeChatClient.ClientError.provider(["message": longerMessage]).localizedDescription == longerMessage
+                && NativeChatClient.errorDetail(Data(longerMessage.utf8)) == longerMessage),
+            ("console stricter", !consoleLine("probe", error: NativeMemoryGateError.request("probe", modelMessage, .requestFailed), diagnostic: nil).contains(longModel)
+                && NativeDiagnosticRedaction.console("opaque " + longRun).contains(NativeDiagnosticRedaction.placeholder)),
+        ]
+        let failing = cases.filter { !$0.1 }.map(\.0)
+        guard failing.isEmpty else {
+            throw NativeMemoryGateError.setup("redaction", "redaction cases failed: \(failing.joined(separator: ", "))")
         }
     }
 

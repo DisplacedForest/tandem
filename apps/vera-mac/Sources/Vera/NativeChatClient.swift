@@ -214,11 +214,21 @@ struct NativeChatClient: NativeChatTransport, Sendable {
 
         static let providerDetailLimit = 1_000
 
+        func redacting(_ secrets: [String]) -> ClientError {
+            let clean = { (text: String) in NativeDiagnosticRedaction.text(text, secrets: secrets) }
+            switch self {
+            case .http(let status, let detail): return .http(status, clean(detail))
+            case .server(let detail): return .server(clean(detail))
+            case .provider(let message, let raw): return .provider(clean(message), clean(raw))
+            case .invalidResponse, .malformedEvent, .noUsableModels, .interrupted: return self
+            }
+        }
+
         static func provider(_ error: [String: Any]) -> ClientError {
             let redacted = NativeDiagnosticRedaction.value(error)
             let raw = (try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys]))
                 .map { String(decoding: $0, as: UTF8.self) } ?? ""
-            let message = (error["message"] as? String).map(NativeDiagnosticRedaction.text) ?? "The model endpoint reported an error"
+            let message = (error["message"] as? String).map { NativeDiagnosticRedaction.text($0) } ?? "The model endpoint reported an error"
             return .provider(message, String(raw.prefix(providerDetailLimit)))
         }
 
@@ -252,16 +262,26 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         }
     }
 
+    var redactionSecrets: [String] { [config.apiKey].compactMap { $0 }.filter { !$0.isEmpty } }
+
+    func sanitized(_ error: Error) -> Error {
+        (error as? ClientError)?.redacting(redactionSecrets) ?? error
+    }
+
     func discoverModels() async throws -> [String] {
         var request = URLRequest(url: config.modelsURL)
         request.timeoutInterval = 10
         applyAuthorization(to: &request)
-        let (data, response) = try await session.data(for: request)
-        let status = try statusCode(response)
-        guard (200..<300).contains(status) else {
-            throw ClientError.http(status, Self.errorDetail(data))
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = try statusCode(response)
+            guard (200..<300).contains(status) else {
+                throw ClientError.http(status, Self.errorDetail(data))
+            }
+            return try Self.modelIDs(from: data)
+        } catch {
+            throw sanitized(error)
         }
-        return try Self.modelIDs(from: data)
     }
 
     func request(
@@ -328,7 +348,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                     } catch is CancellationError {
                         continuation.finish()
                     } catch {
-                        continuation.finish(throwing: error)
+                        continuation.finish(throwing: sanitized(error))
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
@@ -388,7 +408,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                 } catch is CancellationError {
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: sanitized(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -481,11 +501,11 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return http.statusCode
     }
 
-    private static func errorDetail(_ data: Data) -> String {
+    static func errorDetail(_ data: Data) -> String {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let error = object["error"] as? [String: Any], let message = error["message"] as? String {
-            return message
+            return NativeDiagnosticRedaction.text(message)
         }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return NativeDiagnosticRedaction.payload(data)
     }
 }
