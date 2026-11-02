@@ -12,8 +12,8 @@ final class ChatStore: ObservableObject {
     @Published var classicChatRequest = 0
     @Published var draft: String = ""
     @Published private(set) var veraThreadID: String?
-    private(set) var lastFocusedConversationID: String?
-    private var drafts: [String: String] = [:]
+    var lastFocusedConversationID: String?
+    var drafts: [String: String] = [:]
     static let veraThreadOriginType = "assistant"
     static let veraThreadOriginID = "vera"
     @Published var section: AppSection = .chat
@@ -23,6 +23,7 @@ final class ChatStore: ObservableObject {
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memoryRecords: [NativeMemoryRecord] = []
+    @Published var projectError: String?
     @Published var memoryLibraryRevision = 0
     var nativeMemoryNow: () -> Date = { Date() }
     var nativeMemorySelectionTransform: (([NativeMemoryRanked]) -> [NativeMemoryRanked])?
@@ -70,6 +71,8 @@ final class ChatStore: ObservableObject {
     @Published var artifactRecords: [ArtifactRecord] = []
     @Published var pendingConversationDeletion: PendingConversationDeletion?
     var recordedArtifactSourceKeys: Set<String> = []
+    @Published var projects: [ProjectRecord] = []
+    @Published var requestedArtifactID: String?
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
@@ -255,6 +258,7 @@ final class ChatStore: ObservableObject {
             }
         }
         reloadArtifacts()
+        reloadProjects()
         for conversation in conversations where !conversation.messages.isEmpty {
             reconcileTaskArtifacts(conversationID: conversation.id)
         }
@@ -860,7 +864,8 @@ final class ChatStore: ObservableObject {
             guard queuedTurnStillAllowed(turn) else { continue }
             await learnFromCompletedTurn(
                 user: turn.user, assistant: turn.assistant, source: turn.source,
-                turnKey: turn.turnKey, conversationExcluded: turn.conversationExcluded)
+                turnKey: turn.turnKey, conversationExcluded: turn.conversationExcluded,
+                projectID: turn.projectID, resolveProject: false)
             if queuedMemoryTurns.contains(where: { $0.turnKey == turn.turnKey }) {
                 for rest in pending[(offset + 1)...] { enqueueMemoryTurn(rest) }
                 return
@@ -960,6 +965,7 @@ final class ChatStore: ObservableObject {
                             user: messages[index].text, assistant: messages[index + 1].text,
                             sourceConversationID: conversation.id,
                             sourceMessageID: messages[index].id.uuidString,
+                            projectID: conversation.projectID.flatMap { project($0)?.id },
                             sensitiveHandling: sensitiveHandling,
                             existing: { try memoryRepository.extractionMemories() }, now: Date())
                         guard pastChatScanAllowed else { break search }
@@ -976,7 +982,8 @@ final class ChatStore: ObservableObject {
                                 messageID: messages[index].id.uuidString, date: messages[index].createdAt),
                             sourceText: messages[index].text,
                             turnKey: conversation.id + "|" + messages[index].id.uuidString,
-                            flagged: flagged, allowed: { self.pastChatScanAllowed })
+                            flagged: flagged, projectID: conversation.projectID.flatMap { project($0)?.id },
+                            allowed: { self.pastChatScanAllowed })
                         reviewedTurns += 1
                         reviewedBytes += turnBytes
                     }
@@ -1120,6 +1127,7 @@ final class ChatStore: ObservableObject {
                     durability: proposal.durability, expiry: proposal.expiry, status: .approved,
                     embedding: nil, sourceConversationID: proposal.sourceConversationID,
                     sourceMessageID: proposal.sourceMessageID, createdAt: Date(), updatedAt: Date())
+                memory.projectID = proposal.projectID
                 memory = try boundConsent(memory, grant: sensitive)
                 try memoryRepository.saveMemory(
                     memory, decision: editedDetails == nil ? .accepted : .edited,
@@ -1140,6 +1148,7 @@ final class ChatStore: ObservableObject {
                     target.sourceConversationID = source
                     target.sourceMessageID = message
                 }
+                if let projectID = proposal.projectID { target.projectID = projectID }
                 target = try boundConsent(target, grant: sensitive)
                 target.updatedAt = Date()
                 try memoryRepository.saveMemory(
@@ -1335,7 +1344,8 @@ final class ChatStore: ObservableObject {
     }
 
     func learnFromCompletedTurn(
-        user: String, assistant: Message, source: NativeMemoryTurnSource?, turnKey: String, conversationExcluded: Bool
+        user: String, assistant: Message, source: NativeMemoryTurnSource?, turnKey: String, conversationExcluded: Bool,
+        projectID: String? = nil, resolveProject: Bool = true
     ) async {
         let live = nativeMemorySettings
         guard live.enabled, live.generateFromChats,
@@ -1350,24 +1360,25 @@ final class ChatStore: ObservableObject {
             self.nativeMemorySettings.enabled && self.nativeMemorySettings.generateFromChats
                 && self.memorySourceIsLive(source, generation: generation, wasVeraThread: wasVeraThread)
         }
+        let projectID = resolveProject ? projectID ?? source.flatMap { projectForConversation($0.conversationID)?.id } : projectID
         do {
             let extraction = try await memoryService.extraction(
                 user: user, assistant: assistant.text,
                 sourceConversationID: source?.conversationID, sourceMessageID: source?.messageID,
-                sensitiveHandling: live.sensitiveHandling,
+                projectID: projectID, sensitiveHandling: live.sensitiveHandling,
                 existing: { try memoryRepository.extractionMemories() }, now: Date())
             let flagged = NativeMemorySensitiveHandling.needsReview(user, assistant.text)
             try await saveMemoryProposals(
                 extraction.proposals, service: memoryService, repository: memoryRepository,
                 flagged: flagged, sourceText: source == nil ? nil : user, allowed: allowed)
             stageDomainCandidates(extraction, source: source, sourceText: user, turnKey: turnKey,
-                                  flagged: flagged, allowed: allowed)
+                                  flagged: flagged, projectID: projectID, allowed: allowed)
             reloadNativeMemory()
         } catch let error as NativeMemoryServiceError where error.isEndpointOutage {
             memoryEndpointStatus = .unreachable(error.localizedDescription)
             enqueueMemoryTurn(NativeMemoryQueuedTurn(
                 user: user, assistant: assistant, source: source, turnKey: turnKey,
-                conversationExcluded: conversationExcluded))
+                conversationExcluded: conversationExcluded, projectID: projectID))
         } catch {
             memoryServiceState = .retrievalUnavailable(error.localizedDescription)
         }
@@ -1375,7 +1386,7 @@ final class ChatStore: ObservableObject {
 
     private func stageDomainCandidates(
         _ extraction: NativeMemoryExtraction, source: NativeMemoryTurnSource?, sourceText: String,
-        turnKey: String, flagged: Bool, allowed: () -> Bool
+        turnKey: String, flagged: Bool, projectID: String? = nil, allowed: () -> Bool
     ) {
         guard let local = repository as? LocalChatRepository, !flagged else { return }
         func skip(_ reason: String, _ index: Int) {
@@ -1394,7 +1405,7 @@ final class ChatStore: ObservableObject {
             do {
                 _ = try local.stageExtractedDomainEntry(
                     candidate, conversationID: source.conversationID, messageID: source.messageID,
-                    sourceText: sourceText, fallbackDate: source.date)
+                    sourceText: sourceText, fallbackDate: source.date, projectID: projectID)
             } catch let error as NativeDomainExtractionSkip {
                 skip(error.reason, index)
             } catch {
@@ -1432,6 +1443,7 @@ final class ChatStore: ObservableObject {
                     && $0.bank == reconciled.bank && $0.durability == reconciled.durability && $0.expiry == reconciled.expiry
                     && $0.targetIDs == reconciled.targetIDs && $0.sensitiveReview == reconciled.sensitiveReview
                     && $0.sourceConversationID == reconciled.sourceConversationID && $0.sourceMessageID == reconciled.sourceMessageID
+                    && $0.projectID == reconciled.projectID
             }) {
                 if match.sourceVersion == reconciled.sourceVersion { continue }
                 reconciled.id = match.id
@@ -1447,7 +1459,9 @@ final class ChatStore: ObservableObject {
     func newConversation() {
         stashDraft()
         section = .chat
-        if let existing = conversations.first(where: { $0.title == "New chat" && $0.messages.isEmpty && !isVeraThread($0.id) }) {
+        if let existing = conversations.first(where: {
+            $0.title == "New chat" && $0.messages.isEmpty && $0.projectID == nil && !isVeraThread($0.id)
+        }) {
             selectedID = existing.id
             draft = drafts[existing.id] ?? ""
         } else {
@@ -1539,8 +1553,11 @@ final class ChatStore: ObservableObject {
             userScope = profiles.filter { $0.scope == .user }
                 .map(\.content).joined(separator: "\n\n")
         }
-        let instructions = conversationID
+        let own = conversationID
             .flatMap { id in conversations.first(where: { $0.id == id })?.instructions } ?? ""
+        let shared = conversationID.flatMap { projectForConversation($0)?.instructions }?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let instructions = [shared, own].filter { !$0.isEmpty }.joined(separator: "\n\n")
         return ResolvedPromptScopes(persona: persona, userScope: userScope, instructions: instructions)
     }
 
@@ -2274,7 +2291,8 @@ final class ChatStore: ObservableObject {
                 }
                 var selectedMemories: [NativeMemoryRanked] = []
                 let retrieval = await retrieveApprovedMemory(text, history: turn.history.filter { $0.id != turn.userMessageID },
-                                                             settings: memorySettings, service: memoryService)
+                                                             settings: memorySettings, service: memoryService,
+                                                             projectID: projectForConversation(id)?.id)
                 selectedMemories = retrieval.selected
                 if let trace = retrieval.trace { memoryRetrievalTraces[id] = trace }
                 var groundingAssembly: KnowledgeGrounding.Assembly?

@@ -19,7 +19,8 @@ enum Shot {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let artifactSeed = view.hasPrefix("artifacts") ? ArtifactShotFixture.store(variant: view) : nil
-        let store = artifactSeed?.store ?? ChatStore()
+        let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
+        let store = artifactSeed?.store ?? projectSeed?.store ?? ChatStore()
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -367,7 +368,7 @@ enum Shot {
             case "agentic": section = .agentic
             case "vera": section = .vera
             case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
-            case "projects": section = .projects
+            case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations": section = .integrations
@@ -385,7 +386,8 @@ enum Shot {
                          schedule: view == "chats-schedule",
                          collapsedSidebar: view == "sidebar-collapsed",
                          mentions: view == "chats-mentions",
-                         artifactSelection: artifactSeed?.selection)
+                         artifactSelection: artifactSeed?.selection,
+                         projectSelection: projectSeed?.selection)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)

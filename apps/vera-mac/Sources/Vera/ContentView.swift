@@ -32,7 +32,8 @@ struct ContentView: View {
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
                         case .scheduled: ScheduledView()
                         case .artifacts: ArtifactsView()
-                        case .projects, .integrations:
+                        case .projects: ProjectsView()
+                        case .integrations:
                             DestinationPlaceholder(section: store.section)
                         }
                     }
@@ -97,6 +98,7 @@ struct Placeholder: View {
 }
 
 struct SidebarRow: View {
+    @EnvironmentObject var store: ChatStore
     let convo: Conversation
     var onPin: () -> Void = {}
     var onRename: (String) -> Void = { _ in }
@@ -116,6 +118,24 @@ struct SidebarRow: View {
         Button("Rename", action: beginRename)
         Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
         Button("Instructions…") { editingInstructions = true }
+        if !store.projects.isEmpty {
+            Menu("Move to project") {
+                ForEach(store.projects) { project in
+                    Button {
+                        store.moveConversation(convo.id, toProject: project.id)
+                    } label: {
+                        if convo.projectID == project.id {
+                            Label(project.name, systemImage: "checkmark")
+                        } else {
+                            Text(project.name)
+                        }
+                    }
+                }
+            }
+        }
+        if convo.projectID != nil {
+            Button("Remove from project") { store.moveConversation(convo.id, toProject: nil) }
+        }
         Button(
             convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
             action: onMemoryExclusion)

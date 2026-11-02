@@ -127,6 +127,7 @@ enum NativeCommandTools {
                     }
                     location = NativeFolderLocation(root: still, components: [])
                 }
+                try NativeFolderTools.requireWritable(location)
                 let directory = try NativeFolderIO.walk(location, components: location.components)
                 let requestedTimeout = arguments.folderInt("timeout_seconds").map { Duration.seconds(max(1, $0)) } ?? NativeCommandLimits.defaultTimeout
                 let limit = min(requestedTimeout, NativeCommandLimits.maximumTimeout)
