@@ -405,6 +405,10 @@ enum SelfTest {
         do { try await ProjectStoreSelftest.run() }
         catch { print("SELFTEST ERROR: project store \(error)"); exit(1) }
         do { try await ProjectContextSelftest.run() } catch { print("SELFTEST ERROR: project context \(error)"); exit(1) }
+        do { try NativeMCPStarterCatalogSelftest.run() }
+        catch { print("SELFTEST ERROR: mcp starter catalog \(error)"); exit(1) }
+        do { try await NativeMCPInstallSelftest.run() }
+        catch { print("SELFTEST ERROR: mcp install \(error)"); exit(1) }
         do { try runComposerMentions() }
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }

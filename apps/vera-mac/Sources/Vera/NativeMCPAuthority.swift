@@ -12,13 +12,18 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let authentication: Authentication
     let oauth: NativeMCPOAuthConfiguration?
     let allowsLoopbackFixture: Bool
-    init(id: String, name: String, endpoint: URL, readTools: Set<String>, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil) throws {
+    let publisher: String?
+    let sourceURL: URL?
+    init(id: String, name: String, endpoint: URL, readTools: Set<String>, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
         guard UUID(uuidString: id) != nil, !name.isEmpty, name.utf8.count <= 100,
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.host != nil, endpoint.scheme == "https" || (allowLoopbackFixture && endpoint.scheme == "http" && ["127.0.0.1", "::1"].contains(endpoint.host!)),
               !readTools.isEmpty, readTools.count <= 64, readTools.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
               !scopes.isEmpty, scopes.isSubset(of: ["focused", "assistant", "worker"]), timeout.isFinite, (0.1...20).contains(timeout) else { throw NativeToolError.failed("The connected service configuration is invalid.") }
         guard (authentication == .oauth) == (oauth != nil), oauth == nil || oauth?.resource == endpoint else { throw NativeToolError.failed("The sign-in configuration is invalid.") }
+        guard publisher.map({ !$0.isEmpty && $0.utf8.count <= 100 }) ?? true,
+              sourceURL.map({ $0.scheme == "https" && $0.host != nil && $0.user == nil && $0.password == nil }) ?? true else { throw NativeToolError.failed("The connected service configuration is invalid.") }
+        self.publisher = publisher; self.sourceURL = sourceURL
         self.oauth = oauth
         self.id = id.lowercased(); self.name = name; self.endpoint = endpoint
         self.readTools = readTools; self.scopes = scopes; self.timeout = timeout; self.authentication = authentication; self.allowsLoopbackFixture = allowLoopbackFixture
@@ -29,15 +34,17 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         do {
             var ids = Set<String>()
             let servers = try rows.map { row -> Self in
-                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "scopes", "timeout_seconds", "authentication", "oauth"]),
+                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
                       let id = row["id"] as? String, let name = row["name"] as? String,
                       let url = row["url"] as? String, let endpoint = URL(string: url),
                       let tools = row["read_tools"] as? [String], row["scopes"] == nil || row["scopes"] is [String],
                       row["timeout_seconds"] == nil || row["timeout_seconds"] is Double,
                       row["authentication"] == nil || row["authentication"] is String,
-                      let authentication = Authentication(rawValue: row["authentication"] as? String ?? "none") else { throw NativeToolError.unavailable }
+                      let authentication = Authentication(rawValue: row["authentication"] as? String ?? "none"),
+                      row["publisher"] == nil || row["publisher"] is String,
+                      row["source_url"] == nil || (row["source_url"] as? String).flatMap(URL.init(string:)) != nil else { throw NativeToolError.unavailable }
                 let oauth = row["oauth"] == nil ? nil : try NativeMCPOAuthConfiguration.load(row["oauth"])
-                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(tools), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth)
+                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(tools), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
                 guard ids.insert(server.id).inserted else { throw NativeToolError.unavailable }
                 return server
             }

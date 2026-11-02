@@ -364,6 +364,7 @@ struct NativeVisionBridgeEditor: View {
 
 struct NativeToolEditor: View {
     @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
 
     private var catalog: [NativeChatToolDescriptor] {
         NativeChatToolCatalog.tools(
@@ -417,7 +418,14 @@ struct NativeToolEditor: View {
                     .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
-            NativeMCPToolsEditor(manager: config.nativeMCP)
+            HStack(spacing: 10) {
+                Text("Connected services are managed under Integrations.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Button("Open Integrations") {
+                    store.section = .integrations
+                    NSApp.keyWindow?.performClose(nil)
+                }
+            }
             Text("Tool declarations load from the \(NativeCapabilityTools.directoryName) folder next to your config file. Saving reloads them.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }
