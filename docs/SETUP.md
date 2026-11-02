@@ -349,7 +349,7 @@ Settings, Rules holds one setting per kind of action:
 | Send on your behalf (connected services that send) | Hand off to me |
 | Sensitive actions (credentials, payments, deleting outside the working tree) | Hand off to me, fixed |
 
-The four choices: **Act without asking** runs the action and shows what happened on the turn. **Act only when the request pre-approves it** runs only when your message says so in plain words (for example "go ahead", "no need to ask", "you have my approval") and asks otherwise. **Ask first** puts a card on the turn before anything runs. **Hand off to me** refuses the tool call with a message that names the rule, so the model tells you what it would have done. Rules never widen what a connected MCP server allows: a tool the server's authority denies stays denied.
+The four choices: **Act without asking** runs the action and shows what happened on the turn. **Act only when the request pre-approves it** runs only when your message says so in plain words (for example "go ahead", "no need to ask", "you have my approval") and asks otherwise. Pre-approval is recognized only when the request opens or closes with the phrase; otherwise Tandem asks. **Ask first** puts a card on the turn before anything runs. **Hand off to me** refuses the tool call with a message that names the rule, so the model tells you what it would have done. Rules never widen what a connected MCP server allows: a tool the server's authority denies stays denied.
 
 The Rules button next to the folder chips tightens any of these for the current chat. A chat can only choose a stricter setting than the global one, and the popover also lists the command prefixes you've approved for that chat so you can take one back.
 
