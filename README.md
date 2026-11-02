@@ -92,6 +92,12 @@ The sidebar is one fixed rail. At the top are the Tandem mark and wordmark, then
 
 Each answer has its own Stop control and tool approvals. Stopping an answer does not cancel a separate research task; use the task card's Stop research control for that. Accepted messages are saved before the composer clears. After a restart, unsent messages can resume with their original settings, while interrupted requests stay available for explicit review or retry. An uncertain action is never automatically replayed. Ephemeral keyed configurations without a stable saved profile require a new message after restart.
 
+The conversation has a header with the assistant's avatar, its name and a status line: Ready, Working on your answer, Waiting for your approval, or the current step of the reply. Replies sit in bubbles beside a small avatar and your own messages are right-aligned. When a reply produces a document, a research report, an image or a canvas piece, a result row under it has an Open button. Reports and documents open in their reader and canvas pieces open the canvas. An action that needs your permission shows up inline as a card with Approve and Decline, and command cards add Approve similar. A declined action is shown as declined, not as a failure.
+
+The **Ongoing work** panel on the right lists the background work in the current chat with a title and a plain state for each. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** shows every chat's work. On narrower windows the panel becomes an **Ongoing work** button at the top of the conversation, with a count of the tasks that are running or waiting. The canvas and the panel share the right column, and an open canvas piece takes precedence.
+
+The composer is one rounded field: a plus menu (files, folders and saved prompts), the message field, and, when voice is set up, a microphone and a waveform. The microphone dictates into the message. Press it to start, press it again to stop, and the text lands in the field for you to review and send. The waveform starts a voice chat. Both use the same speech service, which you set under Settings, Services, Voice. Until that address is set, neither control appears and the plus menu shows a "Voice is not set up" item that opens Settings. The microphone also has to be allowed for Tandem in System Settings.
+
 ### Library
 
 Library collects what Tandem produces across all your conversations: documents (background documents and cited research reports), images from image generation, every file created, edited, moved or trashed inside a granted folder, and the markdown, code, HTML, SVG and diagram pieces a reply can put on the canvas. Each row shows the title, what it is, the conversation it came from and a plain date. Search by name and filter by kind. Until something has been produced, the view explains what will collect there.
@@ -191,7 +197,7 @@ This is the Settings, Plugins store for the optional server-side integrations, s
 
 ### Memory, voice, and home control
 
-Vera maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. A local voice service provides STT/TTS. With Home Assistant connected, Vera answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. Exactly one verb is enrolled: recipe import, so Vera can save a recipe she finds worth keeping into the household cookbook on her own, capped, deduplicated, and announced after the fact.
+Vera maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. A local voice service provides STT/TTS, which powers dictation into the composer and in-app voice chat. With Home Assistant connected, Vera answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. Exactly one verb is enrolled: recipe import, so Vera can save a recipe she finds worth keeping into the household cookbook on her own, capped, deduplicated, and announced after the fact.
 
 <div align="center"><img src="docs/assets/voice.png" alt="Voice mode" width="850"></div>
 
@@ -206,7 +212,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Coder LLM | OpenAI `/v1` + tool calls | Cross-model claim auditing, fact verification | Audits fall back to the main model; daily features unaffected |
 | Image gen | OpenAI Images API | Pulse cover art | Cards use the best researched image instead |
 | Vision | OpenAI chat + `image_url` | Image understanding in chat | Vision tools report unconfigured |
-| Voice | Wyoming + small HTTP API | Hands-free voice mode | Voice UI disabled |
+| Voice | Wyoming + small HTTP API | Dictation and voice chat | Microphone and waveform controls hidden |
 | Playwright | run-server websocket | Full-page renders for research | Falls back to snippets |
 | Embeddings | OpenAI `/v1/embeddings` | Document knowledge indexing and retrieval, Pulse novelty ranking | Collections stay manageable; indexing and retrieval report unconfigured |
 

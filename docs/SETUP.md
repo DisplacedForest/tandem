@@ -1,12 +1,12 @@
 # Setting up Vera
 
-This is the end-to-end path from nothing to a working installation: backend, chat, native app, then the optional layers — integrations, veins, and satellite services. Each stage works without the stages after it, and the system reports what is and isn't configured.
+This is the end-to-end path from nothing to a working installation: backend, chat, native app, then the optional layers (integrations, veins, and satellite services). Each stage works without the stages after it, and the system reports what is and isn't configured.
 
 **The stack** (each component is a URL in config; topology is up to you):
 
 | Piece | What it is | Required? |
 |---|---|---|
-| An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
+| An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API: anything serving `/v1` | Yes |
 | **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
@@ -18,14 +18,14 @@ For optional cloud model evaluation, see the [OpenRouter setup and synthetic smo
 
 ## 1. Prerequisites
 
-- **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.
+- **An LLM endpoint**: any standard OpenAI-compatible `/v1` server with a capable instruct model.
 - **Docker** (optional) on any Linux/macOS host for vera-api.
 
 ## 2. vera-api
 
 ```sh
 git clone https://github.com/DisplacedForest/tandem.git && cd tandem
-cp .env.example .env     # fill in what you run — everything unset degrades gracefully
+cp .env.example .env     # fill in what you run; everything unset degrades gracefully
 docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api image
 ```
 
@@ -43,7 +43,7 @@ An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its
 
 Every release ships a packaged engine binary alongside the image. Download `vera-api-macos-arm64.zip` and its `.sha256` from the GitHub Release, verify with `shasum -a 256 -c vera-api-macos-arm64.zip.sha256`, unzip, and run `./vera-api/vera-api`. It serves on `127.0.0.1:8089` and keeps its data in `~/.vera/data`; `VERA_DATA_DIR`, `VERA_BIND`, and `VERA_PORT` override those defaults. Configuration is the same `.env` surface either way (export the variables or launch through a wrapper that sets them).
 
-Then read the **config report** — vera-api prints exactly what is wired at startup, and it is the first thing to check when something is off:
+Then read the **config report**: vera-api prints exactly what is wired at startup, and it is the first thing to check when something is off:
 
 ```sh
 curl localhost:8089/health
@@ -210,7 +210,7 @@ Clients stop accepting output at the generation cutoff and request local cancell
 Two conventions:
 
 - **Endpoints are `*_BASE`, credentials are `*_KEY`.** Older names still work; the config report flags them with their replacement.
-- **Unset means off, visibly.** A capability without its endpoint reports itself as not configured — it never fakes output and never affects other capabilities.
+- **Unset means off, visibly.** A capability without its endpoint reports itself as not configured. It never fakes output and never affects other capabilities.
 
 Integrations (Home Assistant and the rest) can be set in `.env` for headless installs; the app's integration store in step 3 is the recommended path.
 
@@ -317,6 +317,20 @@ To change the shortcut, open Settings, Identity, find **Quick ask**, click the r
 
 The shortcut is stored as `companion_shortcut` in `~/.vera/config.json`. The value is lowercase tokens joined with plus signs: any of `control`, `option`, `shift` and `command`, then a key name such as `space`, `k` or `f5`, for example `option+shift+space`. At least one of control, option or command is required unless the key is a function key. When unset, the default applies.
 
+### Voice and dictation
+
+Set the voice service address under Settings, Services, Voice (`voice_base` in `~/.vera/config.json`) and use **Test voice** to check it. With an address set, the composer shows two separate controls. The microphone dictates into the message: press it to start, press it again to stop, and the transcribed text lands in the message field for you to edit and send. The waveform starts an in-app voice chat. Dictation and voice chat use the same speech service.
+
+With no address set, neither control appears, and the composer's plus menu has a **Voice is not set up** item that opens Settings. The first time you use the microphone, macOS asks for permission. If you declined, allow Tandem under Privacy & Security, Microphone in System Settings.
+
+### The conversation and ongoing work
+
+The conversation header shows the assistant's avatar and name with a status line: Ready, Working on your answer, Waiting for your approval, or the current step of the reply. Replies appear in bubbles beside a small avatar, and your messages are right-aligned. A reply that produces a document, report, image or canvas piece gets a result row with an **Open** button. Reports and documents open in their reader, and canvas pieces open the canvas.
+
+Actions that need your permission appear inline as a card with **Approve** and **Decline**. A declined action is shown as declined rather than failed.
+
+The **Ongoing work** panel on the right lists the background work of the current chat, each with a title and its state. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** lists the work from every chat. On narrower windows the panel turns into an **Ongoing work** button at the top of the conversation, with a count of the tasks that are running or waiting. The canvas and the panel share the right column, so an open canvas piece takes precedence over the panel.
+
 ### Working in folders
 
 Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.
@@ -409,7 +423,7 @@ Each call renders as a pending, succeeded, or failed activity chip. Expand it to
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice remains unavailable in the native chat path. Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
+Voice is set up separately, see [Voice and dictation](#voice-and-dictation). Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
@@ -496,12 +510,12 @@ vera-api's Profile Graph learns from conversation transcripts. Alongside the sch
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 
-- **Plugins** — the integration store, a tab in **Settings** (⌘,). Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet — off until consented.
-- **Veins** — Pulse's ambient monitors, opened from the **Veins** button in the Pulse header. **Vera ships with none**: a vein is something you build for your own life — a river gauge, a service-status watch, a geopolitics bar, whatever deserves an ambient eye — and your catalog starts empty. Every vein is a schema-validated JSON definition living one file per vein at `/data/veins.d/<kind>.json`, managed through the API (`GET /pulse/veins/schema` serves the contract, `POST /pulse/veins` creates). A vein carries a `pipeline` of blocks (the built-ins `web_search`, `http_fetch`, `ha_state`, `trip_band`, `llm_judge`, `llm_compose`, `situation_cluster`, `present`, plus code-backed blocks capabilities register, plus any Python modules you drop in the data volume's `blocks.d/` — the code extension point for bespoke sources, each calling `vein_engine.register` at import) and a cron `schedule`, and the vein engine runs it: dropping a valid definition file in place is all it takes to have a running ambient monitor, and a definition marked `standing` keeps one always-present card updated in place instead of alerting. Each pipeline vein registers a scheduler job as `vein_<kind>`, `POST /pulse/veins/{kind}/run` fires it on demand (`dry_run=true` returns the would-be cards without posting), and the engine owns quiet discipline: one card per distinct situation (updated, never stacked), a seen-memory so watchers don't re-alert on a standing story (`VEIN_SEEN_DECAY_DAYS`, default 7), and a schedule floor for LLM-bearing pipelines (`VEIN_LLM_FLOOR_MINUTES`, default 30; engine state in `VEIN_ENGINE_DB_PATH`). Per-vein enable/options state lives separately in `/data/veins.json`. The Veins pane shows only what this deployment can actually run: a vein whose definition requires an integration appears once that integration is connected (`GET /pulse/veins/catalog` returns exposed veins, `?all=true` adds the requirement-unmet ones for the pane's Add-a-vein browse sheet), and removing the integration hides the vein again while keeping its settings. Veins you author yourself always show, whatever their requirements. You don't have to write definitions by hand: `POST /pulse/veins/builder/turn` runs the authoring conversation against whatever model `VERA_BASE`/`VERA_MODEL` name (describe what you want watched; each turn returns prose plus a schema-validated draft), and `POST /pulse/veins/builder/dry_run` executes an unsaved draft once and returns what would have posted, persisting nothing. With no model configured both endpoints report disabled cleanly. After a vein exists, its Configure sheet can reopen it in the builder to edit the definition in place or delete it outright (`PUT /pulse/veins/{kind}/definition`, `DELETE /pulse/veins/{kind}`), so the whole lifecycle lives in the app.
+- **Plugins**: the integration store, a tab in **Settings** (⌘,). Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet, off until consented.
+- **Veins**: Pulse's ambient monitors, opened from the **Veins** button in the Pulse header. **Vera ships with none**: a vein is something you build for your own life (a river gauge, a service-status watch, a geopolitics bar, whatever deserves an ambient eye), and your catalog starts empty. Every vein is a schema-validated JSON definition living one file per vein at `/data/veins.d/<kind>.json`, managed through the API (`GET /pulse/veins/schema` serves the contract, `POST /pulse/veins` creates). A vein carries a `pipeline` of blocks (the built-ins `web_search`, `http_fetch`, `ha_state`, `trip_band`, `llm_judge`, `llm_compose`, `situation_cluster`, `present`, plus code-backed blocks capabilities register, plus any Python modules you drop in the data volume's `blocks.d/`, the code extension point for bespoke sources, each calling `vein_engine.register` at import) and a cron `schedule`, and the vein engine runs it: dropping a valid definition file in place is all it takes to have a running ambient monitor, and a definition marked `standing` keeps one always-present card updated in place instead of alerting. Each pipeline vein registers a scheduler job as `vein_<kind>`, `POST /pulse/veins/{kind}/run` fires it on demand (`dry_run=true` returns the would-be cards without posting), and the engine owns quiet discipline: one card per distinct situation (updated, never stacked), a seen-memory so watchers don't re-alert on a standing story (`VEIN_SEEN_DECAY_DAYS`, default 7), and a schedule floor for LLM-bearing pipelines (`VEIN_LLM_FLOOR_MINUTES`, default 30; engine state in `VEIN_ENGINE_DB_PATH`). Per-vein enable/options state lives separately in `/data/veins.json`. The Veins pane shows only what this deployment can actually run: a vein whose definition requires an integration appears once that integration is connected (`GET /pulse/veins/catalog` returns exposed veins, `?all=true` adds the requirement-unmet ones for the pane's Add-a-vein browse sheet), and removing the integration hides the vein again while keeping its settings. Veins you author yourself always show, whatever their requirements. You don't have to write definitions by hand: `POST /pulse/veins/builder/turn` runs the authoring conversation against whatever model `VERA_BASE`/`VERA_MODEL` name (describe what you want watched; each turn returns prose plus a schema-validated draft), and `POST /pulse/veins/builder/dry_run` executes an unsaved draft once and returns what would have posted, persisting nothing. With no model configured both endpoints report disabled cleanly. After a vein exists, its Configure sheet can reopen it in the builder to edit the definition in place or delete it outright (`PUT /pulse/veins/{kind}/definition`, `DELETE /pulse/veins/{kind}`), so the whole lifecycle lives in the app.
 
 **Sharing veins.** A vein is a file, so it travels. Export one from its detail sheet (or `GET /pulse/veins/{kind}/export`) and you get a `<kind>.vein.json` with deployment specifics stripped: provider URLs, env-seeded option defaults, and any secret-shaped strings are cleared, so the file is safe to hand to anyone. Import one from the Add-a-vein sheet (or `POST /pulse/veins/import`): it validates against the schema, re-resolves requirements on your deployment, warns about anything unmet or any pipeline block this build lacks (the vein simply cannot enable until it exists), and lands the vein **disabled**. Review it, then enable it exactly like a vein you built yourself. A file from a newer deployment format is refused with a clear message rather than imported half-understood.
 
-Both are UI over vera-api's API — headless deployments can do everything with `curl`.
+Both are UI over vera-api's API; headless deployments can do everything with `curl`.
 
 ## 4. Integrations, one by one
 
@@ -509,7 +523,7 @@ Each integration unlocks its capability when its test passes; each degrades to "
 
 | Integration | Unlocks | Notes |
 |---|---|---|
-| Home Assistant | Live home state in chat and Pulse, confirm-gated device actuation, the `ha_state` vein block | Use an IP for the URL, not `.local` — containers can't resolve mDNS. Long-lived access token. |
+| Home Assistant | Live home state in chat and Pulse, confirm-gated device actuation, the `ha_state` vein block | Use an IP for the URL, not `.local` (containers can't resolve mDNS). Long-lived access token. |
 | Grocy | Kitchen inventory + expiry awareness, shopping list | Pairs with Mealie: recipe suggestions from expiring inventory unlock when both are on |
 | Mealie | Recipe import, browse, classification | See Grocy pairing |
 | Overseerr | Media requests from chat, availability checks; the media-curation blocks for a weekly digest vein (experimental, consent-gated) | |
@@ -532,7 +546,7 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
 Reminders reaches EventKit, Apple's only supported door into Reminders, which must run
-on a **Mac signed into the iCloud account whose lists Vera should see** — it sees shared
+on a **Mac signed into the iCloud account whose lists Vera should see**. It sees shared
 lists, so items added by Siri on any household device appear and Vera's writes sync back
 to everyone.
 
@@ -548,7 +562,7 @@ app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-
 prompt, then enable the Apple Reminders integration with the bridge URL.
 
 Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
-companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh` —
+companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh`:
 runtime copy-out, both venvs, launchd agents), and the image/vision services ship launchd
 templates installed via `scripts/install-launchd.sh`.
 
@@ -556,18 +570,18 @@ templates installed via `scripts/install-launchd.sh`.
 
 In-app schedules for research and documents are separate and are described under [Scheduled work](#scheduled-work) in the Mac app section.
 
-vera-api runs all recurring work itself — no external cron. Defaults:
+vera-api runs all recurring work itself, with no external cron. Defaults:
 
 | Job | Default | Gated on |
 |---|---|---|
-| Pulse briefing | daily 5:00 | — (core; needs your LLM) |
+| Pulse briefing | daily 5:00 | Nothing (core, needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Knowledge grooming | daily 4:00 | `KNOWLEDGE_GROOM_ENABLED` |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
-Pipeline veins register their jobs dynamically — one per definition, appearing and disappearing with the definition file — and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).
+Pipeline veins register their jobs dynamically (one per definition, appearing and disappearing with the definition file), and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).
 
-With home-modeling consent on, the capture stream also tees every numeric `sensor.*` reading into a dedicated series store (`SERIES_DB_PATH`, default `/data/series.db`) retained for `SERIES_RETAIN_DAYS` (default 365) — the substrate household forecasting reads. Inspect it at `GET /home/series` (entities + counts) and `GET /home/series/{entity_id}` (raw points); on first init it backfills from the existing event log. With capture off it stays empty and both endpoints return empty cleanly.
+With home-modeling consent on, the capture stream also tees every numeric `sensor.*` reading into a dedicated series store (`SERIES_DB_PATH`, default `/data/series.db`) retained for `SERIES_RETAIN_DAYS` (default 365). This is the substrate household forecasting reads. Inspect it at `GET /home/series` (entities + counts) and `GET /home/series/{entity_id}` (raw points); on first init it backfills from the existing event log. With capture off it stays empty and both endpoints return empty cleanly.
 
 A gated job never fires while its gate is closed: on a fresh install, nothing is monitored until its vein is enabled or its feature is consented to. The app's **Workflows** view, in the sidebar's **More** menu, renders all of this as a canvas: every flow as a node connected to the surface it feeds (the Pulse feed, the veins, memory, actions), with live status and running-state. The topology comes from `GET /agentic/graph`, a server-declared manifest, so a new capability appears on the canvas without an app update. Schedules can be pinned with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
 
@@ -579,7 +593,7 @@ Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24
 
 ## 7. Verifying the install
 
-1. `curl localhost:8089/health` — vera-api is up.
+1. `curl localhost:8089/health` confirms vera-api is up.
 2. The startup config report lists every endpoint you configured (and flags anything deprecated or missing).
 3. Chat in the app and ask something that needs a tool (e.g. a web search, once a search URL is saved in Settings, Search) and confirm the tool fires.
 4. Trigger a Pulse run from the app (or `POST /pulse/run`) and watch cards arrive.
