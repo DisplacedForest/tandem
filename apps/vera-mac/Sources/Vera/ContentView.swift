@@ -464,7 +464,7 @@ struct StarterChipLabel: View {
 }
 
 enum ComposerControlKind {
-    case plus, voice, send(active: Bool, generating: Bool), stop(enabled: Bool)
+    case plus, voice, dictate(active: Bool), send(active: Bool, generating: Bool), stop(enabled: Bool)
 }
 
 struct ComposerMentionList: View {
@@ -541,6 +541,7 @@ struct ComposerControlGlyph: View {
         switch kind {
         case .plus: Theme.assistantBubble
         case .voice: Theme.surfaceHover
+        case .dictate(let active): active ? Theme.sage : Theme.surfaceHover
         case .send(let active, let generating): generating || active ? Theme.sage : Theme.sage.opacity(0.35)
         case .stop(let enabled): enabled ? Theme.sage : Theme.sage.opacity(0.35)
         }
@@ -550,6 +551,7 @@ struct ComposerControlGlyph: View {
         switch kind {
         case .plus: Theme.warmTextSecondary
         case .voice: Theme.textSecondary
+        case .dictate(let active): active ? Theme.onSage : Theme.textSecondary
         case .send, .stop: Theme.onSage
         }
     }
@@ -557,7 +559,7 @@ struct ComposerControlGlyph: View {
     private var diameter: CGFloat {
         switch kind {
         case .plus: Self.plusSize
-        case .voice: Self.size
+        case .voice, .dictate: Self.size
         case .send, .stop: Self.sendSize
         }
     }
@@ -566,6 +568,7 @@ struct ComposerControlGlyph: View {
         switch kind {
         case .plus: "plus"
         case .voice: "waveform"
+        case .dictate(let active): active ? "mic.fill" : "mic"
         case .send: "arrow.up"
         case .stop: "stop.fill"
         }
@@ -1040,12 +1043,33 @@ struct ComposerField: View {
     @State private var mentionSelectionID: String?
     @State private var dismissedDraft: String?
     @State private var showingFolderUnsupported = false
+    @Environment(\.openSettings) private var openSettings
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
         Binding(get: { route.draft }, set: { route.draft = $0 })
     }
     private func submit() { route.send() }
+    private var voiceAvailability: ComposerVoiceAvailability {
+        ComposerVoiceAvailability(dictation: voice.supportsDictation, voiceChat: voice.supportsVoiceChat)
+    }
+
+    private func toggleDictation() {
+        if voice.isDictating {
+            voice.stopDictation()
+            return
+        }
+        let base = route.draft
+        voice.startDictation { text, isFinal in
+            route.draft = ComposerDictation.merge(base: base, text)
+            if isFinal { focused = true }
+        }
+    }
+
+    private func openVoiceSettings() {
+        store.settingsTab = .services
+        openSettings()
+    }
     private var canSend: Bool { route.canSend }
     private var mentionQuery: ComposerMentionQuery? {
         guard route.draft != dismissedDraft else { return nil }
@@ -1092,6 +1116,18 @@ struct ComposerField: View {
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
+            if let error = voice.entryError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                    Text(error).font(.system(size: 11))
+                    Button { voice.entryError = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+                }
+                .foregroundStyle(Theme.textSecondary)
+            }
             if let error = store.grantError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
@@ -1129,6 +1165,10 @@ struct ComposerField: View {
                             }
                         }
                     }
+                    if !voiceAvailability.any {
+                        Divider()
+                        Button("Voice is not set up") { openVoiceSettings() }
+                    }
                 } label: {
                     ComposerControlGlyph(kind: .plus)
                 }
@@ -1163,11 +1203,12 @@ struct ComposerField: View {
                         submit()
                         return .handled
                     }
-                Button(action: {}) { ComposerControlGlyph(kind: .voice) }
-                    .buttonStyle(.plain)
-                    .disabled(true)
-                    .help("Voice is not available in native chat yet")
-                    .padding(.bottom, 2)
+                if voiceAvailability.any {
+                    ComposerVoiceControls(availability: voiceAvailability, dictating: voice.isDictating,
+                                          assistantName: store.assistantName,
+                                          onDictate: toggleDictation, onVoiceChat: { voice.start() })
+                        .padding(.bottom, 2)
+                }
                 if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
                     Button { store.stopAnswer(stoppable) } label: {
                         ComposerControlGlyph(kind: .stop(enabled: true))
@@ -1197,7 +1238,10 @@ struct ComposerField: View {
             focused = true
             installPasteMonitor()
         }
-        .onDisappear { removePasteMonitor() }
+        .onDisappear {
+            removePasteMonitor()
+            voice.stopDictation()
+        }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .onChange(of: store.grantConsentTick) { _, _ in
             let missing = [NativeFolderTools.toolID, NativeCommandTools.toolID].filter { !config.nativeSettings.enabledToolIDs.contains($0) }

@@ -382,7 +382,7 @@ enum Shot {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
             case "vera": section = .vera
-            case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
+            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
@@ -407,6 +407,8 @@ enum Shot {
                          integrationsSeed: integrationsSeed,
                          workColumn: view == "conversation-work",
                          workCollapsed: view == "conversation-narrow",
+                         voiceAvailability: ComposerVoiceAvailability(dictation: true, voiceChat: true),
+                         dictating: view == "chats-dictating",
                          width: size.width)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)

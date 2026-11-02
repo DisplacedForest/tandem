@@ -418,6 +418,7 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }
         catch { print("SELFTEST ERROR: task engine \(error)"); exit(1) }
+        do { try await VoiceEntrySelftest.run() } catch { print("SELFTEST ERROR: voice entry \(error)"); exit(1) }
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()

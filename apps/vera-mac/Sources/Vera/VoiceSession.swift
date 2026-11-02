@@ -19,6 +19,8 @@ final class VoiceSession: ObservableObject {
     @Published private(set) var debugFrames = 0         // tap callbacks seen — diagnostics
     @Published private(set) var debugFloor: Float = -45 // adaptive noise floor (dBFS) — diagnostics
     @Published private(set) var debugSpeech = false     // VAD inSpeech state — diagnostics
+    @Published private(set) var isDictating = false
+    @Published var entryError: String?
 
     private let client: VoiceClient
     private let socket: VeraSocket?
@@ -29,19 +31,36 @@ final class VoiceSession: ObservableObject {
     private let queue: AudioQueue
 
     private var streamTask: Task<Void, Never>?
-    private var sttStream: TranscriptionStream?   // open while listening (streaming STT)
+    private var sttStream: (any VoiceTranscript)?
+    private let capture: any VoiceCaptureDevice
+    private let openTranscription: @Sendable () async throws -> any VoiceTranscript
+    private var opening = false
+    private var advancing = false
+    private var dictationGeneration = 0
+    private var dictationText = ""
+    private var dictationHandler: (@MainActor (String, Bool) -> Void)?
+    private var dictationTail: Task<Void, Never>?
     private var warmed = false
     private var playbackHold: Task<Void, Never>?
     private var playbackEvents = PlaybackEventFilter()
 
     var isActive: Bool { state != .idle }
 
-    init(client: VoiceClient, socket: VeraSocket?, store: ChatStore) {
+    var supportsDictation: Bool { !client.host.isEmpty }
+
+    var supportsVoiceChat: Bool { supportsDictation && socket != nil }
+
+    init(client: VoiceClient, socket: VeraSocket?, store: ChatStore,
+         capture: (any VoiceCaptureDevice)? = nil,
+         transcription: (@Sendable () async throws -> any VoiceTranscript)? = nil) {
         self.client = client
         self.socket = socket
         self.store = store
-        self.mic = MicCapture(engine: engine)
+        let mic = MicCapture(engine: engine)
+        self.mic = mic
         self.queue = AudioQueue(engine: engine)
+        self.capture = capture ?? MicEngineCapture(engine: engine, mic: mic)
+        self.openTranscription = transcription ?? { [client] in try await client.startTranscription() }
         configureCallbacks()
     }
 
@@ -49,7 +68,7 @@ final class VoiceSession: ObservableObject {
         mic.onLevel = { [weak self] lvl, db in Task { @MainActor in self?.updateLevel(lvl, db) } }
         // Stream captured 16 kHz mono PCM frames into the open STT connection while listening.
         mic.onFrame = { [weak self] pcm in Task { @MainActor in self?.sttStream?.send(pcm) } }
-        mic.onUtterance = { [weak self] _ in Task { @MainActor in self?.handleEndOfTurn() } }
+        mic.onUtterance = { [weak self] _ in Task { @MainActor in self?.utteranceEnded() } }
         mic.onDebug = { [weak self] floor, sp in Task { @MainActor in self?.debugFloor = floor; self?.debugSpeech = sp } }
         queue.onDrained = { [weak self] in Task { @MainActor in self?.handleDrained() } }
         queue.onPlayback = { [weak self] sequence, playing in Task { @MainActor in self?.playbackChanged(sequence, playing) } }
@@ -83,57 +102,170 @@ final class VoiceSession: ObservableObject {
     private func updateLevel(_ lvl: Float, _ db: Float) {
         debugDB = db
         debugFrames += 1
-        guard state == .listening else { return }
+        guard state == .listening || isDictating else { return }
         level = lvl
     }
 
     // MARK: - Lifecycle
 
     func start() {
-        guard state == .idle else { return }
+        guard state == .idle, !opening, !isDictating, dictationTail == nil else { return }
         lastError = nil
-        let device = AVCaptureDevice.default(for: .audio)?.localizedName ?? "NONE"
-        NSLog("vera-voice-dbg: start() default audio input = \(device)")
+        entryError = nil
+        opening = true
         Task {
-            guard await Self.requestMic() else { lastError = "Microphone access denied"; return }
-            NSLog("vera-voice-dbg: mic permission granted")
-            do {
-                mic.install()
-                try engine.start()
-                queue.start()
-                NSLog("vera-voice-dbg: engine started, isRunning=\(engine.isRunning)")
-            } catch {
-                NSLog("vera-voice-dbg: engine start FAILED: \(error.localizedDescription)")
-                lastError = "Audio engine failed: \(error.localizedDescription)"
+            defer { opening = false }
+            if let failure = await openCapture() {
+                entryError = failure.message
                 return
             }
+            queue.start()
             await prewarm()
-            beginListening()
+            guard let stream = await openTranscript() else {
+                queue.stop()
+                capture.end()
+                entryError = VoiceEntryFailure.serviceUnreachable.message
+                return
+            }
+            beginListening(with: stream)
         }
     }
 
     func stop() {
+        if isDictating { finishDictation(nil) }
         streamTask?.cancel(); streamTask = nil
         sttStream = nil
         queue.stop()
         clearPlayback()
-        mic.setActive(false)
-        mic.remove()
-        engine.stop()
+        capture.end()
         level = 0
         state = .idle
     }
 
-    private func beginListening() {
+    private func beginListening(with stream: (any VoiceTranscript)? = nil) {
         state = .listening
         level = 0
         statusLine = nil
-        // Open a fresh streaming-STT connection; mic frames flow into it while active.
-        sttStream = nil
-        Task {
-            sttStream = try? await client.startTranscription()
+        sttStream = stream
+        if stream == nil {
+            Task { sttStream = await openTranscript() }
         }
-        mic.setActive(true)
+        capture.listen(true)
+    }
+
+    private func openCapture() async -> VoiceEntryFailure? {
+        guard await capture.authorize() else { return .microphoneDenied }
+        do {
+            try capture.begin()
+        } catch {
+            capture.end()
+            return .microphoneUnavailable
+        }
+        return nil
+    }
+
+    private func openTranscript() async -> (any VoiceTranscript)? {
+        try? await openTranscription()
+    }
+
+    func startDictation(onText: @escaping @MainActor (String, Bool) -> Void) {
+        guard state == .idle, !opening, !isDictating, dictationTail == nil else { return }
+        entryError = nil
+        dictationGeneration &+= 1
+        let generation = dictationGeneration
+        dictationText = ""
+        dictationHandler = onText
+        isDictating = true
+        Task {
+            let failure = await openCapture()
+            guard generation == dictationGeneration, isDictating else {
+                if failure == nil { releaseAbandonedCapture(generation) }
+                return
+            }
+            if let failure {
+                finishDictation(failure)
+                return
+            }
+            let stream = await openTranscript()
+            guard generation == dictationGeneration, isDictating else {
+                if let stream { Task { _ = try? await stream.finish() } }
+                releaseAbandonedCapture(generation)
+                return
+            }
+            guard let stream else {
+                finishDictation(.serviceUnreachable)
+                return
+            }
+            sttStream = stream
+            capture.listen(true)
+        }
+    }
+
+    func stopDictation() {
+        finishDictation(nil)
+    }
+
+    func utteranceEnded() {
+        if isDictating {
+            advanceDictation()
+        } else {
+            handleEndOfTurn()
+        }
+    }
+
+    private func releaseAbandonedCapture(_ generation: Int) {
+        guard generation == dictationGeneration, !isDictating, state == .idle, !opening else { return }
+        capture.end()
+    }
+
+    private func finishDictation(_ failure: VoiceEntryFailure?) {
+        guard isDictating else { return }
+        let generation = dictationGeneration
+        let handler = dictationHandler
+        isDictating = false
+        dictationHandler = nil
+        capture.end()
+        level = 0
+        if let failure { entryError = failure.message }
+        if let current = sttStream {
+            sttStream = nil
+            enqueueDictation(current, generation: generation)
+        }
+        let tail = dictationTail
+        dictationTail = Task {
+            await tail?.value
+            guard generation == dictationGeneration else { return }
+            handler?(dictationText, true)
+            dictationTail = nil
+        }
+    }
+
+    private func advanceDictation() {
+        guard isDictating, !advancing, let finished = sttStream else { return }
+        advancing = true
+        let generation = dictationGeneration
+        Task {
+            let next = await openTranscript()
+            advancing = false
+            guard generation == dictationGeneration, isDictating, sttStream === finished else {
+                if let next { Task { _ = try? await next.finish() } }
+                return
+            }
+            sttStream = next
+            enqueueDictation(finished, generation: generation)
+            if next == nil { finishDictation(.serviceUnreachable) }
+        }
+    }
+
+    private func enqueueDictation(_ stream: any VoiceTranscript, generation: Int) {
+        let previous = dictationTail
+        dictationTail = Task {
+            await previous?.value
+            let text = (try? await stream.finish()) ?? ""
+            guard generation == dictationGeneration else { return }
+            dictationText = ComposerDictation.merge(base: dictationText, text)
+            if isDictating { dictationHandler?(dictationText, false) }
+        }
     }
 
     /// Warm both models once at session open (in parallel) so the first real turn is fast: synth a
@@ -154,11 +286,9 @@ final class VoiceSession: ObservableObject {
 
     // MARK: - Turn handling
 
-    /// End-of-turn (energy-VAD): stop the mic, finalise the streaming STT connection to get the
-    /// transcript, then run the EXISTING reply path verbatim.
     private func handleEndOfTurn() {
         guard state == .listening else { return }
-        mic.setActive(false)
+        capture.listen(false)
         state = .transcribing
         guard let stream = sttStream else { beginListening(); return }
         sttStream = nil
@@ -167,11 +297,11 @@ final class VoiceSession: ObservableObject {
                 let text = try await stream.finish()
                 guard !text.isEmpty else { beginListening(); return }
                 guard let socket, let turn = store.beginVoiceTurn(userText: text) else {
-                    lastError = "Voice needs OWUI configured (~/.vera/config.json)"
+                    lastError = "Voice chat isn't set up. Check Settings."
                     beginListening(); return
                 }
                 state = .thinking
-                NSSound(named: "Tink")?.play()   // earcon: heard you, working on it
+                NSSound(named: "Tink")?.play()
                 streamReply(socket: socket, chatID: turn.chatID, messages: turn.messages)
             } catch {
                 lastError = error.localizedDescription
@@ -293,7 +423,7 @@ final class VoiceSession: ObservableObject {
 
     // MARK: - Permission
 
-    private static func requestMic() async -> Bool {
+    static func requestMic() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true
         case .notDetermined:
@@ -312,5 +442,58 @@ struct PlaybackEventFilter: Sendable {
         guard sequence > latest else { return false }
         latest = sequence
         return true
+    }
+}
+
+enum VoiceEntryFailure: Equatable, Sendable {
+    case microphoneDenied, microphoneUnavailable, serviceUnreachable
+
+    var message: String {
+        switch self {
+        case .microphoneDenied: "Microphone access is off. Allow it in System Settings, Privacy and Security."
+        case .microphoneUnavailable: "The microphone didn't start. Check your input device in System Settings."
+        case .serviceUnreachable: "The voice service didn't answer. Check its address in Settings."
+        }
+    }
+}
+
+@MainActor
+protocol VoiceCaptureDevice: AnyObject {
+    func authorize() async -> Bool
+    func begin() throws
+    func listen(_ on: Bool)
+    func end()
+}
+
+protocol VoiceTranscript: AnyObject, Sendable {
+    func send(_ pcm16k: Data)
+    func finish() async throws -> String
+}
+
+extension TranscriptionStream: VoiceTranscript {}
+
+@MainActor
+final class MicEngineCapture: VoiceCaptureDevice {
+    private let engine: AVAudioEngine
+    private let mic: MicCapture
+
+    init(engine: AVAudioEngine, mic: MicCapture) {
+        self.engine = engine
+        self.mic = mic
+    }
+
+    func authorize() async -> Bool { await VoiceSession.requestMic() }
+
+    func begin() throws {
+        mic.install()
+        try engine.start()
+    }
+
+    func listen(_ on: Bool) { mic.setActive(on) }
+
+    func end() {
+        mic.setActive(false)
+        mic.remove()
+        engine.stop()
     }
 }

@@ -856,6 +856,8 @@ final class ConfigStore: ObservableObject {
         return (trimmed?.isEmpty == false) ? URL(string: trimmed!) : nil
     }
 
+    var voiceConfigured: Bool { !(voiceBase?.host ?? "").isEmpty }
+
     /// The person's name — drives the greeting and the sidebar chip. Nil when unset.
     var ownerName: String? {
         let env = ProcessInfo.processInfo.environment["VERA_OWNER_NAME"]

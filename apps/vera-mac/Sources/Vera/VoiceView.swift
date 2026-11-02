@@ -25,13 +25,6 @@ struct VoiceView: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 30)
-                // Diagnostics (Phase-1 tuning): live input level + frames seen.
-                Text(String(format: "in: %.0f  floor: %.0f dBFS  %@  frames: %d",
-                             voice.debugDB, voice.debugFloor,
-                             voice.debugSpeech ? "SPEECH" : "N/A", voice.debugFrames))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                    .padding(.top, 8)
                 Spacer()
 
                 if let err = voice.lastError {
@@ -51,6 +44,7 @@ struct VoiceView: View {
                 .buttonStyle(.plain)
                 .padding(.bottom, 40)
                 .help("End voice session")
+                .accessibilityLabel("End voice session")
             }
         }
     }

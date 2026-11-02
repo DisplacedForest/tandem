@@ -19,6 +19,8 @@ struct ShotView: View {
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
     var workColumn = false
     var workCollapsed = false
+    var voiceAvailability = ComposerVoiceAvailability(dictation: true, voiceChat: true)
+    var dictating = false
     var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
@@ -436,13 +438,23 @@ struct ShotView: View {
                 .foregroundStyle(typed ? Theme.warmTextPrimary : Theme.warmTextSecondary)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, minHeight: ComposerControlGlyph.sendSize, alignment: .leading)
-            ComposerControlGlyph(kind: .voice).padding(.bottom, 2)
+            if voiceAvailability.any {
+                ComposerVoiceControls(availability: voiceAvailability, dictating: dictating,
+                                      assistantName: store.assistantName, animated: false)
+                    .padding(.bottom, 2)
+            }
             if stop {
                 ComposerControlGlyph(kind: .stop(enabled: true))
             } else {
                 ComposerControlGlyph(kind: .send(active: active, generating: false))
             }
         }
+    }
+
+    private var shotComposerText: String {
+        if mentions { return "@" }
+        if dictating { return "Move the dentist appointment to Thursday and remind me the day before" }
+        return "Message \(store.assistantName)"
     }
 
     private var shotStatusLine: String {
@@ -610,7 +622,7 @@ struct ShotView: View {
                     ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                 }
-                shotComposerRow(text: mentions ? "@" : "Message \(store.assistantName)", typed: mentions, active: false, stop: streaming)
+                shotComposerRow(text: shotComposerText, typed: mentions || dictating, active: dictating, stop: streaming)
             }
             .modifier(ShotComposerPill())
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
