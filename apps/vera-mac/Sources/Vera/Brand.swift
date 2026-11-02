@@ -105,26 +105,11 @@ struct TandemLogoMark: View {
 struct CompanionAvatar: View {
     var size: CGFloat
     @Environment(\.companionName) private var name
+    @Environment(\.companionAppearance) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.45, style: .continuous)
-            .fill(Color(red: 0.714, green: 0.808, blue: 0.549))
-            .overlay {
-                HStack(spacing: size * 0.18) {
-                    eye
-                    eye
-                }
-                .offset(y: -size * 0.04)
-            }
-            .frame(width: size, height: size)
-            .accessibilityElement()
-            .accessibilityLabel(name ?? "Companion")
-    }
-
-    private var eye: some View {
-        RoundedRectangle(cornerRadius: size * 0.05, style: .continuous)
-            .fill(Color(red: 0.13, green: 0.16, blue: 0.11))
-            .frame(width: size * 0.1, height: size * 0.18)
+        CompanionAvatarView(appearance: appearance, state: .ready, size: size, name: name, reduceMotion: reduceMotion)
     }
 }
 
@@ -136,5 +121,16 @@ extension EnvironmentValues {
     var companionName: String? {
         get { self[CompanionNameKey.self] }
         set { self[CompanionNameKey.self] = newValue }
+    }
+}
+
+private struct CompanionAppearanceKey: EnvironmentKey {
+    static let defaultValue = CompanionAppearance.default
+}
+
+extension EnvironmentValues {
+    var companionAppearance: CompanionAppearance {
+        get { self[CompanionAppearanceKey.self] }
+        set { self[CompanionAppearanceKey.self] = newValue }
     }
 }

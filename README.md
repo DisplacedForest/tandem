@@ -142,6 +142,10 @@ The scheduler lives in the app, so it only fires while Tandem is running. If a t
 
 Tandem is the application name. The assistant inside keeps whatever name you chose, and the default is Vera. The app icon is two overlapping green circles on a charcoal tile, and the menu bar item uses a monochrome two-circle mark that adapts to light and dark menu bars. The logo moves in response to real events, such as a greeting on launch and a bounded orbit while an answer is being generated, and it stays still when Reduce Motion is on. Details are in the [setup guide](docs/SETUP.md#tandem-identity).
 
+### Companion appearance
+
+The assistant also has a small companion figure, and you can change how it looks from Settings, Identity, Change appearance. Pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl) in any combination, and the sheet shows a live preview under the same assistant name you use everywhere else. Nothing changes until you press Save, and Cancel keeps the previous appearance. The figure shows up wherever the companion does, including the voice view. It has six states shown through motion: ready, thinking, listening, speaking, resting and needs you. Listening only happens during real capture, speaking only during playback, and needs you only while a real question is waiting (it hops once, then holds), and with Reduce Motion on every state is a still pose. Details are in the [setup guide](docs/SETUP.md#companion-appearance).
+
 ### Working in folders
 
 Any chat can work in folders you hand it. There's no mode to switch on. Choose "Work in a folder" from the composer's plus menu or the @ picker, or drop a folder onto the composer (dropping a file still attaches it). Each folder shows as a chip above the composer with its name, and the x on a chip takes the access back. Grants belong to that conversation (a chat inside a project also gets the project's folders) and are still there after a relaunch. A folder inside one you've already granted is refused, and granting a parent replaces any grants inside it.
