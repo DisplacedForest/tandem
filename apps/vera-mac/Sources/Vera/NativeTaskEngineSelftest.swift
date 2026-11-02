@@ -673,8 +673,13 @@ extension SelfTest {
         var draft = Message(role: .assistant, text: "A fixture check-in", state: .complete)
         draft.displayBlocks = checkIn.displayBlocks
         let atomic = draft
-        let firstPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key", referenceID: reference.id)
-        let secondPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key", referenceID: reference.id)
+        let firstPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key",
+                                                           referenceID: reference.id, decisionID: decision.id)
+        let secondPost = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "atomic-key",
+                                                            referenceID: reference.id, decisionID: decision.id)
+        let wrongDecision = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "other-key",
+                                                               referenceID: reference.id, decisionID: "not-the-current-decision")
+        try require(!wrongDecision, "A post for a decision the task is not paused on is refused inside the transaction")
         try require(firstPost && !secondPost, "The same check-in key posts once and then refuses")
         let afterAtomic = try repository.messages(conversationID: conversationID)
         try require(afterAtomic.count == before + 2 && afterAtomic.filter { $0.id == atomic.id }.count == 1, "A refused post adds no message")
@@ -702,6 +707,18 @@ extension SelfTest {
         try require(storedCheckIn.flatMap(cardStatus) == .completed, "The stored check-in card shows the finished task")
         let liveCheckIn = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == checkIn.id }
         try require(liveCheckIn.flatMap(cardStatus) == .completed, "The check-in card in memory shows the finished task")
+        let movedOn = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "moved-on",
+                                                         referenceID: reference.id, decisionID: decision.id)
+        try require(!movedOn && (try repository.messages(conversationID: conversationID)).count == before + 2,
+                    "A post whose task completed between the read and the write is refused and adds nothing")
+        let waitingBlocks = try nativeTaskEncoded(checkIn.displayBlocks)
+        try await repository.database.write { db in
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [waitingBlocks, checkIn.id.uuidString])
+        }
+        let unchanged = try repository.projectTask(id: reference.id, snapshot: nil, cursor: 0)
+        try require(unchanged?.mirrors.contains(checkIn.id) == true, "An unchanged projection still names the check-in mirror")
+        let refreshed = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
+        try require(refreshed.flatMap(cardStatus) == .completed, "An unchanged projection tick rewrites a stale mirror card")
 
         var answered = try NativeSchedule(owner: .conversation, workerType: "research", title: "Answered check",
                                           instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)

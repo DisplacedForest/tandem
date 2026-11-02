@@ -457,8 +457,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
-    func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID) throws -> Bool {
+    func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID, decisionID: String) throws -> Bool {
         try database.write { db in
+            guard let snapshot = try Self.readTaskProjection(db, id: referenceID)?.snapshot,
+                  snapshot.state == .needsDecision, snapshot.decision?.id == decisionID else { return false }
             guard try NativeScheduleStore.claimCheckIn(db, runID: runID, key: key) else { return false }
             let ordinal = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE conversation_id = ?", arguments: [conversationID]) ?? 0
             try Self.saveMessage(message, conversationID: conversationID, ordinal: ordinal, db: db)

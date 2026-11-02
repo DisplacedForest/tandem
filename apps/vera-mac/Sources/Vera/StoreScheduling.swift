@@ -74,7 +74,8 @@ extension ChatStore {
                                   text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(decision.prompt)",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
-            guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid)) == true else { continue }
+            guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
+                                                  decisionID: decision.id)) == true else { continue }
             if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
                 if !conversations[index].messages.isEmpty || selectedID == conversationID {
                     conversations[index].messages.append(message)

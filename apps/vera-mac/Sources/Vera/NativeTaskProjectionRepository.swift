@@ -200,7 +200,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
                reference.snapshot == canonical {
                 return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
                     messageID: reference.origin.assistantMessageID, blocks: envelope.displayBlocks,
-                    mirrors: try Self.taskCardMirrorIDs(db, referenceID: id))
+                    mirrors: try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: display.artifact))
             }
             try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
                 arguments: [try nativeTaskEncoded(envelope.displayBlocks), reference.origin.assistantMessageID.uuidString])
