@@ -373,6 +373,7 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
+        do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }

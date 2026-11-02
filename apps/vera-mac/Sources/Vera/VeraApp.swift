@@ -33,6 +33,7 @@ struct VeraApp: App {
     @StateObject private var config: ConfigStore
     @StateObject private var updates = UpdateChecker()
     @StateObject private var engine = EngineManager()
+    @StateObject private var presence: TandemLogoPresence
 
     init() {
         let fixture = NativePiNativeContext.candidate
@@ -93,8 +94,10 @@ struct VeraApp: App {
         }
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
-        _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
-                                                        socket: socket, store: storeInstance))
+        let voiceInstance = VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
+                                         socket: socket, store: storeInstance)
+        _voice = StateObject(wrappedValue: voiceInstance)
+        _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance, voice: voiceInstance))
     }
 
     var body: some Scene {
@@ -105,9 +108,12 @@ struct VeraApp: App {
                 .environmentObject(config)
                 .environmentObject(updates)
                 .environmentObject(engine)
+                .environmentObject(presence)
+                .environment(\.companionName, store.assistantName)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { if NativePiNativeContext.candidate == nil { updates.start() } }
+                .task { if NativePiNativeContext.candidate == nil { presence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
                 .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
         }
@@ -127,7 +133,11 @@ struct VeraApp: App {
                 .environmentObject(store)
                 .environmentObject(config)
         } label: {
-            Label(config.assistantName, systemImage: "sparkle")
+            Label {
+                Text(config.assistantName)
+            } icon: {
+                Image(nsImage: TandemTemplate.image(pointSize: 18))
+            }
         }
 
         Settings {
@@ -136,6 +146,8 @@ struct VeraApp: App {
                 .environmentObject(store)
                 .environmentObject(updates)
                 .environmentObject(engine)
+                .environmentObject(presence)
+                .environment(\.companionName, store.assistantName)
                 .preferredColorScheme(config.colorSchemeOverride)
         }
     }

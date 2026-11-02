@@ -298,6 +298,14 @@ Once a schedule exists, Tandem keeps running in the menu bar after you close the
 
 This is separate from the server scheduler in [section 6](#6-the-scheduler), which drives Pulse and veins on vera-api. In-app schedules only drive research and document runs in the app.
 
+### Tandem identity
+
+Tandem is the application name. The assistant inside uses the name you chose (the default is Vera). The app icon is two overlapping green circles on a charcoal tile. The menu bar item is a monochrome two-circle template that adapts to light and dark menu bars.
+
+**Logo motion.** The two-circle logo has a small set of named motions driven by real events: a greeting on launch, a bounded orbit while an answer is being generated, a nudge when something needs a decision, a gather on completion, a recoil on failure, listen and speak only during real audio, and rest when the app is inactive. The menu bar stays on the static template. With Reduce Motion on in System Settings, the logo stays still. Settings, About has a motion gallery that previews every sequence with replay, speed, size, light and dark background and Reduce Motion controls. It is a preview tool and does not show live status.
+
+**Brand sources.** `apps/vera-mac/Brand` holds the layered color mark, the flat mark, the monochrome template, a vector PDF, the logo motion master, the twelve motion sequences as animated SVGs, `motion.json` (the shared motion timeline the app loads at runtime), and the exporter and rebuild script. The exporter is a Swift script: run it with `swift` and then `iconutil`, as its header describes. The app's packaging script turns the 1024 pixel icon in the resource bundle into the icon file. Edit the masters under `Brand` and re-export instead of editing the PNGs.
+
 ### Working in folders
 
 Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.

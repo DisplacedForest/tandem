@@ -138,6 +138,10 @@ A waiting run shows its question and the choices, such as Retry, as buttons in S
 
 The scheduler lives in the app, so it only fires while Tandem is running. If a time passes while the app is closed or the Mac is asleep for more than five minutes, that run is recorded as Missed and isn't made up later. If the previous run is still going when the next time arrives, the new one is recorded as Skipped. Once you have a schedule, Tandem stays in the menu bar when you close the window, showing the next run and how many are in progress. You can turn that off in Settings, Identity. Research schedules need the search URL set in Settings, Search. See [Scheduled work in the setup guide](docs/SETUP.md#scheduled-work) for details.
 
+### Tandem identity
+
+Tandem is the application name. The assistant inside keeps whatever name you chose, and the default is Vera. The app icon is two overlapping green circles on a charcoal tile, and the menu bar item uses a monochrome two-circle mark that adapts to light and dark menu bars. The logo moves in response to real events, such as a greeting on launch and a bounded orbit while an answer is being generated, and it stays still when Reduce Motion is on. Details are in the [setup guide](docs/SETUP.md#tandem-identity).
+
 ### Working in folders
 
 Any chat can work in folders you hand it. There's no mode to switch on. Choose "Work in a folder" from the composer's plus menu or the @ picker, or drop a folder onto the composer (dropping a file still attaches it). Each folder shows as a chip above the composer with its name, and the x on a chip takes the access back. Grants belong to that conversation (a chat inside a project also gets the project's folders) and are still there after a relaunch. A folder inside one you've already granted is refused, and granting a parent replaces any grants inside it.

@@ -894,9 +894,23 @@ private struct AboutTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var updates: UpdateChecker
     @State private var serverVersion: String?
+    @State private var showingGallery = false
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 14) {
+                    LiveTandemLogo(size: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tandem").font(.system(size: 17, weight: .semibold))
+                        Text("Version \(AppVersion.current)")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Logo motion gallery") { showingGallery = true }
+                }
+                .padding(.vertical, 4)
+            }
             Section("Versions") {
                 LabeledContent("App", value: AppVersion.current)
                 LabeledContent("vera-api", value: serverVersion ?? "N/A")
@@ -937,6 +951,19 @@ private struct AboutTab: View {
         }
         .formStyle(.grouped)
         .task { await loadServerVersion() }
+        .sheet(isPresented: $showingGallery) {
+            VStack(spacing: 0) {
+                TandemMotionGalleryView()
+                Divider()
+                HStack {
+                    Spacer()
+                    Button("Done") { showingGallery = false }
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(12)
+            }
+            .frame(width: 760, height: 620)
+        }
     }
 
     private func loadServerVersion() async {

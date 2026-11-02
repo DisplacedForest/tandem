@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 410 256" role="img" aria-label="Tandem">
+  <defs><clipPath id="left-boundary"><circle cx="128" cy="128" r="128"/></clipPath></defs>
+  <g id="tandem-pair">
+    <circle id="left-circle" cx="128" cy="128" r="128" fill="#BAD797"/>
+    <circle id="right-circle" cx="282" cy="128" r="128" fill="#87B16A"/>
+    <g id="overlap" clip-path="url(#left-boundary)"><circle cx="282" cy="128" r="128" fill="#ADD08C"/></g>
+  </g>
+</svg>
