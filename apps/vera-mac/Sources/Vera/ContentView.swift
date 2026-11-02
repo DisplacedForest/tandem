@@ -78,7 +78,7 @@ struct ContentView: View {
     static func deletionMessage(_ count: Int) -> String {
         let noun = count == 1 ? "an artifact" : "\(count) artifacts"
         let pronoun = count == 1 ? "it" : "them"
-        return "This chat produced \(noun). You can keep \(pronoun) in Artifacts or delete \(pronoun) with the chat."
+        return "This chat produced \(noun). You can keep \(pronoun) in Library or delete \(pronoun) with the chat."
     }
 }
 

@@ -34,6 +34,7 @@ struct VeraApp: App {
     @StateObject private var updates = UpdateChecker()
     @StateObject private var engine = EngineManager()
     @StateObject private var presence: TandemLogoPresence
+    @StateObject private var companion: CompanionCoordinator
 
     init() {
         let fixture = NativePiNativeContext.candidate
@@ -94,6 +95,7 @@ struct VeraApp: App {
         }
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
+        _companion = StateObject(wrappedValue: CompanionCoordinator(store: storeInstance, config: configInstance))
         let voiceInstance = VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
                                          socket: socket, store: storeInstance)
         _voice = StateObject(wrappedValue: voiceInstance)
@@ -110,12 +112,14 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .environmentObject(presence)
                 .environment(\.companionName, store.assistantName)
+                .environmentObject(companion)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { if NativePiNativeContext.candidate == nil { updates.start() } }
                 .task { if NativePiNativeContext.candidate == nil { presence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
                 .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
+                .task { if NativePiNativeContext.candidate == nil { companion.start() } }
         }
         .defaultSize(width: 1180, height: 760)
         .windowStyle(.hiddenTitleBar)
@@ -132,9 +136,10 @@ struct VeraApp: App {
             MenuBarStatusMenu()
                 .environmentObject(store)
                 .environmentObject(config)
+                .environmentObject(companion)
         } label: {
             Label {
-                Text(config.assistantName)
+                Text(store.companionUnreadCount > 0 ? config.assistantName + " •" : config.assistantName)
             } icon: {
                 Image(nsImage: TandemTemplate.image(pointSize: 18))
             }
@@ -148,6 +153,7 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .environmentObject(presence)
                 .environment(\.companionName, store.assistantName)
+                .environmentObject(companion)
                 .preferredColorScheme(config.colorSchemeOverride)
         }
     }
@@ -156,6 +162,7 @@ struct VeraApp: App {
 struct MenuBarStatusMenu: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var companion: CompanionCoordinator
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -173,6 +180,7 @@ struct MenuBarStatusMenu: View {
             Text(waiting == 1 ? "1 scheduled run is waiting for you" : "\(waiting) scheduled runs are waiting for you")
         }
         Divider()
+        Button(config.companionActiveShortcut.map { "Quick ask  \($0.symbols)" } ?? "Quick ask") { companion.toggle() }
         Button("Open Tandem") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)

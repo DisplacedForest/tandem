@@ -374,6 +374,8 @@ enum SelfTest {
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
+        do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
+        do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
@@ -397,8 +399,8 @@ enum SelfTest {
         await runNativeStore()
         do { try await runConversationTitles() }
         catch { print("SELFTEST ERROR: conversation titles \(error)"); exit(1) }
-        do { try runSidebarPins() }
-        catch { print("SELFTEST ERROR: sidebar pins \(error)"); exit(1) }
+        do { try runSidebarDestinations() }
+        catch { print("SELFTEST ERROR: sidebar destinations \(error)"); exit(1) }
         do { try ArtifactStoreSelftest.run() }
         catch { print("SELFTEST ERROR: artifact store \(error)"); exit(1) }
         do { try await ArtifactProducerSelftest.run() }

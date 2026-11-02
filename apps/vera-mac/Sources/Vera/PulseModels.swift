@@ -6,16 +6,16 @@ enum AppSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .vera: "Vera"; case .chat: "Chats"; case .projects: "Projects"
-        case .artifacts: "Artifacts"; case .scheduled: "Scheduled"; case .integrations: "Integrations"
+        case .artifacts: "Library"; case .scheduled: "Scheduled"; case .integrations: "Integrations"
         case .pulse: "Pulse"; case .memory: "Memory"; case .agentic: "Workflows"
         }
     }
     var icon: String {
         switch self {
         case .vera: "sparkle"
-        case .chat: "bubble.left.and.bubble.right"
+        case .chat: "bubble.left"
         case .projects: "folder"
-        case .artifacts: "doc.richtext"
+        case .artifacts: "books.vertical"
         case .scheduled: "calendar.badge.clock"
         case .integrations: "puzzlepiece.extension"
         case .pulse: "newspaper"
@@ -28,7 +28,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var placeholder: (title: String, note: String)? {
         switch self {
         case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")
-        case .artifacts: ("Artifacts", "Documents, images and file changes Vera produces will be collected here to open, revise and save.")
+        case .artifacts: ("Library", "Documents, images and file changes the assistant produces are collected here to open, revise and save.")
         case .scheduled: ("Scheduled", "Work Vera runs on a schedule, with its upcoming runs and history.")
         case .integrations: ("Integrations", "Services Vera can use, with what each one is allowed to do.")
         default: nil

@@ -35,6 +35,9 @@ enum NativeSessionHTTPFixture {
         try NativeTaskFixture.require(store.selected?.messages.first(where: { $0.id == first })?.state == .streaming,
                                       "The first native HTTP answer must remain independently active")
         store.stopAnswer(first)
+        try await NativeSessionFixture.eventually("Stopping settles before the late completion") {
+            !store.isSchedulingTurns && store.conversationTurns.first(where: { $0.assistantMessageID == first })?.state == .stopped
+        }
         let stopped = store.selected!.messages.first(where: { $0.id == first })!
         _ = try await URLSession.shared.data(from: base.appendingPathComponent("release"))
         try await Task.sleep(for: .milliseconds(100))
