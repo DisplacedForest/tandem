@@ -88,7 +88,7 @@ When the native app has a Vera engine configured, chat and vision requests reser
 
 ### Vera and ordinary chats
 
-The app has a compact icon rail beside a contextual sidebar. The rail lists Vera, Chats, Projects, Artifacts, Scheduled, Integrations, Pulse and Memory, with Settings at the bottom, and the sidebar shows content for the selected item. Under Chats it holds **New chat**, search and the grouped history. Under Pulse it has three rows: Feed, Workflows and Activity. **Vera** is one pinned, ongoing conversation on the native chat engine. It keeps its own history and draft, separate from focused chats, and cannot be deleted from the list. **New chat** opens a separate ordinary conversation, and drafts are kept per conversation. Integrations is in the rail as a destination with an empty state describing what it will hold. It has no capability yet. Projects is live, see [Projects](#projects). Artifacts is live, see [Artifacts](#artifacts). Scheduled is live, see [Scheduled work](#scheduled-work). Ordinary chats answer one message at a time in each conversation and save later messages in a visible queue. Returning to Vera preserves its thread, draft and tasks. Ordinary chat queues allow at most two active foreground turns across their conversations and eight waiting messages. A full queue keeps your draft and attachments intact.
+The app has a compact icon rail beside a contextual sidebar. The rail lists Vera, Chats, Projects, Artifacts, Scheduled, Integrations, Pulse and Memory, with Settings at the bottom, and the sidebar shows content for the selected item. Under Chats it holds **New chat**, search and the grouped history. Under Pulse it has three rows: Feed, Workflows and Activity. **Vera** is one pinned, ongoing conversation on the native chat engine. It keeps its own history and draft, separate from focused chats, and cannot be deleted from the list. **New chat** opens a separate ordinary conversation, and drafts are kept per conversation. Integrations is live, see [Connected services](#connected-services). Projects is live, see [Projects](#projects). Artifacts is live, see [Artifacts](#artifacts). Scheduled is live, see [Scheduled work](#scheduled-work). Ordinary chats answer one message at a time in each conversation and save later messages in a visible queue. Returning to Vera preserves its thread, draft and tasks. Ordinary chat queues allow at most two active foreground turns across their conversations and eight waiting messages. A full queue keeps your draft and attachments intact.
 
 Each answer has its own Stop control and tool approvals. Stopping an answer does not cancel a separate research task; use the task card's Stop research control for that. Accepted messages are saved before the composer clears. After a restart, unsent messages can resume with their original settings, while interrupted requests stay available for explicit review or retry. An uncertain action is never automatically replayed. Ephemeral keyed configurations without a stable saved profile require a new message after restart.
 
@@ -107,6 +107,14 @@ A project groups related work. It has a name, instructions, granted folders and 
 A chat opened inside a project follows the project's instructions, applied after your persona and before the chat's own instructions. It can read and edit files in the project's folders without you granting them again, alongside any folders granted to the chat itself. Attached files can be read through the file tools as a read-only folder, and the tools refuse to change them and say so. A conversation belongs to at most one project. From the chat list, **Move to project** and **Remove from project** change membership, and the next turn gains or loses the project context.
 
 Memory can be scoped too. Facts suggested from a conversation inside a project are tagged with that project, and recall inside the project puts those facts ahead of shared ones within the usual limits. Outside the project, recall works as it always has. The Memory Library can filter by project and shows which project a fact came from. See [Project scope](docs/NATIVE_MEMORY.md#project-scope) for the details. Projects don't index the contents of attached files, and they can't be shared, templated or nested.
+
+### Connected services
+
+**Integrations** in the rail has two views. **Personal** lists every remote MCP server you have set up, with its state in plain words and the action that fits: Connect, Sign in or Disconnect. Under each server you see the read tools it offers and can turn each one on or off, run **Try** to test a read tool without a model, and choose where the server applies: focused chats, the Vera thread or background work.
+
+**Public** is a bundled starter list of well-known remote HTTP MCP servers, each with its name, publisher, description, category, endpoint and whether it needs no sign-in, an access token or an account sign-in. Search it or browse by category. **Install** opens a review of the endpoint, the proposed read tools (any of which you can leave off) and the scopes. Confirming creates your personal entry and continues with the usual connect or sign-in step. An entry you already installed shows Installed. Listing a publisher is not a verification of the service, so review each one before you connect it.
+
+**Manage** opens a sheet with the entry's name, endpoint, read tools, scopes, authentication and timeout, plus **Remove**. Removing a server disconnects it, and its tools stop being available everywhere at once. Local stdio servers are not supported. See [Connected service tools](docs/MCP.md) for authentication, limits and the configuration file.
 
 ### The dot
 
@@ -170,9 +178,9 @@ Everything Vera does on her own is also auditable in one place: an Activity feed
 
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic canvas: every autonomous flow, live" width="850"></div>
 
-### Integrations: configured from the app
+### Plugins: configured from the app
 
-Each integration is a card: enter a URL and key, test, enable. Enabling an integration activates the capability across the stack. Experimental features (whole-house behavior modeling, media curation) require explicit consent and state exactly what they do before they can be enabled.
+This is the Settings, Plugins store for the optional server-side integrations, separate from Connected services in the rail. Each integration is a card: enter a URL and key, test, enable. Enabling an integration activates the capability across the stack. Experimental features (whole-house behavior modeling, media curation) require explicit consent and state exactly what they do before they can be enabled.
 
 <div align="center"><img src="docs/assets/plugins.png" alt="Integrations with live status" width="850"></div>
 

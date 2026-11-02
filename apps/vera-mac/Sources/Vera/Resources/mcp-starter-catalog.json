@@ -1,0 +1,165 @@
+{
+  "entries": [
+    {
+      "id": "deepwiki",
+      "name": "DeepWiki",
+      "publisher": "Cognition (Devin)",
+      "description": "Documentation and answers for public GitHub repositories.",
+      "category": "Documentation",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "read_wiki_structure",
+        "read_wiki_contents",
+        "ask_question"
+      ],
+      "source_url": "https://docs.devin.ai/work-with-devin/deepwiki-mcp"
+    },
+    {
+      "id": "context7",
+      "name": "Context7",
+      "publisher": "Upstash",
+      "description": "Current library and framework documentation for coding questions.",
+      "category": "Documentation",
+      "url": "https://mcp.context7.com/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "resolve-library-id",
+        "get-library-docs"
+      ],
+      "source_url": "https://github.com/upstash/context7"
+    },
+    {
+      "id": "microsoft-learn",
+      "name": "Microsoft Learn",
+      "publisher": "Microsoft",
+      "description": "Search and read Microsoft Learn documentation and code samples.",
+      "category": "Documentation",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "microsoft_docs_search",
+        "microsoft_docs_fetch",
+        "microsoft_code_sample_search"
+      ],
+      "source_url": "https://learn.microsoft.com/training/support/mcp"
+    },
+    {
+      "id": "cloudflare-docs",
+      "name": "Cloudflare Docs",
+      "publisher": "Cloudflare",
+      "description": "Search Cloudflare's developer documentation.",
+      "category": "Documentation",
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "search_cloudflare_documentation"
+      ],
+      "source_url": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/"
+    },
+    {
+      "id": "astro-docs",
+      "name": "Astro Docs",
+      "publisher": "Astro",
+      "description": "Search the Astro web framework documentation.",
+      "category": "Documentation",
+      "url": "https://mcp.docs.astro.build/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "search_astro_docs"
+      ],
+      "source_url": "https://docs.astro.build/en/guides/mcp/"
+    },
+    {
+      "id": "semgrep",
+      "name": "Semgrep",
+      "publisher": "Semgrep",
+      "description": "Static analysis rules and findings from Semgrep.",
+      "category": "Developer tools",
+      "url": "https://mcp.semgrep.ai/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "semgrep_rule_schema",
+        "get_supported_languages",
+        "semgrep_findings"
+      ],
+      "source_url": "https://semgrep.dev/docs/mcp"
+    },
+    {
+      "id": "globalping",
+      "name": "Globalping",
+      "publisher": "jsDelivr",
+      "description": "Run network measurements from probes around the world.",
+      "category": "Network",
+      "url": "https://mcp.globalping.dev/mcp",
+      "authentication": "none",
+      "read_tools": [
+        "ping",
+        "traceroute",
+        "dns",
+        "mtr",
+        "http",
+        "locations"
+      ],
+      "source_url": "https://github.com/jsdelivr/globalping-mcp-server"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "publisher": "GitHub",
+      "description": "Read repositories, issues, pull requests and code on GitHub.",
+      "category": "Code hosting",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "authentication": "bearer",
+      "read_tools": [
+        "get_me",
+        "search_repositories",
+        "get_file_contents",
+        "list_issues",
+        "get_issue",
+        "search_issues",
+        "list_pull_requests",
+        "get_pull_request",
+        "search_code",
+        "list_commits"
+      ],
+      "source_url": "https://github.com/github/github-mcp-server"
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "publisher": "Sentry",
+      "description": "Look up Sentry organizations, projects, issues and events.",
+      "category": "Monitoring",
+      "url": "https://mcp.sentry.dev/mcp",
+      "authentication": "bearer",
+      "read_tools": [
+        "find_organizations",
+        "find_projects",
+        "find_issues",
+        "get_issue_details",
+        "search_events",
+        "search_docs"
+      ],
+      "source_url": "https://docs.sentry.io/product/sentry-mcp/"
+    },
+    {
+      "id": "hugging-face",
+      "name": "Hugging Face",
+      "publisher": "Hugging Face",
+      "description": "Search models, datasets, papers and Spaces on the Hugging Face Hub.",
+      "category": "Models and datasets",
+      "url": "https://huggingface.co/mcp",
+      "authentication": "bearer",
+      "read_tools": [
+        "model_search",
+        "dataset_search",
+        "paper_search",
+        "space_search",
+        "hub_repo_details",
+        "hf_doc_search"
+      ],
+      "source_url": "https://huggingface.co/settings/mcp"
+    }
+  ]
+}
