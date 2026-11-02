@@ -29,7 +29,7 @@ enum NativeTaskTools {
                     "deliverables": .object(["type": .string("array"), "minItems": .number(1), "maxItems": .number(5),
                         "items": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(500)])]),
                 ]),
-            ]), confirmation: .none, timeout: .seconds(10), isAvailable: { true }, execute: { arguments in
+            ]), confirmation: .none, timeout: .seconds(10), effect: .read, isAvailable: { true }, execute: { arguments in
                 guard Set(arguments.keys).isSubset(of: ["worker_type", "title", "objective", "deliverables"]),
                       case .string(let workerType) = arguments["worker_type"],
                       NativeResearchTaskRequest.chatWorkerTypes.contains(workerType),

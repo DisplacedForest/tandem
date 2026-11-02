@@ -3,10 +3,19 @@ import Foundation
 final class NativeFolderGrantSource: @unchecked Sendable {
     private let lock = NSLock()
     private var grants: [String: [FolderGrant]] = [:]
+    private var revisionValue = 0
+
+    var revision: Int {
+        lock.lock(); defer { lock.unlock() }
+        return revisionValue
+    }
 
     func set(_ value: [FolderGrant], for conversationID: String) {
         lock.lock(); defer { lock.unlock() }
-        if value.isEmpty { grants.removeValue(forKey: conversationID) } else { grants[conversationID] = value }
+        let next: [FolderGrant]? = value.isEmpty ? nil : value
+        guard grants[conversationID] != next else { return }
+        grants[conversationID] = next
+        revisionValue += 1
     }
 
     func grants(for conversationID: String) -> [FolderGrant] {
@@ -16,7 +25,10 @@ final class NativeFolderGrantSource: @unchecked Sendable {
 
     func replaceAll(_ conversations: [Conversation]) {
         lock.lock(); defer { lock.unlock() }
-        grants = Dictionary(uniqueKeysWithValues: conversations.filter { !$0.grants.isEmpty }.map { ($0.id, $0.grants) })
+        let next = Dictionary(uniqueKeysWithValues: conversations.filter { !$0.grants.isEmpty }.map { ($0.id, $0.grants) })
+        guard grants != next else { return }
+        grants = next
+        revisionValue += 1
     }
 }
 

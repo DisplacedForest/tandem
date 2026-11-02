@@ -275,6 +275,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeScheduleCheckInsV27") { db in try NativeScheduleStore.migrateCheckIns(db) }
         migrator.registerMigration("nativeDotProfileV26") { db in try NativeDotProfileStore.migrate(db) }
         migrator.registerMigration("nativeCompanionOriginsV32") { db in try Self.migrateCompanionOrigins(db) }
+        migrator.registerMigration("nativeEffectLedgerV29") { db in try NativeEffectLedgerStore.migrate(db) }
         try migrator.migrate(database)
     }
 

@@ -168,6 +168,8 @@ enum NativeCapabilityTools {
             parameters: declaration.parameters,
             confirmation: declaration.confirmation,
             timeout: .seconds(declaration.timeoutSeconds),
+            effect: declaration.method == .get ? .read : .write,
+            action: declaration.method == .get ? nil : .networkSends,
             isAvailable: { resolve(declaration, base: base()) != nil },
             execute: { arguments in
                 try await call(declaration, arguments: arguments, base: base(), client: client)

@@ -135,6 +135,8 @@ final class ChatStore: ObservableObject {
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
+    var rulesRevision: Int { nativeRuleSource.revision }
+    var grantsRevision: Int { nativeGrantSource.revision }
     @Published var schedules: [NativeSchedule] = []
     @Published var scheduleRuns: [String: [NativeScheduleRun]] = [:]
     @Published var scheduleError: String?

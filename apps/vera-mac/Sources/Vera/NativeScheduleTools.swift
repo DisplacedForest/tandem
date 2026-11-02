@@ -46,7 +46,7 @@ enum NativeScheduleTools {
                                       "description": .string("For every_hours")]),
                     "at": .object(["type": .string("string"), "description": .string("YYYY-MM-DDTHH:MM local time, for once")]),
                 ]),
-            ]), confirmation: .required, timeout: .seconds(10), isAvailable: { true }, execute: { arguments in
+            ]), confirmation: .required, timeout: .seconds(10), action: .networkSends, isAvailable: { true }, execute: { arguments in
                 let draft = try draft(from: arguments, now: now(), timeZone: timeZone())
                 if draft.workerType == "research", !searchAvailable() {
                     throw NativeToolError.failed(NativeTaskTools.searchUnavailable)

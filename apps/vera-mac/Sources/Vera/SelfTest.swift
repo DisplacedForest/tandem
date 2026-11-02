@@ -400,6 +400,7 @@ enum SelfTest {
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }
+        do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()

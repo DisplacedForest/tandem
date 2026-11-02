@@ -600,25 +600,40 @@ final class NativeRuleSource: @unchecked Sendable {
     private let lock = NSLock()
     private var global: NativeRules = .defaults
     private var conversations: [String: NativeConversationRules] = [:]
+    private var revisionValue = 0
+
+    var revision: Int {
+        lock.lock(); defer { lock.unlock() }
+        return revisionValue
+    }
 
     func setGlobal(_ rules: NativeRules) {
         lock.lock(); defer { lock.unlock() }
+        guard global != rules else { return }
         global = rules
+        revisionValue += 1
     }
 
     func set(_ rules: NativeConversationRules, for conversationID: String) {
         lock.lock(); defer { lock.unlock() }
-        if rules.isEmpty { conversations.removeValue(forKey: conversationID) } else { conversations[conversationID] = rules }
+        let next: NativeConversationRules? = rules.isEmpty ? nil : rules
+        guard conversations[conversationID] != next else { return }
+        conversations[conversationID] = next
+        revisionValue += 1
     }
 
     func replaceAll(_ pairs: [(String, NativeConversationRules)]) {
         lock.lock(); defer { lock.unlock() }
-        conversations = Dictionary(pairs.filter { !$0.1.isEmpty }, uniquingKeysWith: { first, _ in first })
+        let next = Dictionary(pairs.filter { !$0.1.isEmpty }, uniquingKeysWith: { first, _ in first })
+        guard conversations != next else { return }
+        conversations = next
+        revisionValue += 1
     }
 
     func resolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
         lock.lock(); defer { lock.unlock() }
-        return NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(), requestText: requestText)
+        return NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(),
+                                  requestText: requestText, revision: revisionValue)
     }
 }
 
@@ -626,6 +641,14 @@ struct NativeRuleResolver: Sendable {
     var global: NativeRules
     var conversation: NativeConversationRules
     var requestText: String
+    let revision: Int
+
+    init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0) {
+        self.global = global
+        self.conversation = conversation
+        self.requestText = requestText
+        self.revision = revision
+    }
 
     func choice(for action: NativeActionClass) -> NativeRuleChoice {
         let base = global.choice(for: action)
