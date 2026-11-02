@@ -272,7 +272,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
         migrator.registerMigration("artifactsV24") { db in try Self.migrateArtifacts(db) }
         migrator.registerMigration("projectsV25") { db in try Self.migrateProjects(db) }
-        migrator.registerMigration("nativeScheduleCheckInsV26") { db in try NativeScheduleStore.migrateCheckIns(db) }
+        migrator.registerMigration("nativeScheduleCheckInsV27") { db in try NativeScheduleStore.migrateCheckIns(db) }
         try migrator.migrate(database)
     }
 
