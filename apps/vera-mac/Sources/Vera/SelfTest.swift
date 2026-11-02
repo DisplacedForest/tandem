@@ -1479,6 +1479,12 @@ enum SelfTest {
                 nativeConfig: chatConfig,
                 nativeTransport: chatTransport, repository: repository, nativeMemorySettings: memorySettings, nativeMemoryService: memoryService)
             await store.connect()
+            for _ in 0..<1_000 where !(store.memoryIndexingProgress == nil && (store.memoryVectorStatus?.complete ?? false)) {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard store.memoryIndexingProgress == nil, store.memoryVectorStatus?.complete == true else {
+                print("SELFTEST ERROR: native memory recall backfill did not finish before the question (vectors \(String(describing: store.memoryVectorStatus)))"); exit(1)
+            }
             store.sendText("What do I like?")
             await waitForGeneration(store)
             for _ in 0..<100 where memoryService.extractionCalls == 0 {
