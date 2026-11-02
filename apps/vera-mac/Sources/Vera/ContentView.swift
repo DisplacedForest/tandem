@@ -27,7 +27,9 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     Group {
                         switch store.section {
-                        case .vera, .chat: ChatPane(workCollapsed: hasWork && (!wideEnoughForWork || store.showCanvas))
+                        case .vera, .chat: ChatPane(workCollapsed: ConversationPresence.showsWorkButton(
+                            references: store.nativeTaskReferences, conversationID: store.selectedID,
+                            wide: wideEnoughForWork, canvasOpen: store.showCanvas))
                         case .pulse: PulseView()
                         case .memory: MemoryView()
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -41,7 +43,9 @@ struct ContentView: View {
                     if store.showCanvas, chatSection {
                         Divider()
                         CanvasPanel().frame(width: 480)
-                    } else if chatSection, hasWork, wideEnoughForWork {
+                    } else if chatSection, ConversationPresence.showsWorkPanel(
+                        references: store.nativeTaskReferences, conversationID: store.selectedID,
+                        wide: wideEnoughForWork, canvasOpen: store.showCanvas) {
                         OngoingWorkPanel(conversationID: store.selectedID, onSelect: store.revealOngoingWork)
                             .frame(width: OngoingWorkMetrics.panelWidth)
                     }
@@ -77,7 +81,6 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
-    private var hasWork: Bool { !store.nativeTaskReferences.isEmpty }
     private var wideEnoughForWork: Bool { windowWidth >= OngoingWorkMetrics.minimumWindowWidth }
 
     private var deletionTitle: String {
@@ -267,9 +270,7 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.isVeraThread(conversation?.id) {
-                DotHeaderView()
-            } else if showsHeader {
+            if showsHeader, ConversationPresence.headerKind(companionThread: store.isVeraThread(conversation?.id)) == .conversation {
                 ConversationHeader(name: store.assistantName, status: store.conversationStatusLine)
             }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
@@ -303,7 +304,8 @@ private struct ChatPane: View {
                                            onToolDecision: { decision in
                                                store.resolveTurnConfirmation(msg.id, decision: decision,
                                                    requestID: confirmation?.id, token: confirmationToken)
-                                           })
+                                           },
+                                           companionThread: store.isVeraThread(convo.id))
                                     .background(
                                         RoundedRectangle(cornerRadius: 10)
                                             .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
@@ -364,12 +366,21 @@ private struct ChatPane: View {
             }
         }
         .sheet(isPresented: $showingWork) {
-            OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
-                showingWork = false
-                store.revealOngoingWork(reference)
-            }, onClose: { showingWork = false })
-            .frame(width: 420, height: 560)
-            .environmentObject(store)
+            if OngoingWork.items(store.nativeTaskReferences, conversationID: conversation?.id).isEmpty {
+                OngoingWorkAllSheet(onGo: { reference in
+                    showingWork = false
+                    store.revealOngoingWork(reference)
+                })
+                .frame(width: 420, height: 560)
+                .environmentObject(store)
+            } else {
+                OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
+                    showingWork = false
+                    store.revealOngoingWork(reference)
+                }, onClose: { showingWork = false })
+                .frame(width: 420, height: 560)
+                .environmentObject(store)
+            }
         }
         .onAppear(perform: refreshDotSetup)
         .onChange(of: store.dotProfile) { refreshDotSetup() }
@@ -383,21 +394,25 @@ private struct ChatPane: View {
 struct ConversationHeader: View {
     let name: String
     let status: String
+    var companionThread = false
 
     var body: some View {
         HStack(spacing: 12) {
-            CompanionAvatar(size: ConversationMetrics.avatarSize)
+            ConversationFigureView(figure: ConversationPresence.headerFigure(companionThread: companionThread),
+                                   size: ConversationMetrics.avatarSize)
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
                     .font(.system(size: ConversationMetrics.headerNameSize, weight: .semibold))
                     .foregroundStyle(Theme.warmTextPrimary)
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    Circle().fill(Theme.statusGreen).frame(width: 7, height: 7)
-                    Text(status)
-                        .font(.system(size: ConversationMetrics.metaSize))
-                        .foregroundStyle(Theme.warmTextSecondary)
-                        .lineLimit(1)
+                if ConversationPresence.headerShowsStatus(companionThread: companionThread) {
+                    HStack(spacing: 6) {
+                        Circle().fill(Theme.statusGreen).frame(width: 7, height: 7)
+                        Text(status)
+                            .font(.system(size: ConversationMetrics.metaSize))
+                            .foregroundStyle(Theme.warmTextSecondary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .accessibilityElement(children: .combine)
@@ -453,7 +468,7 @@ private struct EmptyChatView: View {
             Spacer()
             VStack(spacing: 22) {
                 HStack(spacing: 14) {
-                    CompanionAvatar(size: 56)
+                    ConversationFigureView(figure: ConversationPresence.greetingFigure(companionThread: store.isVeraThread(store.selectedID)), size: 56)
                     Text(greeting).font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
@@ -638,11 +653,14 @@ struct MessageRow: View {
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
     var onToolDecision: ((NativeToolDecision) -> Void)? = nil
+    var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             if message.role == .assistant {
-                CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
-                    .padding(.top, 4)
+                if ConversationPresence.replyFigure(companionThread: companionThread) == .companion {
+                    CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
+                        .padding(.top, 4)
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     AssistantBody(message: message, section: .bubble, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
