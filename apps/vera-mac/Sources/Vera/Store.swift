@@ -2536,45 +2536,61 @@ final class ChatStore: ObservableObject {
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
-                for try await snapshot in toolLoop.stream(
-                    messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
-                ) {
-                    try await ensureTurnCurrent(turn)
-                    guard let location = turnLocation(turn) else { throw CancellationError() }
-                    let i = location.conversation
-                    let replyIndex = location.reply
-                    partialAnswer = snapshot.isPartial
-                    let (afterArt, arts) = Artifact.parse(snapshot.content)
-                    let (clean, ask) = VeraAsk.parse(afterArt)
-                    conversations[i].messages[replyIndex].text = clean
-                    conversations[i].messages[replyIndex].ask = ask
-                    conversations[i].messages[replyIndex].artifacts = arts
-                    conversations[i].messages[replyIndex].toolActivities = snapshot.activities
-                    for activity in snapshot.activities {
-                        guard let image = NativeImageTools.attachment(from: activity),
-                              !conversations[i].messages[replyIndex].attachments.contains(where: { $0.fileName == image.fileName }) else { continue }
-                        conversations[i].messages[replyIndex].attachments.append(image)
-                        recordImageArtifact(image, activity: activity, conversationID: id,
-                                            messageID: conversations[i].messages[replyIndex].id.uuidString,
-                                            revising: revisionTarget)
-                    }
-                    let lifted = NativeResearchSources.lift(snapshot.activities)
-                    if !lifted.isEmpty {
-                        conversations[i].messages[replyIndex].sources =
-                            NativeMemoryCitation.merging(lifted, grounding: groundingAssembly?.sources ?? [], memories: selectedMemories)
-                    }
-                    if let latest = arts.last,
-                       latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
-                        openArtifact(latest)
-                    }
-                    setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
-                        .map { "Using \($0.title)…" } ?? (turnCheckpointStalled(turn) ? Self.saveWaitingStatus : nil), turn: turn)
-                    if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
-                        scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
-                        recordCanvasArtifacts(arts, conversationID: id,
-                                              messageID: conversations[i].messages[replyIndex].id.uuidString,
-                                              revising: revisionTarget)
-                        lastCheckpoint = Date()
+                var transientRetries = 0
+                var streamedAny = false
+                while true {
+                    do {
+                        for try await snapshot in toolLoop.stream(
+                            messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
+                        ) {
+                            if !snapshot.content.isEmpty || !snapshot.activities.isEmpty { streamedAny = true }
+                            try await ensureTurnCurrent(turn)
+                            guard let location = turnLocation(turn) else { throw CancellationError() }
+                            let i = location.conversation
+                            let replyIndex = location.reply
+                            partialAnswer = snapshot.isPartial
+                            let (afterArt, arts) = Artifact.parse(snapshot.content)
+                            let (clean, ask) = VeraAsk.parse(afterArt)
+                            conversations[i].messages[replyIndex].text = clean
+                            conversations[i].messages[replyIndex].ask = ask
+                            conversations[i].messages[replyIndex].artifacts = arts
+                            conversations[i].messages[replyIndex].toolActivities = snapshot.activities
+                            for activity in snapshot.activities {
+                                guard let image = NativeImageTools.attachment(from: activity),
+                                      !conversations[i].messages[replyIndex].attachments.contains(where: { $0.fileName == image.fileName }) else { continue }
+                                conversations[i].messages[replyIndex].attachments.append(image)
+                                recordImageArtifact(image, activity: activity, conversationID: id,
+                                                    messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                                    revising: revisionTarget)
+                            }
+                            let lifted = NativeResearchSources.lift(snapshot.activities)
+                            if !lifted.isEmpty {
+                                conversations[i].messages[replyIndex].sources =
+                                    NativeMemoryCitation.merging(lifted, grounding: groundingAssembly?.sources ?? [], memories: selectedMemories)
+                            }
+                            if let latest = arts.last,
+                               latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
+                                openArtifact(latest)
+                            }
+                            setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
+                                .map { "Using \($0.title)…" } ?? (turnCheckpointStalled(turn) ? Self.saveWaitingStatus : nil), turn: turn)
+                            if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
+                                scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
+                                recordCanvasArtifacts(arts, conversationID: id,
+                                                      messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                                      revising: revisionTarget)
+                                lastCheckpoint = Date()
+                            }
+                        }
+                        break
+                    } catch {
+                        guard transientRetries == 0, !streamedAny, !(error is CancellationError),
+                              NativeTransientFailure.isTransient(error) else { throw error }
+                        transientRetries += 1
+                        try await ensureTurnCurrent(turn)
+                        setTurnStatus(NativeTransientFailure.retryingStatus, turn: turn)
+                        try await Task.sleep(for: .seconds(NativeTransientFailure.retryPauseSeconds))
+                        try await ensureTurnCurrent(turn)
                     }
                 }
                 try Task.checkCancellation()
@@ -2632,7 +2648,7 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].state = .interrupted
                     conversations[i].messages[replyIndex].failure = error is CancellationError
                         ? "This answer stopped before another step could run. Check its settings before retrying."
-                        : error.localizedDescription
+                        : NativeTransientFailure.describe(error)
                     conversations[i].updatedAt = Date()
                     if userIndex >= 0, userIndex < conversations[i].messages.count,
                        conversations[i].messages[userIndex].routeNote?.route == .bridged,
