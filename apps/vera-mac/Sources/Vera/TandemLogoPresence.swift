@@ -11,7 +11,7 @@ final class TandemLogoPresence: ObservableObject {
     private var snapshot: TandemLogoSnapshot?
     private var appActive = true
     private var launchPending = false
-    private var activeTurnConversation: String?
+    private var activeTurn: TandemLogoTurnFocus?
 
     init(store: ChatStore, voice: VoiceSession, controller: TandemMotionController = TandemMotionController()) {
         self.store = store
@@ -24,7 +24,7 @@ final class TandemLogoPresence: ObservableObject {
         appActive = NSApplication.shared.isActive
         launchPending = true
         snapshot = nil
-        activeTurnConversation = nil
+        activeTurn = nil
         let center = NotificationCenter.default
         center.publisher(for: NSApplication.didBecomeActiveNotification)
             .receive(on: DispatchQueue.main)
@@ -35,7 +35,8 @@ final class TandemLogoPresence: ObservableObject {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.setActive(false) } }
             .store(in: &subscriptions)
         let storeChanges = store.$generating.map { _ in () }
-            .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () })
+            .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () },
+                        store.$turnConfirmations.map { _ in () })
         let voiceChanges = voice.$state.removeDuplicates().map { _ in () }
             .merge(with: voice.$isPlayingAudio.removeDuplicates().map { _ in () })
         storeChanges.merge(with: voiceChanges)
@@ -48,7 +49,7 @@ final class TandemLogoPresence: ObservableObject {
     func stop() {
         subscriptions.removeAll()
         snapshot = nil
-        activeTurnConversation = nil
+        activeTurn = nil
         controller.stop()
     }
 
@@ -57,18 +58,47 @@ final class TandemLogoPresence: ObservableObject {
         refresh()
     }
 
-    static func selectedTurnRunning(_ store: ChatStore) -> Bool {
-        guard store.generating, let id = store.selectedID else { return false }
-        if store.turnExecutions.isEmpty { return true }
-        return store.turnExecutions.values.contains { $0.record.conversationID == id }
+    static func selectedExecution(_ store: ChatStore) -> NativeTurnExecution? {
+        guard let id = store.selectedID else { return nil }
+        return store.turnExecutions.values.first { $0.record.conversationID == id }
     }
 
-    static func terminalEvent(of message: Message?) -> (completed: Bool, failed: Bool, canceled: Bool) {
-        guard let message else { return (false, false, false) }
-        if message.failure != nil { return (false, true, false) }
-        if message.state == .interrupted { return (false, false, true) }
-        let spoke = message.state == .complete && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (spoke, false, false)
+    static func selectedTurnRunning(_ store: ChatStore) -> Bool {
+        guard store.generating, store.selectedID != nil else { return false }
+        if store.turnExecutions.isEmpty { return true }
+        return selectedExecution(store) != nil
+    }
+
+    static func decisionPending(confirmations: [UUID: NativeToolConfirmationRequest], assistantMessageID: UUID?,
+                                fallback: Bool) -> Bool {
+        guard let assistantMessageID else { return fallback }
+        return confirmations[assistantMessageID] != nil
+    }
+
+    static func selectedDecisionPending(_ store: ChatStore) -> Bool {
+        guard selectedTurnRunning(store) else { return false }
+        let execution = selectedExecution(store)
+        return decisionPending(confirmations: store.turnConfirmations, assistantMessageID: execution?.record.assistantMessageID,
+                               fallback: store.turnExecutions.isEmpty && store.pendingToolConfirmation != nil)
+    }
+
+    static func terminalEvent(turn: NativeConversationTurn.State?, message: Message?) -> TandemLogoTurnOutcome {
+        if let turn {
+            switch turn {
+            case .stopped: return .canceled
+            case .interrupted: return .failed
+            case .complete: return message.map(Self.spoke) == true ? .completed : .none
+            case .pending, .running: return .none
+            }
+        }
+        guard let message else { return .none }
+        if message.failure != nil { return .failed }
+        if message.state == .interrupted { return .canceled }
+        return spoke(message) ? .completed : .none
+    }
+
+    private static func spoke(_ message: Message) -> Bool {
+        message.state == .complete && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func refresh() {
@@ -80,16 +110,24 @@ final class TandemLogoPresence: ObservableObject {
         let selectedID = store.selectedID
         let running = Self.selectedTurnRunning(store)
         next.generating = running
-        next.decisionPending = running && store.pendingToolConfirmation != nil
+        next.decisionPending = Self.selectedDecisionPending(store)
         if running {
-            activeTurnConversation = selectedID
-        } else if let ended = activeTurnConversation {
-            activeTurnConversation = nil
-            if ended == selectedID {
-                let event = Self.terminalEvent(of: store.selected?.messages.last(where: { $0.role == .assistant }))
-                next.turnCompleted = event.completed
-                next.turnFailed = event.failed
-                next.turnCanceled = event.canceled
+            let execution = Self.selectedExecution(store)
+            activeTurn = TandemLogoTurnFocus(conversationID: selectedID, turnID: execution?.record.id,
+                                             assistantMessageID: execution?.record.assistantMessageID)
+        } else if let ended = activeTurn {
+            activeTurn = nil
+            if ended.conversationID == selectedID {
+                let turnState = ended.turnID.flatMap { id in store.conversationTurns.first { $0.id == id }?.state }
+                let messages = store.selected?.messages ?? []
+                let message = ended.assistantMessageID.flatMap { id in messages.first { $0.id == id } }
+                    ?? messages.last(where: { $0.role == .assistant })
+                switch Self.terminalEvent(turn: turnState, message: message) {
+                case .completed: next.turnCompleted = true
+                case .failed: next.turnFailed = true
+                case .canceled: next.turnCanceled = true
+                case .none: break
+                }
             }
         }
         if let voice {
@@ -102,6 +140,16 @@ final class TandemLogoPresence: ObservableObject {
         if loop && controller.activeSequence == cue.rawValue { return }
         controller.play(cue.rawValue, loop: loop)
     }
+}
+
+struct TandemLogoTurnFocus: Equatable {
+    var conversationID: String?
+    var turnID: UUID?
+    var assistantMessageID: UUID?
+}
+
+enum TandemLogoTurnOutcome: Equatable {
+    case none, completed, failed, canceled
 }
 
 struct LiveTandemLogo: View {

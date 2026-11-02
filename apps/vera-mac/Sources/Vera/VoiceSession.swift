@@ -32,6 +32,7 @@ final class VoiceSession: ObservableObject {
     private var sttStream: TranscriptionStream?   // open while listening (streaming STT)
     private var warmed = false
     private var playbackHold: Task<Void, Never>?
+    private var playbackEvents = PlaybackEventFilter()
 
     var isActive: Bool { state != .idle }
 
@@ -51,10 +52,11 @@ final class VoiceSession: ObservableObject {
         mic.onUtterance = { [weak self] _ in Task { @MainActor in self?.handleEndOfTurn() } }
         mic.onDebug = { [weak self] floor, sp in Task { @MainActor in self?.debugFloor = floor; self?.debugSpeech = sp } }
         queue.onDrained = { [weak self] in Task { @MainActor in self?.handleDrained() } }
-        queue.onPlayback = { [weak self] playing in Task { @MainActor in self?.playbackChanged(playing) } }
+        queue.onPlayback = { [weak self] sequence, playing in Task { @MainActor in self?.playbackChanged(sequence, playing) } }
     }
 
-    private func playbackChanged(_ playing: Bool) {
+    private func playbackChanged(_ sequence: Int, _ playing: Bool) {
+        guard playbackEvents.admits(sequence) else { return }
         playbackHold?.cancel()
         playbackHold = nil
         if playing {
@@ -300,5 +302,15 @@ final class VoiceSession: ObservableObject {
             }
         default: return false
         }
+    }
+}
+
+struct PlaybackEventFilter: Sendable {
+    private(set) var latest = 0
+
+    mutating func admits(_ sequence: Int) -> Bool {
+        guard sequence > latest else { return false }
+        latest = sequence
+        return true
     }
 }
