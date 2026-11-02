@@ -140,6 +140,7 @@ final class ChatStore: ObservableObject {
     @Published var dotProfile = NativeDotProfile()
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
+    let companionCompactor = NativeCompanionCompactor()
     var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
@@ -2248,12 +2249,16 @@ final class ChatStore: ObservableObject {
             allowed.remove(NativeFolderTools.toolID)
             allowed.remove(NativeCommandTools.toolID)
         }
+        let companionNotesTool = companionNotesToolDefinition(for: turn, contextCeiling: nativeConfig?.options.contextCeiling)
+        if companionNotesTool != nil, companionAllowsNotesTool(turn, supportsTools: supportsTools, authority: authority) {
+            allowed.insert(NativeContinuityNotesTool.toolID)
+        }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
         let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
             + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
             + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true)
-            + (scheduleToolDefinition().map { [$0] } ?? []))
+            + (scheduleToolDefinition().map { [$0] } ?? []) + (companionNotesTool.map { [$0] } ?? []))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2333,6 +2338,10 @@ final class ChatStore: ObservableObject {
                 },
                 alwaysAvailable: true))
         }
+        let companionNotesTool = companionNotesToolDefinition(for: turn, contextCeiling: nativeConfig.options.contextCeiling)
+        if let companionNotesTool {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [companionNotesTool])
+        }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2361,6 +2370,9 @@ final class ChatStore: ObservableObject {
         }
         if !(capabilityProfile.supportsTools && authority.allowsTools && commandsConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeCommandTools.toolID)
+        }
+        if companionNotesTool != nil, companionAllowsNotesTool(turn, supportsTools: capabilityProfile.supportsTools, authority: authority) {
+            enabledToolIDs.insert(NativeContinuityNotesTool.toolID)
         }
         let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
             ? NativeFolderTools.grantNote(turnGrants) : nil
@@ -2505,7 +2517,10 @@ final class ChatStore: ObservableObject {
                     conversations[location.conversation].messages[location.reply].sources =
                         (groundingAssembly?.sources ?? []) + NativeMemoryCitation.sources(selectedMemories)
                 }
-                let assembled = NativeContextAssembler.assemble(NativeContextInput(
+                let companionContext = companionTurnContext(
+                    conversationID: id, contextCeiling: nativeConfig.options.contextCeiling,
+                    notesToolAvailable: activeTools.contains { $0.id == NativeContinuityNotesTool.toolID })
+                let (_, history) = NativeCompanionContext.compose(input: NativeContextInput(
                     persona: persona, userScope: scopes.userScope,
                     conversationInstructions: scopes.instructions,
                     timestamp: Date(), timeZone: .current,
@@ -2515,12 +2530,11 @@ final class ChatStore: ObservableObject {
                     contracts: contracts,
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
-                    assistantProfile: turnDotContext(turn)))
-                let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
+                    assistantProfile: turnDotContext(turn)),
+                    messages: turnMessages, suffix: (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
-                    contextCeiling: nativeConfig.options.contextCeiling)
+                    contextCeiling: nativeConfig.options.contextCeiling, companion: companionContext)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
@@ -2577,6 +2591,10 @@ final class ChatStore: ObservableObject {
                     try await finishTurnOffMain(turn, state: partialAnswer ? .interrupted : .complete,
                         message: finalMessage, ordinal: location.reply, updatedAt: completedAt)
                     guard let settled = turnLocation(turn) else { throw CancellationError() }
+                    if !partialAnswer {
+                        scheduleCompanionCompaction(conversationID: id, transport: nativeTransport, model: nativeConfig.model,
+                                                    contextCeiling: nativeConfig.options.contextCeiling)
+                    }
                     let i = settled.conversation
                     let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,

@@ -90,6 +90,10 @@ struct NativeContextInput: Sendable {
     var contracts: Set<NativePresentationContract>
     var unavailableNotes: [String]
     var assistantProfile: String?
+    var continuityNotes: String?
+    var continuityNotesRevisable = false
+    var threadSummary: [String]?
+    var companionBudget: NativeCompanionContextBudget?
 
     init(
         persona: String, userScope: String = "", conversationInstructions: String = "",
@@ -177,10 +181,22 @@ enum NativeContextAssembler {
         add("assistant", assistantSection(input.assistantProfile ?? ""), cap: Caps.assistant)
         add("session", session(for: input), cap: Caps.session)
         if let memory = NativeMemoryPromptAssembler.section(selected: input.memories) {
-            add("memory", memory, cap: Caps.memory)
+            add("memory", memory, cap: input.companionBudget?.memoryCharacters ?? Caps.memory)
         }
         add("world", input.worldModel, cap: Caps.world)
         add("knowledge", knowledgeSection(input.knowledgeGrounding), cap: Caps.knowledge)
+        if let budget = input.companionBudget {
+            if let notes = input.continuityNotes {
+                add(NativeCompanionContext.notesSectionName,
+                    NativeCompanionContext.notesSection(notes, revisable: input.continuityNotesRevisable),
+                    cap: budget.notesCharacters)
+            }
+            if let summary = input.threadSummary {
+                add(NativeCompanionContext.summarySectionName,
+                    NativeCompanionContext.summarySection(summary, cap: budget.summaryCharacters),
+                    cap: budget.summaryCharacters)
+            }
+        }
         if input.capabilities.supportsTools, !input.tools.isEmpty {
             add("tools", toolsSection(input.tools), cap: Caps.tools)
         }
