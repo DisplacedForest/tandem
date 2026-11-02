@@ -242,19 +242,39 @@ extension SelfTest {
         probeWindow.close()
 
         let done = Message(role: .assistant, text: "Here it is.")
-        var failed = Message(role: .assistant, text: "")
-        failed.failure = "The model did not answer."
-        var canceled = Message(role: .assistant, text: "Partial")
-        canceled.state = .interrupted
+        var stopped = Message(role: .assistant, text: "Partial")
+        stopped.state = .interrupted
+        stopped.failure = "Stopped."
+        var broken = Message(role: .assistant, text: "")
+        broken.state = .interrupted
+        broken.failure = "The model did not answer."
         let silent = Message(role: .assistant, text: "   ")
-        let completed = TandemLogoPresence.terminalEvent(of: done)
-        try require(completed.completed && !completed.failed && !completed.canceled, "A finished answer with text reads as completed")
-        try require(TandemLogoPresence.terminalEvent(of: failed).failed, "A failed answer reads as failed")
-        try require(TandemLogoPresence.terminalEvent(of: canceled).canceled, "An interrupted answer reads as canceled")
-        let quiet = TandemLogoPresence.terminalEvent(of: silent)
-        try require(!quiet.completed && !quiet.failed && !quiet.canceled, "An empty answer plays no completion")
-        let none = TandemLogoPresence.terminalEvent(of: nil)
-        try require(!none.completed && !none.failed && !none.canceled, "No assistant message plays nothing")
+        try require(TandemLogoPresence.terminalEvent(turn: .stopped, message: stopped) == .canceled,
+                    "A turn the user stopped reads as canceled even though its message carries a reason")
+        try require(TandemLogoPresence.terminalEvent(turn: .interrupted, message: broken) == .failed, "An interrupted turn reads as failed")
+        try require(TandemLogoPresence.terminalEvent(turn: .complete, message: done) == .completed, "A finished answer with text reads as completed")
+        try require(TandemLogoPresence.terminalEvent(turn: .complete, message: silent) == .none, "An empty answer plays no completion")
+        try require(TandemLogoPresence.terminalEvent(turn: .running, message: done) == .none, "A turn still running plays nothing")
+        try require(TandemLogoPresence.terminalEvent(turn: nil, message: stopped) == .failed
+                    && TandemLogoPresence.terminalEvent(turn: nil, message: done) == .completed
+                    && TandemLogoPresence.terminalEvent(turn: nil, message: nil) == .none,
+                    "Without a turn record the message alone decides")
+
+        let activity = NativeToolActivity(id: "call-1", toolID: "search", name: "search", title: "Search", round: 0,
+                                          request: "{}", result: nil, state: .pending, confirmationRequired: true)
+        let mine = UUID(), theirs = UUID()
+        let confirmations = [theirs: NativeToolConfirmationRequest(activity: activity)]
+        try require(!TandemLogoPresence.decisionPending(confirmations: confirmations, assistantMessageID: mine, fallback: true),
+                    "Another conversation's approval does not nudge the selected one")
+        try require(TandemLogoPresence.decisionPending(confirmations: confirmations, assistantMessageID: theirs, fallback: false),
+                    "The selected conversation's own approval nudges")
+        try require(TandemLogoPresence.decisionPending(confirmations: [:], assistantMessageID: nil, fallback: true)
+                    && !TandemLogoPresence.decisionPending(confirmations: [:], assistantMessageID: nil, fallback: false),
+                    "Without a turn record the shared pending flag decides")
+
+        var filter = PlaybackEventFilter()
+        try require(filter.admits(1) && filter.admits(3) && !filter.admits(2) && !filter.admits(3) && filter.admits(4),
+                    "A playback event that arrives after a newer one is ignored")
 
         try runTandemCueMapper()
         print("PASS tandem motion: twelve sequences, smoothstep sampling, live overlap, template mark, interruption, host visibility, Reduce Motion, cue mapping")

@@ -16,7 +16,9 @@ final class ChatStore: ObservableObject {
     var drafts: [String: String] = [:]
     static let veraThreadOriginType = "assistant"
     static let veraThreadOriginID = "vera"
-    @Published var section: AppSection = .chat
+    @Published var section: AppSection = .chat {
+        didSet { if oldValue == .vera, section != .vera { markCompanionSeen() } }
+    }
     @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
     @Published var agenticFlowID: String?
@@ -60,6 +62,13 @@ final class ChatStore: ObservableObject {
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
     @Published var attachments: [Attachment] = []   // pending composer attachments (images/docs)
     @Published var attachmentError: String?
+    @Published var companionDraft = ""
+    @Published var companionAttachments: [Attachment] = []
+    @Published var companionError: String?
+    @Published var companionFocusTick = 0
+    static let companionSeenKey = "companion_last_seen_reply"
+    var companionDefaults: UserDefaults = .standard
+    private var companionSeenStorage: String??
     @Published var pendingSendDecision: PendingSendDecision?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
@@ -146,6 +155,7 @@ final class ChatStore: ObservableObject {
     static let turnProcessIdentity = UUID().uuidString
     var suspendsTurnScheduling = false
     var isSchedulingTurns = false
+    var turnSchedulingRerun = false
     var conversationTurnLoop: Task<Void, Never>?
     var conversationTurnToken: [Int64]?
     var dirtyTurnConversations: Set<String> = []
@@ -678,6 +688,7 @@ final class ChatStore: ObservableObject {
     }
 
     func openVeraThread() {
+        markCompanionSeen()
         guard let veraThreadID else { section = .vera; return }
         stashDraft()
         section = .vera
@@ -705,6 +716,8 @@ final class ChatStore: ObservableObject {
     }
 
     func select(_ id: String) {
+        if let current = selectedID, isVeraThread(current), !isVeraThread(id), section == .vera { markCompanionSeen() }
+        if isVeraThread(id) { markCompanionSeen() }
         stashDraft()
         section = isVeraThread(id) ? .vera : .chat
         selectedID = id
@@ -1771,31 +1784,164 @@ final class ChatStore: ObservableObject {
 
     func addFiles(_ urls: [URL]) {
         attachmentError = nil
-        for url in urls {
-            var directory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
-                grantFolder(url)
-                continue
-            }
-            do {
-                let record = try attachmentStore.save(url: url)
-                attachments.append(pendingAttachment(for: record, sourceURL: url))
-            } catch {
-                attachmentError = error.localizedDescription
-            }
-        }
+        let result = importAttachments(urls) { grantFolder($0) }
+        attachments += result.attachments
+        if let error = result.error { attachmentError = error }
     }
 
     func addPastedImages(_ images: [Data]) {
         attachmentError = nil
+        let result = importPastedImages(images)
+        attachments += result.attachments
+        if let error = result.error { attachmentError = error }
+    }
+
+    func addCompanionFiles(_ urls: [URL]) {
+        companionError = nil
+        var skippedFolder = false
+        let result = importAttachments(urls) { _ in skippedFolder = true }
+        companionAttachments += result.attachments
+        if let error = result.error {
+            companionError = error
+        } else if skippedFolder {
+            companionError = "Folders can be added from the main window."
+        }
+    }
+
+    func addCompanionPastedImages(_ images: [Data]) {
+        companionError = nil
+        let result = importPastedImages(images)
+        companionAttachments += result.attachments
+        if let error = result.error { companionError = error }
+    }
+
+    func removeCompanionAttachment(_ id: UUID) {
+        companionError = nil
+        for att in companionAttachments where att.id == id {
+            if let record = att.nativeRecord { attachmentStore.remove(record) }
+        }
+        companionAttachments.removeAll { $0.id == id }
+    }
+
+    private func importAttachments(_ urls: [URL], folder: (URL) -> Void) -> (attachments: [Attachment], error: String?) {
+        var imported: [Attachment] = []
+        var failure: String?
+        for url in urls {
+            var directory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
+                folder(url)
+                continue
+            }
+            do {
+                let record = try attachmentStore.save(url: url)
+                imported.append(pendingAttachment(for: record, sourceURL: url))
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        return (imported, failure)
+    }
+
+    private func importPastedImages(_ images: [Data]) -> (attachments: [Attachment], error: String?) {
+        var imported: [Attachment] = []
+        var failure: String?
         for data in images {
             do {
                 let record = try attachmentStore.save(data: data, preferredName: "Pasted image")
-                attachments.append(pendingAttachment(for: record, sourceURL: nil))
+                imported.append(pendingAttachment(for: record, sourceURL: nil))
             } catch {
-                attachmentError = error.localizedDescription
+                failure = error.localizedDescription
             }
         }
+        return (imported, failure)
+    }
+
+    private var companionReplies: [Message] {
+        guard let veraThreadID, let thread = conversations.first(where: { $0.id == veraThreadID }) else { return [] }
+        return thread.messages.filter { $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty }
+    }
+
+    var companionSeenReplyID: String? {
+        if let cached = companionSeenStorage { return cached }
+        let stored = companionDefaults.string(forKey: Self.companionSeenKey)
+        companionSeenStorage = .some(stored)
+        return stored
+    }
+
+    func markCompanionSeen() {
+        setCompanionSeenReply(companionReplies.last?.id.uuidString ?? "")
+    }
+
+    func setCompanionSeenReplyForTesting(_ id: String?) {
+        setCompanionSeenReply(id)
+    }
+
+    private func setCompanionSeenReply(_ id: String?) {
+        guard companionSeenReplyID != id else { return }
+        objectWillChange.send()
+        companionSeenStorage = .some(id)
+        if let id {
+            companionDefaults.set(id, forKey: Self.companionSeenKey)
+        } else {
+            companionDefaults.removeObject(forKey: Self.companionSeenKey)
+        }
+    }
+
+    var mainWindowShowsCompanionThread: Bool {
+        guard let veraThreadID, selectedID == veraThreadID, section == .vera else { return false }
+        return NSApp.windows.contains { $0.isVisible && !($0 is NSPanel) && $0.identifier?.rawValue.hasPrefix("main") == true }
+    }
+
+    var companionUnreadCount: Int {
+        guard let marker = companionSeenReplyID else { return 0 }
+        if mainWindowShowsCompanionThread { return 0 }
+        let replies = companionReplies
+        if marker.isEmpty { return replies.count }
+        guard let index = replies.firstIndex(where: { $0.id.uuidString == marker }) else { return 0 }
+        return replies.count - index - 1
+    }
+
+    var companionAwaitingApproval: Bool {
+        guard let veraThreadID else { return false }
+        return conversationTurns.contains { $0.conversationID == veraThreadID && turnConfirmations[$0.assistantMessageID] != nil }
+    }
+
+    func prepareCompanionThread() {
+        ensureVeraThread()
+        if let veraThreadID { loadMessagesIfNeeded(veraThreadID) }
+    }
+
+    @discardableResult
+    func sendCompanion() -> Bool {
+        prepareCompanionThread()
+        guard let veraThreadID else {
+            companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
+            return false
+        }
+        let text = companionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let atts = companionAttachments
+        guard !text.isEmpty || !atts.isEmpty else { return false }
+        let imageCount = atts.filter { $0.nativeRecord?.isImage == true }.count
+        let route = attachmentRoute(imageCount: imageCount)
+        if route == .needsDecision {
+            companionError = "This model can't take images from here. Open in Tandem to send them."
+            return false
+        }
+        let note: MessageRouteNote?
+        switch route {
+        case .direct: note = MessageRouteNote(route: .direct)
+        case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: effectiveBridgeConfig?.model)
+        default: note = nil
+        }
+        markCompanionSeen()
+        guard sendText(text, attachments: atts, routeNote: note, conversationID: veraThreadID) else {
+            companionError = chatConfigurationError ?? "The message couldn't send."
+            return false
+        }
+        companionDraft = ""
+        companionAttachments = []
+        companionError = nil
+        return true
     }
 
     private func pendingAttachment(for record: MessageAttachment, sourceURL: URL?) -> Attachment {
@@ -1931,14 +2077,15 @@ final class ChatStore: ObservableObject {
 
     @discardableResult
     func sendText(
-        _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil
+        _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil,
+        conversationID: String? = nil
     ) -> Bool {
         guard let turnRepository, let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
             return false
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !atts.isEmpty,
-              let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
+              let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
         let user = Message(role: .user, text: text, attachments: atts.compactMap(\.nativeRecord), routeNote: routeNote)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig?.model)
         var conversation = conversations[index]
@@ -1960,6 +2107,11 @@ final class ChatStore: ObservableObject {
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
             conversation.messages = stored.map { live[$0.id] ?? $0 }
             conversations[index] = conversation
+            if !conversationTurns.contains(where: { $0.id == turn.id }) {
+                conversationTurns.append(turn)
+                conversationTurns.sort { $0.createdAt < $1.createdAt }
+            }
+            generating = true
             chatConfigurationError = nil
         } catch {
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
@@ -2360,10 +2512,9 @@ final class ChatStore: ObservableObject {
                         openArtifact(latest)
                     }
                     setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
-                        .map { "Using \($0.title)…" }, turn: turn)
+                        .map { "Using \($0.title)…" } ?? (turnCheckpointStalled(turn) ? Self.saveWaitingStatus : nil), turn: turn)
                     if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
-                        try turnRepository?.checkpointTurn(turn,
-                            message: conversations[i].messages[replyIndex], ordinal: replyIndex)
+                        scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                         recordCanvasArtifacts(arts, conversationID: id,
                                               messageID: conversations[i].messages[replyIndex].id.uuidString,
                                               revising: revisionTarget)
@@ -2374,15 +2525,18 @@ final class ChatStore: ObservableObject {
                 try await ensureTurnCurrent(turn)
                 setTurnStatus(nil, turn: turn)
                 if let location = turnLocation(turn) {
-                    let i = location.conversation
-                    let replyIndex = location.reply
-                    conversations[i].messages[replyIndex].state = partialAnswer ? .interrupted : .complete
-                    conversations[i].messages[replyIndex].failure = partialAnswer
+                    conversations[location.conversation].messages[location.reply].state = partialAnswer ? .interrupted : .complete
+                    conversations[location.conversation].messages[location.reply].failure = partialAnswer
                         ? "This answer is unfinished. You can ask a follow-up or retry the answer." : nil
-                    conversations[i].updatedAt = Date()
-                    try turnRepository?.finishTurn(turn.id, attempt: turn.attempt, state: partialAnswer ? .interrupted : .complete,
-                        message: conversations[i].messages[replyIndex], ordinal: replyIndex)
-                    try repository.saveConversation(conversations[i])
+                    conversations[location.conversation].updatedAt = Date()
+                    let finalMessage = conversations[location.conversation].messages[location.reply]
+                    let completedAt = conversations[location.conversation].updatedAt
+                    await awaitTurnCheckpoint(turn)
+                    try await finishTurnOffMain(turn, state: partialAnswer ? .interrupted : .complete,
+                        message: finalMessage, ordinal: location.reply, updatedAt: completedAt)
+                    guard let settled = turnLocation(turn) else { throw CancellationError() }
+                    let i = settled.conversation
+                    let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
                                           revising: revisionTarget)
@@ -2394,7 +2548,7 @@ final class ChatStore: ObservableObject {
                     if repository is any NativeMemoryRepository {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded
-                        let userIndex = location.user
+                        let userIndex = settled.user
                         let sourceDate = conversations[i].messages.indices.contains(userIndex)
                             ? conversations[i].messages[userIndex].createdAt : Date()
                         Task {

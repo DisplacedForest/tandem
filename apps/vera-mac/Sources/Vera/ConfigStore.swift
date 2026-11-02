@@ -39,6 +39,8 @@ final class ConfigStore: ObservableObject {
     }
     let nativeMCP: NativeMCPManager
     @Published var nativeMCPConfigurationError: String?
+    @Published var companionShortcutProblem: String?
+    @Published var companionActiveShortcut: CompanionShortcut?
     private var nativeMCPReplacement: Task<Void, Never>?
     static let nativeMCPServerLimit = 8
     @Published private var nativeAPIKeys: [String: String]
@@ -850,6 +852,15 @@ final class ConfigStore: ObservableObject {
     func setCompanionAppearance(_ appearance: CompanionAppearance) {
         self[Self.companionShapeKey] = appearance.shape.rawValue
         self[Self.companionColorKey] = appearance.color.rawValue
+    }
+
+    var companionShortcut: CompanionShortcut {
+        let stored = self[CompanionShortcut.configKey]
+        return stored.isEmpty ? .default : (CompanionShortcut(configValue: stored) ?? .default)
+    }
+
+    func setCompanionShortcut(_ shortcut: CompanionShortcut?) {
+        self[CompanionShortcut.configKey] = shortcut?.configValue ?? ""
     }
 
     var voiceBase: URL? {

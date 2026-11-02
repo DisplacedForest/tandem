@@ -28,7 +28,8 @@ final class CompanionPresence: ObservableObject {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.setActive(false) } }
             .store(in: &subscriptions)
         let storeChanges = store.$generating.map { _ in () }
-            .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () })
+            .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () },
+                        store.$turnConfirmations.map { _ in () })
         let voiceChanges = voice.$state.removeDuplicates().map { _ in () }
             .merge(with: voice.$isPlayingAudio.removeDuplicates().map { _ in () })
         storeChanges.merge(with: voiceChanges)
@@ -53,7 +54,7 @@ final class CompanionPresence: ObservableObject {
         var snapshot = CompanionStateSnapshot()
         let running = TandemLogoPresence.selectedTurnRunning(store)
         snapshot.foregroundGenerating = running
-        snapshot.decisionPending = running && store.pendingToolConfirmation != nil
+        snapshot.decisionPending = TandemLogoPresence.selectedDecisionPending(store)
         snapshot.explicitlyResting = false
         snapshot.appInactive = !appActive
         if let voice {
