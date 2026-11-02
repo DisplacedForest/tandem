@@ -398,8 +398,8 @@ final class DotMemoryService: NativeMemoryServing, @unchecked Sendable {
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
         existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
     ) async throws -> [NativeMemoryProposal] {
-        let hook = lock.withLock { count += 1; return hook }
-        if let hook { await hook() }
+        let pending = lock.withLock { count += 1; return self.hook }
+        if let pending { await pending() }
         return [NativeMemoryProposal(
             id: UUID().uuidString, kind: .create, title: "Morning watering",
             summary: "Waters the greenhouse in the morning", details: ["The user waters the greenhouse in the morning"],
