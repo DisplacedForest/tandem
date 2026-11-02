@@ -115,5 +115,41 @@ enum ArtifactStoreSelftest {
         try check(decoded.canvasType == .svg && decoded.sources.first?.n == 2 && decoded.truncated == false, "Details encode and decode")
         let sparse = try JSONDecoder().decode(ArtifactDetails.self, from: Data("{\"changeKind\":\"moved\",\"movedFrom\":\"a.txt\"}".utf8))
         try check(sparse.changeKind == .moved && sparse.movedFrom == "a.txt" && sparse.sources.isEmpty && !sparse.truncated, "Sparse details decode with defaults")
+
+        let filesBefore = try files().count
+        let note = ArtifactDraft(
+            kind: .document, title: "Note", conversationID: "conversation-d", originTitle: "Notes",
+            messageID: "message-d", sourceKey: "note:1", data: Data("first".utf8),
+            mime: "text/markdown", fileExtension: "md")
+        let noteOne = try repository.recordArtifact(note, revising: nil)
+        try check(noteOne.contentHash == LocalChatRepository.contentHash(Data("first".utf8)) && noteOne.contentHash.count == 64, "Versions carry a hex SHA-256 of their bytes")
+        let noteAgain = try repository.recordArtifact(note, revising: nil)
+        try check(noteAgain == noteOne, "Same key and same bytes return the existing version")
+        try check(try files().count == filesBefore + 1, "Same key and same bytes write no file")
+        try check(try repository.artifact(noteOne.artifactID)?.versionCount == 1, "Same key and same bytes add no version")
+
+        var changed = note
+        changed.title = "Note, edited"
+        changed.data = Data("second".utf8)
+        let noteTwo = try repository.recordArtifact(changed, revising: image.artifactID)
+        try check(noteTwo.artifactID == noteOne.artifactID && noteTwo.ordinal == 2, "Same key and new bytes append to the same artifact")
+        try check(noteTwo.contentHash == LocalChatRepository.contentHash(Data("second".utf8)) && noteTwo.contentHash != noteOne.contentHash, "The appended version carries the new hash")
+        try check(noteTwo.fileName != noteOne.fileName && (try files().count) == filesBefore + 2, "The appended version writes a new file")
+        try check(try repository.artifact(noteOne.artifactID)?.title == "Note, edited", "The appended version updates the title")
+        try check(try repository.artifact(image.artifactID)?.versionCount == 1, "A known source key ignores the revising argument")
+        try check(try repository.artifactVersion(sourceKey: "note:1")?.ordinal == 2, "The latest version answers its source key")
+        try check(try repository.recordArtifact(changed, revising: nil) == noteTwo, "Repeating the latest bytes is a no-op")
+
+        try check(try repository.revisionTarget(messageID: "message-r") == nil, "No revision target by default")
+        try repository.setRevisionTarget(messageID: "message-r", artifactID: first.artifactID)
+        try check(try repository.revisionTarget(messageID: "message-r") == first.artifactID, "A revision target reads back")
+        try repository.setRevisionTarget(messageID: "message-r", artifactID: noteOne.artifactID)
+        try check(try repository.revisionTarget(messageID: "message-r") == noteOne.artifactID, "Setting a revision target again replaces it")
+        try repository.clearRevisionTarget(messageID: "message-r")
+        try check(try repository.revisionTarget(messageID: "message-r") == nil, "A cleared revision target is gone")
+        try repository.setRevisionTarget(messageID: "message-r", artifactID: noteOne.artifactID)
+        let removedNotes = try repository.resolveArtifacts(conversationID: "conversation-d", choice: .delete)
+        try check(Set(removedNotes) == [noteOne.fileName, noteTwo.fileName], "Deleting returns both versions of the note")
+        try check(try repository.revisionTarget(messageID: "message-r") == nil, "A revision target to a deleted artifact reads as nil")
     }
 }

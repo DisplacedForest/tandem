@@ -1,5 +1,63 @@
 import Foundation
 
+final class ArtifactScriptTransport: NativeChatTransport, @unchecked Sendable {
+    enum Step: Sendable {
+        case reply(String)
+        case interrupt(String)
+        case fail
+        case hold(String)
+    }
+
+    private let lock = NSLock()
+    private var captured: [[NativeChatMessage]] = []
+    private var steps: [Step] = []
+    private var held: [AsyncThrowingStream<NativeChatStreamSnapshot, Error>.Continuation] = []
+
+    var histories: [[NativeChatMessage]] { withLock { captured } }
+
+    func queue(_ step: Step) { withLock { steps.append(step) } }
+
+    func releaseHeld() {
+        let pending = withLock { () -> [AsyncThrowingStream<NativeChatStreamSnapshot, Error>.Continuation] in
+            defer { held = [] }
+            return held
+        }
+        for continuation in pending { continuation.finish() }
+    }
+
+    func discoverModels() async throws -> [String] { ["local-model"] }
+
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        let step = withLock { () -> Step in
+            captured.append(messages)
+            return steps.isEmpty ? .reply("Native reply") : steps.removeFirst()
+        }
+        return AsyncThrowingStream { continuation in
+            switch step {
+            case .reply(let content):
+                continuation.yield(NativeChatStreamSnapshot(content: content, toolCalls: [], finishReason: "stop"))
+                continuation.finish()
+            case .interrupt(let content):
+                continuation.yield(NativeChatStreamSnapshot(content: content, toolCalls: [], finishReason: nil))
+                continuation.finish(throwing: NativeChatClient.ClientError.server("test interruption"))
+            case .fail:
+                continuation.finish(throwing: NativeChatClient.ClientError.server("test failure"))
+            case .hold(let content):
+                continuation.yield(NativeChatStreamSnapshot(content: content, toolCalls: [], finishReason: nil))
+                self.withLock { self.held.append(continuation) }
+            }
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 enum ArtifactProducerSelftest {
     struct Failure: Error, CustomStringConvertible {
         let description: String
@@ -22,13 +80,22 @@ enum ArtifactProducerSelftest {
     }
 
     @MainActor
+    static func waitUntil(_ message: String, _ condition: () -> Bool) async throws {
+        for _ in 0..<500 {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw Failure(description: message)
+    }
+
+    @MainActor
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("vera-artifact-producers-\(UUID().uuidString.lowercased())", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let repository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
-        let transport = SelfTestNativeTransport()
+        let transport = ArtifactScriptTransport()
         let config = NativeChatConfig(
             baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
             model: "local-model", chatTemplateKwargs: nil)
@@ -156,9 +223,9 @@ enum ArtifactProducerSelftest {
         guard let revisionTurn = try repository.conversationTurns().last(where: { $0.conversationID == conversationID }) else {
             throw Failure(description: "The revision turn is missing")
         }
-        try check(store.artifactRevisionTargets[revisionTurn.userMessageID.uuidString] == nil,
+        try check(store.artifactRevisionTarget(messageID: revisionTurn.userMessageID.uuidString) == nil,
                   "The revision request target clears when the turn finishes")
-        try check(store.artifactRevisionTargets[revisionTurn.assistantMessageID.uuidString] == document.id,
+        try check(store.artifactRevisionTarget(messageID: revisionTurn.assistantMessageID.uuidString) == document.id,
                   "The revision reply keeps its target for late task results")
         try check(store.artifactRecords.first { $0.id == document.id }?.versionCount == 2,
                   "A reply without a revised block adds no version")
@@ -248,5 +315,91 @@ enum ArtifactProducerSelftest {
                   "The backup replaces an older one")
         try check(try ChatStore.importLegacyCanvasLibrary(from: legacyURL, into: legacyRepository) == 0,
                   "A missing legacy library imports nothing")
+
+        try await runRetriesAndStops(store: store, transport: transport, repository: repository, directory: directory)
+    }
+
+    @MainActor
+    static func runRetriesAndStops(
+        store: ChatStore, transport: ArtifactScriptTransport, repository: LocalChatRepository, directory: URL
+    ) async throws {
+        func latestText(_ record: ArtifactRecord?) -> String? {
+            record.flatMap { store.artifactVersions($0.id).last }.flatMap { store.artifactText($0) }
+        }
+        func lastTurn(_ conversationID: String) throws -> NativeConversationTurn {
+            guard let turn = try repository.conversationTurns().last(where: { $0.conversationID == conversationID }) else {
+                throw Failure(description: "The turn is missing")
+            }
+            return turn
+        }
+
+        store.newConversation()
+        guard let draftChat = store.selectedID else { throw Failure(description: "No draft chat") }
+        let first = Artifact(id: "draft", title: "Draft", type: .markdown, language: "", content: "A")
+        var second = first
+        second.content = "B"
+        store.recordCanvasArtifacts([first], conversationID: draftChat, messageID: "retried-message")
+        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message")
+        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message")
+        let drafts = store.artifactRecords.filter { $0.title == "Draft" }
+        try check(drafts.count == 1 && drafts[0].versionCount == 2 && latestText(drafts.first) == "B",
+                  "A regenerated canvas block with new content becomes the next version, and a repeat adds nothing")
+
+        transport.queue(.interrupt(":::vera-artifact id=\"note\" title=\"Field note\" type=\"markdown\"\n# Note\n:::\nAnd then"))
+        try check(store.sendText("Write a field note"), "The interrupted message sends")
+        guard let noteChat = store.selectedID else { throw Failure(description: "No note chat") }
+        try await waitForReply(store, conversationID: noteChat)
+        try check(latestText(store.artifactRecords.first { $0.title == "Field note" }) == "# Note",
+                  "An interrupted answer still records its finished canvas block")
+
+        store.newConversation()
+        transport.queue(.hold(":::vera-artifact id=\"held\" title=\"Held piece\" type=\"markdown\"\n# Held\n:::\nStill going"))
+        try check(store.sendText("Start a long piece"), "The held message sends")
+        guard let heldChat = store.selectedID else { throw Failure(description: "No held chat") }
+        try await waitUntil("The held block never parsed") {
+            store.conversations.first { $0.id == heldChat }?.messages.last?.artifacts.isEmpty == false
+        }
+        let heldTurn = try lastTurn(heldChat)
+        store.stopAnswer(heldTurn.assistantMessageID)
+        transport.releaseHeld()
+        try check(latestText(store.artifactRecords.first { $0.title == "Held piece" }) == "# Held",
+                  "Stopping an answer records its finished canvas block")
+
+        store.newConversation()
+        try check(store.sendText("Plan Rome"), "The Rome message sends")
+        guard let romeChat = store.selectedID else { throw Failure(description: "No Rome chat") }
+        try await waitForReply(store, conversationID: romeChat)
+        let romeTurn = try lastTurn(romeChat)
+        store.applyNativeTaskUpdates([NativeTaskMessageUpdate(
+            conversationID: romeChat, messageID: romeTurn.assistantMessageID,
+            blocks: [.artifact(NativeResearchArtifact(id: "rome", title: "Rome guide", report: "# Rome", sources: []))])])
+        guard let rome = store.artifactRecords.first(where: { $0.title == "Rome guide" }) else {
+            throw Failure(description: "The Rome guide is missing")
+        }
+        transport.queue(.fail)
+        store.reviseArtifact(rome, change: "Add Ostia")
+        try await waitForReply(store, conversationID: romeChat)
+        let failedTurn = try lastTurn(romeChat)
+        try check(store.conversations.first { $0.id == romeChat }?.messages.last?.state == .interrupted,
+                  "The failed revision attempt is interrupted")
+        try check(store.artifactRevisionTarget(messageID: failedTurn.userMessageID.uuidString) == rome.id,
+                  "A failed revision keeps its target")
+        let other = ChatStore(
+            nativeConfig: nil, nativeTransport: nil, repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        try check(other.artifactRevisionTarget(messageID: failedTurn.userMessageID.uuidString) == rome.id,
+                  "The revision target is durable across stores")
+        transport.queue(.reply(":::vera-artifact id=\"rome\" title=\"Rome guide\" type=\"markdown\"\n# Rome with Ostia\n:::\nAdded Ostia."))
+        store.retryAnswer(failedTurn.assistantMessageID)
+        try await waitUntil("The retried revision never finished") {
+            store.conversations.first { $0.id == romeChat }?.messages.last?.state == .complete
+        }
+        try check((transport.histories.last?.first?.content ?? "").contains("The user is revising the document titled \"Rome guide\""),
+                  "The retried attempt still carries the revision note")
+        let revisedRome = store.artifactRecords.first { $0.id == rome.id }
+        try check(revisedRome?.versionCount == 2 && revisedRome?.kind == .document && latestText(revisedRome) == "# Rome with Ostia",
+                  "The retried revision records the next document version")
+        try check(store.artifactRevisionTarget(messageID: failedTurn.userMessageID.uuidString) == nil,
+                  "A finished revision clears its request target")
     }
 }

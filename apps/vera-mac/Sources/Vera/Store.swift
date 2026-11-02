@@ -68,7 +68,6 @@ final class ChatStore: ObservableObject {
     @Published var pendingToolConfirmation: NativeToolConfirmationRequest?
     @Published var artifactRecords: [ArtifactRecord] = []
     @Published var pendingConversationDeletion: PendingConversationDeletion?
-    var artifactRevisionTargets: [String: String] = [:]
     var recordedArtifactSourceKeys: Set<String> = []
 
     private var client: VeraAPIClient?
@@ -2173,12 +2172,13 @@ final class ChatStore: ObservableObject {
         }
         turnExecutions[turn.id]?.task = Task {
             let revisionKey = turn.userMessageID.uuidString
-            let revisionTarget = artifactRevisionTargets[revisionKey]
-            if let revisionTarget { artifactRevisionTargets[turn.assistantMessageID.uuidString] = revisionTarget }
+            let revisionTarget = artifactRevisionTarget(messageID: revisionKey)
+            if let revisionTarget {
+                setArtifactRevisionTarget(messageID: turn.assistantMessageID.uuidString, artifactID: revisionTarget)
+            }
             let revisionNote = revisionTarget.flatMap { artifactRevisionNote(target: $0) }
             defer {
                 turnMemorySelections[turn.attempt ?? turn.id] = nil
-                artifactRevisionTargets[revisionKey] = nil
                 finishTurnExecution(turn)
             }
             var lastCheckpoint = Date.distantPast
@@ -2357,6 +2357,7 @@ final class ChatStore: ObservableObject {
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
                                           revising: revisionTarget)
+                    if !partialAnswer, revisionTarget != nil { clearArtifactRevisionTarget(messageID: revisionKey) }
                     if !partialAnswer, conversations[i].messages[replyIndex].id
                         == conversations[i].messages.first(where: { $0.role == .assistant })?.id {
                         generateTitleIfNeeded(conversationID: id)

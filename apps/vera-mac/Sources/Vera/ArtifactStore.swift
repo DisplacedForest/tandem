@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -24,6 +25,7 @@ struct ArtifactVersion: Identifiable, Hashable, Codable, Sendable {
     var fileName: String
     var mime: String
     var byteSize: Int
+    var contentHash: String
     var messageID: String?
     var details: ArtifactDetails
     var createdAt: Date
@@ -98,6 +100,9 @@ protocol ArtifactRepository: Sendable {
     func artifactIDs(conversationID: String) throws -> [String]
     func resolveArtifacts(conversationID: String, choice: ArtifactConversationDeletion) throws -> [String]
     func updateArtifactOrigin(conversationID: String, title: String) throws
+    func revisionTarget(messageID: String) throws -> String?
+    func setRevisionTarget(messageID: String, artifactID: String) throws
+    func clearRevisionTarget(messageID: String) throws
 }
 
 extension LocalChatRepository: ArtifactRepository {
@@ -118,14 +123,21 @@ extension LocalChatRepository: ArtifactRepository {
                 id TEXT PRIMARY KEY NOT NULL,
                 artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
                 ordinal INTEGER NOT NULL,
-                source_key TEXT NOT NULL UNIQUE,
+                source_key TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 mime TEXT NOT NULL,
                 byte_size INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
                 message_id TEXT,
                 details_json TEXT NOT NULL,
                 created_at DOUBLE NOT NULL,
                 UNIQUE(artifact_id, ordinal)
+            );
+            CREATE INDEX artifact_versions_source_key ON artifact_versions(source_key);
+            CREATE TABLE artifact_revision_targets (
+                message_id TEXT PRIMARY KEY NOT NULL,
+                artifact_id TEXT NOT NULL,
+                created_at DOUBLE NOT NULL
             );
             """)
     }
@@ -163,11 +175,18 @@ extension LocalChatRepository: ArtifactRepository {
     func recordArtifact(_ draft: ArtifactDraft, revising artifactID: String?) throws -> ArtifactVersion {
         let directory = artifactDirectory
         return try database.write { db in
-            if let existing = try Self.fetchArtifactVersion(db, sourceKey: draft.sourceKey) { return existing }
+            let contentHash = Self.contentHash(draft.data)
             let now = Date()
             var target: String?
             var ordinal = 1
-            if let artifactID,
+            if let existing = try Self.fetchArtifactVersion(db, sourceKey: draft.sourceKey) {
+                if existing.contentHash == contentHash { return existing }
+                target = existing.artifactID
+                let last = try Int.fetchOne(
+                    db, sql: "SELECT MAX(ordinal) FROM artifact_versions WHERE artifact_id = ?",
+                    arguments: [existing.artifactID]) ?? existing.ordinal
+                ordinal = last + 1
+            } else if let artifactID,
                let row = try Row.fetchOne(db, sql: "SELECT kind FROM artifacts WHERE id = ?", arguments: [artifactID]),
                (row["kind"] as String?) == draft.kind.rawValue {
                 target = artifactID
@@ -203,16 +222,17 @@ extension LocalChatRepository: ArtifactRepository {
                 let version = ArtifactVersion(
                     id: UUID().uuidString.lowercased(), artifactID: artifactKey, ordinal: ordinal,
                     sourceKey: draft.sourceKey, fileName: fileName, mime: draft.mime, byteSize: draft.data.count,
-                    messageID: draft.messageID, details: draft.details, createdAt: now)
+                    contentHash: contentHash, messageID: draft.messageID, details: draft.details, createdAt: now)
                 try db.execute(
                     sql: """
                         INSERT INTO artifact_versions
-                            (id, artifact_id, ordinal, source_key, file_name, mime, byte_size, message_id, details_json, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (id, artifact_id, ordinal, source_key, file_name, mime, byte_size, content_hash, message_id,
+                             details_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                     arguments: [
                         version.id, version.artifactID, version.ordinal, version.sourceKey, version.fileName,
-                        version.mime, version.byteSize, version.messageID, detailsJSON,
+                        version.mime, version.byteSize, version.contentHash, version.messageID, detailsJSON,
                         now.timeIntervalSince1970,
                     ])
                 return try Self.fetchArtifactVersion(db, sourceKey: draft.sourceKey) ?? version
@@ -221,6 +241,40 @@ extension LocalChatRepository: ArtifactRepository {
                 throw error
             }
         }
+    }
+
+    func revisionTarget(messageID: String) throws -> String? {
+        try database.read { db in
+            try String.fetchOne(
+                db,
+                sql: """
+                    SELECT t.artifact_id FROM artifact_revision_targets t
+                    JOIN artifacts a ON a.id = t.artifact_id
+                    WHERE t.message_id = ?
+                    """,
+                arguments: [messageID])
+        }
+    }
+
+    func setRevisionTarget(messageID: String, artifactID: String) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO artifact_revision_targets (message_id, artifact_id, created_at) VALUES (?, ?, ?)
+                    ON CONFLICT(message_id) DO UPDATE SET artifact_id = excluded.artifact_id, created_at = excluded.created_at
+                    """,
+                arguments: [messageID, artifactID, Date().timeIntervalSince1970])
+        }
+    }
+
+    func clearRevisionTarget(messageID: String) throws {
+        try database.write { db in
+            try db.execute(sql: "DELETE FROM artifact_revision_targets WHERE message_id = ?", arguments: [messageID])
+        }
+    }
+
+    static func contentHash(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     func artifactIDs(conversationID: String) throws -> [String] {
@@ -268,7 +322,9 @@ extension LocalChatRepository: ArtifactRepository {
     }
 
     private static func fetchArtifactVersion(_ db: Database, sourceKey: String) throws -> ArtifactVersion? {
-        try Row.fetchOne(db, sql: "SELECT * FROM artifact_versions WHERE source_key = ?", arguments: [sourceKey])
+        try Row.fetchOne(
+            db, sql: "SELECT * FROM artifact_versions WHERE source_key = ? ORDER BY ordinal DESC, created_at DESC LIMIT 1",
+            arguments: [sourceKey])
             .flatMap(decodeArtifactVersion)
     }
 
@@ -289,7 +345,7 @@ extension LocalChatRepository: ArtifactRepository {
         return ArtifactVersion(
             id: row["id"], artifactID: row["artifact_id"], ordinal: row["ordinal"],
             sourceKey: row["source_key"], fileName: row["file_name"], mime: row["mime"],
-            byteSize: row["byte_size"], messageID: row["message_id"], details: details,
+            byteSize: row["byte_size"], contentHash: row["content_hash"], messageID: row["message_id"], details: details,
             createdAt: Date(timeIntervalSince1970: row["created_at"]))
     }
 }

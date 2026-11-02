@@ -139,7 +139,7 @@ extension ChatStore {
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
         guard artifactRepository != nil else { return }
         let origin = conversations.first(where: { $0.id == conversationID })?.title
-        let target = artifactRevisionTargets[messageID]
+        let target = artifactRevisionTarget(messageID: messageID)
         for block in blocks {
             guard case .artifact(let artifact) = block,
                   !artifact.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -205,7 +205,19 @@ extension ChatStore {
         guard sendText("Revise \"\(record.title)\": \(trimmed)"),
               let user = conversations.first(where: { $0.id == conversationID })?.messages.last(where: { $0.role == .user })
         else { return }
-        artifactRevisionTargets[user.id.uuidString] = record.id
+        setArtifactRevisionTarget(messageID: user.id.uuidString, artifactID: record.id)
+    }
+
+    func artifactRevisionTarget(messageID: String) -> String? {
+        (try? artifactRepository?.revisionTarget(messageID: messageID)) ?? nil
+    }
+
+    func setArtifactRevisionTarget(messageID: String, artifactID: String) {
+        try? artifactRepository?.setRevisionTarget(messageID: messageID, artifactID: artifactID)
+    }
+
+    func clearArtifactRevisionTarget(messageID: String) {
+        try? artifactRepository?.clearRevisionTarget(messageID: messageID)
     }
 
     @discardableResult

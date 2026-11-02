@@ -145,7 +145,7 @@ extension ChatStore {
         }
         if case .fileChange(let change) = block {
             recordFileChangeArtifact(change, conversationID: turn.conversationID, messageID: turn.assistantMessageID.uuidString,
-                                     revising: artifactRevisionTargets[turn.userMessageID.uuidString])
+                                     revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         }
     }
 
