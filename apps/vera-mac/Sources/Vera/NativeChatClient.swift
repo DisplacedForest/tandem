@@ -128,7 +128,7 @@ struct NativeChatDeltaAccumulator: Sendable {
             throw NativeChatClient.ClientError.malformedEvent
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeChatClient.ClientError.server((error["message"] as? String) ?? "The model endpoint reported an error")
+            throw NativeChatClient.ClientError.provider(error)
         }
         guard let choice = (object["choices"] as? [[String: Any]])?.first else {
             throw NativeChatClient.ClientError.malformedEvent
@@ -209,7 +209,16 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         case malformedEvent
         case noUsableModels
         case server(String)
+        case provider(String, String)
         case interrupted
+
+        static let providerDetailLimit = 1_000
+
+        static func provider(_ error: [String: Any]) -> ClientError {
+            let raw = (try? JSONSerialization.data(withJSONObject: error, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? ""
+            return .provider((error["message"] as? String) ?? "The model endpoint reported an error", String(raw.prefix(providerDetailLimit)))
+        }
 
         var errorDescription: String? {
             switch self {
@@ -218,7 +227,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                 return detail.isEmpty ? "The model endpoint answered HTTP \(status)" : "The model endpoint answered HTTP \(status): \(detail)"
             case .malformedEvent: return "The model endpoint returned a malformed stream"
             case .noUsableModels: return "The endpoint responded, but none of its model entries had a usable identifier"
-            case .server(let detail): return detail
+            case .server(let detail), .provider(let detail, _): return detail
             case .interrupted: return "The response stream ended before completion"
             }
         }
@@ -389,7 +398,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             throw ClientError.invalidResponse
         }
         if let error = object["error"] as? [String: Any] {
-            throw ClientError.server((error["message"] as? String) ?? "The model endpoint reported an error")
+            throw ClientError.provider(error)
         }
         guard let choice = (object["choices"] as? [[String: Any]])?.first,
               let message = choice["message"] as? [String: Any] else {
