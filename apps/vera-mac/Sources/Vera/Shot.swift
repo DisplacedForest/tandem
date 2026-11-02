@@ -369,12 +369,12 @@ enum Shot {
             case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
             case "projects": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
-            case "scheduled": section = .scheduled
+            case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations": section = .integrations
             case "memory": section = .memory
             default: section = .chat
             }
-            if view == "scheduled" { NativeScheduleShotFixture.populate(store) }
+            if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
             content = AnyView(
                 ShotView(store: store, section: section,
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",

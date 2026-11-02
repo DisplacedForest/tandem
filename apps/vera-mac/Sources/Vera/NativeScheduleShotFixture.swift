@@ -2,7 +2,11 @@ import Foundation
 
 @MainActor
 enum NativeScheduleShotFixture {
-    static func populate(_ store: ChatStore) {
+    static func populate(_ store: ChatStore, assistantPaused: Bool = false) {
+        if assistantPaused {
+            store.adoptAssistantName(NativeDotShotFixture.name)
+            store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .paused, setupCompleted: true)
+        }
         let zone = TimeZone(identifier: "America/Chicago")!
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone

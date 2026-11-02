@@ -217,9 +217,37 @@ enum NativeRequestPreapproval {
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
                             "if ", "when ", "once ", "after ", "later", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
-    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">"]
+    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
-    static let openers = ["please", "yes", "yes,", "ok", "ok,", "okay", "okay,", "sure", "sure,", "just", "you can", "you may", "feel free", "go", "run", "do", "fix", "build", "make", "deploy", "install", "update", "apply", "proceed", "skip", "no need", "and"]
+    static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"]
+
+    static func words(_ text: String) -> [String] {
+        text.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
+    }
+
+    static func negated(_ text: String) -> Bool {
+        let list = words(text)
+        let joined = " " + list.joined(separator: " ") + " "
+        return negations.contains { negation in
+            let trimmed = negation.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("n't") { return list.contains { $0.hasSuffix("n't") } }
+            return joined.contains(" " + trimmed + " ")
+        }
+    }
+
+    static func sentenceGrants(_ sentence: String) -> Bool {
+        var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+        if phrases.contains(where: { rest.hasSuffix(", " + $0) || rest.hasSuffix(" and " + $0) || rest.hasSuffix(", and " + $0) }) { return true }
+        var stripped = true
+        while stripped {
+            stripped = false
+            for opener in openers where rest.hasPrefix(opener + " ") || rest.hasPrefix(opener + ",") {
+                rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+                stripped = true
+            }
+        }
+        return phrases.contains { rest.hasPrefix($0) }
+    }
 
     static func grants(_ text: String) -> Bool {
         let lowered = text.lowercased()
@@ -227,14 +255,9 @@ enum NativeRequestPreapproval {
         var remainder = lowered
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
         if remainder.contains(where: { quoteCharacters.contains($0) }) { return false }
-        let padded = " " + remainder.replacingOccurrences(of: "\n", with: " ") + " "
-        if negations.contains(where: { padded.contains($0.hasPrefix("n't") ? $0 : " " + $0) }) { return false }
-        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).map { $0.trimmingCharacters(in: .whitespaces) }
-        return sentences.contains { sentence in
-            guard phrases.contains(where: { sentence.contains($0) }) else { return false }
-            if phrases.contains(where: { sentence.hasPrefix($0) }) { return true }
-            return openers.contains { sentence.hasPrefix($0 + " ") }
-        }
+        if negated(remainder) { return false }
+        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!?;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
+        return sentences.contains { sentenceGrants($0) }
     }
 }
 
@@ -268,7 +291,11 @@ enum NativeCommandClassifier {
         while let first = tokens.first, launchers.contains(stripOuterQuotes(first)) {
             if stripOuterQuotes(first) != first { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
-            while let next = tokens.first, next.hasPrefix("-") || next.contains("=") { tokens = tokens.dropFirst() }
+            if let next = tokens.first, next.hasPrefix("-") { return ("?", Array(tokens.dropFirst())) }
+            while let next = tokens.first, next.contains("="), !next.hasPrefix("/") {
+                if next.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+                tokens = tokens.dropFirst()
+            }
         }
         guard let first = tokens.first else { return ("", []) }
         let unquoted = stripOuterQuotes(first)

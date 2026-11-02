@@ -105,6 +105,7 @@ struct ScheduledView: View {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
                                 ownerLabel: schedule.owner == .dot ? store.assistantName : "its own chat",
+                                pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused, assistantName: store.assistantName),
                                 running: (store.scheduleRuns[schedule.id] ?? []).contains { $0.outcome == .running })
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
@@ -127,9 +128,7 @@ struct ScheduledView: View {
 
     @ViewBuilder
     private func actions(for schedule: NativeSchedule) -> some View {
-        Button("Run now") { store.runScheduleNow(schedule.id) }
-        Button(schedule.enabled ? "Pause" : "Resume") { store.setSchedule(schedule.id, enabled: !schedule.enabled) }
-        Button("Edit") { editing = .existing(schedule) }
+        ScheduleControlButtons(schedule: schedule, onEdit: { editing = .existing(schedule) })
         Divider()
         Button("Delete", role: .destructive) { confirmingDelete = schedule }
     }
@@ -139,6 +138,7 @@ private struct ScheduleRow: View {
     let schedule: NativeSchedule
     let selected: Bool
     let ownerLabel: String
+    var pausedNote: String? = nil
     let running: Bool
 
     var body: some View {
@@ -163,6 +163,7 @@ private struct ScheduleRow: View {
     private var statusLine: String {
         if running { return "Running now" }
         guard schedule.enabled else { return "Paused" }
+        if let pausedNote { return pausedNote }
         var parts: [String] = []
         if let next = schedule.nextRunAt {
             parts.append("Next \(NativeScheduleClock.relative(next, now: Date(), timeZone: schedule.timeZone))")
@@ -191,9 +192,7 @@ private struct ScheduleDetail: View {
                     Text(schedule.instruction).font(.system(size: 13)).textSelection(.enabled).padding(.top, 4)
                 }
                 HStack(spacing: 10) {
-                    Button("Run now") { store.runScheduleNow(schedule.id) }
-                    Button(schedule.enabled ? "Pause" : "Resume") { store.setSchedule(schedule.id, enabled: !schedule.enabled) }
-                    Button("Edit", action: onEdit)
+                    ScheduleControlButtons(schedule: schedule, onEdit: onEdit)
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Runs").font(.system(size: 13, weight: .semibold))
@@ -209,6 +208,26 @@ private struct ScheduleDetail: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct ScheduleControlButtons: View {
+    @EnvironmentObject var store: ChatStore
+    let schedule: NativeSchedule
+    let onEdit: () -> Void
+
+    var body: some View {
+        ForEach(NativeScheduleControls.controls(for: schedule, assistantPaused: store.isDotPaused), id: \.self) { control in
+            Button(NativeScheduleControls.title(control, assistantName: store.assistantName)) {
+                switch control {
+                case .runNow: store.runScheduleNow(schedule.id)
+                case .pause: store.setSchedule(schedule.id, enabled: false)
+                case .resume: store.setSchedule(schedule.id, enabled: true)
+                case .resumeAssistant: store.setDotState(.active)
+                case .edit: onEdit()
+                }
+            }
         }
     }
 }

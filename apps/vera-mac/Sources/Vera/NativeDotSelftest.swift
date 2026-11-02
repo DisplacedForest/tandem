@@ -207,10 +207,11 @@ extension SelfTest {
                     && (try NativeDotProfileStore(database: repository.database).load()) == nil, "The profile returns to defaults and setup shows again")
         try require(store.conversationRules(for: freshID).isEmpty, "The fresh thread starts with the global rules")
         try checkHeaderSummary()
+        try checkScheduleControls()
         try await checkCorruptProfile(folder: folder)
         try await checkFireLiveness(folder: folder)
         try await checkExtractionAfterReset()
-        print("  dot OK (profile, context, tightening, services, pause, resume, liveness, extraction, header, reset)")
+        print("  dot OK (profile, context, tightening, services, pause, resume, liveness, extraction, header, schedule controls, reset)")
     }
 
     private static func turn(_ store: ChatStore, conversationID: String, text: String) -> NativeConversationTurn {
@@ -295,6 +296,31 @@ extension SelfTest {
         for text in [summary, quiet, mixedSummary] {
             try require(!raw.contains { $0.contains("_") && text.contains($0) } && !text.contains("_"), "The header summary carries no internal names: \(text)")
         }
+    }
+
+    private static func checkScheduleControls() throws {
+        let require = NativeTaskFixture.require
+        let zone = TimeZone(identifier: "UTC")!
+        let dot = try NativeSchedule(owner: .dot, workerType: "research", title: "Morning check", instruction: "Check",
+                                     cadence: .daily(minuteOfDay: 420), timeZone: zone)
+        let own = try NativeSchedule(owner: .conversation, workerType: "research", title: "Digest", instruction: "Write",
+                                     cadence: .daily(minuteOfDay: 420), timeZone: zone)
+        var stopped = dot
+        stopped.enabled = false
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: true, assistantName: "Ada") == "Paused with Ada",
+                    "A schedule for a paused assistant says it is paused with them")
+        try require(NativeScheduleControls.controls(for: dot, assistantPaused: true) == [.resumeAssistant, .edit],
+                    "A paused assistant's schedule offers only resuming them and editing")
+        try require(NativeScheduleControls.title(.resumeAssistant, assistantName: "Ada") == "Resume Ada", "The resume control names the assistant")
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: false, assistantName: "Ada") == nil
+                    && NativeScheduleControls.controls(for: dot, assistantPaused: false) == [.runNow, .pause, .edit],
+                    "An active assistant's schedule keeps its normal controls")
+        try require(NativeScheduleControls.pausedNote(own, assistantPaused: true, assistantName: "Ada") == nil
+                    && NativeScheduleControls.controls(for: own, assistantPaused: true) == [.runNow, .pause, .edit],
+                    "A chat's own schedule ignores the assistant's pause")
+        try require(NativeScheduleControls.pausedNote(stopped, assistantPaused: true, assistantName: "Ada") == nil
+                    && NativeScheduleControls.controls(for: stopped, assistantPaused: true) == [.runNow, .resume, .edit],
+                    "A schedule paused on its own keeps its own resume")
     }
 
     private static func checkCorruptProfile(folder: URL) async throws {
