@@ -396,6 +396,10 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: conversation titles \(error)"); exit(1) }
         do { try runSidebarPins() }
         catch { print("SELFTEST ERROR: sidebar pins \(error)"); exit(1) }
+        do { try ArtifactStoreSelftest.run() }
+        catch { print("SELFTEST ERROR: artifact store \(error)"); exit(1) }
+        do { try await ArtifactProducerSelftest.run() }
+        catch { print("SELFTEST ERROR: artifact producers \(error)"); exit(1) }
         do { try runComposerMentions() }
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }

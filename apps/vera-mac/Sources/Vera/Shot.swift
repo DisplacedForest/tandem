@@ -18,7 +18,8 @@ enum Shot {
         // NSColor brand tokens, the SwiftUI environment resolves the semantic colors.
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
-        let store = ChatStore()
+        let artifactSeed = view.hasPrefix("artifacts") ? ArtifactShotFixture.store(variant: view) : nil
+        let store = artifactSeed?.store ?? ChatStore()
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -349,7 +350,7 @@ enum Shot {
             case "vera": section = .vera
             case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
             case "projects": section = .projects
-            case "artifacts": section = .artifacts
+            case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled": section = .scheduled
             case "integrations": section = .integrations
             case "memory": section = .memory
@@ -365,7 +366,8 @@ enum Shot {
                          command: view == "chats-command",
                          schedule: view == "chats-schedule",
                          collapsedSidebar: view == "sidebar-collapsed",
-                         mentions: view == "chats-mentions")
+                         mentions: view == "chats-mentions",
+                         artifactSelection: artifactSeed?.selection)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
