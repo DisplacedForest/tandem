@@ -90,3 +90,51 @@ struct VeraMark: View {
         }
     }
 }
+
+struct TandemLogoMark: View {
+    var size: CGFloat
+
+    var body: some View {
+        TandemLogoView(pose: .rest)
+            .frame(width: size * 410 / 256, height: size)
+            .accessibilityElement()
+            .accessibilityLabel("Tandem")
+    }
+}
+
+struct CompanionAvatar: View {
+    var size: CGFloat
+    @Environment(\.companionName) private var name
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.45, style: .continuous)
+            .fill(Color(red: 0.714, green: 0.808, blue: 0.549))
+            .overlay {
+                HStack(spacing: size * 0.18) {
+                    eye
+                    eye
+                }
+                .offset(y: -size * 0.04)
+            }
+            .frame(width: size, height: size)
+            .accessibilityElement()
+            .accessibilityLabel(name ?? "Companion")
+    }
+
+    private var eye: some View {
+        RoundedRectangle(cornerRadius: size * 0.05, style: .continuous)
+            .fill(Color(red: 0.13, green: 0.16, blue: 0.11))
+            .frame(width: size * 0.1, height: size * 0.18)
+    }
+}
+
+private struct CompanionNameKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    var companionName: String? {
+        get { self[CompanionNameKey.self] }
+        set { self[CompanionNameKey.self] = newValue }
+    }
+}
