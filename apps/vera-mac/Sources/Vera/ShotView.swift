@@ -10,6 +10,7 @@ struct ShotView: View {
     var streaming: Bool = false
     var folder: Bool = false
     var command: Bool = false
+    var schedule: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
@@ -274,6 +275,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if schedule { return scheduleMessages }
         if command { return commandMessages }
         if folder { return folderMessages }
         var m = store.selected?.messages ?? []
@@ -319,6 +321,23 @@ struct ShotView: View {
                     toolActivities: [NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
                                                         request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true)]),
         ]
+    }
+
+    private var scheduleActivity: NativeToolActivity {
+        NativeToolActivity(id: "s1", toolID: NativeScheduleTools.toolID, name: NativeScheduleTools.toolName, title: "Schedule work", round: 1,
+                           request: "{\"title\":\"Morning policy check\",\"worker_type\":\"research\",\"instruction\":\"Summarize overnight developments in semiconductor export policy with sources.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                           result: nil, state: .pending, confirmationRequired: true)
+    }
+
+    private var scheduleMessages: [Message] {
+        [
+            Message(role: .user, text: "Every weekday at 7 research overnight developments in semiconductor export policy and give me a short summary with sources."),
+            Message(role: .assistant, text: "", toolActivities: [scheduleActivity]),
+        ]
+    }
+
+    private var scheduleConfirmation: NativeToolConfirmationRequest {
+        NativeToolConfirmationRequest(activity: scheduleActivity)
     }
 
     private var shotConfirmation: NativeToolConfirmationRequest {
@@ -506,7 +525,8 @@ struct ShotView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
-                    MessageRow(message: message, pendingConfirmation: command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
+                    MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
                 }
             }
             .padding(.horizontal, 28).padding(.vertical, 26)

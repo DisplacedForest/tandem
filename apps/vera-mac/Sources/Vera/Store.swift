@@ -26,6 +26,7 @@ final class ChatStore: ObservableObject {
     @Published var projectError: String?
     @Published var memoryLibraryRevision = 0
     var nativeMemoryNow: () -> Date = { Date() }
+    var nativeMemorySelectionTransform: (([NativeMemoryRanked]) -> [NativeMemoryRanked])?
     private var reloadingNativeMemory = false
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var inspectedMemoryRevision: Int?
@@ -2045,8 +2046,8 @@ final class ChatStore: ObservableObject {
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
         let (authority, consented) = turnToolAuthority(for: turn)
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)),
-            hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
+        var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: turn.enabledToolIDs, consented: consented, authority: authority,
+            hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil, hasStore: nativeScheduleStore != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
@@ -2058,7 +2059,8 @@ final class ChatStore: ObservableObject {
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
         let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
             + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
-            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
+            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true)
+            + (scheduleToolDefinition().map { [$0] } ?? []))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2112,6 +2114,9 @@ final class ChatStore: ObservableObject {
                 ])
             }
         }
+        if let scheduleTool = scheduleToolDefinition() {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [scheduleTool])
+        }
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
@@ -2153,8 +2158,9 @@ final class ChatStore: ObservableObject {
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let (authority, consented) = turnToolAuthority(for: turn)
         var enabledToolIDs = capabilityProfile.supportsTools
-            ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)), hasEngine: nativeTaskEngine.base != nil,
-                                         hasRepository: nativeTaskRepository != nil) : []
+            ? NativeScheduleTools.turnEnabledIDs(snapshot: turn.enabledToolIDs, consented: consented, authority: authority,
+                                                 hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil,
+                                                 hasStore: nativeScheduleStore != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
         if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
@@ -2294,6 +2300,8 @@ final class ChatStore: ObservableObject {
                     }
                     memoryRetrievalTraces[id] = finalTrace
                 }
+                let admittedMemories = selectedMemories
+                if let transform = nativeMemorySelectionTransform { selectedMemories = transform(selectedMemories) }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
                     contracts.insert(.citations)
@@ -2319,7 +2327,7 @@ final class ChatStore: ObservableObject {
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
-                turnMemorySelections[turn.attempt ?? turn.id] = selectedMemories
+                turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
