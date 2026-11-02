@@ -66,9 +66,6 @@ struct ShotView: View {
                     } else {
                         HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 0) {
-                                if dotHeader {
-                                    DotHeaderBar(name: store.assistantName, paused: store.isDotPaused)
-                                }
                                 if emptyChat { emptyChatShot } else { chat }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -426,7 +423,7 @@ struct ShotView: View {
             Spacer()
             VStack(spacing: 22) {
                 HStack(spacing: 14) {
-                    CompanionAvatar(size: 56)
+                    ConversationFigureView(figure: ConversationPresence.greetingFigure(companionThread: store.isVeraThread(store.selectedID)), size: 56)
                     Text("Good afternoon, Jordan").font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
@@ -631,13 +628,13 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            if !dotHeader, companionPanel == nil {
+            if ConversationPresence.headerKind(companionThread: store.isVeraThread(store.selectedID)) == .conversation, companionPanel == nil {
                 ConversationHeader(name: store.assistantName, status: shotStatusLine)
             }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
-                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil)
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil, companionThread: store.isVeraThread(store.selectedID))
                 }
             }
             .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)

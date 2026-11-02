@@ -1,6 +1,10 @@
 import Foundation
 
 extension ChatStore {
+    var companionRulesSummary: String {
+        NativeDotContext.headerSummary(resolver: ruleResolver(for: veraThreadID ?? "", requestText: ""))
+    }
+
     func companionOverviewModel() -> CompanionOverviewModel {
         let threadID = veraThreadID
         let projection = repository as? any NativeTaskProjectionRepository
@@ -23,7 +27,7 @@ extension ChatStore {
         return CompanionOverviewModel.build(
             name: assistantName, profile: dotProfile,
             services: CompanionOverviewModel.servicesLine(options: options, selected: dotSelectedServices(options)),
-            rules: dotHeaderRules, activity: activity, results: results)
+            rules: companionRulesSummary, activity: activity, results: results)
     }
 
     func refreshCompanionOverview() {
