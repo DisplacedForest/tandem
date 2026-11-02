@@ -840,6 +840,20 @@ final class ConfigStore: ObservableObject {
         self[Self.menuBarKey] = value ? "on" : "off"
     }
 
+    static let companionShapeKey = "companion_shape"
+    static let companionColorKey = "companion_color"
+
+    var companionAppearance: CompanionAppearance {
+        CompanionAppearance(
+            shape: CompanionShape(rawValue: self[Self.companionShapeKey]) ?? CompanionAppearance.default.shape,
+            color: CompanionColor(rawValue: self[Self.companionColorKey]) ?? CompanionAppearance.default.color)
+    }
+
+    func setCompanionAppearance(_ appearance: CompanionAppearance) {
+        self[Self.companionShapeKey] = appearance.shape.rawValue
+        self[Self.companionColorKey] = appearance.color.rawValue
+    }
+
     var companionShortcut: CompanionShortcut {
         let stored = self[CompanionShortcut.configKey]
         return stored.isEmpty ? .default : (CompanionShortcut(configValue: stored) ?? .default)

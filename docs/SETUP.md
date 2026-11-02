@@ -319,6 +319,23 @@ To change the shortcut, open Settings, Identity, find **Quick ask**, click the r
 
 The shortcut is stored as `companion_shortcut` in `~/.vera/config.json`. The value is lowercase tokens joined with plus signs: any of `control`, `option`, `shift` and `command`, then a key name such as `space`, `k` or `f5`, for example `option+shift+space`. At least one of control, option or command is required unless the key is a function key. When unset, the default applies.
 
+### Companion appearance
+
+The companion is the small figure that stands for the assistant. It uses the same assistant name as the rest of the app. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
+
+The figure appears wherever the companion does: the sidebar, Settings and the voice view, where it replaces the old orb. Outside the voice view its state follows the conversation you have selected, so a turn running in another chat does not animate it. It has six states, each shown through motion rather than text:
+
+- Ready: a slow breath and an occasional blink.
+- Thinking: a side to side sway while an answer is being generated, or while voice is transcribing or thinking.
+- Listening: perked up, only while the microphone is really capturing.
+- Speaking: a bounce, only while audio is really playing back.
+- Resting: settled low with closed eyes while the app is inactive.
+- Needs you: only while a real question is waiting for your decision. It hops once and then holds the pose until the question is answered.
+
+With Reduce Motion on in System Settings, each state is a still pose. Animation also stops while a view is hidden, so a figure you can't see costs nothing.
+
+The choice is stored in `~/.vera/config.json` under `companion_shape` and `companion_color`, using the lowercase names (for example `"companion_shape": "fold"` and `"companion_color": "periwinkle"`). When either key is unset or unrecognized, the companion uses Pebble and Sage.
+
 ### Working in folders
 
 Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.

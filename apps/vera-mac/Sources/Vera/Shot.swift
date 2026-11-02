@@ -33,6 +33,10 @@ enum Shot {
             size = CGSize(width: 900, height: 640)
         } else if view == "brand-marks" {
             size = CGSize(width: 900, height: 320)
+        } else if view == "companion-picker" {
+            size = CGSize(width: 640, height: 560)
+        } else if view == "companion-states" {
+            size = CGSize(width: 900, height: 520)
         } else if view == "companion" {
             size = CompanionPanelController.size
         } else {
@@ -44,6 +48,7 @@ enum Shot {
             let voice = VoiceSession.preview(state: .listening, level: 0.6, store: store)
             content = AnyView(
                 VoiceView()
+                    .environment(\.renderSafe, true)
                     .environmentObject(voice)
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
@@ -353,6 +358,23 @@ enum Shot {
         } else if view == "brand-marks" {
             content = AnyView(
                 ShotBrandMarks()
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "companion-picker" {
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
+                                     readConfiguration: { ["assistant_name": "Sol"] },
+                                     writeConfiguration: { _ in })
+            let fixture = CompanionAppearanceFixtureStore()
+            fixture.stored = CompanionAppearance(shape: .fold, color: .periwinkle)
+            content = AnyView(
+                CompanionAppearancePicker(config: config, store: fixture, renderSafe: true)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "companion-states" {
+            content = AnyView(
+                ShotCompanionStates()
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
@@ -1375,6 +1397,31 @@ private struct ShotBrandMarks: View {
         .padding(.horizontal, 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(dark ? Color(red: 0.07, green: 0.08, blue: 0.09) : Color(red: 0.96, green: 0.96, blue: 0.94))
+    }
+}
+
+private struct ShotCompanionStates: View {
+    private let appearance = CompanionAppearance(shape: .pebble, color: .sage)
+
+    var body: some View {
+        Grid(horizontalSpacing: 48, verticalSpacing: 36) {
+            ForEach(0..<2, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<3, id: \.self) { column in
+                        cell(CompanionState.allCases[row * 3 + column])
+                    }
+                }
+            }
+        }
+    }
+
+    private func cell(_ state: CompanionState) -> some View {
+        VStack(spacing: 14) {
+            CompanionAvatarView(appearance: appearance, state: state, size: 120, renderSafe: true)
+            Text(state.displayName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+        }
     }
 }
 
