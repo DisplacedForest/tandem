@@ -9,7 +9,7 @@ enum ProjectStoreSelftest {
         if !condition { throw Failure(description: message) }
     }
 
-    static func run() throws {
+    static func run() async throws {
         let manager = FileManager.default
         let base = manager.temporaryDirectory
             .appendingPathComponent("vera-project-selftest-\(UUID().uuidString.lowercased())", isDirectory: true)
@@ -21,6 +21,7 @@ enum ProjectStoreSelftest {
         try checkStore(repository, base: base, projects: projects)
         try checkReadOnlyFolderTools(base: base)
         try checkNestedGrants(base: base)
+        try await checkAncestorOfReadOnlyRoot(base: base)
         try checkMemoryProjectTag()
     }
 
@@ -171,6 +172,54 @@ enum ProjectStoreSelftest {
             try check(beside.root.id == writable.id, "A path beside the nested grant resolves to the outer grant (order \(index))")
             _ = try NativeFolderTools.write(beside, content: "allowed", ledger: ledger)
             try check(try String(contentsOf: outer.appendingPathComponent("beside-\(index).txt"), encoding: .utf8) == "allowed", "Writing beside the nested grant succeeds (order \(index))")
+        }
+    }
+
+    static func execute(_ definitions: [NativeToolDefinition], _ name: String, _ arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
+        guard let definition = definitions.first(where: { $0.name == name }) else { throw Failure(description: "Missing tool \(name)") }
+        return try await definition.execute(arguments)
+    }
+
+    static func checkAncestorOfReadOnlyRoot(base: URL) async throws {
+        let manager = FileManager.default
+        for order in 0..<2 {
+            let workspace = base.appendingPathComponent("workspace-\(order)", isDirectory: true)
+            let project = workspace.appendingPathComponent("project", isDirectory: true)
+            let files = project.appendingPathComponent("files", isDirectory: true)
+            let other = workspace.appendingPathComponent("other", isDirectory: true)
+            try manager.createDirectory(at: files, withIntermediateDirectories: true)
+            try manager.createDirectory(at: other, withIntermediateDirectories: true)
+            try "kept".write(to: files.appendingPathComponent("brief.txt"), atomically: true, encoding: .utf8)
+            let writable = try FolderGrant.make(url: workspace)
+            var readOnly = try FolderGrant.make(url: files)
+            readOnly.readOnly = true
+            let grants = order == 0 ? [writable, readOnly] : [readOnly, writable]
+            let access = NativeFolderAccess(grants: grants)
+            try check(access.containsReadOnlyRoot(under: writable.path + "/project"), "The project folder holds a read-only root (order \(order))")
+            try check(access.containsReadOnlyRoot(under: readOnly.path), "A read-only root counts as under itself (order \(order))")
+            try check(!access.containsReadOnlyRoot(under: writable.path + "/other"), "A sibling folder holds no read-only root (order \(order))")
+            try check(!access.containsReadOnlyRoot(under: writable.path + "/project/files-old"), "A name sharing a prefix is not an ancestor (order \(order))")
+            let definitions = NativeFolderTools.definitions(grants: { grants }, ledger: NativeFileChangeLedger(), trash: .act(.rule))
+
+            func refused(_ label: String, _ name: String, _ arguments: [String: NativeJSONValue]) async throws {
+                do {
+                    _ = try await execute(definitions, name, arguments)
+                    throw Failure(description: "\(label) must be refused (order \(order))")
+                } catch let error as NativeFolderAccessError {
+                    try check(error == .readOnly(readOnly.path), "\(label) names the read-only folder (order \(order)): \(error)")
+                }
+            }
+            try await refused("Moving an ancestor of a read-only folder", NativeFolderTools.moveName,
+                        ["from": .string(writable.path + "/project"), "to": .string(writable.path + "/renamed")])
+            try check(manager.fileExists(atPath: files.appendingPathComponent("brief.txt").path)
+                        && !manager.fileExists(atPath: workspace.appendingPathComponent("renamed").path), "Nothing moved (order \(order))")
+            try await refused("Trashing an ancestor of a read-only folder", NativeFolderTools.trashName,
+                        ["path": .string(writable.path + "/project")])
+            try check(manager.fileExists(atPath: files.appendingPathComponent("brief.txt").path), "Nothing was trashed (order \(order))")
+            _ = try await execute(definitions, NativeFolderTools.moveName,
+                            ["from": .string(writable.path + "/other"), "to": .string(writable.path + "/moved")])
+            try check(!manager.fileExists(atPath: other.path)
+                        && manager.fileExists(atPath: workspace.appendingPathComponent("moved").path), "Moving a folder without a read-only root works (order \(order))")
         }
     }
 

@@ -142,6 +142,7 @@ enum NativeFolderTools {
                     let current = access()
                     let from = try current.locate(try requiredString(arguments, "from"))
                     let to = try current.locate(try requiredString(arguments, "to"))
+                    try current.requireNoReadOnlyRoot(under: from)
                     return try move(from: from, to: to, ledger: ledger)
                 }),
             NativeToolDefinition(
@@ -165,7 +166,9 @@ enum NativeFolderTools {
                 confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, isAvailable: available,
                 execute: { arguments in
                     try NativeRuleResolver.gate(live: live(.trash) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
-                    let location = try access().locate(try requiredString(arguments, "path"))
+                    let current = access()
+                    let location = try current.locate(try requiredString(arguments, "path"))
+                    try current.requireNoReadOnlyRoot(under: location)
                     return try moveToTrash(location, ledger: ledger)
                 }),
         ]

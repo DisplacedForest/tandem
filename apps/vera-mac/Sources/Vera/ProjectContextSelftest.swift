@@ -49,6 +49,52 @@ final class ProjectContextMemoryService: NativeMemoryServing, @unchecked Sendabl
     ) async throws -> [NativeMemoryProposal] { [] }
 }
 
+final class ProjectMoveFailingRepository: ChatRepository, ProjectRepository, @unchecked Sendable {
+    let inner: LocalChatRepository
+    private let lock = NSLock()
+    private var failing = false
+
+    init(inner: LocalChatRepository) { self.inner = inner }
+
+    var failMoves: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return failing }
+        set { lock.lock(); failing = newValue; lock.unlock() }
+    }
+
+    func listConversations() throws -> [Conversation] { try inner.listConversations() }
+    func messages(conversationID: String) throws -> [Message] { try inner.messages(conversationID: conversationID) }
+    func recentMessages(conversationID: String, limit: Int) throws -> [Message] {
+        try inner.recentMessages(conversationID: conversationID, limit: limit)
+    }
+    func saveConversation(_ conversation: Conversation) throws { try inner.saveConversation(conversation) }
+    func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
+        try inner.saveMessage(message, conversationID: conversationID, ordinal: ordinal)
+    }
+    func deleteConversation(_ id: String) throws { try inner.deleteConversation(id) }
+    func conversation(originType: String, originID: String) throws -> Conversation? {
+        try inner.conversation(originType: originType, originID: originID)
+    }
+    func createOriginConversation(_ conversation: Conversation, seed: Message) throws {
+        try inner.createOriginConversation(conversation, seed: seed)
+    }
+    func referencedAttachmentFileNames() throws -> Set<String> { try inner.referencedAttachmentFileNames() }
+
+    func listProjects() throws -> [ProjectRecord] { try inner.listProjects() }
+    func project(_ id: String) throws -> ProjectRecord? { try inner.project(id) }
+    func saveProject(_ project: ProjectRecord) throws { try inner.saveProject(project) }
+    func deleteProject(_ id: String) throws -> [String] { try inner.deleteProject(id) }
+    func conversationIDs(projectID: String) throws -> [String] { try inner.conversationIDs(projectID: projectID) }
+    func setConversationProject(_ conversationID: String, projectID: String?) throws {
+        if failMoves {
+            throw NSError(domain: "SelfTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "scripted move failure"])
+        }
+        try inner.setConversationProject(conversationID, projectID: projectID)
+    }
+    func projectFilesDirectory(_ projectID: String) -> URL { inner.projectFilesDirectory(projectID) }
+    func addProjectFile(_ projectID: String, from url: URL) throws -> ProjectFile { try inner.addProjectFile(projectID, from: url) }
+    func removeProjectFile(_ projectID: String, fileID: String) throws { try inner.removeProjectFile(projectID, fileID: fileID) }
+}
+
 enum ProjectContextSelftest {
     struct Failure: Error, CustomStringConvertible {
         let description: String
@@ -116,6 +162,7 @@ enum ProjectContextSelftest {
         try check(folderPaths().contains(folderPath) && store.grants(for: chat).contains { $0.name == "Garden files" },
                   "Moving back restores the project folders")
 
+        try checkFilesGrantStaysReadOnly(store, chat: chat, projectID: project.id)
         try await checkProposalTagging(store, service: service, chat: chat, projectID: project.id)
         try await checkTypedTagging(store, service: service, repository: repository, projectID: project.id)
         try await checkNewChatAndReplayScope(store, service: service, projectChat: chat, projectID: project.id)
@@ -132,7 +179,8 @@ enum ProjectContextSelftest {
 
         try checkPreferProject()
         try await checkProjectRecall(store, repository: repository)
-        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, typed tagging, queued replay, replay scope, new chat reuse, recall preference)")
+        try checkFailedMove(base: base)
+        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, typed tagging, queued replay, replay scope, new chat reuse, recall preference, read-only files folder, failed moves)")
     }
 
     @MainActor
@@ -160,6 +208,93 @@ enum ProjectContextSelftest {
         try check(!replayed.isEmpty && replayed.allSatisfy { $0.projectID == projectID }, "A replayed turn tags its proposals with the project")
         for pending in store.memoryProposals { store.dismissMemoryProposal(pending) }
         store.reloadNativeMemory()
+    }
+
+    @MainActor
+    static func checkFilesGrantStaysReadOnly(_ store: ChatStore, chat: String, projectID: String) throws {
+        guard let directory = store.projectRepository?.projectFilesDirectory(projectID),
+              let index = store.conversations.firstIndex(where: { $0.id == chat }) else {
+            throw Failure(description: "No project files folder for the grant check")
+        }
+        var writable = try FolderGrant.make(url: directory)
+        writable.readOnly = false
+        let saved = store.conversations[index].grants
+        store.conversations[index].grants = [writable]
+        store.refreshConversationGrants(chat)
+        defer {
+            if let restore = store.conversations.firstIndex(where: { $0.id == chat }) {
+                store.conversations[restore].grants = saved
+                store.refreshConversationGrants(chat)
+            }
+        }
+        let matching = store.grants(for: chat).filter { $0.path == writable.path }
+        try check(matching.count == 1 && matching[0].readOnly, "A writable chat grant on the project files folder stays read-only, got \(matching.map(\.readOnly))")
+        let sourced = store.nativeGrantSource.grants(for: chat).filter { $0.path == writable.path }
+        try check(sourced.count == 1 && sourced[0].readOnly, "The tool grant source holds one read-only files grant")
+        let access = NativeFolderAccess(grants: store.grants(for: chat))
+        let target = try access.locate(writable.path + "/written.txt")
+        do {
+            _ = try NativeFolderTools.write(target, content: "new", ledger: NativeFileChangeLedger())
+            throw Failure(description: "Writing into the project files folder must be refused")
+        } catch let error as NativeFolderAccessError {
+            try check(error == .readOnly(target.path), "The project files write reports read-only: \(error)")
+        }
+        try check(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("written.txt").path),
+                  "Nothing is written into the project files folder")
+    }
+
+    @MainActor
+    static func checkFailedMove(base: URL) throws {
+        let manager = FileManager.default
+        let root = base.appendingPathComponent("failed-move", isDirectory: true)
+        let attachments = root.appendingPathComponent("attachments", isDirectory: true)
+        let folder = root.appendingPathComponent("shared-folder", isDirectory: true)
+        try manager.createDirectory(at: attachments, withIntermediateDirectories: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let inner = try LocalChatRepository(inMemory: true, artifactDirectory: attachments,
+                                            projectsDirectory: root.appendingPathComponent("projects", isDirectory: true))
+        let repository = ProjectMoveFailingRepository(inner: inner)
+        let store = ChatStore(
+            nativeConfig: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
+                                           model: "local-model", chatTemplateKwargs: nil),
+            nativeTransport: ArtifactScriptTransport(), repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: attachments), artifactPersistenceEnabled: false)
+        guard let project = store.createProject(name: "Orchard") else { throw Failure(description: "The move fixture project was not created") }
+        store.addProjectFolder(project.id, url: folder)
+        store.newConversation()
+        guard let chat = store.selectedID, let index = store.conversations.firstIndex(where: { $0.id == chat }) else {
+            throw Failure(description: "No move fixture chat")
+        }
+        store.conversations[index].isPersisted = true
+        try inner.saveConversation(store.conversations[index])
+        let folderPath = try FolderGrant.make(url: folder).path
+
+        repository.failMoves = true
+        let outside = store.grants(for: chat)
+        store.moveConversation(chat, toProject: project.id)
+        try check(store.conversations.first { $0.id == chat }.map { $0.projectID == nil } == true, "A failed move in leaves the chat outside")
+        try check(store.grants(for: chat) == outside && !store.grants(for: chat).contains { $0.path == folderPath },
+                  "A failed move in leaves the grants unchanged")
+        try check(store.projectError?.contains("scripted move failure") == true, "A failed move sets the project error")
+        try check(store.chatConfigurationError?.contains("scripted move failure") == true, "A failed move sets the chat error")
+        try check(try inner.conversationIDs(projectID: project.id).isEmpty, "A failed move writes nothing")
+
+        repository.failMoves = false
+        store.clearProjectError()
+        store.chatConfigurationError = nil
+        store.moveConversation(chat, toProject: project.id)
+        try check(store.conversations.first { $0.id == chat }?.projectID == project.id, "A working move joins the project")
+        try check(store.projectError == nil, "A working move sets no error")
+        let inside = store.grants(for: chat)
+        try check(inside.contains { $0.path == folderPath }, "A joined chat sees the project folder")
+
+        repository.failMoves = true
+        store.moveConversation(chat, toProject: nil)
+        try check(store.conversations.first { $0.id == chat }?.projectID == project.id, "A failed move out keeps the membership")
+        try check(store.grants(for: chat) == inside, "A failed move out keeps the project grants")
+        try check(store.nativeGrantSource.grants(for: chat).contains { $0.path == folderPath }, "A failed move out keeps the tool grants")
+        try check(store.projectError != nil && store.chatConfigurationError != nil, "A failed move out sets both errors")
+        try check(try inner.conversationIDs(projectID: project.id) == [chat], "A failed move out leaves the saved membership")
     }
 
     @MainActor

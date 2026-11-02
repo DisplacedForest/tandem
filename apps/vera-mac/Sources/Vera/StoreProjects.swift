@@ -116,11 +116,16 @@ extension ChatStore {
     func moveConversation(_ conversationID: String, toProject projectID: String?) {
         guard !isVeraThread(conversationID), let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         if let projectID, project(projectID) == nil { return }
-        conversations[index].projectID = projectID
         if conversations[index].isPersisted {
             do { try projectRepository?.setConversationProject(conversationID, projectID: projectID) }
-            catch { projectError = "The chat couldn't be moved: \(error.localizedDescription)" }
+            catch {
+                let message = "The chat couldn't be moved: \(error.localizedDescription)"
+                projectError = message
+                chatConfigurationError = message
+                return
+            }
         }
+        conversations[index].projectID = projectID
         refreshConversationGrants(conversationID)
     }
 
@@ -164,7 +169,8 @@ extension ChatStore {
                 var readOnly = grant
                 readOnly.readOnly = true
                 readOnly.name = "\(record.name) files"
-                if !combined.contains(where: { $0.path == readOnly.path }) { combined.append(readOnly) }
+                combined.removeAll { $0.path == readOnly.path }
+                combined.append(readOnly)
             }
         }
         return combined

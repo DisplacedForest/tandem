@@ -399,7 +399,7 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: artifact store \(error)"); exit(1) }
         do { try await ArtifactProducerSelftest.run() }
         catch { print("SELFTEST ERROR: artifact producers \(error)"); exit(1) }
-        do { try ProjectStoreSelftest.run() }
+        do { try await ProjectStoreSelftest.run() }
         catch { print("SELFTEST ERROR: project store \(error)"); exit(1) }
         do { try await ProjectContextSelftest.run() } catch { print("SELFTEST ERROR: project context \(error)"); exit(1) }
         do { try runComposerMentions() }

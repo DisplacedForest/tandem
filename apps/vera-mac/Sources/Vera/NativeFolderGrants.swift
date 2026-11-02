@@ -111,6 +111,18 @@ struct NativeFolderAccess: Sendable {
         path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
+    func readOnlyRoot(under path: String) -> FolderGrant? {
+        roots.first { $0.readOnly && Self.contains(root: path, path: $0.path) }
+    }
+
+    func containsReadOnlyRoot(under path: String) -> Bool {
+        readOnlyRoot(under: path) != nil
+    }
+
+    func requireNoReadOnlyRoot(under location: NativeFolderLocation) throws {
+        if let protected = readOnlyRoot(under: location.path) { throw NativeFolderAccessError.readOnly(protected.path) }
+    }
+
     func locate(_ requested: String) throws -> NativeFolderLocation {
         guard !requested.isEmpty, !requested.contains("\0"), !requested.contains("\n"), !requested.contains("\r"), requested.utf8.count <= 4096,
               !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: Self.reserved) else {
