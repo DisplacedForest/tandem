@@ -121,6 +121,7 @@ struct NativeChatDeltaAccumulator: Sendable {
 
     private var content = ""
     private var builders: [Int: Builder] = [:]
+    var secrets: [String] = []
 
     mutating func consume(_ payload: String) throws -> NativeChatStreamSnapshot {
         guard let data = payload.data(using: .utf8),
@@ -128,7 +129,7 @@ struct NativeChatDeltaAccumulator: Sendable {
             throw NativeChatClient.ClientError.malformedEvent
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeChatClient.ClientError.provider(error)
+            throw NativeChatClient.ClientError.provider(error, secrets: secrets)
         }
         guard let choice = (object["choices"] as? [[String: Any]])?.first else {
             throw NativeChatClient.ClientError.malformedEvent
@@ -224,11 +225,9 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             }
         }
 
-        static func provider(_ error: [String: Any]) -> ClientError {
-            let redacted = NativeDiagnosticRedaction.value(error)
-            let raw = (try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys]))
-                .map { String(decoding: $0, as: UTF8.self) } ?? ""
-            let message = (error["message"] as? String).map { NativeDiagnosticRedaction.text($0) } ?? "The model endpoint reported an error"
+        static func provider(_ error: [String: Any], secrets: [String] = []) -> ClientError {
+            let raw = NativeDiagnosticRedaction.serialized(error, secrets: secrets)
+            let message = (error["message"] as? String).map { NativeDiagnosticRedaction.text($0, secrets: secrets) } ?? "The model endpoint reported an error"
             return .provider(message, String(raw.prefix(providerDetailLimit)))
         }
 
@@ -276,7 +275,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             let (data, response) = try await session.data(for: request)
             let status = try statusCode(response)
             guard (200..<300).contains(status) else {
-                throw ClientError.http(status, Self.errorDetail(data))
+                throw ClientError.http(status, Self.errorDetail(data, secrets: redactionSecrets))
             }
             return try Self.modelIDs(from: data)
         } catch {
@@ -337,9 +336,9 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                             try budget?.check()
                             let status = try statusCode(response)
                             guard (200..<300).contains(status) else {
-                                throw ClientError.http(status, Self.errorDetail(data))
+                                throw ClientError.http(status, Self.errorDetail(data, secrets: redactionSecrets))
                             }
-                            let snapshot = try Self.completeSnapshot(from: data)
+                            let snapshot = try Self.completeSnapshot(from: data, secrets: redactionSecrets)
                             try budget?.check()
                             try Task.checkCancellation()
                             continuation.yield(snapshot)
@@ -367,11 +366,12 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                         guard (200..<300).contains(status) else {
                             var body = Data()
                             for try await byte in bytes { body.append(byte) }
-                            throw ClientError.http(status, Self.errorDetail(body))
+                            throw ClientError.http(status, Self.errorDetail(body, secrets: redactionSecrets))
                         }
                         var decoder = ChatSSEDecoder()
                         var chunk = Data()
                         var accumulator = NativeChatDeltaAccumulator()
+                        accumulator.secrets = redactionSecrets
                         var lastSnapshot = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                         var completed = false
                         for try await byte in bytes {
@@ -415,12 +415,12 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         }
     }
 
-    static func completeSnapshot(from data: Data) throws -> NativeChatStreamSnapshot {
+    static func completeSnapshot(from data: Data, secrets: [String] = []) throws -> NativeChatStreamSnapshot {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ClientError.invalidResponse
         }
         if let error = object["error"] as? [String: Any] {
-            throw ClientError.provider(error)
+            throw ClientError.provider(error, secrets: secrets)
         }
         guard let choice = (object["choices"] as? [[String: Any]])?.first,
               let message = choice["message"] as? [String: Any] else {
@@ -501,11 +501,11 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return http.statusCode
     }
 
-    static func errorDetail(_ data: Data) -> String {
+    static func errorDetail(_ data: Data, secrets: [String] = []) -> String {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let error = object["error"] as? [String: Any], let message = error["message"] as? String {
-            return NativeDiagnosticRedaction.text(message)
+            return NativeDiagnosticRedaction.text(message, secrets: secrets)
         }
-        return NativeDiagnosticRedaction.payload(data)
+        return NativeDiagnosticRedaction.payload(data, secrets: secrets)
     }
 }

@@ -4,14 +4,23 @@ enum NativeDiagnosticRedaction {
     static let placeholder = "[redacted]"
     static let sensitiveKeyParts = ["key", "token", "secret", "authorization", "password", "cookie", "credential"]
     static let minimumSecretLength = 6
-    static let opaqueSegmentLength = 16
-    static let textPatterns = [
-        (#"(?i)\bbearer\s+[A-Za-z0-9._~+/=\-]+"#, placeholder),
-        (#"(?i)\b(x[-_]?api[-_]?key|api[-_]?key|apikey|key|token|secret|password|authorization)("?\s*[=:]\s*"?)[^\s&",;}]+"#, "$1$2" + placeholder),
-        (#"\bsk-[A-Za-z0-9_\-]{8,}"#, placeholder),
-        (#"\b[0-9A-Fa-f]{32,}\b"#, placeholder),
+    static let authorizationValues = #"(?i)\b(?:bearer\s+[A-Za-z0-9._~+/=\-]{8,}|basic\s+[A-Za-z0-9+/=]{8,})"#
+    static let credentialAssignment = #"(?i)\b(x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|secret|password|authorization)("?\s*[=:]\s*"?)[^\s&",;}]+"#
+    static let knownKeyShapes = [
+        #"\bsk[-_][A-Za-z0-9_\-]{8,}"#,
+        #"\b[pr]k_(?:live|test)_[A-Za-z0-9]{8,}"#,
+        #"\bAIza[0-9A-Za-z_\-]{35}"#,
+        #"\bgh[opus]_[A-Za-z0-9]{16,}"#,
+        #"\bgithub_pat_[A-Za-z0-9_]{16,}"#,
+        #"\bxox[bpa]-[A-Za-z0-9\-]{10,}"#,
+        #"\bxapp-[A-Za-z0-9\-]{10,}"#,
+        #"\bAKIA[0-9A-Z]{16}\b"#,
+        #"\bya29\.[A-Za-z0-9_\-]{16,}"#,
+        #"\bglpat-[A-Za-z0-9_\-]{16,}"#,
+        #"\bhf_[A-Za-z0-9]{16,}"#,
+        #"\br8_[A-Za-z0-9]{16,}"#,
+        #"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"#,
     ]
-    static let base64Candidate = #"[A-Za-z0-9+/_\-]{40,}={0,2}"#
     static let consolePatterns = [#"[A-Za-z0-9+/=_\-]{24,}"#]
 
     static func isSensitiveKey(_ key: String) -> Bool {
@@ -34,11 +43,15 @@ enum NativeDiagnosticRedaction {
         }
     }
 
+    static func serialized(_ value: Any, secrets: [String] = []) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: self.value(value, secrets: secrets),
+                                                     options: [.sortedKeys, .withoutEscapingSlashes]) else { return "" }
+        return text(String(decoding: data, as: UTF8.self), secrets: secrets)
+    }
+
     static func payload(_ data: Data, secrets: [String] = []) -> String {
-        if let object = try? JSONSerialization.jsonObject(with: data),
-           object is [String: Any] || object is [Any],
-           let encoded = try? JSONSerialization.data(withJSONObject: self.value(object, secrets: secrets), options: [.sortedKeys]) {
-            return text(String(decoding: encoded, as: UTF8.self), secrets: secrets)
+        if let object = try? JSONSerialization.jsonObject(with: data), object is [String: Any] || object is [Any] {
+            return serialized(object, secrets: secrets)
         }
         return text(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), secrets: secrets)
     }
@@ -47,29 +60,16 @@ enum NativeDiagnosticRedaction {
         var output = secrets.filter { $0.count >= minimumSecretLength }.reduce(input) {
             $0.replacingOccurrences(of: $1, with: placeholder)
         }
-        for (pattern, template) in textPatterns {
-            output = output.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
-        }
-        return maskOpaque(output)
-    }
-
-    static func console(_ input: String) -> String {
-        consolePatterns.reduce(text(input)) { current, pattern in
+        output = output.replacingOccurrences(of: authorizationValues, with: placeholder, options: .regularExpression)
+        output = output.replacingOccurrences(of: credentialAssignment, with: "$1$2" + placeholder, options: .regularExpression)
+        return knownKeyShapes.reduce(output) { current, pattern in
             current.replacingOccurrences(of: pattern, with: placeholder, options: .regularExpression)
         }
     }
 
-    private static func maskOpaque(_ input: String) -> String {
-        guard let expression = try? NSRegularExpression(pattern: base64Candidate) else { return input }
-        var output = input
-        let matches = expression.matches(in: input, range: NSRange(input.startIndex..., in: input))
-        for match in matches.reversed() {
-            guard let range = Range(match.range, in: output) else { continue }
-            let candidate = output[range]
-            let longest = candidate.split(whereSeparator: { $0 == "/" || $0 == "-" }).map(\.count).max() ?? 0
-            guard longest >= opaqueSegmentLength, candidate.contains(where: \.isNumber), candidate.contains(where: \.isLetter) else { continue }
-            output.replaceSubrange(range, with: placeholder)
+    static func console(_ input: String, secrets: [String] = []) -> String {
+        consolePatterns.reduce(text(input, secrets: secrets)) { current, pattern in
+            current.replacingOccurrences(of: pattern, with: placeholder, options: .regularExpression)
         }
-        return output
     }
 }

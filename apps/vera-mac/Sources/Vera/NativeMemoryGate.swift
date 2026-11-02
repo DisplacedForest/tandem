@@ -704,6 +704,9 @@ enum NativeMemoryGate {
 
     static func redactionChecks() throws {
         let secret = "sk" + "-live-" + String(repeating: "0a9Z", count: 6)
+        let configured = "fixture-configured-" + String(repeating: "k", count: 8)
+        let client = NativeChatClient(config: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: configured,
+                                                               model: "fixture-model", chatTemplateKwargs: nil))
         let echoed = NativeChatClient.ClientError.provider(["message": "Rate limited", "code": 429, "metadata": ["api_key": secret]])
         let nested = NativeChatClient.ClientError.provider(["message": "Upstream refused", "metadata": [
             "attempts": [["session_token": "short-value", "headers": ["Authorization": "Basic short"]]], "provider_name": "fixture"]])
@@ -714,18 +717,40 @@ enum NativeMemoryGate {
         let modelMessage = "model \(longModel) is not available"
         let longerMessage = "model \(longerModel) is not available"
         let longRun = String(repeating: "q7Z", count: 10)
-        let hex = String(repeating: "a1", count: 16)
-        let base64 = String(repeating: "Zq9", count: 14)
-        let configured = "fixture-configured-" + String(repeating: "k", count: 8)
+        let googleKey = "AI" + "za" + String(repeating: "Ab3x5", count: 7)
+        let githubToken = "gh" + "p_" + String(repeating: "Q1w2", count: 9)
+        let webToken = "ey" + "JhbGciOiJIUzI1NiJ9." + "ey" + "JzdWIiOiIxIn0." + String(repeating: "s1G", count: 8)
+        let awsKey = "AK" + "IA" + "ABCD2345EFGH6789"
+        let shapes = [googleKey, githubToken, webToken, awsKey]
+        let slashed = "fixture/" + String(repeating: "c4/d5", count: 5)
+        let slashClient = NativeChatClient(config: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: slashed,
+                                                                    model: "fixture-model", chatTemplateKwargs: nil))
+        let slashBody = Data(String(decoding: try JSONSerialization.data(withJSONObject: ["detail": ["echo": slashed], "code": 401]), as: UTF8.self).utf8)
+        let slashHTTP = slashClient.sanitized(NativeChatClient.ClientError.http(401, NativeChatClient.errorDetail(slashBody, secrets: slashClient.redactionSecrets)))
+        let slashProvider = slashClient.sanitized(NativeChatClient.ClientError.provider(
+            ["message": "rejected \(slashed)", "metadata": ["echo": slashed]], secrets: slashClient.redactionSecrets))
+        let slashPrinted = [slashHTTP, slashProvider].map { error in
+            consoleLine("probe", error: NativeMemoryGateError.request("probe", error.localizedDescription, .requestFailed), diagnostic: diagnostic(error))
+        }
+        var slashStored: [String] = [slashHTTP.localizedDescription, slashProvider.localizedDescription]
+        if case .provider(_, let raw)? = slashProvider as? NativeChatClient.ClientError { slashStored.append(raw) }
+        let parameters = NativeChatRequestOptions(
+            topLevel: [NativeChatRequestOptions.Entry(key: "temperature", value: .number(0.7), source: .override),
+                       NativeChatRequestOptions.Entry(key: "max_tokens", value: .number(256), source: .override)],
+            kwargs: [], streamingOverride: nil, contextCeiling: nil)
+        let unsupported = "Unsupported key: temperature"
+        let unknown = "Unknown parameter: max_tokens"
+        let rejectedHTTP = client.sanitized(NativeChatClient.ClientError.http(400, NativeChatClient.errorDetail(
+            Data("{\"error\":{\"message\":\"\(unsupported)\"}}".utf8), secrets: client.redactionSecrets)))
+        let rejectedProvider = client.sanitized(NativeChatClient.ClientError.provider(["message": unknown], secrets: client.redactionSecrets))
         let printed = [echoed, nested, inline].map { error in
             consoleLine("probe", error: NativeMemoryGateError.request("probe", error.localizedDescription, .requestFailed), diagnostic: diagnostic(error))
         }
         let nestedBody = NativeChatClient.ClientError.http(429, NativeChatClient.errorDetail(Data("{\"code\":429,\"detail\":{\"api_key\":\"short\"}}".utf8)))
         let plainBody = NativeChatClient.errorDetail(Data("upstream said api_key=abc123 for this project".utf8))
         let queried = NativeChatClient.ClientError.provider(["message": "See https://example.test/v1?api_key=zz9&mode=x for details"]).localizedDescription
-        let opaque = NativeChatClient.ClientError.provider(["message": "tokens \(hex) and \(base64) were rejected"]).localizedDescription
-        let client = NativeChatClient(config: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: configured,
-                                                               model: "fixture-model", chatTemplateKwargs: nil))
+        let shapedMessage = NativeChatClient.ClientError.provider(["message": "keys " + shapes.joined(separator: " and ") + " were rejected"]).localizedDescription
+        let shapedBody = NativeChatClient.errorDetail(Data(("upstream refused " + shapes.joined(separator: ", ") + " today").utf8))
         let echoedKey = client.sanitized(NativeChatClient.ClientError.provider(["message": "the key \(configured) is not allowed"])).localizedDescription
         let echoedHTTP = client.sanitized(NativeChatClient.ClientError.http(401, "bad credential \(configured)")).localizedDescription
         let cases: [(String, Bool)] = [
@@ -737,7 +762,12 @@ enum NativeMemoryGate {
                 && nestedBody.localizedDescription.contains("429")),
             ("non-JSON body assignment", !plainBody.contains("abc123") && plainBody.contains("api_key=") && plainBody.contains("for this project")),
             ("query parameter", !queried.contains("zz9") && queried.contains("mode=x")),
-            ("opaque tokens", !opaque.contains(hex) && !opaque.contains(base64) && opaque.contains("were rejected")),
+            ("known key shapes", shapes.allSatisfy { !shapedMessage.contains($0) && !shapedBody.contains($0) }
+                && shapedMessage.contains("were rejected") && shapedBody.contains("today")),
+            ("slashed configured key", !(slashStored + slashPrinted).contains { $0.contains(slashed) || $0.contains("c4/d5c4") }),
+            ("parameter names readable", NativeDiagnosticRedaction.text(unsupported) == unsupported && NativeDiagnosticRedaction.text(unknown) == unknown
+                && ModelParameterRejectionClassifier.classify(error: rejectedHTTP, options: parameters)?.key == "temperature"
+                && ModelParameterRejectionClassifier.classify(error: rejectedProvider, options: parameters)?.key == "max_tokens"),
             ("configured key echoed", !echoedKey.contains(configured) && !echoedHTTP.contains(configured) && echoedHTTP.contains("bad credential")),
             ("ordinary message", NativeDiagnosticRedaction.text(ordinary) == ordinary && NativeDiagnosticRedaction.console(ordinary) == ordinary
                 && NativeChatClient.ClientError.provider(["message": "Provider returned error", "code": 429]).localizedDescription == "Provider returned error"),
