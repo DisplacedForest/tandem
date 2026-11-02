@@ -17,6 +17,7 @@ enum VoiceEntrySelftest {
         try requireEditedSegments(require)
         try await requireTransportEnd(require)
         try await requireStaleVoiceChat(require)
+        try await requireStaleDictationAuthorization(require)
         print("VOICE ENTRY OK")
     }
 
@@ -331,6 +332,42 @@ enum VoiceEntrySelftest {
         }
     }
 
+    private static func requireStaleDictationAuthorization(_ require: (Bool, String) throws -> Void) async throws {
+        let older = FakeGate()
+        let newer = FakeGate()
+        let capture = FakeCapture()
+        capture.authorizeGates = [older, newer]
+        let session = makeSession(capture, FakeTranscriptSource(["first", "second", "third"]))
+        session.startDictation(onText: DictationRecorder().record)
+        try await waitFor { capture.authorizeCalls == 1 }
+        session.stopDictation()
+        try await waitFor { !session.hasPendingDictation }
+        session.startDictation(onText: DictationRecorder().record)
+        try await waitFor { capture.authorizeCalls == 2 }
+        newer.open()
+        try await waitFor { capture.listening }
+        session.stopDictation()
+        try await waitFor { !session.hasPendingDictation }
+        try require(!capture.running && capture.begun == 1, "Only the newer dictation started the microphone")
+        older.open()
+        try await waitFor { capture.authorizeReturns == 2 }
+        try await Task.sleep(for: .milliseconds(60))
+        try require(capture.begun == 1, "A stale authorization never restarts the microphone")
+        try require(!capture.running && !capture.listening, "Nothing is left running after a stale authorization")
+        try require(!session.isDictating && session.state == .idle && session.entryError == nil, "A stale authorization leaves the composer idle")
+
+        let chatGate = FakeGate()
+        let chatCapture = FakeCapture()
+        chatCapture.authorizeGates = [chatGate]
+        let chat = makeSession(chatCapture, FakeTranscriptSource(["unused"]))
+        chat.start()
+        try await waitFor { chatCapture.authorizeCalls == 1 }
+        chat.stop()
+        chatGate.open()
+        try await waitFor { !chat.isOpening }
+        try require(chatCapture.begun == 0 && !chatCapture.running, "A stopped voice chat never starts the microphone after authorization")
+    }
+
     private static func makeSession(_ capture: FakeCapture, _ source: FakeTranscriptSource) -> VoiceSession {
         VoiceSession(client: VoiceClient(host: "voice.test"), socket: nil, store: fixtureStore(),
                      capture: capture, transcription: { try source.open() })
@@ -363,18 +400,29 @@ private final class DictationRecorder {
 private final class FakeCapture: VoiceCaptureDevice {
     var authorized = true
     var authorizeGate: FakeGate?
+    var authorizeGates: [FakeGate] = []
+    var authorizeCalls = 0
+    var authorizeReturns = 0
+    var running = false
     var listening = false
     var begun = 0
     var ended = 0
 
     func authorize() async -> Bool {
-        await authorizeGate?.wait()
+        authorizeCalls += 1
+        let held = authorizeGates.isEmpty ? authorizeGate : authorizeGates.removeFirst()
+        await held?.wait()
+        authorizeReturns += 1
         return authorized
     }
-    func begin() throws { begun += 1 }
+    func begin() throws {
+        begun += 1
+        running = true
+    }
     func listen(_ on: Bool) { listening = on }
 
     func end() {
+        running = false
         listening = false
         ended += 1
     }

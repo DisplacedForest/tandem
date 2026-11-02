@@ -39,6 +39,8 @@ final class VoiceSession: ObservableObject {
     private var configSubscription: AnyCancellable?
     private var opening = false
     private var chatGeneration = 0
+    private var captureToken = 0
+    private var captureOwner: Int?
     private var advancing = false
     private var dictationGeneration = 0
     private var dictationText = ""
@@ -164,30 +166,29 @@ final class VoiceSession: ObservableObject {
         let generation = chatGeneration
         Task {
             defer { opening = false }
-            let failure = await openCapture()
-            guard generation == chatGeneration else {
-                if failure == nil { releaseStaleStart() }
-                return
-            }
-            if let failure {
+            let token: Int
+            switch await openCapture(isCurrent: { [weak self] in self?.chatGeneration == generation }) {
+            case .stale: return
+            case .failed(let failure):
                 entryError = failure.message
                 return
+            case .began(let began): token = began
             }
             queue.start()
             await prewarm()
             guard generation == chatGeneration else {
-                releaseStaleStart()
+                releaseStaleStart(token)
                 return
             }
             let stream = await openTranscript()
             guard generation == chatGeneration else {
                 if let stream { Task { _ = try? await stream.finish() } }
-                releaseStaleStart()
+                releaseStaleStart(token)
                 return
             }
             guard let stream else {
                 queue.stop()
-                capture.end()
+                endCapture()
                 entryError = VoiceEntryFailure.serviceUnreachable.message
                 return
             }
@@ -195,10 +196,15 @@ final class VoiceSession: ObservableObject {
         }
     }
 
-    private func releaseStaleStart() {
-        guard state == .idle, !isDictating else { return }
+    private func releaseStaleStart(_ token: Int) {
+        guard captureOwner == token else { return }
         queue.stop()
+        endCapture()
+    }
+
+    private func endCapture() {
         capture.end()
+        captureOwner = nil
     }
 
     func stop() {
@@ -208,7 +214,7 @@ final class VoiceSession: ObservableObject {
         sttStream = nil
         queue.stop()
         clearPlayback()
-        capture.end()
+        endCapture()
         level = 0
         state = .idle
     }
@@ -232,15 +238,25 @@ final class VoiceSession: ObservableObject {
         capture.listen(true)
     }
 
-    private func openCapture() async -> VoiceEntryFailure? {
-        guard await capture.authorize() else { return .microphoneDenied }
+    private enum CaptureOpening {
+        case began(Int)
+        case failed(VoiceEntryFailure)
+        case stale
+    }
+
+    private func openCapture(isCurrent: @MainActor () -> Bool) async -> CaptureOpening {
+        let authorized = await capture.authorize()
+        guard isCurrent() else { return .stale }
+        guard authorized else { return .failed(.microphoneDenied) }
         do {
             try capture.begin()
         } catch {
-            capture.end()
-            return .microphoneUnavailable
+            endCapture()
+            return .failed(.microphoneUnavailable)
         }
-        return nil
+        captureToken &+= 1
+        captureOwner = captureToken
+        return .began(captureToken)
     }
 
     private func openTranscript() async -> (any VoiceTranscript)? {
@@ -256,19 +272,18 @@ final class VoiceSession: ObservableObject {
         dictationHandler = onText
         isDictating = true
         Task {
-            let failure = await openCapture()
-            guard generation == dictationGeneration, isDictating else {
-                if failure == nil { releaseAbandonedCapture(generation) }
-                return
-            }
-            if let failure {
+            let token: Int
+            switch await openCapture(isCurrent: { [weak self] in self?.dictationGeneration == generation && self?.isDictating == true }) {
+            case .stale: return
+            case .failed(let failure):
                 finishDictation(failure)
                 return
+            case .began(let began): token = began
             }
             let stream = await openTranscript()
             guard generation == dictationGeneration, isDictating else {
                 if let stream { Task { _ = try? await stream.finish() } }
-                releaseAbandonedCapture(generation)
+                releaseAbandonedCapture(token)
                 return
             }
             guard let stream else {
@@ -292,9 +307,9 @@ final class VoiceSession: ObservableObject {
         }
     }
 
-    private func releaseAbandonedCapture(_ generation: Int) {
-        guard generation == dictationGeneration, !isDictating, state == .idle, !opening else { return }
-        capture.end()
+    private func releaseAbandonedCapture(_ token: Int) {
+        guard captureOwner == token else { return }
+        endCapture()
     }
 
     private func finishDictation(_ failure: VoiceEntryFailure?) {
@@ -303,7 +318,7 @@ final class VoiceSession: ObservableObject {
         let handler = dictationHandler
         isDictating = false
         dictationHandler = nil
-        capture.end()
+        endCapture()
         level = 0
         if let failure { entryError = failure.message }
         if let current = sttStream {
