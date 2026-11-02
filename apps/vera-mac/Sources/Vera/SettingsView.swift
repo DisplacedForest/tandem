@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import SwiftUI
 
 /// The Settings window (⌘,) — every endpoint and identity value editable in-app, written to
@@ -858,6 +859,7 @@ private struct MaintenanceControls: View {
 private struct IdentityTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var companion: CompanionCoordinator
     var body: some View {
         Form {
             Section("Identity") {
@@ -884,10 +886,108 @@ private struct IdentityTab: View {
                     }))
                 .help("Closing the window leaves Tandem in the menu bar so scheduled work keeps running. It turns on by itself once you create a schedule.")
             }
+            Section("Quick ask") {
+                LabeledContent("Shortcut") {
+                    HStack(spacing: 10) {
+                        CompanionShortcutRecorder()
+                        Button("Reset to default") { apply(nil) }
+                            .disabled(config.companionShortcut == .default)
+                    }
+                }
+                if let problem = config.companionShortcutProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
             SaveSection()
         }
         .formStyle(.grouped)
     }
+
+    private func apply(_ shortcut: CompanionShortcut?) {
+        companion.apply(shortcut)
+    }
+}
+
+struct CompanionShortcutRecorder: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var companion: CompanionCoordinator
+    @State private var recording = false
+    @State private var rejected = false
+    @State private var monitor: Any?
+    @State private var resignObserver: NSObjectProtocol?
+    @State private var host = RecorderWindowBox()
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Button(action: toggle) {
+                Text(recording ? "Press a shortcut" : config.companionShortcut.symbols)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(recording ? Theme.accent : Theme.textPrimary)
+                    .frame(minWidth: 96)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(Theme.surface))
+                    .overlay(Capsule().strokeBorder(recording ? Theme.accent : Theme.hairline, lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Press it from any app to open a small composer over the companion thread. Escape hides it.")
+            .accessibilityLabel("Quick ask shortcut")
+            .accessibilityValue(recording ? "Press a shortcut" : config.companionShortcut.displayName)
+            .accessibilityHint("Click, then press the keys you want.")
+            if recording && rejected {
+                Text("Use at least one of Control, Option or Command with a key.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .background(WorkflowCanvasWindowReader { [host] window in host.window = window })
+        .onDisappear(perform: stop)
+    }
+
+    private func toggle() {
+        recording ? stop() : start()
+    }
+
+    private func start() {
+        stop()
+        guard let window = host.window ?? NSApp.keyWindow else { return }
+        host.window = window
+        recording = true
+        rejected = false
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { stop() }
+        }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak window] event in
+            guard let window, event.window === window else { return event }
+            if event.keyCode == UInt16(kVK_Escape) && event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty {
+                stop()
+                return nil
+            }
+            guard let shortcut = CompanionShortcut(event: event) else {
+                rejected = true
+                return nil
+            }
+            companion.apply(shortcut)
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        recording = false
+        rejected = false
+    }
+}
+
+@MainActor
+private final class RecorderWindowBox {
+    weak var window: NSWindow?
 }
 
 private struct AboutTab: View {
