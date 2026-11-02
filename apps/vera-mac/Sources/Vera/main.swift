@@ -129,6 +129,11 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativeMemoryEvidenceSelftest.run() }
         catch { print("native-memory-evidence: FAIL \(error.localizedDescription)"); exit(1) }
     }
+} else if arguments.contains("--companion-context-selftest") {
+    NativeApplicationEntry.runAsync {
+        do { try await NativeCompanionContextSelftest.run(); print("COMPANION CONTEXT SELFTEST OK") }
+        catch { print("COMPANION CONTEXT SELFTEST FAILED: \(error)"); exit(1) }
+    }
 } else if arguments.contains("--selftest") {
     NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {

@@ -474,13 +474,14 @@ enum NativeChatHistoryBuilder {
     static let approximateCharactersPerToken = 4
     static let approximateCharactersPerImage = 4000
 
+    static func cost(_ message: NativeChatMessage) -> Int {
+        message.content.count
+            + message.images.count * approximateCharactersPerImage
+            + message.toolCalls.reduce(0) { $0 + $1.name.count + $1.arguments.count }
+    }
+
     static func trimmed(_ history: [NativeChatMessage], ceiling: Int) -> [NativeChatMessage] {
         let budget = ceiling * approximateCharactersPerToken
-        func cost(_ message: NativeChatMessage) -> Int {
-            message.content.count
-                + message.images.count * approximateCharactersPerImage
-                + message.toolCalls.reduce(0) { $0 + $1.name.count + $1.arguments.count }
-        }
         var result = history
         var total = result.reduce(0) { $0 + cost($1) }
         while total > budget {

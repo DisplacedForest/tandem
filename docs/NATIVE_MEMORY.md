@@ -52,6 +52,20 @@ The past-chat search control reads at most 48 recent messages from each of 12 lo
 
 The Sensitive information setting covers the wider set: settings text, code, hidden reasoning, and similar content. Never remember (the default) skips those turns completely. Suggest for review only lets them produce suggestions marked "Contains sensitive text:" in the review queue. Nothing is saved until you accept it. Accepting one keeps its source so it can be recalled. Switching back to Never remember stops recall of those records without deleting them.
 
+## How the companion thread keeps context
+
+The companion conversation never ends, so it can't send its whole history with every message. Its share of the model's context is split up front: about 45 percent for recent exchanges sent word for word, 20 percent for summaries of older exchanges, 15 percent for recalled memory, 10 percent for the companion's own notes, and the rest for instructions and your current message. The memory share only ever lowers the usual memory limit, never raises it. The shares are taken from the context length ceiling in the model's settings. Without one, the companion assumes 32,768 tokens, which `VERA_COMPANION_CONTEXT_TOKENS` overrides.
+
+After a reply finishes, if the recent exchanges are over their share, the oldest twelve (each of your messages with its reply and any tool use) are condensed into one summary by the configured chat model, with no tools. Condensing repeats until the recent exchanges fit in about 60 percent of their share, and the last eight exchanges always stay word for word. Each summary keeps decisions, corrections, open items and anything you asked it not to do, sees the earlier summaries so a correction carries forward, and says which statement is current when two conflict. The summaries are sent oldest first under a line saying the most recent one wins where they disagree. If the newest summaries don't all fit their share, the oldest are left out first.
+
+A summary is saved in one step or not at all. If the model call fails, nothing is saved and condensing picks up at the same place after the next reply. A message sent while condensing is running uses only the summaries already saved, and only one condensing pass runs at a time. Condensing changes what is sent to the model, never the conversation itself: every message stays in the history as it was.
+
+The companion also keeps short working notes: the standing goal, decisions, corrections, open items and things you asked it not to do. It replaces them with a notes tool that exists only in the companion conversation, and it's asked to revise them after older exchanges are condensed, after a run completes, or when you correct it. The first message after a new summary reminds it to. Notes are capped to fit their share, anything that looks like a credential is redacted before they're saved, and each change is kept as a new revision.
+
+Summaries and notes are context for the companion only. They never go to memory extraction and never become memory suggestions, so suggestions still come only from your messages and the replies, as in any chat. Start over removes them along with the conversation. Focused chats don't use any of this and are assembled exactly as before.
+
+`mise run native-companion-context-test` runs a scripted 300-exchange companion conversation against a stub model: condensing thresholds and contiguous ranges, a failed summary that leaves nothing behind and resumes, the section and history limits on every message, a correction carried into the latest summary, notes revisions, the notes tool staying out of focused chats, and a focused chat matching its earlier output byte for byte. It makes no provider calls and does not measure summary quality.
+
 ## Project scope
 
 A fact proposed from a conversation that belongs to a project is tagged with that project, on the proposal and on the record once you accept it. Facts proposed from conversations outside any project carry no tag and stay shared.

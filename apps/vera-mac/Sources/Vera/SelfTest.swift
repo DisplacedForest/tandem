@@ -377,6 +377,7 @@ enum SelfTest {
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
+        do { try await NativeCompanionContextSelftest.run() } catch { print("SELFTEST ERROR: companion context \(error)"); exit(1) }
         do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
