@@ -232,11 +232,16 @@ final class NativeMemoryGateCapture: NativeChatTransport, @unchecked Sendable {
     }
 }
 
-final class NativeMemoryGateAttempts: @unchecked Sendable {
+final class NativeMemoryGateCalls: @unchecked Sendable {
     private let lock = NSLock()
-    private var count = 0
-    var value: Int { lock.withLock { count } }
-    func record() { lock.withLock { count += 1 } }
+    private var counts: [String: Int] = [:]
+    func count(_ id: String) -> Int { lock.withLock { counts[id] ?? 0 } }
+    func next(_ id: String) -> Int {
+        lock.withLock {
+            counts[id, default: 0] += 1
+            return counts[id] ?? 0
+        }
+    }
 }
 
 private final class NativeMemoryGateScriptedTransport: NativeChatTransport, @unchecked Sendable {
@@ -288,7 +293,8 @@ struct NativeMemoryGateFixtureDriver: NativeMemoryGateDriver {
     var reply = NativeMemoryGateFixtureReply.answer
     var tolerant = false
     var failingScenario: String?
-    let attempts = NativeMemoryGateAttempts()
+    var failingCalls: [String: Set<Int>] = [:]
+    let calls = NativeMemoryGateCalls()
     let announces = false
     let pause: Duration = .zero
     let memoryService: any NativeMemoryServing = NativeMemoryFixtureService(model: "fixture-embed", reranker: "fixture-rerank")
@@ -311,8 +317,8 @@ struct NativeMemoryGateFixtureDriver: NativeMemoryGateDriver {
 
     func transport(scenario: NativeMemoryGateScenario) -> any NativeChatTransport {
         let answer = scenario.expectedAnswer
-        if scenario.id == failingScenario {
-            attempts.record()
+        let call = calls.next(scenario.id)
+        if scenario.id == failingScenario || failingCalls[scenario.id]?.contains(call) == true {
             return NativeMemoryGateScriptedTransport(reply: nil)
         }
         return switch reply {
@@ -536,36 +542,34 @@ enum NativeMemoryGate {
 
     static func attempt(_ scenario: NativeMemoryGateScenario, driver: any NativeMemoryGateDriver,
                         sabotage: Bool) async throws -> NativeMemoryGateScenarioResult {
-        var retried = false
-        while true {
-            var runner: NativeMemoryGateRunner?
-            do {
-                runner = try NativeMemoryGateRunner(scenario: scenario, driver: driver, sabotage: sabotage)
-                return try await runner!.run().result
-            } catch {
-                guard driver.tolerant else { throw error }
-                let failure = (error as? NativeMemoryGateError)?.failure ?? .setupFailed
-                if driver.announces {
-                    let detail = runner?.diagnostic.map { " Provider said: " + $0 } ?? ""
-                    print("memory-gate: \(scenario.id): \(failure.rawValue). \(error.localizedDescription).\(detail)")
-                }
-                guard failure != .setupFailed, !retried else {
-                    return NativeMemoryGateScenarioResult(id: scenario.id, counts: NativeMemoryGateCounts(), observations: 0,
-                                                          elapsedMilliseconds: 0, retrievalMilliseconds: 0, failed: failure)
-                }
-                retried = true
-                if driver.pause > .zero { try await Task.sleep(for: driver.pause) }
-                if driver.announces { print("memory-gate: \(scenario.id): retried once") }
-            }
+        do {
+            return try await NativeMemoryGateRunner(scenario: scenario, driver: driver, sabotage: sabotage).run().result
+        } catch {
+            guard driver.tolerant else { throw error }
+            announce(scenario.id, error: error, diagnostic: nil, announces: driver.announces)
+            return NativeMemoryGateScenarioResult(id: scenario.id, counts: NativeMemoryGateCounts(), observations: 0,
+                                                  elapsedMilliseconds: 0, retrievalMilliseconds: 0, failed: .setupFailed)
         }
     }
 
+    static func announce(_ id: String, error: Error, diagnostic: String?, announces: Bool) {
+        guard announces else { return }
+        print(consoleLine(id, error: error, diagnostic: diagnostic))
+    }
+
+    static func consoleLine(_ id: String, error: Error, diagnostic: String?) -> String {
+        let failure = (error as? NativeMemoryGateError)?.failure ?? .setupFailed
+        let detail = diagnostic.map { " Provider said: " + $0 } ?? ""
+        return "memory-gate: \(id): \(failure.rawValue). " + NativeDiagnosticRedaction.text(error.localizedDescription) + "." + detail
+    }
+
     static func diagnostic(_ error: Error) -> String {
-        switch error as? NativeChatClient.ClientError {
-        case .http(let status, let detail)?: "HTTP \(status): " + String(detail.prefix(diagnosticLimit))
-        case .provider(_, let raw)?: "provider error " + String(raw.prefix(diagnosticLimit))
-        default: String(error.localizedDescription.prefix(diagnosticLimit))
+        let text: String = switch error as? NativeChatClient.ClientError {
+        case .http(let status, let detail)?: "HTTP \(status): " + NativeDiagnosticRedaction.text(detail)
+        case .provider(_, let raw)?: "provider error " + NativeDiagnosticRedaction.text(raw)
+        default: NativeDiagnosticRedaction.text(error.localizedDescription)
         }
+        return String(text.prefix(diagnosticLimit + 32))
     }
 
     static func write(_ report: NativeMemoryGateReport, to directory: URL) throws -> (json: URL, markdown: URL) {
@@ -649,13 +653,15 @@ enum NativeMemoryGate {
         }
         try await artifactCheck(driver, scenario: unfinished)
         try await liveShapedCheck()
+        try redactionChecks()
+        try await retryScopeCheck()
         driver.contextCeiling = nil
         let compaction = scenarios.first { $0.id == "repeated-compaction" }!
         do {
             _ = try await NativeMemoryGateRunner(scenario: compaction, driver: driver, sabotage: false).run()
             throw NativeMemoryGateError.setup("compaction", "a long chat without a context ceiling was accepted as folded")
         } catch NativeMemoryGateError.setup(let id, let reason) where id == compaction.id && reason.contains("sent without folding") { }
-        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(clean.elapsedMilliseconds) ms of \(fixtureBudgetMilliseconds) ms; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; each sabotaged scenario failed on its own; failed, unparsed and unfolded replies refused; a live-shaped run recorded its failed scenario, retried once and wrote its report; artifacts stayed in the run directory; report carries ids and counts only)")
+        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(clean.elapsedMilliseconds) ms of \(fixtureBudgetMilliseconds) ms; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; each sabotaged scenario failed on its own; failed, unparsed and unfolded replies refused; a live-shaped run recorded its failed scenario, retried only the failed request, kept earlier observations and wrote its report; provider errors redacted; artifacts stayed in the run directory; report carries ids and counts only)")
     }
 
     static func liveShapedCheck() async throws {
@@ -674,7 +680,7 @@ enum NativeMemoryGate {
         guard written.scenarios.count == scenarios.count,
               written.scenarios.first(where: { $0.id == failing })?.failed == .requestFailed,
               others.allSatisfy({ $0.failed == nil && $0.observations > 0 && $0.counts.errors == 0 }),
-              exitStatus(written) == 1, !written.passed, driver.attempts.value == 2,
+              exitStatus(written) == 1, !written.passed, driver.calls.count(failing) == 2,
               markdown.contains("| \(failing) | request failed |"), !raw.contains("fixture transport failure"),
               summary(written).contains("could not run: \(failing) (request failed)") else {
             throw NativeMemoryGateError.setup("live-shaped", "a scenario that could not run was not recorded, retried once and written to the report")
@@ -685,7 +691,7 @@ enum NativeMemoryGate {
         let providerDetail = diagnostic(provider)
         guard probe.diagnostic == "fixture transport failure", provider.localizedDescription == "Provider returned error",
               providerDetail.contains("429"), providerDetail.contains("upstream rate limit"),
-              diagnostic(NativeChatClient.ClientError.http(503, String(repeating: "x", count: 500))).count == "HTTP 503: ".count + diagnosticLimit else {
+              diagnostic(NativeChatClient.ClientError.http(503, String(repeating: "x ", count: 500))).count <= diagnosticLimit + 32 else {
             throw NativeMemoryGateError.setup("live-shaped", "the provider error was not kept for the console")
         }
         var strict = NativeMemoryGateFixtureDriver()
@@ -694,6 +700,46 @@ enum NativeMemoryGate {
             _ = try await run(driver: strict)
             throw NativeMemoryGateError.setup("live-shaped", "fixture mode accepted a scenario that could not run")
         } catch NativeMemoryGateError.request(let id, _, .requestFailed) where id == failing { }
+    }
+
+    static func redactionChecks() throws {
+        let secret = "sk-live-0123456789abcdefABCDEF"
+        let echoed = NativeChatClient.ClientError.provider(["message": "Rate limited", "code": 429, "metadata": ["api_key": secret]])
+        let nested = NativeChatClient.ClientError.provider(["message": "Upstream refused", "metadata": [
+            "attempts": [["session_token": "short-value", "headers": ["Authorization": "Basic short"]]], "provider_name": "fixture"]])
+        let inline = NativeChatClient.ClientError.provider(["message": "Invalid key \(secret) and Bearer abc.def-ghi supplied"])
+        let ordinary = "Provider returned error: rate limit exceeded, try again in 20 seconds"
+        let printed = [echoed, nested, inline].map { error in
+            consoleLine("probe", error: NativeMemoryGateError.request("probe", error.localizedDescription, .requestFailed), diagnostic: diagnostic(error))
+        }
+        guard !printed.contains(where: { $0.contains(secret) || $0.contains("short-value") || $0.contains("Basic short") || $0.contains("abc.def-ghi") }),
+              printed[0].contains("429"), printed[0].contains("Rate limited"), printed[1].contains("provider_name"),
+              printed[2].contains("Invalid key"), printed.allSatisfy({ $0.contains(NativeDiagnosticRedaction.placeholder) }),
+              NativeDiagnosticRedaction.text(ordinary) == ordinary,
+              NativeChatClient.ClientError.provider(["message": "Provider returned error", "code": 429]).localizedDescription == "Provider returned error" else {
+            throw NativeMemoryGateError.setup("redaction", "a credential reached the console or an ordinary message was changed")
+        }
+    }
+
+    static func retryScopeCheck() async throws {
+        let compaction = scenarios.first { $0.id == "repeated-compaction" }!
+        var flaky = NativeMemoryGateFixtureDriver()
+        flaky.tolerant = true
+        flaky.failingCalls = [compaction.id: [3]]
+        let report = try await run(driver: flaky, sabotage: true, mode: "live-shaped fixture with broken retrieval")
+        let recovered = report.scenarios.first { $0.id == compaction.id }
+        guard let recovered, recovered.failed == nil, recovered.observations == 4, recovered.counts.resurrections == 4,
+              flaky.calls.count(compaction.id) == 5, !report.passed, exitStatus(report) == 1 else {
+            throw NativeMemoryGateError.setup("retry", "a retried request lost the observations made before it")
+        }
+        var broken = NativeMemoryGateFixtureDriver()
+        broken.tolerant = true
+        broken.failingCalls = [compaction.id: [3, 4]]
+        let partial = try await NativeMemoryGateRunner(scenario: compaction, driver: broken, sabotage: true).run()
+        guard partial.result.failed == .requestFailed, partial.result.observations == 2, partial.result.counts.resurrections == 2,
+              partial.observations.first?.recalled.contains("geese-old") == true else {
+            throw NativeMemoryGateError.setup("retry", "a scenario that failed partway dropped the resurrections it had already seen")
+        }
     }
 
     static func artifactCheck(_ base: NativeMemoryGateFixtureDriver, scenario: NativeMemoryGateScenario) async throws {
@@ -933,18 +979,25 @@ private final class NativeMemoryGateRunner {
     func run() async throws -> (result: NativeMemoryGateScenarioResult, observations: [NativeMemoryGateObservation], artifactFiles: Int) {
         defer { try? FileManager.default.removeItem(at: directory) }
         let started = ContinuousClock.now
-        for step in scenario.steps { try await apply(step) }
-        try await ask(nil)
+        var failed: NativeMemoryGateFailure?
+        do {
+            for step in scenario.steps { try await apply(step) }
+            try await ask(nil)
+        } catch {
+            guard driver.tolerant else { throw error }
+            NativeMemoryGate.announce(scenario.id, error: error, diagnostic: diagnostic, announces: driver.announces)
+            failed = (error as? NativeMemoryGateError)?.failure ?? .setupFailed
+        }
         let sources = ledger.compactMapValues(\.sourceMessageID)
         let decisive = scenario.expectation.decisiveSource.flatMap { messageIDs[$0] }
-        if scenario.expectation.decisiveSource != nil, decisive == nil { throw failure("decisive source was never said") }
+        if failed == nil, scenario.expectation.decisiveSource != nil, decisive == nil { throw failure("decisive source was never said") }
         let counts = observations.reduce(NativeMemoryGateCounts()) {
             $0 + NativeMemoryGate.score($1, expectation: scenario.expectation, fields: scenario.fields, sources: sources, decisive: decisive)
         }
         let result = NativeMemoryGateScenarioResult(
             id: scenario.id, counts: counts, observations: observations.count,
             elapsedMilliseconds: NativeMemoryGate.milliseconds(started.duration(to: .now)),
-            retrievalMilliseconds: observations.map(\.retrievalMilliseconds).max() ?? 0)
+            retrievalMilliseconds: observations.map(\.retrievalMilliseconds).max() ?? 0, failed: failed)
         return (result, observations, artifactFiles)
     }
 
@@ -1048,6 +1101,18 @@ private final class NativeMemoryGateRunner {
 
     @discardableResult
     private func ask(_ chat: String?) async throws -> Int {
+        do {
+            return try await askOnce(chat)
+        } catch let error as NativeMemoryGateError where driver.tolerant && error.failure != .setupFailed {
+            NativeMemoryGate.announce(scenario.id, error: error, diagnostic: diagnostic, announces: driver.announces)
+            if driver.pause > .zero { try await Task.sleep(for: driver.pause) }
+            if driver.announces { print("memory-gate: \(scenario.id): retried once") }
+            return try await askOnce(chat)
+        }
+    }
+
+    private func askOnce(_ chat: String?) async throws -> Int {
+        diagnostic = nil
         let capture = NativeMemoryGateCapture(driver.transport(scenario: scenario))
         let store = ChatStore(nativeConfig: driver.chatConfig, nativeTransport: capture, repository: repository,
                               nativeTransportFactory: { _ in capture },

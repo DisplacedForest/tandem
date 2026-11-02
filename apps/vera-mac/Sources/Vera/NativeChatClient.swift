@@ -215,9 +215,11 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         static let providerDetailLimit = 1_000
 
         static func provider(_ error: [String: Any]) -> ClientError {
-            let raw = (try? JSONSerialization.data(withJSONObject: error, options: [.sortedKeys]))
+            let redacted = NativeDiagnosticRedaction.value(error)
+            let raw = (try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys]))
                 .map { String(decoding: $0, as: UTF8.self) } ?? ""
-            return .provider((error["message"] as? String) ?? "The model endpoint reported an error", String(raw.prefix(providerDetailLimit)))
+            let message = (error["message"] as? String).map(NativeDiagnosticRedaction.text) ?? "The model endpoint reported an error"
+            return .provider(message, String(raw.prefix(providerDetailLimit)))
         }
 
         var errorDescription: String? {
