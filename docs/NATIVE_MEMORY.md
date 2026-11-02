@@ -96,6 +96,26 @@ Recall spans eligible approved records in the selected bank on this Mac. It does
 
 The native regression command `Vera --memory-evidence-selftest` uses synthetic fixtures and injected transports to check migration, cross-chat correction, planned care, reopen, citations, source exclusion and removal, and delayed work. It makes no model calls and does not measure local-model answer quality.
 
+## How memory is verified
+
+`Vera --memory-gate-selftest` drives a family of correction scenarios through the real local store, the real recall path and an ordinary chat turn. Each scenario sets up chats and approved memories, changes them, restarts by reopening the database, and then asks a question in a new chat. The question asks for a short JSON answer with fixed fields, such as the current count and whether the care is planned, completed or unknown. The scenarios cover a count corrected in a later chat with a loss and planned care added, a preference replaced and another removed, an unfinished task, an approach that failed, a source conversation deleted, a source conversation excluded from memory, a memory that refers to an attachment that is no longer available, and a corrected count that has to survive a long chat being folded several times.
+
+The answer is read strictly: the first JSON object in the reply has to contain every field with an allowed value, or the reply counts as unparsed. Nothing tries to interpret free text. The memory block the model received and the parsed answer are both scored against what the scenario expects. These count as errors:
+
+* a recalled memory the scenario didn't expect
+* a memory that should be gone showing up, counted separately as a resurrection when it was removed or replaced
+* a replaced value appearing in the memory context
+* an answer that says planned care was completed, an unfinished task is done, a failed approach worked, or the missing attachment's content is known
+* any other answer field that disagrees with the scenario, such as the old count
+* a plan, unfinished task or failed approach losing its qualifier in the memory block
+* the decisive source, usually the correcting message, not cited, or cited with a missing or wrong number
+* an expected memory not recalled
+* a reply that doesn't parse
+
+The fixture run fails on any error or when it takes longer than its declared 20 second budget. Scores come from the memory block in the request the model actually received, not from the citations saved on the reply. A request that fails, returns an empty answer or returns an answer that doesn't parse stops the run instead of scoring as clean. Every scenario record renders to a single line in the memory block, and the run stops if one doesn't. Any document the model produces is saved inside the run's temporary folder. The long chat is folded with a fixed context limit, and the run fails if the request carried the whole chat. It then runs again with retrieval deliberately broken just before the request is put together, so removed and replaced memories really reach the model, and fails unless that run is caught.
+
+`Vera --memory-gate-live` runs the same scenarios against the chat profile and memory endpoint saved in Settings. It uses a throwaway database in a temporary folder, never your own history or memory, and writes `memory-gate-<date>.json` and `.md` to `~/Library/Application Support/Vera/reports`. The reports hold scenario names, counts, timings, the model name and endpoint hosts, never memory text or keys. A live run fails only on resurrections or work described as done when it wasn't. Unparsed replies and the other counts are recorded so model quality can be tracked over time. If no chat profile or memory endpoint is set, it says so and exits.
+
 ## Shared runtime context
 
 The native persistent-workspace connection receives the same `ChatStore` used by focused chats. It uses that store's approved-memory retrieval, selected bank, enabled setting, optional embeddings service, source eligibility and revision checks. Provider and conversation type do not create another memory identity. Pi is an internal execution adapter, not another assistant.

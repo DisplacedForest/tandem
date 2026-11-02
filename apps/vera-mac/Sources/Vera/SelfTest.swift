@@ -386,6 +386,8 @@ enum SelfTest {
             try await NativeRuntimeMemorySelftest.run()
         }
         catch { print("SELFTEST ERROR: memory evidence \(error.localizedDescription)"); exit(1) }
+        do { try await NativeMemoryGate.selftest() }
+        catch { print("SELFTEST ERROR: memory gate \(error.localizedDescription)"); exit(1) }
         await runNativeMemory()
         await runNativeMemoryEndpoint()
         await runNativeMemoryGroom()
