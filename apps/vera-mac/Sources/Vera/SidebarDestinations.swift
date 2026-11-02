@@ -37,9 +37,9 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
     static let primary: [SidebarDestination] = [.chats, .projects, .library, .scheduled, .integrations]
     static let secondary: [SidebarDestination] = [.pulse, .workflows, .activity, .memory]
 
-    func isSelected(section: AppSection, pane: AgenticPane) -> Bool {
+    func isSelected(section: AppSection, pane: AgenticPane, showingConversation: Bool = false) -> Bool {
         switch self {
-        case .chats: section == .chat
+        case .chats: section == .chat && !showingConversation
         case .projects: section == .projects
         case .library: section == .artifacts
         case .scheduled: section == .scheduled

@@ -21,6 +21,12 @@ extension SelfTest {
             }
         }
 
+        try require(!SidebarDestination.chats.isSelected(section: .chat, pane: .canvas, showingConversation: true), "Chats steps aside while a listed conversation row is selected")
+        for section in AppSection.allCases {
+            let shown = SidebarDestination.allCases.filter { $0.isSelected(section: section, pane: .canvas, showingConversation: true) }.count
+                + (section == .vera ? 1 : 0) + (section == .chat ? 1 : 0)
+            try require(shown == 1, "Exactly one sidebar row is selected for \(section.rawValue) while a conversation row is shown")
+        }
         try require(SidebarDestination.allCases.allSatisfy { !$0.title.isEmpty && !$0.icon.isEmpty }, "Every destination has a title and an icon")
         try require(AppSection.artifacts.title == "Library", "The artifacts section is called Library")
     }

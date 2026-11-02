@@ -490,10 +490,11 @@ struct ShotView: View {
             shotRow(SidebarRowLabel(icon: CompanionAvatar(size: 20), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false, rowHeight: 36), selected: section == .vera)
                 .padding(.top, 6)
             ForEach(SidebarDestination.primary) { destination in
-                shotNav(destination.title, destination.icon, active: destination.isSelected(section: section, pane: .canvas))
+                shotNav(destination.title, destination.icon,
+                        active: destination.isSelected(section: section, pane: .canvas, showingConversation: !collapsedSidebar && !emptyChat))
             }
             if collapsedSidebar {
-                shotNav("More", "ellipsis", active: false)
+                shotNav("More", "ellipsis", active: SidebarDestination.secondary.contains { $0.isSelected(section: section, pane: .canvas) })
             }
             if !collapsedSidebar {
                 shotDivider

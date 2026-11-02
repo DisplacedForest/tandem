@@ -319,8 +319,13 @@ struct VeraSidebar: View {
         Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
     }
 
+    private var showingConversationRow: Bool {
+        guard !collapsed, store.section == .chat, let id = store.selectedID else { return false }
+        return store.sidebarGroups(search: search).contains { $0.convos.contains { $0.id == id } }
+    }
+
     private func destinationRow(_ destination: SidebarDestination) -> some View {
-        let selected = destination.isSelected(section: store.section, pane: store.agenticPane)
+        let selected = destination.isSelected(section: store.section, pane: store.agenticPane, showingConversation: showingConversationRow)
         return Button { go(destination) } label: {
             SidebarRowLabel(icon: Image(systemName: destination.icon), title: destination.title, selected: selected, collapsed: collapsed)
         }
@@ -369,6 +374,9 @@ struct VeraSidebar: View {
         .padding(.bottom, 2)
         .onChange(of: searchFocused) { _, focused in
             if !focused && search.isEmpty { searching = false }
+        }
+        .onChange(of: search) { _, text in
+            if text.isEmpty && !searchFocused { searching = false }
         }
     }
 
