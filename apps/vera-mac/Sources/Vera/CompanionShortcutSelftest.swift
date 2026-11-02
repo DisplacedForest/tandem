@@ -112,8 +112,10 @@ extension SelfTest {
         }
         let applyConfig = store(nil)
         let applier = applying()
-        try check(applier.apply(takenChord, config: applyConfig) == CompanionHotkey.conflictMessage, "Applying a taken shortcut reports the conflict")
-        try check(applyConfig.companionShortcut == standard && applyConfig.companionShortcutProblem == CompanionHotkey.conflictMessage,
+        try check(applier.apply(takenChord, config: applyConfig) == CompanionHotkey.conflictMessage + CompanionHotkey.noneActiveNote,
+                  "Applying a taken shortcut before anything is registered reports the conflict and that nothing is active")
+        try check(applyConfig.companionShortcut == standard && applyConfig.companionActiveShortcut == nil
+                  && applyConfig.companionShortcutProblem == CompanionHotkey.conflictMessage + CompanionHotkey.noneActiveNote,
                   "A rejected shortcut is not persisted and the problem is shown")
         try check(applier.apply(freeChord, config: applyConfig) == nil, "Applying a free shortcut succeeds")
         try check(applyConfig.companionShortcut == freeChord && applyConfig.companionShortcutProblem == nil && applier.current == freeChord,
@@ -123,12 +125,24 @@ extension SelfTest {
         let savedTaken = store(takenChord.configValue)
         let starter = applying()
         starter.start(config: savedTaken)
-        try check(starter.current == standard && savedTaken.companionShortcutProblem == CompanionHotkey.conflictMessage + CompanionHotkey.fallbackNote,
-                  "A saved shortcut that cannot register falls back to the default and says so")
+        try check(starter.current == standard && savedTaken.companionActiveShortcut == standard
+                  && savedTaken.companionShortcutProblem == CompanionHotkey.conflictMessage + " \(standard.displayName) is active instead.",
+                  "A saved shortcut that cannot register falls back to the default, records it as active and says so")
+        try check(starter.apply(takenChord, config: savedTaken) == CompanionHotkey.conflictMessage + " \(standard.displayName) is active instead."
+                  && savedTaken.companionShortcut == takenChord && savedTaken.companionActiveShortcut == standard && starter.current == standard,
+                  "A rejected recording after a fallback keeps the saved preference, the active default and an accurate status")
+        let savedBothTaken = store(takenChord.configValue)
+        let hopeless = applying()
+        hopeless.attempt = { _, _ in (OSStatus(eventHotKeyExistsErr), nil) }
+        hopeless.start(config: savedBothTaken)
+        try check(hopeless.current == nil && savedBothTaken.companionActiveShortcut == nil
+                  && savedBothTaken.companionShortcutProblem == CompanionHotkey.conflictMessage + CompanionHotkey.noneActiveNote,
+                  "When neither the saved nor the default shortcut registers, nothing is active and the status says so")
         let savedFree = store(freeChord.configValue)
         let cleanStart = applying()
         cleanStart.start(config: savedFree)
-        try check(cleanStart.current == freeChord && savedFree.companionShortcutProblem == nil, "A saved free shortcut registers at start")
+        try check(cleanStart.current == freeChord && savedFree.companionActiveShortcut == freeChord && savedFree.companionShortcutProblem == nil,
+                  "A saved free shortcut registers at start and is recorded as active")
 
         print("  companion shortcut: PASS (\(checks) checks, parsing, config, system shortcuts, registration, apply and fallback)")
     }

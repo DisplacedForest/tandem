@@ -168,7 +168,7 @@ struct MenuBarStatusMenu: View {
             Text(waiting == 1 ? "1 scheduled run is waiting for you" : "\(waiting) scheduled runs are waiting for you")
         }
         Divider()
-        Button("Quick ask  \(config.companionShortcut.symbols)") { companion.toggle() }
+        Button(config.companionActiveShortcut.map { "Quick ask  \($0.symbols)" } ?? "Quick ask") { companion.toggle() }
         Button("Open Tandem") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)

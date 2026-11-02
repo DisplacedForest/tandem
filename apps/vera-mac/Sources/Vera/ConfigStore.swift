@@ -40,6 +40,7 @@ final class ConfigStore: ObservableObject {
     let nativeMCP: NativeMCPManager
     @Published var nativeMCPConfigurationError: String?
     @Published var companionShortcutProblem: String?
+    @Published var companionActiveShortcut: CompanionShortcut?
     private var nativeMCPReplacement: Task<Void, Never>?
     static let nativeMCPServerLimit = 8
     @Published private var nativeAPIKeys: [String: String]

@@ -154,15 +154,22 @@ final class CompanionHotkey {
         return nil
     }
 
-    static let fallbackNote = " The default shortcut is active instead."
+    static let noneActiveNote = " No shortcut is active right now."
+
+    static func status(active: CompanionShortcut?, saved: CompanionShortcut) -> String {
+        guard let active else { return noneActiveNote }
+        return active == saved ? "" : " \(active.displayName) is active instead."
+    }
 
     func apply(_ shortcut: CompanionShortcut?, config: ConfigStore) -> String? {
         if let problem = register(shortcut ?? .default) {
-            config.companionShortcutProblem = problem
-            return problem
+            let message = problem + Self.status(active: current, saved: config.companionShortcut)
+            config.companionShortcutProblem = message
+            return message
         }
         config.setCompanionShortcut(shortcut)
         try? config.save()
+        config.companionActiveShortcut = current
         config.companionShortcutProblem = nil
         return nil
     }
@@ -170,14 +177,13 @@ final class CompanionHotkey {
     func start(config: ConfigStore) {
         let saved = config.companionShortcut
         guard let problem = register(saved) else {
+            config.companionActiveShortcut = current
             config.companionShortcutProblem = nil
             return
         }
-        if saved != .default, register(.default) == nil {
-            config.companionShortcutProblem = problem + Self.fallbackNote
-        } else {
-            config.companionShortcutProblem = problem
-        }
+        if saved != .default { _ = register(.default) }
+        config.companionActiveShortcut = current
+        config.companionShortcutProblem = problem + Self.status(active: current, saved: saved)
     }
 
     func unregister() {
