@@ -156,6 +156,7 @@ enum NativeSessionFixture {
         let store = store(repository, transport: transport, gate: gate)
         try acceptLegacyContinuous("slow first question", store: store)
         let firstID = store.selected!.messages.last!.id
+        let firstTurnID = try repository.conversationTurns()[0].id
         try await eventually("First turn must reach its real tool executor") {
             store.selected?.messages.first(where: { $0.id == firstID })?.toolActivities.first?.state == .pending
         }
@@ -174,6 +175,9 @@ enum NativeSessionFixture {
         try await eventually("Inactive conversations must not block a selected conversation") { store.selected?.messages.last?.state == .complete }
         store.select(original)
         store.stopAnswer(firstID)
+        try await eventually("Stopping settles before the tool result arrives") {
+            !store.isSchedulingTurns && store.conversationTurns.first(where: { $0.id == firstTurnID })?.state == .stopped
+        }
         let stopped = store.selected!.messages.first(where: { $0.id == firstID })!
         await gate.release()
         try await Task.sleep(for: .milliseconds(80))
@@ -212,7 +216,10 @@ enum NativeSessionFixture {
         let transport = NativeSessionFixtureTransport()
         let gate = NativeSessionGate()
         let store = store(repository, transport: transport, gate: gate)
-        for index in 0..<10 { try NativeTaskFixture.require(try acceptLegacyContinuous("slow \(index)", store: store), "Queue must accept its bounded capacity") }
+        for index in 0..<10 {
+            try NativeTaskFixture.require(try acceptLegacyContinuous("slow \(index)", store: store), "Queue must accept its bounded capacity")
+            try await eventually("Accepted work starts on the next tick") { !store.isSchedulingTurns }
+        }
         store.draft = "keep this draft"
         store.send()
         try NativeTaskFixture.require(store.draft == "keep this draft" && store.selected?.messages.count == 20,
