@@ -34,6 +34,7 @@ struct VeraApp: App {
     @StateObject private var updates = UpdateChecker()
     @StateObject private var engine = EngineManager()
     @StateObject private var presence: TandemLogoPresence
+    @StateObject private var companionPresence: CompanionPresence
     @StateObject private var companion: CompanionCoordinator
 
     init() {
@@ -101,6 +102,7 @@ struct VeraApp: App {
         voiceInstance.observe(configInstance)
         _voice = StateObject(wrappedValue: voiceInstance)
         _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance, voice: voiceInstance))
+        _companionPresence = StateObject(wrappedValue: CompanionPresence(store: storeInstance, voice: voiceInstance))
     }
 
     var body: some Scene {
@@ -113,11 +115,13 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .environmentObject(presence)
                 .environment(\.companionName, store.assistantName)
+                .environment(\.companionAppearance, config.companionAppearance)
+                .environment(\.companionLiveState, companionPresence.state)
                 .environmentObject(companion)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { if NativePiNativeContext.candidate == nil { updates.start() } }
-                .task { if NativePiNativeContext.candidate == nil { presence.start() } }
+                .task { if NativePiNativeContext.candidate == nil { presence.start(); companionPresence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
                 .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
                 .task { if NativePiNativeContext.candidate == nil { companion.start() } }
@@ -154,6 +158,8 @@ struct VeraApp: App {
                 .environmentObject(engine)
                 .environmentObject(presence)
                 .environment(\.companionName, store.assistantName)
+                .environment(\.companionAppearance, config.companionAppearance)
+                .environment(\.companionLiveState, companionPresence.state)
                 .environmentObject(companion)
                 .preferredColorScheme(config.colorSchemeOverride)
         }

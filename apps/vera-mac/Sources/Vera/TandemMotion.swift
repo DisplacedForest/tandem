@@ -303,6 +303,7 @@ struct AnimatedTandemLogo: View {
     @ObservedObject var controller: TandemMotionController
     var reduceMotionOverride: Bool? = nil
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.renderSafe) private var renderingShot
     @State private var hostID = UUID()
     @State private var appeared = false
     @State private var hostVisible = false
@@ -311,10 +312,14 @@ struct AnimatedTandemLogo: View {
 
     var body: some View {
         TandemLogoStage(pose: reduce ? .rest : controller.pose)
-            .background(TandemHostVisibilityProbe { visible in
-                hostVisible = visible
-                if appeared { controller.setHost(hostID, visible: visible) }
-            })
+            .background {
+                if !renderingShot {
+                    TandemHostVisibilityProbe { visible in
+                        hostVisible = visible
+                        if appeared { controller.setHost(hostID, visible: visible) }
+                    }
+                }
+            }
             .onAppear {
                 controller.reduceMotion = reduce
                 appeared = true
