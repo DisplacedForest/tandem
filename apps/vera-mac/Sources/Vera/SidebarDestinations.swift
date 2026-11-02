@@ -2,14 +2,15 @@ import Foundation
 import SwiftUI
 
 enum SidebarDestination: String, CaseIterable, Identifiable {
-    case projects, artifacts, scheduled, integrations, pulse, workflows, activity, memory
+    case chats, projects, library, scheduled, integrations, pulse, workflows, activity, memory
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .chats: "Chats"
         case .projects: "Projects"
-        case .artifacts: "Artifacts"
+        case .library: "Library"
         case .scheduled: "Scheduled"
         case .integrations: "Integrations"
         case .pulse: "Pulse"
@@ -21,8 +22,9 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .chats: "bubble.left"
         case .projects: AppSection.projects.icon
-        case .artifacts: AppSection.artifacts.icon
+        case .library: AppSection.artifacts.icon
         case .scheduled: AppSection.scheduled.icon
         case .integrations: AppSection.integrations.icon
         case .pulse: AppSection.pulse.icon
@@ -32,87 +34,20 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultPins: [SidebarDestination] = [.projects, .pulse]
+    static let primary: [SidebarDestination] = [.chats, .projects, .library, .scheduled, .integrations]
+    static let secondary: [SidebarDestination] = [.pulse, .workflows, .activity, .memory]
 
-    func isSelected(section: AppSection, pane: AgenticPane) -> Bool {
+    func isSelected(section: AppSection, pane: AgenticPane, showingConversation: Bool = false) -> Bool {
         switch self {
-        case .workflows: section == .agentic && pane == .canvas
-        case .activity: section == .agentic && pane == .activity
+        case .chats: section == .chat && !showingConversation
         case .projects: section == .projects
-        case .artifacts: section == .artifacts
+        case .library: section == .artifacts
         case .scheduled: section == .scheduled
         case .integrations: section == .integrations
         case .pulse: section == .pulse
+        case .workflows: section == .agentic && pane == .canvas
+        case .activity: section == .agentic && pane == .activity
         case .memory: section == .memory
         }
-    }
-}
-
-@MainActor
-final class SidebarPins: ObservableObject {
-    static let key = "sidebarPinnedSections"
-    static let shared = SidebarPins()
-    @Published private(set) var pinned: [SidebarDestination]
-    private let defaults: UserDefaults
-
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        pinned = Self.stored(in: defaults)
-        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
-    }
-
-    func isPinned(_ destination: SidebarDestination) -> Bool {
-        pinned.contains(destination)
-    }
-
-    func toggle(_ destination: SidebarDestination) {
-        var next = Self.stored(in: defaults)
-        if let index = next.firstIndex(of: destination) { next.remove(at: index) } else { next.append(destination) }
-        _ = save(next)
-    }
-
-    @discardableResult
-    func move(_ destination: SidebarDestination, before target: SidebarDestination) -> Bool {
-        var next = Self.stored(in: defaults)
-        guard destination != target, next.contains(destination), next.contains(target) else { return false }
-        next.removeAll { $0 == destination }
-        guard let index = next.firstIndex(of: target) else { return false }
-        next.insert(destination, at: index)
-        return save(next)
-    }
-
-    @discardableResult
-    func moveToEnd(_ destination: SidebarDestination) -> Bool {
-        var next = Self.stored(in: defaults)
-        guard next.contains(destination) else { return false }
-        next.removeAll { $0 == destination }
-        next.append(destination)
-        return save(next)
-    }
-
-    func accept(dropped items: [String], before target: SidebarDestination?) -> Bool {
-        guard let dragged = items.first.flatMap(SidebarDestination.init(rawValue:)) else { return false }
-        if let target { return move(dragged, before: target) }
-        return moveToEnd(dragged)
-    }
-
-    private func save(_ next: [SidebarDestination]) -> Bool {
-        guard next != Self.stored(in: defaults) else { return false }
-        pinned = next
-        defaults.set(next.map(\.rawValue), forKey: Self.key)
-        return true
-    }
-
-    func refresh() {
-        let current = Self.stored(in: defaults)
-        if current != pinned { pinned = current }
-    }
-
-    private static func stored(in defaults: UserDefaults) -> [SidebarDestination] {
-        guard let stored = defaults.array(forKey: key) as? [String] else { return SidebarDestination.defaultPins }
-        var seen = Set<SidebarDestination>()
-        return stored.compactMap(SidebarDestination.init(rawValue:)).filter { seen.insert($0).inserted }
     }
 }

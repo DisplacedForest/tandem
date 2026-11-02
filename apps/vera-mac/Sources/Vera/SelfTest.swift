@@ -398,8 +398,8 @@ enum SelfTest {
         await runNativeStore()
         do { try await runConversationTitles() }
         catch { print("SELFTEST ERROR: conversation titles \(error)"); exit(1) }
-        do { try runSidebarPins() }
-        catch { print("SELFTEST ERROR: sidebar pins \(error)"); exit(1) }
+        do { try runSidebarDestinations() }
+        catch { print("SELFTEST ERROR: sidebar destinations \(error)"); exit(1) }
         do { try ArtifactStoreSelftest.run() }
         catch { print("SELFTEST ERROR: artifact store \(error)"); exit(1) }
         do { try await ArtifactProducerSelftest.run() }
