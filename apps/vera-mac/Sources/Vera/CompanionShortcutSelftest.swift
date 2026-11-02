@@ -100,6 +100,36 @@ extension SelfTest {
         try check(hotkey.current == accepted && !attempts.contains(invalid), "An invalid shortcut is never attempted")
         try check(fired == 0, "Registering never fires the handler")
 
-        print("  companion shortcut: PASS (\(checks) checks, parsing, config, system shortcuts, registration)")
+        let freeChord = CompanionShortcut(configValue: "command+k")!
+        let takenChord = CompanionShortcut(configValue: "control+option+f")!
+        func applying() -> CompanionHotkey {
+            let hotkey = CompanionHotkey {}
+            hotkey.systemShortcuts = { [] }
+            hotkey.attempt = { shortcut, _ in
+                shortcut == takenChord ? (OSStatus(eventHotKeyExistsErr), nil) : (noErr, OpaquePointer(bitPattern: 1))
+            }
+            return hotkey
+        }
+        let applyConfig = store(nil)
+        let applier = applying()
+        try check(applier.apply(takenChord, config: applyConfig) == CompanionHotkey.conflictMessage, "Applying a taken shortcut reports the conflict")
+        try check(applyConfig.companionShortcut == standard && applyConfig.companionShortcutProblem == CompanionHotkey.conflictMessage,
+                  "A rejected shortcut is not persisted and the problem is shown")
+        try check(applier.apply(freeChord, config: applyConfig) == nil, "Applying a free shortcut succeeds")
+        try check(applyConfig.companionShortcut == freeChord && applyConfig.companionShortcutProblem == nil && applier.current == freeChord,
+                  "An freeChord shortcut is persisted and clears the problem")
+        try check(applier.apply(takenChord, config: applyConfig) == CompanionHotkey.conflictMessage && applyConfig.companionShortcut == freeChord
+                  && applier.current == freeChord, "A later conflict keeps the freeChord shortcut registered and persisted")
+        let savedTaken = store(takenChord.configValue)
+        let starter = applying()
+        starter.start(config: savedTaken)
+        try check(starter.current == standard && savedTaken.companionShortcutProblem == CompanionHotkey.conflictMessage + CompanionHotkey.fallbackNote,
+                  "A saved shortcut that cannot register falls back to the default and says so")
+        let savedFree = store(freeChord.configValue)
+        let cleanStart = applying()
+        cleanStart.start(config: savedFree)
+        try check(cleanStart.current == freeChord && savedFree.companionShortcutProblem == nil, "A saved free shortcut registers at start")
+
+        print("  companion shortcut: PASS (\(checks) checks, parsing, config, system shortcuts, registration, apply and fallback)")
     }
 }

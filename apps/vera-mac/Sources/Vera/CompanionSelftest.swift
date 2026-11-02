@@ -134,8 +134,19 @@ extension SelfTest {
                                       "only the reply after leaving the thread counts as new")
         try NativeTaskFixture.require(store.selectedID == otherID, "replies in the thread keep the main selection")
 
+        store.select(threadID)
+        store.section = .memory
+        let acknowledgedOnLeave = store.companionSeenReplyID
+        try NativeTaskFixture.require(acknowledgedOnLeave == completed().last?.id.uuidString, "leaving the companion section acknowledges what was shown")
+        try NativeTaskFixture.require(store.sendText("while on another section", conversationID: threadID), "a reply arrives while another section shows")
+        try await settle()
+        try NativeTaskFixture.require(store.companionUnreadCount == 1, "a reply that arrives while another section shows counts as new")
+        store.select(otherID)
+        try NativeTaskFixture.require(store.companionUnreadCount == 1 && store.companionSeenReplyID == acknowledgedOnLeave,
+                                      "selecting another chat afterwards does not acknowledge the unseen reply")
+
         try NativeTaskFixture.require(!store.companionAwaitingApproval, "nothing awaits approval without a pending tool turn")
 
-        print("  companion: PASS (thread prep, draft isolation, panel send, acknowledgement, rebuild, main window, approval)")
+        print("  companion: PASS (thread prep, draft isolation, panel send, acknowledgement, rebuild, main window, section navigation, approval)")
     }
 }

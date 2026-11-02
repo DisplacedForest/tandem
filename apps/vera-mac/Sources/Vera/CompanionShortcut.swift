@@ -154,6 +154,32 @@ final class CompanionHotkey {
         return nil
     }
 
+    static let fallbackNote = " The default shortcut is active instead."
+
+    func apply(_ shortcut: CompanionShortcut?, config: ConfigStore) -> String? {
+        if let problem = register(shortcut ?? .default) {
+            config.companionShortcutProblem = problem
+            return problem
+        }
+        config.setCompanionShortcut(shortcut)
+        try? config.save()
+        config.companionShortcutProblem = nil
+        return nil
+    }
+
+    func start(config: ConfigStore) {
+        let saved = config.companionShortcut
+        guard let problem = register(saved) else {
+            config.companionShortcutProblem = nil
+            return
+        }
+        if saved != .default, register(.default) == nil {
+            config.companionShortcutProblem = problem + Self.fallbackNote
+        } else {
+            config.companionShortcutProblem = problem
+        }
+    }
+
     func unregister() {
         if let reference { UnregisterEventHotKey(reference) }
         Self.handlers.removeValue(forKey: identifier)

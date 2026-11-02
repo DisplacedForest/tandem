@@ -16,7 +16,9 @@ final class ChatStore: ObservableObject {
     var drafts: [String: String] = [:]
     static let veraThreadOriginType = "assistant"
     static let veraThreadOriginID = "vera"
-    @Published var section: AppSection = .chat
+    @Published var section: AppSection = .chat {
+        didSet { if oldValue == .vera, section != .vera { markCompanionSeen() } }
+    }
     @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
     @Published var agenticFlowID: String?
@@ -713,7 +715,7 @@ final class ChatStore: ObservableObject {
     }
 
     func select(_ id: String) {
-        if let current = selectedID, isVeraThread(current), !isVeraThread(id) { markCompanionSeen() }
+        if let current = selectedID, isVeraThread(current), !isVeraThread(id), section == .vera { markCompanionSeen() }
         if isVeraThread(id) { markCompanionSeen() }
         stashDraft()
         section = isVeraThread(id) ? .vera : .chat
@@ -1885,8 +1887,8 @@ final class ChatStore: ObservableObject {
     }
 
     var mainWindowShowsCompanionThread: Bool {
-        guard let veraThreadID, selectedID == veraThreadID else { return false }
-        return NSApp.windows.contains { $0.isVisible && !($0 is CompanionPanel) && $0.level == .normal }
+        guard let veraThreadID, selectedID == veraThreadID, section == .vera else { return false }
+        return NSApp.windows.contains { $0.isVisible && !($0 is NSPanel) && $0.identifier?.rawValue.hasPrefix("main") == true }
     }
 
     var companionUnreadCount: Int {

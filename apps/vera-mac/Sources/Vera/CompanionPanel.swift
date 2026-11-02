@@ -132,7 +132,6 @@ final class CompanionCoordinator: ObservableObject {
     let panel: CompanionPanelController
     private let config: ConfigStore
     private var hotkey: CompanionHotkey?
-    private var shortcutObserver: NSObjectProtocol?
 
     init(store: ChatStore, config: ConfigStore) {
         self.config = config
@@ -145,17 +144,14 @@ final class CompanionCoordinator: ObservableObject {
         guard hotkey == nil else { return }
         let hotkey = CompanionHotkey { [weak self] in self?.toggle() }
         self.hotkey = hotkey
-        config.companionShortcutProblem = hotkey.register(config.companionShortcut)
-        shortcutObserver = NotificationCenter.default.addObserver(
-            forName: .companionShortcutChanged, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reregister() }
-        }
+        hotkey.start(config: config)
     }
 
-    private func reregister() {
-        guard let hotkey else { return }
-        config.companionShortcutProblem = hotkey.register(config.companionShortcut)
+    @discardableResult
+    func apply(_ shortcut: CompanionShortcut?) -> String? {
+        if hotkey == nil { start() }
+        guard let hotkey else { return CompanionHotkey.failureMessage }
+        return hotkey.apply(shortcut, config: config)
     }
 }
 

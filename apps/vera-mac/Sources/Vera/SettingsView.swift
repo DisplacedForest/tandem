@@ -859,6 +859,7 @@ private struct MaintenanceControls: View {
 private struct IdentityTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var companion: CompanionCoordinator
     var body: some View {
         Form {
             Section("Identity") {
@@ -904,14 +905,13 @@ private struct IdentityTab: View {
     }
 
     private func apply(_ shortcut: CompanionShortcut?) {
-        config.setCompanionShortcut(shortcut)
-        try? config.save()
-        NotificationCenter.default.post(name: .companionShortcutChanged, object: nil)
+        companion.apply(shortcut)
     }
 }
 
 struct CompanionShortcutRecorder: View {
     @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var companion: CompanionCoordinator
     @State private var recording = false
     @State private var rejected = false
     @State private var monitor: Any?
@@ -969,9 +969,7 @@ struct CompanionShortcutRecorder: View {
                 rejected = true
                 return nil
             }
-            config.setCompanionShortcut(shortcut)
-            try? config.save()
-            NotificationCenter.default.post(name: .companionShortcutChanged, object: nil)
+            companion.apply(shortcut)
             stop()
             return nil
         }
