@@ -55,6 +55,7 @@ struct NativeMemoryQueuedTurn {
     let source: NativeMemoryTurnSource?
     let turnKey: String
     let conversationExcluded: Bool
+    var projectID: String? = nil
 }
 
 enum NativeMemorySensitiveHandling: String, Codable, CaseIterable, Sendable {
@@ -349,6 +350,29 @@ extension NativeMemoryServing {
         NativeMemoryExtraction(proposals: try await proposals(
             user: user, assistant: assistant, sourceConversationID: sourceConversationID,
             sourceMessageID: sourceMessageID, sensitiveHandling: sensitiveHandling, existing: existing, now: now))
+    }
+
+    func extraction(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        projectID: String?, sensitiveHandling: NativeMemorySensitiveHandling,
+        existing: @escaping @Sendable () throws -> [NativeMemoryRecord], now: Date
+    ) async throws -> NativeMemoryExtraction {
+        var result = try await extraction(
+            user: user, assistant: assistant, sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, sensitiveHandling: sensitiveHandling, existing: existing, now: now)
+        result.proposals = NativeMemoryProposal.tagged(result.proposals, projectID: projectID)
+        return result
+    }
+}
+
+extension NativeMemoryProposal {
+    static func tagged(_ proposals: [NativeMemoryProposal], projectID: String?) -> [NativeMemoryProposal] {
+        guard let projectID else { return proposals }
+        return proposals.map { proposal in
+            var tagged = proposal
+            tagged.projectID = projectID
+            return tagged
+        }
     }
 }
 

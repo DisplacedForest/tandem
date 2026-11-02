@@ -317,7 +317,9 @@ Each changed file shows on the turn as a card: Created, Edited, Moved to, or Cre
 
 If the current model can't call tools, the chat gets no file tools. The folder control explains that instead of opening the picker, and the chips show the same note.
 
-Not included: project-level grants, indexing file contents, and App Sandbox entitlements.
+Chats inside a project also get the project's folders, plus its attached files as a read-only folder that the tools refuse to change.
+
+Not included: indexing file contents and App Sandbox entitlements.
 
 ### Artifacts
 

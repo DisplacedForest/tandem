@@ -6,13 +6,29 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     var name: String
     var bookmark: Data?
     var identity: NativeFolderIdentity?
+    var readOnly: Bool = false
 
-    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil, identity: NativeFolderIdentity? = nil) {
+    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil, identity: NativeFolderIdentity? = nil, readOnly: Bool = false) {
         self.id = id
         self.path = path
         self.name = name ?? URL(fileURLWithPath: path).lastPathComponent
         self.bookmark = bookmark
         self.identity = identity
+        self.readOnly = readOnly
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, path, name, bookmark, identity, readOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        path = try container.decode(String.self, forKey: .path)
+        name = try container.decode(String.self, forKey: .name)
+        bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
+        identity = try container.decodeIfPresent(NativeFolderIdentity.self, forKey: .identity)
+        readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
     }
 
     static func make(url: URL) throws -> FolderGrant {
@@ -61,6 +77,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     case binary(String)
     case tooLarge(String, Int)
     case invalidPath(String)
+    case readOnly(String)
 
     var errorDescription: String? {
         switch self {
@@ -74,6 +91,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
         case .binary(let path): return "\(path) is not a text file."
         case .tooLarge(let path, let limit): return "\(path) is larger than the \(limit / 1024) KB limit."
         case .invalidPath(let path): return "\(path) is not a valid path."
+        case .readOnly(let path): return "\(path) is read-only in this chat."
         }
     }
 }

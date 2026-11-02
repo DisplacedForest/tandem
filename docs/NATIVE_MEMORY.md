@@ -52,6 +52,14 @@ The past-chat search control reads at most 48 recent messages from each of 12 lo
 
 The Sensitive information setting covers the wider set: settings text, code, hidden reasoning, and similar content. Never remember (the default) skips those turns completely. Suggest for review only lets them produce suggestions marked "Contains sensitive text:" in the review queue. Nothing is saved until you accept it. Accepting one keeps its source so it can be recalled. Switching back to Never remember stops recall of those records without deleting them.
 
+## Project scope
+
+A fact proposed from a conversation that belongs to a project is tagged with that project, on the proposal and on the record once you accept it. Facts proposed from conversations outside any project carry no tag and stay shared.
+
+Inside a project, recall runs the same search over the same scope and then puts facts tagged with that project ahead of the rest. The limits don't change: still at most 8 facts and about 700 estimated tokens per turn, so project facts take their place within that budget instead of adding to it. Shared facts still fill whatever room is left. Outside a project, recall has no project preference and facts from every project compete on relevance alone.
+
+The Library can be filtered by project, and each fact shows which project it came from. Approval, editing, suppression and deletion work the same for tagged facts as for any other.
+
 ## Behavior and boundaries
 
 Native memory covers these capabilities:

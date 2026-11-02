@@ -82,7 +82,8 @@ extension ChatStore {
     }
 
     func grants(for conversationID: String) -> [FolderGrant] {
-        conversations.first(where: { $0.id == conversationID })?.grants ?? nativeGrantSource.grants(for: conversationID)
+        guard conversations.contains(where: { $0.id == conversationID }) else { return nativeGrantSource.grants(for: conversationID) }
+        return effectiveGrants(for: conversationID)
     }
 
     func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger,
@@ -221,7 +222,7 @@ extension ChatStore {
 
     private func persistGrants(_ index: Int) {
         let conversation = conversations[index]
-        nativeGrantSource.set(conversation.grants, for: conversation.id)
+        refreshConversationGrants(conversation.id)
         guard let repository else { return }
         do {
             conversations[index].isPersisted = true
@@ -233,6 +234,9 @@ extension ChatStore {
 
     func syncGrantSource() {
         nativeGrantSource.replaceAll(conversations)
+        for conversation in conversations where conversation.projectID != nil {
+            refreshConversationGrants(conversation.id)
+        }
     }
 
 }

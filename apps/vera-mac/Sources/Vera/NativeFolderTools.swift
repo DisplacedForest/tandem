@@ -32,7 +32,7 @@ enum NativeFolderTools {
 
     static func grantNote(_ grants: [FolderGrant]) -> String? {
         guard !grants.isEmpty else { return nil }
-        let list = grants.map { "- \($0.name): \($0.path)" }.joined(separator: "\n")
+        let list = grants.map { "- \($0.name): \($0.path)" + ($0.readOnly ? " (read-only)" : "") }.joined(separator: "\n")
         return "Folders granted to this chat (use full paths under them with the file tools; symbolic links are not followed):\n" + list
     }
 
@@ -172,6 +172,7 @@ enum NativeFolderTools {
     }
 
     static func moveToTrash(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+        try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeToolError.failed("The granted folder itself can't be moved to the Trash: \(location.path)") }
         let directory = try NativeFolderIO.parent(of: location)
         guard let info = NativeFolderIO.status(directory, location.name) else { throw NativeFolderAccessError.notFound(location.path) }
@@ -280,6 +281,7 @@ enum NativeFolderTools {
     }
 
     static func write(_ location: NativeFolderLocation, content: String, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+        try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeFolderAccessError.notADirectory(location.path) }
         let directory = try NativeFolderIO.parent(of: location)
         var existed = false
@@ -300,6 +302,7 @@ enum NativeFolderTools {
     }
 
     static func edit(_ location: NativeFolderLocation, old: String, new: String, all: Bool, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+        try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeFolderAccessError.binary(location.path) }
         let directory = try NativeFolderIO.parent(of: location)
         let before = try NativeFolderIO.readText(directory, location.name, display: location.path, limit: maximumWriteBytes)
@@ -326,6 +329,8 @@ enum NativeFolderTools {
     }
 
     static func move(from: NativeFolderLocation, to: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+        try requireWritable(from)
+        try requireWritable(to)
         guard !from.components.isEmpty, !to.components.isEmpty else { throw NativeToolError.failed("A granted folder itself cannot be moved") }
         guard !NativeFolderAccess.contains(root: from.path, path: to.path) else { throw NativeToolError.failed("A folder cannot be moved inside itself") }
         let fromDirectory = try NativeFolderIO.parent(of: from)
@@ -339,6 +344,7 @@ enum NativeFolderTools {
     }
 
     static func makeDirectory(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+        try requireWritable(location)
         guard !location.components.isEmpty else { return .object(["path": .string(location.path), "created": .bool(false)]) }
         var directory = try NativeFolderIO.openRoot(location.root)
         var display = location.root.path
@@ -352,6 +358,10 @@ enum NativeFolderTools {
             directory = try NativeFolderIO.openDirectory(directory, component, display: display)
         }
         return .object(["path": .string(location.path), "created": .bool(created)])
+    }
+
+    static func requireWritable(_ location: NativeFolderLocation) throws {
+        if location.root.readOnly { throw NativeFolderAccessError.readOnly(location.path) }
     }
 
     static func requiredString(_ arguments: [String: NativeJSONValue], _ key: String) throws -> String {

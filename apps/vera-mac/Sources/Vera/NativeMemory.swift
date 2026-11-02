@@ -71,6 +71,7 @@ struct NativeMemoryLibraryFilter: Sendable {
     var category: NativeMemoryCategory?
     var status: NativeMemoryStatus?
     var expiry: NativeMemoryExpiryFilter = .all
+    var project: String?
 
     func matches(_ record: NativeMemoryRecord, now: Date = Date()) -> Bool {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -90,6 +91,7 @@ struct NativeMemoryLibraryFilter: Sendable {
             && (bank == nil || record.bank == bank)
             && (category == nil || record.category == category)
             && (status == nil || record.status == status)
+            && (project == nil || record.projectID == project)
             && matchesExpiry
     }
 }
@@ -261,6 +263,7 @@ struct NativeMemoryRecord: Codable, Identifiable, Hashable, Sendable {
     var domainRevision: Int? = nil
     var sensitiveConsent: Bool? = nil
     var sensitiveConsentVersion: String? = nil
+    var projectID: String? = nil
 
     var embeddingState: NativeMemoryEmbeddingState {
         guard let embedding else { return .missing }
@@ -331,6 +334,7 @@ struct NativeMemoryProposal: Codable, Identifiable, Hashable, Sendable {
     var domain: NativeDomainProposal? = nil
     var sensitiveReview: Bool? = nil
     var sourceVersion: String? = nil
+    var projectID: String? = nil
 }
 
 struct NativeMemoryChange: Codable, Identifiable, Sendable {
