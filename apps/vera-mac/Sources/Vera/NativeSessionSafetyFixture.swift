@@ -69,7 +69,14 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic final state failure") }
         try base.finishTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal)
     }
-    func releaseTurn(_ id: UUID, attempt: UUID) throws { try base.releaseTurn(id, attempt: attempt) }
+    func completeTurn(_ id: UUID, attempt: UUID?, state: NativeConversationTurn.State, message: Message, ordinal: Int, updatedAt: Date) throws {
+        if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic completion failure") }
+        try base.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
+    }
+    func releaseTurn(_ id: UUID, attempt: UUID) throws {
+        if lock.withLock({ failTurnWrites }) { throw NativeToolError.failed("synthetic release failure") }
+        try base.releaseTurn(id, attempt: attempt)
+    }
     func retryTurn(_ id: UUID, profile: String) throws { try base.retryTurn(id, profile: profile) }
 }
 

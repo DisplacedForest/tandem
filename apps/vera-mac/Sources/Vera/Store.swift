@@ -2384,10 +2384,10 @@ final class ChatStore: ObservableObject {
                         ? "This answer is unfinished. You can ask a follow-up or retry the answer." : nil
                     conversations[location.conversation].updatedAt = Date()
                     let finalMessage = conversations[location.conversation].messages[location.reply]
-                    let finalConversation = conversations[location.conversation]
+                    let completedAt = conversations[location.conversation].updatedAt
                     await awaitTurnCheckpoint(turn)
                     try await finishTurnOffMain(turn, state: partialAnswer ? .interrupted : .complete,
-                        message: finalMessage, ordinal: location.reply, conversation: finalConversation)
+                        message: finalMessage, ordinal: location.reply, updatedAt: completedAt)
                     guard let settled = turnLocation(turn) else { throw CancellationError() }
                     let i = settled.conversation
                     let replyIndex = settled.reply

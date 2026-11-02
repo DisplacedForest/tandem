@@ -244,8 +244,12 @@ extension ChatStore {
                     switch turnRepository.turnCurrency(request.id, attempt: request.attempt) {
                     case .current:
                         do {
-                            try turnRepository.finishTurn(request.id, attempt: request.attempt, state: request.state,
-                                                          message: request.message, ordinal: request.ordinal)
+                            if request.state == .pending {
+                                try turnRepository.releaseTurn(request.id, attempt: request.attempt)
+                            } else {
+                                try turnRepository.finishTurn(request.id, attempt: request.attempt, state: request.state,
+                                                              message: request.message, ordinal: request.ordinal)
+                            }
                             finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .finished)
                         } catch {
                             finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .unconfirmed)
@@ -372,13 +376,32 @@ extension ChatStore {
             conversations[current.conversation].messages[current.reply] = interrupted
             if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .interrupted }
         } catch is CancellationError {
-        } catch { chatConfigurationError = "The saved answer couldn't update. Try again." }
+        } catch {
+            guard attempt != nil else { chatConfigurationError = "The saved answer couldn't update. Try again."; return }
+            retainClaimFinalization(turn, state: .interrupted, message: interrupted, ordinal: ordinal)
+        }
     }
 
     private func releaseTurnClaim(_ turn: NativeConversationTurn) async {
         guard let turnRepository, let attempt = turn.attempt else { return }
         let turnID = turn.id
-        try? await Task.detached(priority: .userInitiated) { try turnRepository.releaseTurn(turnID, attempt: attempt) }.value
+        do {
+            try await Task.detached(priority: .userInitiated) { try turnRepository.releaseTurn(turnID, attempt: attempt) }.value
+        } catch is CancellationError {
+        } catch {
+            guard let location = turnLocation(turn) else { return }
+            retainClaimFinalization(turn, state: .pending, message: conversations[location.conversation].messages[location.reply],
+                                    ordinal: location.reply)
+        }
+    }
+
+    private func retainClaimFinalization(_ turn: NativeConversationTurn, state: NativeConversationTurn.State, message: Message, ordinal: Int) {
+        guard turnExecutions[turn.id] == nil else { return }
+        let execution = NativeTurnExecution(turn)
+        execution.finalization = (state, message, ordinal)
+        turnExecutions[turn.id] = execution
+        turnStatuses[turn.assistantMessageID] = Self.savePendingStatus
+        generating = true
     }
 
     func finishTurnExecution(_ turn: NativeConversationTurn) {
@@ -565,13 +588,12 @@ extension ChatStore {
 
 extension ChatStore {
     func finishTurnOffMain(_ turn: NativeConversationTurn, state: NativeConversationTurn.State, message: Message, ordinal: Int,
-                           conversation: Conversation) async throws {
-        guard let turnRepository, let repository else { return }
+                           updatedAt: Date) async throws {
+        guard let turnRepository else { return }
         let id = turn.id
         let attempt = turn.attempt
         try await Task.detached(priority: .userInitiated) {
-            try turnRepository.finishTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal)
-            try repository.saveConversation(conversation)
+            try turnRepository.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
         }.value
         guard turnOwned(turn) else { throw CancellationError() }
     }

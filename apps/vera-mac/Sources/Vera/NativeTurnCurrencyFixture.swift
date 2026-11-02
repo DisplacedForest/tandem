@@ -49,6 +49,7 @@ enum NativeTurnCurrencyFixture {
         try await dispatchContention()
         try await dispatchRevocation()
         try await claimContention()
+        try await releaseContention()
         try await completionRelocation()
         print("TURN CURRENCY OK (confirmed supersession, off-main checks, transient storage failures keep streaming, checkpoint, finalization, dispatch and claim writes off main with their gates re-checked afterwards)")
     }
@@ -259,10 +260,18 @@ enum NativeTurnCurrencyFixture {
         store.scheduleConversationTurns()
         try await NativeSessionFixture.eventually("The claim is written and waiting to return") { repository.claimLanded.value }
         try require(try base.conversationTurns()[0].state == .running, "The claim has landed while the tick waits for it")
+        repository.failTurnWrites = true
         store.applyNativeOptions(.init(baseURL: NativeSessionFixture.config.baseURL, apiKey: nil,
             model: "changed-model", chatTemplateKwargs: nil))
+        try await NativeSessionFixture.eventually("The rejected claim is retained when its interruption cannot save") {
+            !store.isSchedulingTurns && store.turnExecutions[pending.id]?.finalization?.state == .interrupted
+        }
+        try require(try base.conversationTurns()[0].state == .running && transport.histories.isEmpty,
+                    "A rejected claim whose interruption failed keeps its slot without running")
+        repository.failTurnWrites = false
+        store.scheduleConversationTurns()
         try await NativeSessionFixture.eventually("The claim tick settles") {
-            !store.isSchedulingTurns && store.conversationTurns.first?.state == .interrupted
+            !store.isSchedulingTurns && store.conversationTurns.first?.state == .interrupted && store.turnExecutions.isEmpty
         }
         let saved = try base.conversationTurns().first { $0.id == pending.id }
         try require(transport.histories.isEmpty && store.turnExecutions.isEmpty,
@@ -270,6 +279,39 @@ enum NativeTurnCurrencyFixture {
         try require(saved?.state == .interrupted && saved?.attempt != nil, "The rejected claim is finalized instead of left running")
         try require(store.selected?.messages.last?.failure?.contains("original settings") == true,
                     "The rejected claim explains that the saved message needs its original settings")
+        store.conversationTurnLoop?.cancel()
+    }
+
+    static func releaseContention() async throws {
+        let require = NativeTaskFixture.require
+        let base = try LocalChatRepository(inMemory: true)
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.failReadsAfterAcceptance = false
+        repository.claimHold = 0.2
+        let transport = NativeSessionFixtureTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
+            repository: repository, artifactPersistenceEnabled: false)
+        store.newConversation()
+        store.suspendsTurnScheduling = true
+        store.sendText("claimed then held back")
+        let pending = try base.conversationTurns()[0]
+        store.suspendsTurnScheduling = false
+        store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The claim is written and waiting to return") { repository.claimLanded.value }
+        store.suspendsTurnScheduling = true
+        repository.failTurnWrites = true
+        try await NativeSessionFixture.eventually("The claim that cannot start is retained for release") {
+            !store.isSchedulingTurns && store.turnExecutions[pending.id]?.finalization?.state == .pending
+        }
+        try require(try base.conversationTurns()[0].state == .running && transport.histories.isEmpty,
+                    "A claim that cannot start and cannot be released keeps its slot without running")
+        repository.failTurnWrites = false
+        store.suspendsTurnScheduling = false
+        store.scheduleConversationTurns()
+        try await NativeSessionFixture.eventually("The released claim runs on a later tick") {
+            !store.isSchedulingTurns && (try? base.conversationTurns().first { $0.id == pending.id }?.state) == .complete
+        }
+        try require(transport.histories.count == 1 && store.turnExecutions.isEmpty, "The released turn ran exactly once")
         store.conversationTurnLoop?.cancel()
     }
 
@@ -294,6 +336,7 @@ enum NativeTurnCurrencyFixture {
         let front = store.conversations.first
         try require(front?.id != conversationID && front?.messages.isEmpty == true,
                     "A new chat opens at the front while the answer waits to save")
+        store.toggleMemoryExclusion(conversationID)
         try await holder.value
         try await NativeSessionFixture.eventually("The answer completes after storage frees") {
             let original = store.conversations.first(where: { $0.id == conversationID })
@@ -308,6 +351,9 @@ enum NativeTurnCurrencyFixture {
         try require(savedTurn?.state == .complete, "The finished turn is saved")
         let savedMessages = try repository.messages(conversationID: conversationID)
         try require(savedMessages.last?.text == fullAnswer, "The full answer is saved to its own conversation")
+        let savedConversation = try repository.listConversations().first(where: { $0.id == conversationID })
+        try require(savedConversation?.memoryExcluded == true && original?.memoryExcluded == true,
+                    "A setting changed while the answer waited to save survives completion")
         store.conversationTurnLoop?.cancel()
     }
 
