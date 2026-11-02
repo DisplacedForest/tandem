@@ -750,6 +750,17 @@ enum NativeMemoryGate {
             streamingOverride: nil, contextCeiling: nil)
         let customRejection = client.sanitized(NativeChatClient.ClientError.http(400, NativeChatClient.errorDetail(
             Data("{\"error\":{\"message\":\"Unknown parameter: sk_attention_heads\"}}".utf8), secrets: client.redactionSecrets)))
+        let shortKey = "ab" + "c" + "12"
+        let shortClient = NativeChatClient(config: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: shortKey,
+                                                                    model: "fixture-model", chatTemplateKwargs: nil))
+        let shortProvider = shortClient.sanitized(NativeChatClient.ClientError.provider(
+            ["message": "rejected \(shortKey) today", "metadata": ["echo": shortKey]], secrets: shortClient.redactionSecrets))
+        let shortJSON = shortClient.sanitized(NativeChatClient.ClientError.http(401, NativeChatClient.errorDetail(
+            Data("{\"detail\":{\"echo\":\"\(shortKey)\"},\"code\":401}".utf8), secrets: shortClient.redactionSecrets)))
+        let shortPlain = shortClient.sanitized(NativeChatClient.ClientError.http(401, NativeChatClient.errorDetail(
+            Data("rejected \(shortKey) today".utf8), secrets: shortClient.redactionSecrets)))
+        var shortStored = [shortProvider, shortJSON, shortPlain].map(\.localizedDescription)
+        if case .provider(_, let raw)? = shortProvider as? NativeChatClient.ClientError { shortStored.append(raw) }
         let parameters = NativeChatRequestOptions(
             topLevel: [NativeChatRequestOptions.Entry(key: "temperature", value: .number(0.7), source: .override),
                        NativeChatRequestOptions.Entry(key: "max_tokens", value: .number(256), source: .override)],
@@ -781,6 +792,8 @@ enum NativeMemoryGate {
             ("known key shapes", shapes.allSatisfy { !shapedMessage.contains($0) && !shapedBody.contains($0) }
                 && shapedMessage.contains("were rejected") && shapedBody.contains("today")),
             ("slashed configured key", !(slashStored + slashPrinted).contains { $0.contains(slashed) || $0.contains("c4/d5c4") }),
+            ("short configured key", shortStored.allSatisfy { !$0.contains(shortKey) && $0.contains(NativeDiagnosticRedaction.placeholder) }
+                && shortProvider.localizedDescription.hasSuffix(" today") && shortPlain.localizedDescription.hasSuffix(" today")),
             ("bounded shapes leave text alone", untouched.allSatisfy { NativeDiagnosticRedaction.text($0) == $0 }),
             ("bounded shapes still mask keys", masked.allSatisfy { value in
                 let stored = NativeChatClient.ClientError.provider(["message": "rejected " + value + " today"]).localizedDescription

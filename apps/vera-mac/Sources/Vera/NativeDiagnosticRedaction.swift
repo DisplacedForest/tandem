@@ -3,7 +3,6 @@ import Foundation
 enum NativeDiagnosticRedaction {
     static let placeholder = "[redacted]"
     static let sensitiveKeyParts = ["key", "token", "secret", "authorization", "password", "cookie", "credential"]
-    static let minimumSecretLength = 6
     static let credentialAssignment = #"(?i)\b(x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|secret|password|authorization)("?\s*[=:]\s*"?)[^\s&",;}]+"#
     static let minimumTokenLength = 20
     static let leadingBoundary = #"(?<![/A-Za-z0-9])"#
@@ -64,7 +63,7 @@ enum NativeDiagnosticRedaction {
     }
 
     static func text(_ input: String, secrets: [String] = []) -> String {
-        var output = secrets.filter { $0.count >= minimumSecretLength }.reduce(input) {
+        var output = secrets.filter { !$0.isEmpty }.reduce(input) {
             $0.replacingOccurrences(of: $1, with: placeholder)
         }
         output = keyShapeExpressions.reduce(output, maskKeyShape)
