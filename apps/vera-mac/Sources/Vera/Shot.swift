@@ -421,7 +421,10 @@ enum Shot {
             switch view {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
-            case "vera": section = .vera
+            case "vera":
+                section = .vera
+                store.ensureVeraThread()
+                store.openVeraThread()
             case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects

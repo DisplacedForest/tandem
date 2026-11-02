@@ -366,12 +366,21 @@ private struct ChatPane: View {
             }
         }
         .sheet(isPresented: $showingWork) {
-            OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
-                showingWork = false
-                store.revealOngoingWork(reference)
-            }, onClose: { showingWork = false })
-            .frame(width: 420, height: 560)
-            .environmentObject(store)
+            if OngoingWork.items(store.nativeTaskReferences, conversationID: conversation?.id).isEmpty {
+                OngoingWorkAllSheet(onGo: { reference in
+                    showingWork = false
+                    store.revealOngoingWork(reference)
+                })
+                .frame(width: 420, height: 560)
+                .environmentObject(store)
+            } else {
+                OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
+                    showingWork = false
+                    store.revealOngoingWork(reference)
+                }, onClose: { showingWork = false })
+                .frame(width: 420, height: 560)
+                .environmentObject(store)
+            }
         }
         .onAppear(perform: refreshDotSetup)
         .onChange(of: store.dotProfile) { refreshDotSetup() }
