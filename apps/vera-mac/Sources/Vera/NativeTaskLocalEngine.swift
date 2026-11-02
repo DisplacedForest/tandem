@@ -115,6 +115,7 @@ private actor NativeTaskEngineOwnership {
                     WHERE state = 'reserved'
                     """)
             }
+            _ = try NativeEffectLedgerStore(database: store.database).recoverAtBringUp()
             try await dispatcher.start()
             state = .running
         } catch {

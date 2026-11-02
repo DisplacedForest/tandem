@@ -140,6 +140,7 @@ enum NativeImageTools {
                     ], required: ["prompt"]),
                 confirmation: .none,
                 timeout: timeout,
+                action: .fileEdits,
                 isAvailable: { base() != nil },
                 execute: { arguments in
                     guard let prompt = arguments.imageString("prompt") else {

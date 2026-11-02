@@ -30,6 +30,7 @@ enum NativeWebTools {
                     ], required: ["query"]),
                 confirmation: .none,
                 timeout: searchTimeout,
+                effect: .read,
                 isAvailable: { searchBase() != nil },
                 execute: { arguments in
                     guard let query = arguments.webString("query", limit: 500) else {
@@ -52,6 +53,7 @@ enum NativeWebTools {
                     ], required: ["url"]),
                 confirmation: .none,
                 timeout: fetchTimeout,
+                effect: .read,
                 isAvailable: { true },
                 execute: { arguments in
                     guard let url = arguments.webString("url", limit: 2048) else {
