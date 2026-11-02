@@ -12,13 +12,18 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let authentication: Authentication
     let oauth: NativeMCPOAuthConfiguration?
     let allowsLoopbackFixture: Bool
-    init(id: String, name: String, endpoint: URL, readTools: Set<String>, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil) throws {
+    let publisher: String?
+    let sourceURL: URL?
+    init(id: String, name: String, endpoint: URL, readTools: Set<String>, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
         guard UUID(uuidString: id) != nil, !name.isEmpty, name.utf8.count <= 100,
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.host != nil, endpoint.scheme == "https" || (allowLoopbackFixture && endpoint.scheme == "http" && ["127.0.0.1", "::1"].contains(endpoint.host!)),
               !readTools.isEmpty, readTools.count <= 64, readTools.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
               !scopes.isEmpty, scopes.isSubset(of: ["focused", "assistant", "worker"]), timeout.isFinite, (0.1...20).contains(timeout) else { throw NativeToolError.failed("The connected service configuration is invalid.") }
         guard (authentication == .oauth) == (oauth != nil), oauth == nil || oauth?.resource == endpoint else { throw NativeToolError.failed("The sign-in configuration is invalid.") }
+        guard publisher.map({ !$0.isEmpty && $0.utf8.count <= 100 }) ?? true,
+              sourceURL.map({ $0.scheme == "https" && $0.host != nil && $0.user == nil && $0.password == nil }) ?? true else { throw NativeToolError.failed("The connected service configuration is invalid.") }
+        self.publisher = publisher; self.sourceURL = sourceURL
         self.oauth = oauth
         self.id = id.lowercased(); self.name = name; self.endpoint = endpoint
         self.readTools = readTools; self.scopes = scopes; self.timeout = timeout; self.authentication = authentication; self.allowsLoopbackFixture = allowLoopbackFixture
@@ -29,15 +34,17 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         do {
             var ids = Set<String>()
             let servers = try rows.map { row -> Self in
-                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "scopes", "timeout_seconds", "authentication", "oauth"]),
+                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
                       let id = row["id"] as? String, let name = row["name"] as? String,
                       let url = row["url"] as? String, let endpoint = URL(string: url),
                       let tools = row["read_tools"] as? [String], row["scopes"] == nil || row["scopes"] is [String],
                       row["timeout_seconds"] == nil || row["timeout_seconds"] is Double,
                       row["authentication"] == nil || row["authentication"] is String,
-                      let authentication = Authentication(rawValue: row["authentication"] as? String ?? "none") else { throw NativeToolError.unavailable }
+                      let authentication = Authentication(rawValue: row["authentication"] as? String ?? "none"),
+                      row["publisher"] == nil || row["publisher"] is String,
+                      row["source_url"] == nil || (row["source_url"] as? String).flatMap(URL.init(string:)) != nil else { throw NativeToolError.unavailable }
                 let oauth = row["oauth"] == nil ? nil : try NativeMCPOAuthConfiguration.load(row["oauth"])
-                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(tools), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth)
+                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(tools), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
                 guard ids.insert(server.id).inserted else { throw NativeToolError.unavailable }
                 return server
             }
@@ -59,7 +66,7 @@ struct NativeMCPToolRecord: Identifiable, Sendable {
     var callable: Bool { validator != nil && reason == nil }
 }
 struct NativeMCPServerState: Identifiable, Sendable {
-    let configuration: NativeMCPServerConfiguration
+    var configuration: NativeMCPServerConfiguration
     var id: String { configuration.id }
     var generation = UUID()
     var status = "Not connected"
@@ -138,6 +145,46 @@ final class NativeMCPAccess: @unchecked Sendable {
         previous.1.forEach { $0.revoke() }
         previous.2?()
     }
+    func reconcileServers(_ servers: [NativeMCPServerConfiguration]) -> [String: UUID] {
+        let result = lock.withLock { () -> ([String: UUID], [NativeMCPOAuthConnectionLifetime], [NativeMCPAuthorization], (@Sendable () -> Void)?) in
+            var stale: [String: UUID] = [:]
+            var next: [NativeMCPServerState] = []
+            let previous = Dictionary(states.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for server in servers {
+                guard var state = previous[server.id] else {
+                    next.append(NativeMCPServerState(configuration: server))
+                    continue
+                }
+                if state.configuration == server {
+                    next.append(state)
+                } else if Self.keepsConnection(state, server) {
+                    state.configuration = server
+                    state.tools = state.tools.map { NativeMCPToolRecord(id: $0.id, server: server, generation: $0.generation, remoteName: $0.remoteName, description: $0.description, schema: $0.schema, validator: $0.validator, reason: $0.reason) }
+                    next.append(state)
+                } else {
+                    stale[state.id] = state.generation
+                    next.append(NativeMCPServerState(configuration: server))
+                }
+            }
+            let kept = Set(servers.map(\.id))
+            for state in states where !kept.contains(state.id) { stale[state.id] = state.generation }
+            let owners = stale.keys.compactMap { oauthOwners.removeValue(forKey: $0) }
+            let leases = stale.keys.compactMap { authorizations.removeValue(forKey: $0) }
+            states = next
+            return (stale, owners, leases, observer)
+        }
+        result.1.forEach { $0.cancel() }
+        result.2.forEach { $0.revoke() }
+        result.3?()
+        return result.0
+    }
+    private static func keepsConnection(_ state: NativeMCPServerState, _ server: NativeMCPServerConfiguration) -> Bool {
+        let current = state.configuration
+        return !state.connecting && current.authentication != .oauth && server.authentication != .oauth
+            && current.id == server.id && current.endpoint == server.endpoint && current.readTools == server.readTools
+            && current.timeout == server.timeout && current.authentication == server.authentication
+            && current.allowsLoopbackFixture == server.allowsLoopbackFixture
+    }
     func setEnabled(_ ids: Set<String>) {
         let notify = lock.withLock { () -> (@Sendable () -> Void)? in
             guard enabled != ids else { return nil }
@@ -152,7 +199,7 @@ final class NativeMCPAccess: @unchecked Sendable {
         lock.withLock {
             var lines = [identity, String(revision), scope]
             for state in states {
-                let parts = [state.id, state.generation.uuidString, String(state.connected), String(authorized(state.configuration))]
+                let parts = [state.id, state.generation.uuidString, String(state.connected), String(authorized(state.configuration)), String(state.configuration.scopes.contains(scope)), state.configuration.name]
                 lines.append(parts.joined(separator: ":"))
             }
             return piHash(Data(lines.joined(separator: "\n").utf8))
@@ -164,20 +211,28 @@ final class NativeMCPAccess: @unchecked Sendable {
             guard enabled.contains(record.id), authorized(record.server), record.callable, record.server.scopes.contains(scope) else { return false }
             return states.contains { state in
                 state.id == record.server.id && state.generation == record.generation && state.connected
+                    && state.configuration.scopes.contains(scope)
                     && state.tools.contains { $0.id == record.id && $0.callable }
             }
         }
     }
 }
 
+struct NativeMCPPermissionRevoked: Error {}
+
 actor NativeMCPAuthority: NativeRuntimeToolServing {
     typealias Factory = @Sendable (NativeMCPServerConfiguration) throws -> any NativeMCPConnection
     typealias AuthenticatedFactory = @Sendable (NativeMCPServerConfiguration, NativeMCPAuthorization?) throws -> any NativeMCPConnection
     nonisolated let access: NativeMCPAccess
     private let factory: AuthenticatedFactory
-    private var authorizations: [String: (lease: NativeMCPAuthorization, observer: UUID)] = [:]
-    private var connections: [String: any NativeMCPConnection] = [:]
-    private var openings: [String: Task<[NativeMCPToolRecord], Error>] = [:]
+    private struct Handle {
+        let serverID: String
+        var lease: (authorization: NativeMCPAuthorization, observer: UUID)?
+        var connection: (any NativeMCPConnection)?
+        var opening: Task<[NativeMCPToolRecord], Error>?
+    }
+    private var handles: [UUID: Handle] = [:]
+    private var invalidatedCalls: Set<UUID> = []
     private var active: [UUID: (server: String, record: NativeMCPToolRecord, scope: String, subject: String, revision: Int, task: Task<NativeJSONValue, Error>)] = [:]
     init(servers: [NativeMCPServerConfiguration], enabled: Set<String> = [], factory: Factory? = nil, authenticatedFactory: AuthenticatedFactory? = nil) {
         access = NativeMCPAccess(servers: servers, enabled: enabled)
@@ -195,13 +250,14 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             guard let oauth, oauth.isActive, oauth.session != nil, oauth.configuration == state.configuration, access.oauthOwner(id) === oauth else { authorization?.revoke(); return }
         } else if oauth != nil { authorization?.revoke(); return }
         guard !state.connecting, !state.connected else {
-            if authorization !== authorizations[id]?.lease { authorization?.revoke() }
+            if !handles.values.contains(where: { $0.serverID == id && $0.lease?.authorization === authorization }) { authorization?.revoke() }
             return
         }
         let previousGeneration = state.generation
         state.generation = UUID(); state.connecting = true; state.connected = false; state.tools = []; state.status = "Connecting"
         guard access.update(state, expectedGeneration: previousGeneration) else { authorization?.revoke(); return }
         let generation = state.generation
+        handles[generation] = Handle(serverID: id)
         do {
             let server = state.configuration
             if server.authentication != .none {
@@ -213,14 +269,14 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 let observer = authorization.onInvalidation { [weak self] in
                     Task { await self?.authorizationInvalidated(id, generation: generation) }
                 }
-                authorizations[id] = (authorization, observer)
+                handles[generation]?.lease = (authorization, observer)
             } else if authorization != nil {
                 authorization?.revoke()
                 throw NativeMCPTransportError.authenticationRequired
             }
             guard server.authentication == .none || authorization?.isValid(serverID: server.id, endpoint: server.endpoint) == true else { throw NativeMCPTransportError.authenticationRequired }
             let connection = try factory(server, authorization)
-            connections[id] = connection
+            handles[generation]?.connection = connection
             let operation = Task {
                 try await NativeInferenceDeadline.run(seconds: server.timeout) {
                     try Task.checkCancellation()
@@ -248,16 +304,16 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                     throw NativeToolError.unavailable
                 }
             }
-            openings[id] = operation
+            handles[generation]?.opening = operation
             let tools = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
-            guard access.snapshot().first(where: { $0.id == id })?.generation == generation else { try? await NativeInferenceDeadline.run(seconds: 0.5) { await connection.disconnect() }; return }
+            guard access.snapshot().first(where: { $0.id == id })?.generation == generation else { await teardown(generation); return }
             try Task.checkCancellation()
             guard server.authentication == .none || authorization?.isValid(serverID: server.id, endpoint: server.endpoint) == true else { throw NativeMCPTransportError.authenticationRequired }
             state.connecting = false; state.connected = true; state.status = server.authentication == .oauth ? "Signed in" : server.authentication == .bearer ? "Connected with a temporary token" : "Connected"; state.tools = tools
-            openings.removeValue(forKey: id)
-            if !access.update(state, expectedGeneration: generation) { try? await NativeInferenceDeadline.run(seconds: 0.5) { await connection.disconnect() } }
+            handles[generation]?.opening = nil
+            if !access.update(state, expectedGeneration: generation) { await teardown(generation) }
         } catch {
-            guard access.snapshot().first(where: { $0.id == id })?.generation == generation else { return }
+            guard access.snapshot().first(where: { $0.id == id })?.generation == generation else { await teardown(generation); return }
             await disconnect(id, status: Self.message(error), expectedGeneration: generation)
         }
     }
@@ -268,14 +324,26 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
     }
     func disconnect(_ id: String, status: String = "Not connected", oauth: NativeMCPOAuthConnectionLifetime? = nil, preservingOAuth: Bool = false, expectedGeneration: UUID? = nil) async {
         guard access.disconnectState(id, status: status, owner: oauth, expectedGeneration: expectedGeneration, preservingOAuth: preservingOAuth) else { return }
-        if let authorization = authorizations.removeValue(forKey: id) {
-            authorization.lease.removeInvalidationObserver(authorization.observer)
-            authorization.lease.revoke()
+        let current = access.snapshot().first(where: { $0.id == id })?.generation
+        let stale = handles.filter { $0.value.serverID == id && $0.key != current }.map(\.key)
+        for generation in stale { await teardown(generation) }
+    }
+    func retire(_ stale: [String: UUID]) async {
+        for generation in stale.values { await teardown(generation) }
+        permissionsChanged()
+    }
+    private func teardown(_ generation: UUID) async {
+        guard let handle = handles.removeValue(forKey: generation) else { return }
+        if let lease = handle.lease {
+            lease.authorization.removeInvalidationObserver(lease.observer)
+            lease.authorization.revoke()
         }
-        openings.removeValue(forKey: id)?.cancel()
-        for (_, call) in active where call.server == id { call.task.cancel() }
-        let connection = connections.removeValue(forKey: id)
-        if let connection { try? await NativeInferenceDeadline.run(seconds: 0.5) { await connection.disconnect() } }
+        handle.opening?.cancel()
+        for (key, call) in active where call.record.generation == generation {
+            invalidatedCalls.insert(key)
+            call.task.cancel()
+        }
+        if let connection = handle.connection { try? await NativeInferenceDeadline.run(seconds: 0.5) { await connection.disconnect() } }
     }
     func suspendOAuth(_ id: String, owner: NativeMCPOAuthConnectionLifetime) async -> Bool {
         guard access.oauthOwner(id) === owner, owner.isActive else { return false }
@@ -283,7 +351,10 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
         return access.oauthOwner(id) === owner && owner.isActive
     }
     func permissionsChanged() {
-        for (_, call) in active where !access.allowed(call.record, scope: call.scope, revision: call.revision) { call.task.cancel() }
+        for (key, call) in active where !access.allowed(call.record, scope: call.scope, revision: call.revision) {
+            invalidatedCalls.insert(key)
+            call.task.cancel()
+        }
     }
     nonisolated func definitions(scope: String) -> [NativeToolDefinition] {
         let revision = access.permissionRevision()
@@ -312,28 +383,32 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
         try Task.checkCancellation()
         let revision = expectedRevision ?? access.permissionRevision()
         guard expectedCatalog == nil || expectedCatalog == access.catalogRevision(scope: scope) else { throw NativeToolError.unavailable }
-        guard access.allowed(record, scope: scope, revision: revision), let connection = connections[record.server.id], let validator = record.validator,
+        guard access.allowed(record, scope: scope, revision: revision), let connection = handles[record.generation]?.connection, let validator = record.validator,
               case .object(let object) = arguments, (try arguments.piData()).count <= 16384 else { throw NativeToolError.unavailable }
         try validator.validate(arguments)
         let id = UUID()
         let operation = Task {
             try await NativeInferenceDeadline.run(seconds: record.server.timeout) {
                 try Task.checkCancellation()
-                guard self.access.allowed(record, scope: scope, revision: revision), expectedCatalog == nil || expectedCatalog == self.access.catalogRevision(scope: scope) else { throw NativeToolError.unavailable }
+                guard self.access.allowed(record, scope: scope, revision: revision), expectedCatalog == nil || expectedCatalog == self.access.catalogRevision(scope: scope) else { throw NativeMCPPermissionRevoked() }
                 return try await connection.call(name: record.remoteName, arguments: object)
             }
         }
         active[id] = (record.server.id, record, scope, subject, revision, operation)
-        defer { active.removeValue(forKey: id) }
+        defer { active.removeValue(forKey: id); invalidatedCalls.remove(id) }
         do {
             let result = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
             try Task.checkCancellation()
-            guard access.allowed(record, scope: scope, revision: revision), expectedCatalog == nil || expectedCatalog == access.catalogRevision(scope: scope) else { throw NativeToolError.unavailable }
+            guard access.allowed(record, scope: scope, revision: revision) else { throw NativeMCPPermissionRevoked() }
             if result.pi("isError") == .bool(true) { throw NativeMCPTransportError.remoteFailure }
             let wrapped = NativeJSONValue.object(["source": .string(record.server.endpoint.absoluteString), "content": result])
             guard (try wrapped.piData()).count <= 4096 else { throw NativeToolError.failed("The service result is too large. Ask for a narrower read.") }
             return wrapped
         } catch {
+            if invalidatedCalls.contains(id) || error is NativeMCPPermissionRevoked {
+                if error is CancellationError, Task.isCancelled { throw CancellationError() }
+                throw NativeToolError.unavailable
+            }
             if case NativeMCPTransportError.remoteFailure = error { throw NativeToolError.failed("The connected service reported a tool error.") }
             if case NativeMCPTransportError.busy = error { throw NativeToolError.failed("A read from this service is already running. Try again when it finishes.") }
             if access.snapshot().first(where: { $0.id == record.server.id })?.generation == record.generation { await disconnect(record.server.id, status: Self.message(error), expectedGeneration: record.generation) }

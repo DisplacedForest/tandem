@@ -20,7 +20,8 @@ enum Shot {
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let artifactSeed = view.hasPrefix("artifacts") ? ArtifactShotFixture.store(variant: view) : nil
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
-        let store = artifactSeed?.store ?? projectSeed?.store ?? ChatStore()
+        let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
+        let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? ChatStore()
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -353,7 +354,7 @@ enum Shot {
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled": section = .scheduled
-            case "integrations": section = .integrations
+            case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
             default: section = .chat
             }
@@ -369,9 +370,11 @@ enum Shot {
                          collapsedSidebar: view == "sidebar-collapsed",
                          mentions: view == "chats-mentions",
                          artifactSelection: artifactSeed?.selection,
-                         projectSelection: projectSeed?.selection)
+                         projectSelection: projectSeed?.selection,
+                         integrationsSeed: integrationsSeed)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
+                    .environmentObject(integrationsSeed?.config ?? ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in }))
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
@@ -987,7 +990,7 @@ struct NativeSettingsShotView: View {
                 }
                 .padding(10).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
                 Text("UNAVAILABLE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                unavailable("Connected services", "Configure a reviewed remote service and approved read tools in Settings.")
+                unavailable("Connected services", "Connected services are managed under Integrations.")
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {

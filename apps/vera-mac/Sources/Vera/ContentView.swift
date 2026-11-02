@@ -33,8 +33,7 @@ struct ContentView: View {
                         case .scheduled: ScheduledView()
                         case .artifacts: ArtifactsView()
                         case .projects: ProjectsView()
-                        case .integrations:
-                            DestinationPlaceholder(section: store.section)
+                        case .integrations: IntegrationsView()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
