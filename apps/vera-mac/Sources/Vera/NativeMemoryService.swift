@@ -432,7 +432,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         } catch let error as URLError {
-            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(NativeDiagnosticRedaction.text(error.localizedDescription, secrets: redactionSecrets))")
         }
     }
 
@@ -465,7 +465,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         } catch let error as URLError {
-            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(NativeDiagnosticRedaction.text(error.localizedDescription, secrets: redactionSecrets))")
         }
     }
 
@@ -492,7 +492,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         } catch let error as URLError {
-            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(NativeDiagnosticRedaction.text(error.localizedDescription, secrets: redactionSecrets))")
         }
     }
 
@@ -623,7 +623,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw NativeMemoryServiceError.timeout
         } catch let error as URLError {
-            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(error.localizedDescription)")
+            throw NativeMemoryServiceError.unavailable("The memory endpoint could not be reached: \(NativeDiagnosticRedaction.text(error.localizedDescription, secrets: redactionSecrets))")
         }
     }
 
@@ -633,11 +633,15 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         }
     }
 
+    private var redactionSecrets: [String] {
+        [configuration.apiKey].compactMap { $0 }
+    }
+
     private func validate(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw NativeMemoryServiceError.malformed }
         if http.statusCode == 401 || http.statusCode == 403 { throw NativeMemoryServiceError.authentication }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: data, encoding: .utf8)?.prefix(180) ?? ""
+            let detail = NativeDiagnosticRedaction.payload(data, secrets: redactionSecrets).prefix(180)
             throw NativeMemoryServiceError.unavailable("The memory model returned HTTP \(http.statusCode): \(detail)")
         }
     }

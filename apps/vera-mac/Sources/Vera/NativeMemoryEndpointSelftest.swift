@@ -71,10 +71,11 @@ final class MemoryEndpointWireState: @unchecked Sendable {
     private var recorded: [(path: String, body: [String: Any]?)] = []
     var modelsStatus = 200
     var refuseConnections = false
+    var modelsBody: Data?
 
     var requests: [(path: String, body: [String: Any]?)] { lock.lock(); defer { lock.unlock() }; return recorded }
     func record(_ path: String, _ body: [String: Any]?) { lock.lock(); recorded.append((path, body)); lock.unlock() }
-    func reset() { lock.lock(); recorded = []; modelsStatus = 200; refuseConnections = false; lock.unlock() }
+    func reset() { lock.lock(); recorded = []; modelsStatus = 200; refuseConnections = false; modelsBody = nil; lock.unlock() }
 }
 
 final class MemoryEndpointWire: URLProtocol, @unchecked Sendable {
@@ -117,7 +118,8 @@ final class MemoryEndpointWire: URLProtocol, @unchecked Sendable {
         }
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: body))
+        let raw = url.path.hasSuffix("/models") ? Self.state.modelsBody : nil
+        client?.urlProtocol(self, didLoad: raw ?? (try! JSONSerialization.data(withJSONObject: body)))
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
@@ -365,6 +367,41 @@ extension SelfTest {
             } catch let error as NativeMemoryServiceError {
                 guard error.isEndpointOutage else { fail("refused connection was not an outage: \(error)") }
             }
+            let fixtureKey = "fixtureMemoryKey0123456789abcdef"
+            guard fixtureKey.count == 32 else { fail("redaction fixture key length") }
+            let keyed = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
+                baseURL: URL(string: "https://memory.example/v1")!, apiKey: fixtureKey,
+                embeddingsModel: "qwen3-embedding", extractionModel: "", rerankModel: ""), session: session)
+            MemoryEndpointWire.state.reset()
+            MemoryEndpointWire.state.modelsStatus = 400
+            MemoryEndpointWire.state.modelsBody = Data(#"{"error":{"message":"invalid key sk-\#(fixtureKey)","api_key":"\#(fixtureKey)"}}"#.utf8)
+            do {
+                _ = try await keyed.probe()
+                fail("probe accepted a 400")
+            } catch let error as NativeMemoryServiceError {
+                let description = error.localizedDescription
+                guard description.contains("HTTP 400"), description.contains("invalid key"),
+                      description.contains(NativeDiagnosticRedaction.placeholder), !description.contains(fixtureKey) else {
+                    fail("HTTP error body leaked a credential: \(description)")
+                }
+            }
+            let alphabet = [UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "0")...UInt8(ascii: "9")]
+                .flatMap { $0.map { Character(UnicodeScalar($0)) } }
+            let bearer = String((0..<40).map { _ in alphabet.randomElement()! })
+            MemoryEndpointWire.state.reset()
+            MemoryEndpointWire.state.modelsStatus = 500
+            MemoryEndpointWire.state.modelsBody = Data("upstream said Bearer \(bearer)".utf8)
+            do {
+                _ = try await keyed.probe()
+                fail("probe accepted a 500")
+            } catch let error as NativeMemoryServiceError {
+                let description = error.localizedDescription
+                guard description.contains("HTTP 500"), !description.contains(bearer),
+                      description.contains("upstream said"),
+                      description.contains(NativeDiagnosticRedaction.placeholder) else {
+                    fail("plain-text error body leaked a bearer token: \(description)")
+                }
+            }
         } catch {
             fail("wire \(error)")
         }
@@ -452,6 +489,6 @@ extension SelfTest {
         } catch {
             fail("store \(error)")
         }
-        print("  memory endpoint OK (resolution, env, migration, keychain copy, profile switch, rerank, probe, lexical fallback, queue and drain)")
+        print("  memory endpoint OK (resolution, env, migration, keychain copy, profile switch, rerank, probe, error redaction, lexical fallback, queue and drain)")
     }
 }
