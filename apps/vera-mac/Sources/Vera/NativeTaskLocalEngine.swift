@@ -252,8 +252,21 @@ final class NativeTaskLocalEngine: Sendable {
                         identity: @escaping @Sendable () -> NativeWorkerIdentity) -> NativeTaskLocalEngine {
         NativeTaskLocalEngine(database: database, workers: { exchange in
             ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
-             "document": NativeDocumentWorker.make(exchange: exchange, identity: identity)]
+             "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
+             "dot": dotPlaceholder()]
         })
+    }
+
+    static func dotPlaceholder() -> NativeTaskWorker {
+        NativeTaskWorker(timeoutSeconds: 30) { task in
+            let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
+            guard payload.dot != nil else { return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "worker_error") }
+            let title = payload.query.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""
+            return NativeTaskStepResult(state: .completed, checkpoint: NativeTaskStore.emptyObject,
+                result: try NativeTaskStore.canonical(["kind": "dot_report", "query": payload.query, "title": title,
+                                                       "report": "", "summary": "", "sources": [Any]()]),
+                event: "completed")
+        }
     }
 
     var client: NativeTaskClient {
@@ -354,8 +367,17 @@ final class NativeTaskLocalEngine: Sendable {
             throw NativeTaskLocalStatus(code: 503, detail: "This task worker is not configured")
         }
         let payloadData = try NativeTaskStore.canonical(payload)
+        if workerType == "dot" {
+            guard Set(payload.keys).isSubset(of: NativeDotTaskPayload.payloadKeys),
+                  (try? JSONDecoder().decode(NativeDotTaskPayload.self, from: payloadData)) != nil,
+                  (try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData))?.dot != nil else {
+                throw NativeTaskLocalStatus(code: 422, detail: "The task request is not valid")
+            }
+            return try store.create(workerType: workerType, payload: payloadData, idempotencyKey: key)
+        }
         guard NativeResearchTaskRequest.workerTypes.contains(workerType),
               let decoded = try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData),
+              decoded.dot == nil,
               (try? NativeResearchTaskRequest(objective: decoded.query, deliverables: decoded.deliverables,
                                               workerType: workerType, title: decoded.title)) != nil else {
             throw NativeTaskLocalStatus(code: 422, detail: "The task request is not valid")

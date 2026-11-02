@@ -215,7 +215,7 @@ enum NativeScheduleError: Error, LocalizedError, Equatable, Sendable {
 }
 
 struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
-    static let workerTypes: [String] = ["research", "document"]
+    static let workerTypes: [String] = ["research", "document", "dot"]
 
     let id: String
     var owner: NativeScheduleOwner
@@ -278,7 +278,10 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     }
 
     func taskRequest() throws -> NativeResearchTaskRequest {
-        try NativeResearchTaskRequest(objective: instruction, deliverables: deliverables(), workerType: workerType, title: title)
+        if workerType == "dot" {
+            return try NativeResearchTaskRequest(dot: NativeDotTaskPayload(assignment: instruction, mode: "scheduled", goal: ""), title: title)
+        }
+        return try NativeResearchTaskRequest(objective: instruction, deliverables: deliverables(), workerType: workerType, title: title)
     }
 }
 

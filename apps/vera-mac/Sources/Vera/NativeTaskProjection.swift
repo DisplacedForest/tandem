@@ -5,8 +5,9 @@ enum NativeTaskProjection {
                         connectionNote: String? = nil, retryPending: Bool = false)
         throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
         let id = reference.id.uuidString
-        let document = reference.createRequest.workerType == "document"
-        let work = document ? "Writing" : "Research"
+        let dot = reference.createRequest.workerType == "dot"
+        let document = reference.createRequest.workerType == "document" || dot
+        let work = dot ? "Work" : document ? "Writing" : "Research"
         var card = NativeTaskCardPresentation(
             id: id, title: reference.request.displayTitle, status: .preparing,
             milestone: "The request is saved here.", connectionNote: connectionNote,
@@ -46,7 +47,9 @@ enum NativeTaskProjection {
         switch snapshot.state {
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
-            if document {
+            if dot {
+                card.milestone = "Working on your goal."
+            } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint)
             } else {
                 switch snapshot.checkpoint.phase {
@@ -73,17 +76,21 @@ enum NativeTaskProjection {
                 throw NativeTaskHTTPError.invalidResponse
             }
             card.status = .needsInput
-            card.milestone = retryPending ? "Your retry is saved. Waiting to continue." : decision.prompt
+            card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
+                : dot ? "Waiting for your decision. \(decision.prompt)" : decision.prompt
             card.canRetry = decision.choices.contains("retry") && !retryPending
         case .failed:
             card.status = .failed
-            let again = document ? "Start a new document" : "Start a new research request"
+            let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
             switch snapshot.checkpoint.failureReason {
             case "request_limit": card.milestone = "This task reached its model request limit. \(again) to continue."
+            case "input_limit" where dot: card.milestone = "The assignment and its notes are too large for this task. Start the work again with less."
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large for this task. Start a new document with a shorter brief." : "The research input is too large for this task. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             default:
-                if document {
+                if dot {
+                    card.milestone = "The work on your goal couldn't finish."
+                } else if document {
                     card.milestone = saved.map { "Writing couldn't finish. \($0)" } ?? "Writing couldn't finish."
                 } else {
                     card.milestone = count > 0 ? "Research couldn't finish. The gathered sources are saved." : "Research couldn't finish."
@@ -91,11 +98,27 @@ enum NativeTaskProjection {
             }
         case .canceled:
             card.status = .stopped
-            if document {
+            if dot {
+                card.milestone = "Stopped."
+            } else if document {
                 card.milestone = saved.map { "Stopped. \($0)" } ?? "Stopped before any sections were written."
             } else {
                 card.milestone = count > 0 ? "Stopped with \(sourcePhrase) saved." : "Stopped before any sources were saved."
             }
+        case .completed where dot:
+            guard let result = snapshot.result, result.query == reference.request.objective,
+                  result.kind == "dot_report", result.sources.isEmpty,
+                  result.report.unicodeScalars.count <= 40000,
+                  (result.summary ?? "").unicodeScalars.count <= 2000,
+                  (result.title ?? "").unicodeScalars.count <= 200 else {
+                throw NativeTaskHTTPError.invalidResponse
+            }
+            card.status = .completed
+            card.milestone = "Finished."
+            guard !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (card, nil) }
+            return (card, NativeResearchArtifact(
+                id: snapshot.id, title: reference.request.displayTitle,
+                report: result.report, sources: [], kind: "document"))
         case .completed:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
