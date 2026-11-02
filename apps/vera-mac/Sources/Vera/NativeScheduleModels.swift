@@ -168,12 +168,14 @@ enum NativeScheduleClock {
 }
 
 enum NativeScheduleOutcome: String, Codable, Equatable, Hashable, Sendable {
-    case running, completed, failed, stopped, missed, skipped
+    case running, waiting, blocked, completed, failed, stopped, missed, skipped
     case couldNotStart = "could_not_start"
 
     var title: String {
         switch self {
         case .running: return "Running"
+        case .waiting: return "Waiting for you"
+        case .blocked: return "Blocked"
         case .completed: return "Finished"
         case .failed: return "Couldn't finish"
         case .stopped: return "Stopped"
@@ -186,6 +188,8 @@ enum NativeScheduleOutcome: String, Codable, Equatable, Hashable, Sendable {
     var symbol: String {
         switch self {
         case .running: return "clock"
+        case .waiting: return "questionmark.circle"
+        case .blocked: return "pause.circle"
         case .completed: return "checkmark.circle"
         case .failed, .couldNotStart: return "exclamationmark.circle"
         case .stopped: return "stop.circle"
@@ -194,7 +198,8 @@ enum NativeScheduleOutcome: String, Codable, Equatable, Hashable, Sendable {
         }
     }
 
-    var isSettled: Bool { self != .running }
+    var isSettled: Bool { ![.running, .waiting, .blocked].contains(self) }
+    var isOpen: Bool { !isSettled }
 }
 
 enum NativeScheduleError: Error, LocalizedError, Equatable, Sendable {
@@ -288,10 +293,11 @@ struct NativeScheduleRun: Identifiable, Equatable, Hashable, Sendable {
     var conversationID: String?
     var messageID: String?
     var taskReferenceID: String?
+    var checkInKey: String?
 
     init(id: String = UUID().uuidString.lowercased(), scheduleID: String, scheduledFor: Date, startedAt: Date? = nil,
          finishedAt: Date? = nil, outcome: NativeScheduleOutcome, detail: String = "", conversationID: String? = nil,
-         messageID: String? = nil, taskReferenceID: String? = nil) {
+         messageID: String? = nil, taskReferenceID: String? = nil, checkInKey: String? = nil) {
         self.id = id
         self.scheduleID = scheduleID
         self.scheduledFor = scheduledFor
@@ -302,5 +308,6 @@ struct NativeScheduleRun: Identifiable, Equatable, Hashable, Sendable {
         self.conversationID = conversationID
         self.messageID = messageID
         self.taskReferenceID = taskReferenceID
+        self.checkInKey = checkInKey
     }
 }

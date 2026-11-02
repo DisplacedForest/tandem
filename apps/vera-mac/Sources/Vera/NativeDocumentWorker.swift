@@ -18,6 +18,7 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
     var errors: [String] = []
     var nativeUnavailable: String?
     var failureReason: String?
+    var automaticRetryStep: String?
 
     private enum CodingKeys: String, CodingKey {
         case phase, outline, drafts, revisions, retry, attempt, errors
@@ -26,7 +27,10 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
         case outlineAttempts = "outline_attempts"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
+        case automaticRetryStep = "automatic_retry_step"
     }
+
+    var stepKey: String { "\(phase):\(drafts.count):\(revisions.count)" }
 
     init() {}
 
@@ -44,6 +48,7 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
         errors = try container.decodeIfPresent([String].self, forKey: .errors) ?? []
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+        automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
     }
 
     func encoded() throws -> Data {
@@ -87,6 +92,15 @@ enum NativeDocumentWorker {
         } catch let failure as NativeTaskGenerationFailure {
             if NativeTaskWorkerFailures.terminalCodes.contains(failure.code) {
                 return try fail(&checkpoint, code: failure.code, message: NativeTaskWorkerFailures.terminalMessage(failure.code, work: "writing"))
+            }
+            if NativeTaskWorkerFailures.retriesAutomatically(failure.code), checkpoint.automaticRetryStep != checkpoint.stepKey {
+                checkpoint.automaticRetryStep = checkpoint.stepKey
+                checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                checkpoint.note(NativeTaskWorkerFailures.automaticRetryNote)
+                var payload = data(checkpoint)
+                payload["message"] = NativeTaskWorkerFailures.automaticRetryNote
+                return NativeTaskStepResult(state: .queued, checkpoint: try checkpoint.encoded(), event: "progress",
+                                            data: try NativeTaskStore.canonical(payload))
             }
             return try pause(&checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code))
         }

@@ -28,6 +28,7 @@ private final class NativeSchedulerFireLog: @unchecked Sendable {
     private(set) var fired: [(schedule: String, scheduledFor: Date)] = []
     var result: NativeScheduleFireResult = .started(taskReferenceID: "reference-1")
     var status: NativeScheduleTaskStatus = .active
+    var overrides: [String: NativeScheduleTaskStatus] = [:]
 
     func record(_ schedule: NativeSchedule, _ run: NativeScheduleRun) -> NativeScheduleFireResult {
         lock.lock(); defer { lock.unlock() }
@@ -38,7 +39,7 @@ private final class NativeSchedulerFireLog: @unchecked Sendable {
     func link(_ run: NativeScheduleRun) -> NativeScheduleTaskLink? {
         lock.lock(); defer { lock.unlock() }
         guard let id = run.taskReferenceID ?? (run.messageID == "recovered" ? "reference-recovered" : nil) else { return nil }
-        return NativeScheduleTaskLink(referenceID: id, status: status)
+        return NativeScheduleTaskLink(referenceID: id, status: overrides[id] ?? status)
     }
 
     var count: Int {
@@ -250,6 +251,127 @@ extension SelfTest {
         let gone = try store.get(schedule.id)
         let goneRuns = try store.runs(scheduleID: schedule.id)
         try require(gone == nil && goneRuns.isEmpty, "Deleting a schedule removes its history")
-        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink)")
+        try await runWaitingRuns(zone: zone, start: monday, cadence: daily)
+        try runOpenRunWindow(zone: zone, start: monday, cadence: daily)
+        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting, open runs outside the window, claim a check-in once)")
+    }
+
+    private static func reachNextRun(_ store: NativeScheduleStore, _ clock: NativeSchedulerClock, _ scheduler: NativeScheduler, _ id: String) async throws {
+        let next = try store.get(id)!.nextRunAt!
+        clock.set(next.addingTimeInterval(-10))
+        _ = await scheduler.tick()
+        clock.set(next.addingTimeInterval(10))
+        _ = await scheduler.tick()
+    }
+
+    private static func runWaitingRuns(zone: TimeZone, start: Date, cadence: NativeScheduleCadence) async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = NativeScheduleStore(database: repository.database)
+        let clock = NativeSchedulerClock(start)
+        let log = NativeSchedulerFireLog()
+        let scheduler = NativeScheduler(store: store, now: { clock.now }, grace: 300, downtime: 60,
+                                        lookup: { run in log.link(run) },
+                                        fire: { schedule, run, bind in
+                                            await bind("conversation", "message")
+                                            return log.record(schedule, run)
+                                        })
+        var schedule = try NativeSchedule(owner: .conversation, workerType: "research", title: "Evening check",
+                                          instruction: "Look into the fictional moon", cadence: cadence, timeZone: zone, createdAt: start)
+        schedule.advance(after: start, from: nil)
+        try store.save(schedule)
+
+        try await reachNextRun(store, clock, scheduler, schedule.id)
+        let first = try store.runs(scheduleID: schedule.id)
+        try require(log.count == 1 && first.count == 1 && first[0].outcome == .running, "The waiting fixture starts a run")
+        let firstID = first[0].id
+        let prompt = "Retry this step?"
+        log.status = .waiting(prompt)
+        try require(await scheduler.tick(), "A task waiting on a decision changes its run")
+        let waiting = try store.run(firstID)!
+        try require(waiting.outcome == .waiting && waiting.detail == prompt && waiting.finishedAt == nil, "The run waits with the question and stays open")
+        try require(try store.get(schedule.id)?.lastOutcome == .waiting, "The schedule shows the run is waiting")
+        let repeated = await scheduler.tick()
+        try require(repeated == false && (try store.run(firstID)) == waiting, "The same question changes nothing on the next tick")
+
+        log.status = .active
+        _ = await scheduler.tick()
+        let resumed = try store.run(firstID)!
+        try require(resumed.outcome == .running && resumed.detail == "Picked up again." && resumed.finishedAt == nil, "An answered question puts the run back to running")
+        log.status = .waiting(prompt)
+        _ = await scheduler.tick()
+        try require(try store.run(firstID)?.outcome == .waiting, "The run can wait again")
+        log.status = .completed
+        _ = await scheduler.tick()
+        let finished = try store.run(firstID)!
+        try require(finished.outcome == .completed && finished.finishedAt == clock.now, "A waited run finishes when its task completes")
+
+        log.result = .started(taskReferenceID: "reference-2")
+        try await reachNextRun(store, clock, scheduler, schedule.id)
+        log.status = .waiting(prompt)
+        _ = await scheduler.tick()
+        let parked = try store.runs(scheduleID: schedule.id).first { $0.taskReferenceID == "reference-2" }!
+        try require(parked.outcome == .waiting, "The second run is waiting for an answer")
+        log.result = .started(taskReferenceID: "reference-3")
+        try await reachNextRun(store, clock, scheduler, schedule.id)
+        let afterWait = try store.runs(scheduleID: schedule.id)
+        let fresh = afterWait.first { $0.taskReferenceID == "reference-3" }
+        try require(log.count == 3 && fresh?.outcome == .running && !afterWait.contains { $0.outcome == .skipped },
+                    "A waiting run does not block the next occurrence")
+        try require(try store.run(parked.id)?.outcome == .waiting, "The waiting run stays open beside the new one")
+
+        try require(await scheduler.runNow(schedule.id) == nil && log.count == 3, "Run now refuses while a run is running")
+        log.overrides["reference-3"] = .completed
+        _ = await scheduler.tick()
+        try require(try store.run(fresh!.id)?.outcome == .completed, "The new run finishes on its own")
+        log.result = .started(taskReferenceID: "reference-4")
+        let manual = await scheduler.runNow(schedule.id)
+        try require(manual != nil && log.count == 4, "Run now is allowed while the only open run is waiting")
+
+        let blockedNote = "Open Tandem with the saved model profile so this run can continue."
+        log.overrides["reference-4"] = .blocked(blockedNote)
+        _ = await scheduler.tick()
+        let blocked = try store.run(manual!.id)!
+        try require(blocked.outcome == .blocked && blocked.detail == blockedNote && blocked.finishedAt == nil, "A blocked task leaves the run open with what to do")
+        log.overrides["reference-4"] = .failed
+        _ = await scheduler.tick()
+        let failed = try store.run(manual!.id)!
+        try require(failed.outcome == .failed && failed.finishedAt == clock.now, "A blocked run settles as failed when its task fails")
+    }
+
+    private static func runOpenRunWindow(zone: TimeZone, start: Date, cadence: NativeScheduleCadence) throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = NativeScheduleStore(database: repository.database)
+        let busy = try NativeSchedule(owner: .conversation, workerType: "research", title: "Busy check",
+                                      instruction: "Look into the fictional moon", cadence: cadence, timeZone: zone, createdAt: start)
+        let settled = try NativeSchedule(owner: .conversation, workerType: "research", title: "Settled check",
+                                         instruction: "Look into the fictional moon", cadence: cadence, timeZone: zone, createdAt: start)
+        try store.save(busy)
+        try store.save(settled)
+        for index in 0..<60 {
+            let when = start.addingTimeInterval(Double(index) * 3600)
+            try store.saveRun(NativeScheduleRun(scheduleID: busy.id, scheduledFor: when, startedAt: when, outcome: .waiting, detail: "Retry this step?"))
+            try store.saveRun(NativeScheduleRun(scheduleID: settled.id, scheduledFor: when, startedAt: when, finishedAt: when, outcome: .completed))
+        }
+        for index in 0..<5 {
+            let when = start.addingTimeInterval(Double(60 + index) * 3600)
+            try store.saveRun(NativeScheduleRun(scheduleID: busy.id, scheduledFor: when, startedAt: when, finishedAt: when, outcome: .completed))
+        }
+        let busyRuns = try store.runs(scheduleID: busy.id)
+        try require(busyRuns.count == 65 && busyRuns.filter { $0.outcome == .waiting }.count == 60,
+                    "Every open run is listed beside the recent window: \(busyRuns.count)")
+        try require(busyRuns.first?.outcome == .completed && busyRuns.last?.outcome == .waiting
+                    && zip(busyRuns, busyRuns.dropFirst()).allSatisfy { $0.scheduledFor >= $1.scheduledFor }, "Runs stay newest first")
+        try require(try store.runs(scheduleID: settled.id).count == 50, "Settled runs alone keep the default window")
+
+        let target = busyRuns.last!.id
+        let claims = try repository.database.write { db in
+            [try NativeScheduleStore.claimCheckIn(db, runID: target, key: "first-key"),
+             try NativeScheduleStore.claimCheckIn(db, runID: target, key: "first-key"),
+             try NativeScheduleStore.claimCheckIn(db, runID: target, key: "second-key")]
+        }
+        try require(claims == [true, false, true], "A check-in key claims once and a new question claims again: \(claims)")
+        try require(try store.run(target)?.checkInKey == "second-key", "The run keeps the latest claimed key")
     }
 }

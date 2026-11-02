@@ -7,6 +7,8 @@ enum NativeScheduleFireResult: Sendable, Equatable {
 
 enum NativeScheduleTaskStatus: Sendable, Equatable {
     case active
+    case waiting(String)
+    case blocked(String)
     case completed
     case failed
     case stopped
@@ -24,6 +26,8 @@ actor NativeScheduler {
     static let defaultDowntime: TimeInterval = 60
     static let missedHistoryCap = 24
     static let missedNote = "Tandem wasn't running at the scheduled time. It will run next time as planned."
+    static let waitingNote = "Waiting for your answer."
+    static let blockedNote = "Open Tandem with the saved model profile so this run can continue."
 
     let store: NativeScheduleStore
     let now: @Sendable () -> Date
@@ -162,7 +166,7 @@ actor NativeScheduler {
     }
 
     private func hasActiveRun(_ scheduleID: String) -> Bool {
-        ((try? store.activeRuns()) ?? []).contains { $0.scheduleID == scheduleID }
+        ((try? store.runningRuns()) ?? []).contains { $0.scheduleID == scheduleID }
     }
 
     private func settleRuns() -> Bool {
@@ -190,7 +194,27 @@ actor NativeScheduler {
             }
             let outcome: NativeScheduleOutcome
             switch link.status {
-            case .active: continue
+            case .active:
+                guard run.outcome != .running else { continue }
+                run.outcome = .running
+                run.detail = "Picked up again."
+                try? store.saveRun(run)
+                changed = true
+                continue
+            case .waiting(let prompt):
+                guard run.outcome != .waiting || run.detail != prompt else { continue }
+                run.outcome = .waiting
+                run.detail = prompt
+                try? store.saveRun(run)
+                changed = true
+                continue
+            case .blocked(let message):
+                guard run.outcome != .blocked || run.detail != message else { continue }
+                run.outcome = .blocked
+                run.detail = message
+                try? store.saveRun(run)
+                changed = true
+                continue
             case .completed: outcome = .completed
             case .failed: outcome = .failed
             case .stopped: outcome = .stopped
