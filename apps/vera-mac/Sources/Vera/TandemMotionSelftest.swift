@@ -174,8 +174,90 @@ extension SelfTest {
         driven.isVisible = false
         try require(!driven.isDriving, "Hiding stops the timer")
 
+        let hosted = TandemMotionController(reduceMotion: false)
+        let first = UUID(), second = UUID()
+        hosted.play("Breathe")
+        hosted.setHost(first, visible: true)
+        hosted.setHost(second, visible: true)
+        hosted.setHost(first, visible: false)
+        try require(hosted.isVisible && hosted.isDriving, "One remaining visible host keeps the animation running")
+        hosted.setHost(second, visible: false)
+        try require(!hosted.isVisible && !hosted.isDriving, "Hiding the last host stops the timer")
+        hosted.setHost(first, visible: true)
+        try require(hosted.isDriving, "A host that reappears restarts the timer")
+        hosted.stop()
+        hosted.setHost(first, visible: false)
+
+        let toggled = TandemMotionController(reduceMotion: false)
+        toggled.isVisible = true
+        toggled.play("Breathe")
+        try require(toggled.isDriving, "A visible loop drives its timer before Reduce Motion changes")
+        toggled.reduceMotion = true
+        try require(!toggled.isDriving && toggled.pose == .rest && toggled.activeSequence == "Breathe",
+                    "Turning Reduce Motion on mid-loop stops the timer and rests the pair")
+        toggled.reduceMotion = false
+        try require(toggled.isDriving && toggled.activeSequence == "Breathe", "Turning Reduce Motion off resumes the loop")
+        toggled.stop()
+        toggled.isVisible = false
+        try require(TandemMotionGalleryView.reduces(system: true, toggle: false) && TandemMotionGalleryView.reduces(system: false, toggle: true)
+                    && !TandemMotionGalleryView.reduces(system: false, toggle: false), "The gallery reduces motion when either the system or its toggle asks")
+
+        let rect10 = CGRect(x: 0, y: 0, width: 10, height: 10)
+        let probeWindow = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+        probeWindow.isReleasedWhenClosed = false
+        try require(!TandemHostVisibilityView.hostVisible(window: nil, occluded: false, hidden: false, visibleRect: rect10),
+                    "A host without a window is not visible")
+        try require(!TandemHostVisibilityView.hostVisible(window: probeWindow, occluded: false, hidden: false, visibleRect: rect10),
+                    "A host in a window that is not on screen is not visible")
+        probeWindow.orderFront(nil)
+        try require(TandemHostVisibilityView.hostVisible(window: probeWindow, occluded: false, hidden: false, visibleRect: rect10),
+                    "A host in a shown window with a visible rect is visible")
+        try require(!TandemHostVisibilityView.hostVisible(window: probeWindow, occluded: true, hidden: false, visibleRect: rect10),
+                    "An occluded window hides its host")
+        try require(!TandemHostVisibilityView.hostVisible(window: probeWindow, occluded: false, hidden: true, visibleRect: rect10),
+                    "A hidden view hides its host")
+        try require(!TandemHostVisibilityView.hostVisible(window: probeWindow, occluded: false, hidden: false, visibleRect: .zero),
+                    "A host scrolled out of its clip is not visible")
+
+        let scroll = NSScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let page = NSView(frame: CGRect(x: 0, y: 0, width: 200, height: 600))
+        let probe = TandemHostVisibilityView(frame: CGRect(x: 0, y: 500, width: 200, height: 40))
+        var seen: [Bool] = []
+        probe.onChange = { seen.append($0) }
+        page.addSubview(probe)
+        scroll.documentView = page
+        probeWindow.contentView = scroll
+        scroll.contentView.scroll(to: .zero)
+        probe.evaluate()
+        try require(!probe.isHostVisible, "A probe scrolled out of view reports hidden")
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 500))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        probe.evaluate()
+        let onScreen = probeWindow.occlusionState.contains(.visible)
+        try require(probe.isHostVisible == onScreen, "A probe scrolled into view reports the window's visibility")
+        probeWindow.orderOut(nil)
+        probe.evaluate()
+        try require(!probe.isHostVisible, "A probe in a window ordered out reports hidden")
+        try require(seen.last == false || seen.isEmpty, "The probe reports its last change")
+        probeWindow.close()
+
+        let done = Message(role: .assistant, text: "Here it is.")
+        var failed = Message(role: .assistant, text: "")
+        failed.failure = "The model did not answer."
+        var canceled = Message(role: .assistant, text: "Partial")
+        canceled.state = .interrupted
+        let silent = Message(role: .assistant, text: "   ")
+        let completed = TandemLogoPresence.terminalEvent(of: done)
+        try require(completed.completed && !completed.failed && !completed.canceled, "A finished answer with text reads as completed")
+        try require(TandemLogoPresence.terminalEvent(of: failed).failed, "A failed answer reads as failed")
+        try require(TandemLogoPresence.terminalEvent(of: canceled).canceled, "An interrupted answer reads as canceled")
+        let quiet = TandemLogoPresence.terminalEvent(of: silent)
+        try require(!quiet.completed && !quiet.failed && !quiet.canceled, "An empty answer plays no completion")
+        let none = TandemLogoPresence.terminalEvent(of: nil)
+        try require(!none.completed && !none.failed && !none.canceled, "No assistant message plays nothing")
+
         try runTandemCueMapper()
-        print("PASS tandem motion: twelve sequences, smoothstep sampling, live overlap, template mark, interruption, visibility, Reduce Motion, cue mapping")
+        print("PASS tandem motion: twelve sequences, smoothstep sampling, live overlap, template mark, interruption, host visibility, Reduce Motion, cue mapping")
     }
 
     static func runTandemCueMapper() throws {

@@ -179,12 +179,18 @@ final class TandemMotionController: ObservableObject {
     private var generation = 0
     private var lastRequest: (name: String, loop: Bool?)?
     private var hiddenDuringPlayback = false
+    private var visibleHosts: Set<UUID> = []
     private var timer: Timer?
     private var lastTick: CFTimeInterval?
 
     init(reduceMotion: Bool? = nil, manualClock: Bool = false) {
         self.reduceMotion = reduceMotion ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         self.manualClock = manualClock
+    }
+
+    func setHost(_ id: UUID, visible: Bool) {
+        if visible { visibleHosts.insert(id) } else { visibleHosts.remove(id) }
+        isVisible = !visibleHosts.isEmpty
     }
 
     func play(_ name: String, loop: Bool? = nil, completion: (() -> Void)? = nil) {
@@ -297,16 +303,119 @@ struct AnimatedTandemLogo: View {
     @ObservedObject var controller: TandemMotionController
     var reduceMotionOverride: Bool? = nil
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @State private var hostID = UUID()
+    @State private var appeared = false
+    @State private var hostVisible = false
 
     private var reduce: Bool { reduceMotionOverride ?? systemReduceMotion }
 
     var body: some View {
         TandemLogoStage(pose: reduce ? .rest : controller.pose)
+            .background(TandemHostVisibilityProbe { visible in
+                hostVisible = visible
+                if appeared { controller.setHost(hostID, visible: visible) }
+            })
             .onAppear {
                 controller.reduceMotion = reduce
-                controller.isVisible = true
+                appeared = true
+                controller.setHost(hostID, visible: hostVisible)
             }
-            .onDisappear { controller.isVisible = false }
+            .onDisappear {
+                appeared = false
+                controller.setHost(hostID, visible: false)
+            }
             .onChange(of: reduce) { _, value in controller.reduceMotion = value }
     }
+}
+
+struct TandemHostVisibilityProbe: NSViewRepresentable {
+    var onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TandemHostVisibilityView {
+        let view = TandemHostVisibilityView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: TandemHostVisibilityView, context: Context) {
+        view.onChange = onChange
+        view.evaluate()
+    }
+}
+
+final class TandemHostVisibilityView: NSView {
+    var onChange: ((Bool) -> Void)?
+    private(set) var isHostVisible = false
+    private let observers = TandemObserverBag()
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        rebind()
+        evaluate()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        rebind()
+        evaluate()
+    }
+
+    override func layout() {
+        super.layout()
+        evaluate()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        evaluate()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        evaluate()
+    }
+
+    static func hostVisible(window: NSWindow?, occluded: Bool, hidden: Bool, visibleRect: CGRect) -> Bool {
+        guard let window, window.isVisible, !window.isMiniaturized, !occluded, !hidden else { return false }
+        return !visibleRect.isEmpty
+    }
+
+    func evaluate() {
+        let occluded = !(window?.occlusionState.contains(.visible) ?? false)
+        let value = Self.hostVisible(window: window, occluded: occluded, hidden: isHiddenOrHasHiddenAncestor, visibleRect: visibleRect)
+        guard value != isHostVisible else { return }
+        isHostVisible = value
+        onChange?(value)
+    }
+
+    private func rebind() {
+        let center = NotificationCenter.default
+        observers.clear()
+        let handler: @Sendable (Notification) -> Void = { [weak self] _ in MainActor.assumeIsolated { self?.evaluate() } }
+        if let window {
+            for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
+                         NSWindow.didDeminiaturizeNotification, NSWindow.willCloseNotification] {
+                observers.add(center.addObserver(forName: name, object: window, queue: .main, using: handler))
+            }
+        }
+        if let clip = enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            observers.add(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: handler))
+        }
+    }
+}
+
+final class TandemObserverBag: @unchecked Sendable {
+    private var tokens: [NSObjectProtocol] = []
+
+    func add(_ token: NSObjectProtocol) { tokens.append(token) }
+
+    func clear() {
+        tokens.forEach(NotificationCenter.default.removeObserver)
+        tokens = []
+    }
+
+    deinit { clear() }
 }

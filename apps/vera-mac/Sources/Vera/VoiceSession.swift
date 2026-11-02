@@ -11,6 +11,7 @@ final class VoiceSession: ObservableObject {
     enum State: Equatable { case idle, listening, transcribing, thinking, speaking }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var isPlayingAudio = false
     @Published private(set) var level: Float = 0    // mic level 0...1 for the orb pulse
     @Published var lastError: String?
     @Published private(set) var statusLine: String?    // pipeline progress (e.g. "web search") while thinking
@@ -30,6 +31,7 @@ final class VoiceSession: ObservableObject {
     private var streamTask: Task<Void, Never>?
     private var sttStream: TranscriptionStream?   // open while listening (streaming STT)
     private var warmed = false
+    private var playbackHold: Task<Void, Never>?
 
     var isActive: Bool { state != .idle }
 
@@ -49,6 +51,31 @@ final class VoiceSession: ObservableObject {
         mic.onUtterance = { [weak self] _ in Task { @MainActor in self?.handleEndOfTurn() } }
         mic.onDebug = { [weak self] floor, sp in Task { @MainActor in self?.debugFloor = floor; self?.debugSpeech = sp } }
         queue.onDrained = { [weak self] in Task { @MainActor in self?.handleDrained() } }
+        queue.onPlayback = { [weak self] playing in Task { @MainActor in self?.playbackChanged(playing) } }
+    }
+
+    private func playbackChanged(_ playing: Bool) {
+        playbackHold?.cancel()
+        playbackHold = nil
+        if playing {
+            isPlayingAudio = true
+            return
+        }
+        guard state == .speaking, isPlayingAudio else {
+            isPlayingAudio = false
+            return
+        }
+        playbackHold = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.isPlayingAudio = false
+        }
+    }
+
+    private func clearPlayback() {
+        playbackHold?.cancel()
+        playbackHold = nil
+        isPlayingAudio = false
     }
 
     private func updateLevel(_ lvl: Float, _ db: Float) {
@@ -87,6 +114,7 @@ final class VoiceSession: ObservableObject {
         streamTask?.cancel(); streamTask = nil
         sttStream = nil
         queue.stop()
+        clearPlayback()
         mic.setActive(false)
         mic.remove()
         engine.stop()
@@ -178,7 +206,10 @@ final class VoiceSession: ObservableObject {
                     }
                 }
             } catch {
-                if !Task.isCancelled { lastError = error.localizedDescription }
+                if !Task.isCancelled {
+                    lastError = error.localizedDescription
+                    if state == .speaking { queue.markTurnComplete() }
+                }
             }
             // Empty/failed reply that never produced speech → resume listening directly.
             if state == .thinking { beginListening() }
@@ -243,6 +274,7 @@ final class VoiceSession: ObservableObject {
     }
 
     private func handleDrained() {
+        clearPlayback()
         guard state == .speaking else { return }
         beginListening()
     }

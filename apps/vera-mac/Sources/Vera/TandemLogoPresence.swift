@@ -11,8 +11,7 @@ final class TandemLogoPresence: ObservableObject {
     private var snapshot: TandemLogoSnapshot?
     private var appActive = true
     private var launchPending = false
-    private var turnEndPending = false
-    private var lastGenerating = false
+    private var activeTurnConversation: String?
 
     init(store: ChatStore, voice: VoiceSession, controller: TandemMotionController = TandemMotionController()) {
         self.store = store
@@ -25,7 +24,7 @@ final class TandemLogoPresence: ObservableObject {
         appActive = NSApplication.shared.isActive
         launchPending = true
         snapshot = nil
-        lastGenerating = store.generating
+        activeTurnConversation = nil
         let center = NotificationCenter.default
         center.publisher(for: NSApplication.didBecomeActiveNotification)
             .receive(on: DispatchQueue.main)
@@ -35,14 +34,13 @@ final class TandemLogoPresence: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.setActive(false) } }
             .store(in: &subscriptions)
-        store.$generating
+        let storeChanges = store.$generating.map { _ in () }
+            .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () })
+        let voiceChanges = voice.$state.removeDuplicates().map { _ in () }
+            .merge(with: voice.$isPlayingAudio.removeDuplicates().map { _ in () })
+        storeChanges.merge(with: voiceChanges)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] value in MainActor.assumeIsolated { self?.generatingChanged(value) } }
-            .store(in: &subscriptions)
-        store.objectWillChange
-            .merge(with: voice.objectWillChange)
-            .debounce(for: .milliseconds(60), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
+            .sink { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
             .store(in: &subscriptions)
         refresh()
     }
@@ -50,7 +48,7 @@ final class TandemLogoPresence: ObservableObject {
     func stop() {
         subscriptions.removeAll()
         snapshot = nil
-        turnEndPending = false
+        activeTurnConversation = nil
         controller.stop()
     }
 
@@ -59,9 +57,18 @@ final class TandemLogoPresence: ObservableObject {
         refresh()
     }
 
-    private func generatingChanged(_ value: Bool) {
-        if lastGenerating && !value { turnEndPending = true }
-        lastGenerating = value
+    static func selectedTurnRunning(_ store: ChatStore) -> Bool {
+        guard store.generating, let id = store.selectedID else { return false }
+        if store.turnExecutions.isEmpty { return true }
+        return store.turnExecutions.values.contains { $0.record.conversationID == id }
+    }
+
+    static func terminalEvent(of message: Message?) -> (completed: Bool, failed: Bool, canceled: Bool) {
+        guard let message else { return (false, false, false) }
+        if message.failure != nil { return (false, true, false) }
+        if message.state == .interrupted { return (false, false, true) }
+        let spoke = message.state == .complete && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return (spoke, false, false)
     }
 
     private func refresh() {
@@ -70,23 +77,24 @@ final class TandemLogoPresence: ObservableObject {
         next.appActive = appActive
         next.launchedJustNow = launchPending
         launchPending = false
-        next.generating = store.generating
-        next.decisionPending = store.pendingToolConfirmation != nil
-        if turnEndPending && !store.generating {
-            turnEndPending = false
-            if let last = store.selected?.messages.last(where: { $0.role == .assistant }) {
-                if last.failure != nil {
-                    next.turnFailed = true
-                } else if last.state == .interrupted {
-                    next.turnCanceled = true
-                } else if last.state == .complete && !last.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    next.turnCompleted = true
-                }
+        let selectedID = store.selectedID
+        let running = Self.selectedTurnRunning(store)
+        next.generating = running
+        next.decisionPending = running && store.pendingToolConfirmation != nil
+        if running {
+            activeTurnConversation = selectedID
+        } else if let ended = activeTurnConversation {
+            activeTurnConversation = nil
+            if ended == selectedID {
+                let event = Self.terminalEvent(of: store.selected?.messages.last(where: { $0.role == .assistant }))
+                next.turnCompleted = event.completed
+                next.turnFailed = event.failed
+                next.turnCanceled = event.canceled
             }
         }
         if let voice {
             next.voiceCapturing = voice.state == .listening
-            next.voicePlaying = voice.state == .speaking
+            next.voicePlaying = voice.isPlayingAudio
         }
         let previous = snapshot
         snapshot = next

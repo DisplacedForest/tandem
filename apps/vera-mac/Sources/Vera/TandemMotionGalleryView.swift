@@ -27,7 +27,8 @@ struct TandemMotionGalleryView: View {
     @State private var speed: Double = 1
     @State private var size: StageSize = .large
     @State private var lightStage = false
-    @State private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @State private var reduceMotion = false
     @State private var paused = false
 
     private static let ink = TandemPalette.rgb(0x171917)
@@ -38,6 +39,9 @@ struct TandemMotionGalleryView: View {
     private static let staticSizes: [CGFloat] = [16, 18, 22, 32]
 
     private var sequence: TandemMotionSequence? { TandemMotionLibrary.sequence(named: selected) }
+    private var reduced: Bool { Self.reduces(system: systemReduceMotion, toggle: reduceMotion) }
+
+    static func reduces(system: Bool, toggle: Bool) -> Bool { system || toggle }
 
     var body: some View {
         ShotSafeScroll(renderSafe: renderSafe) {
@@ -71,9 +75,9 @@ struct TandemMotionGalleryView: View {
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(Self.line))
             Group {
                 if renderSafe {
-                    TandemLogoStage(pose: reduceMotion ? .rest : (sequence?.frames.first?.pose ?? .rest))
+                    TandemLogoStage(pose: reduced ? .rest : (sequence?.frames.first?.pose ?? .rest))
                 } else {
-                    AnimatedTandemLogo(controller: controller, reduceMotionOverride: reduceMotion)
+                    AnimatedTandemLogo(controller: controller, reduceMotionOverride: reduced)
                 }
             }
             .frame(width: size.rawValue * TandemLogoGeometry.aspectRatio, height: size.rawValue)
@@ -122,7 +126,8 @@ struct TandemMotionGalleryView: View {
             .accessibilityLabel("Logo size")
             Toggle("Light background", isOn: $lightStage)
                 .accessibilityLabel("Light background")
-            Toggle("Reduce motion", isOn: $reduceMotion)
+            Toggle("Reduce motion", isOn: Binding(get: { reduced }, set: { reduceMotion = $0 }))
+                .disabled(systemReduceMotion)
                 .accessibilityLabel("Reduce motion")
         }
         .controlSize(.regular)
