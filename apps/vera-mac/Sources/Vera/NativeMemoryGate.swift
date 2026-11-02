@@ -160,6 +160,7 @@ protocol NativeMemoryGateDriver {
 struct NativeMemoryGateFixtureDriver: NativeMemoryGateDriver {
     let mode = "fixture"
     var contextCeiling: Int? = NativeMemoryGate.contextCeiling
+    var failingTransport = false
     let memoryService: any NativeMemoryServing = NativeMemoryFixtureService(model: "fixture-embed", reranker: "fixture-rerank")
     let memoryEndpointHost = "fixture"
     let replyTimeout: Duration = .seconds(5)
@@ -178,7 +179,9 @@ struct NativeMemoryGateFixtureDriver: NativeMemoryGateDriver {
                              bankScope: NativeMemoryGate.bank, searchPastChats: true, generateFromChats: true)
     }
 
-    func transport() -> any NativeChatTransport { SelfTestNativeTransport() }
+    func transport() -> any NativeChatTransport {
+        failingTransport ? NativeMemoryGateFailingTransport() : SelfTestNativeTransport()
+    }
 }
 
 struct NativeMemoryGateLiveDriver: NativeMemoryGateDriver {
@@ -194,12 +197,27 @@ struct NativeMemoryGateLiveDriver: NativeMemoryGateDriver {
     func transport() -> any NativeChatTransport { NativeChatClient.foreground(config: chatConfig) }
 }
 
+struct NativeMemoryGateEntry: Sendable {
+    let id: String?
+    let marker: Int?
+}
+
 struct NativeMemoryGateObservation: Sendable {
-    var recalled: [String]
-    var unmatchedLines: Int
+    var entries: [NativeMemoryGateEntry]
     var contextLines: [String]
     var reply: String
     var retrievalMilliseconds: Int
+
+    var recalled: [String] { entries.compactMap(\.id) }
+    var unmatchedLines: Int { entries.filter { $0.id == nil }.count }
+}
+
+private final class NativeMemoryGateFailingTransport: NativeChatTransport, @unchecked Sendable {
+    func discoverModels() async throws -> [String] { ["fixture-model"] }
+
+    func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        AsyncThrowingStream { $0.finish(throwing: NativeChatClient.ClientError.server("fixture transport failure")) }
+    }
 }
 
 enum NativeMemoryGateError: LocalizedError {
@@ -223,8 +241,15 @@ enum NativeMemoryGate {
     static let reportFieldCharacters = [("a", "z"), ("A", "Z"), ("0", "9")].reduce(CharacterSet(charactersIn: ".-_:/")) { set, bounds in
         set.union(CharacterSet(charactersIn: Unicode.Scalar(bounds.0)...Unicode.Scalar(bounds.1)))
     }
-    static let negations: Set<String> = ["not", "no", "never", "none", "nothing", "neither", "nor", "without", "cannot"]
-    static let hedges: Set<String> = ["will", "would", "should", "could", "might", "may", "once", "if", "when", "until", "unless", "before"]
+    static let verbNegations: Set<String> = ["not", "never", "cannot"]
+    static let modals: Set<String> = ["will", "would", "should", "could", "might", "may", "can", "must", "shall", "to"]
+    static let auxiliaries: Set<String> = ["is", "are", "was", "were", "be", "been", "being", "am", "has", "have", "had",
+                                           "do", "does", "did", "get", "gets", "got"]
+    static let adverbs: Set<String> = ["already", "yet", "just", "really", "actually", "fully", "finally", "also", "still",
+                                       "ever", "now", "once", "all", "both", "recently", "successfully", "properly", "indeed"]
+    static let governors: Set<String> = ["if", "once", "when", "whenever", "until", "unless", "before", "after", "whether",
+                                         "no", "none", "neither", "nor", "nothing", "without"]
+    static let subjectWindow = 3
 
     static let scenarios: [NativeMemoryGateScenario] = [
         NativeMemoryGateScenario(
@@ -404,38 +429,68 @@ enum NativeMemoryGate {
         guard !broken.passed, broken.totals.resurrections > 0 else {
             throw NativeMemoryGateError.setup("sabotage", "broken retrieval was not caught (resurrections \(broken.totals.resurrections))")
         }
+        for scenario in scenarios where !scenario.expectation.absent.isEmpty {
+            let counts = try await NativeMemoryGateRunner(scenario: scenario, driver: driver, sabotage: true).run().result.counts
+            let revivable = scenario.expectation.absent.values.contains { $0.resurrects }
+            guard counts.errors > 0, revivable ? counts.resurrections > 0 : counts.unnecessaryInsertions > 0 else {
+                throw NativeMemoryGateError.setup("sabotage", "broken retrieval was not caught in \(scenario.id) on its own")
+            }
+        }
+        var failing = driver
+        failing.failingTransport = true
+        let unfinished = scenarios.first { $0.id == "unfinished-task" }!
+        do {
+            _ = try await NativeMemoryGateRunner(scenario: unfinished, driver: failing, sabotage: false).run()
+            throw NativeMemoryGateError.setup("transport", "a failed model request was scored as an answer")
+        } catch NativeMemoryGateError.setup(let id, let reason) where id == unfinished.id && reason.contains("did not complete") { }
         driver.contextCeiling = nil
         let compaction = scenarios.first { $0.id == "repeated-compaction" }!
         do {
             _ = try await NativeMemoryGateRunner(scenario: compaction, driver: driver, sabotage: false).run()
             throw NativeMemoryGateError.setup("compaction", "a long chat without a context ceiling was accepted as folded")
-        } catch NativeMemoryGateError.setup(let id, _) where id == compaction.id { }
-        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(clean.elapsedMilliseconds) ms of \(fixtureBudgetMilliseconds) ms; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; unfolded history refused; report carries ids and counts only)")
+        } catch NativeMemoryGateError.setup(let id, let reason) where id == compaction.id && reason.contains("sent without folding") { }
+        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(clean.elapsedMilliseconds) ms of \(fixtureBudgetMilliseconds) ms; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; each sabotaged scenario failed on its own; failed requests and unfolded history refused; report carries ids and counts only)")
     }
 
     static func scoringChecks() throws {
         let expectation = scenarios[0].expectation
         let care = expectation.qualified[0]
         let completed = NativeMemoryGateObservation(
-            recalled: ["care", "loss"], unmatchedLines: 0,
+            entries: [NativeMemoryGateEntry(id: "care", marker: citationOffset), NativeMemoryGateEntry(id: "loss", marker: citationOffset + 1)],
             contextLines: ["- Planned livestock care: Livestock vaccination is planned for Friday. [10001]"],
             reply: "The hens were vaccinated on Friday.", retrievalMilliseconds: 0)
         let counts = score(completed, expectation: expectation, sources: ["care": "chat-a"], decisive: "chat-b")
         guard counts.fabricatedCompletions == 2, counts.citationErrors == 1, counts.missedRecalls == 4, counts.falseRetrievals == 0 else {
             throw NativeMemoryGateError.setup("scoring", "a completed claim, a missing qualifier, a missing phrase or a missing citation went uncounted")
         }
+        let sources = ["stock": "correction", "care": "care", "loss": "loss"]
+        func cited(_ markers: [Int?]) -> Int {
+            let entries = zip(["stock", "care", "loss"], markers).map { NativeMemoryGateEntry(id: $0.0, marker: $0.1) }
+            let observation = NativeMemoryGateObservation(entries: entries, contextLines: [], reply: "", retrievalMilliseconds: 0)
+            return score(observation, expectation: expectation, sources: sources, decisive: "correction").citationErrors
+        }
+        let first = citationOffset
+        guard cited([first, first + 1, first + 2]) == 0, cited([nil, first + 1, first + 2]) == 1,
+              cited([99_999, first + 1, first + 2]) == 1, cited([first + 1, first, first + 2]) == 1 else {
+            throw NativeMemoryGateError.setup("scoring", "a missing, wrong or swapped citation number was not counted")
+        }
         let shed = scenarios.first { $0.id == "unfinished-task" }!.expectation.qualified[0]
         let asserted: [(NativeMemoryGateQualifiedFact, String)] = [
             (care, "No delay. Hens were vaccinated."), (care, "Not only hens were vaccinated."),
-            (shed, "Yes, you completed the shed repainting."),
+            (care, "When I checked the hens were vaccinated."), (care, "The hens were once vaccinated."),
+            (shed, "Yes, you completed the shed repainting."), (shed, "You may recall that you completed the shed repainting."),
         ]
         let negated: [(NativeMemoryGateQualifiedFact, String)] = [
             (care, "The hens were not vaccinated."), (care, "The vaccination hasn't been done yet."),
+            (care, "Once the vaccination is done, the flock can go out."), (care, "If the hens are vaccinated on Friday, say so."),
+            (care, "The hens will be vaccinated on Friday."), (care, "No hens were vaccinated."),
             (care, "Livestock vaccination is planned for Friday, not completed."),
             (shed, "Repainting the shed was started and is unfinished, not completed."),
         ]
-        guard asserted.allSatisfy({ claimsCompletion($0.0, in: $0.1) }), !negated.contains(where: { claimsCompletion($0.0, in: $0.1) }) else {
-            throw NativeMemoryGateError.setup("scoring", "negated and asserted completions were not told apart")
+        let missed = asserted.filter { !claimsCompletion($0.0, in: $0.1) }.map(\.1)
+        let wrong = negated.filter { claimsCompletion($0.0, in: $0.1) }.map(\.1)
+        guard missed.isEmpty, wrong.isEmpty else {
+            throw NativeMemoryGateError.setup("scoring", "completion claims misjudged: missed \(missed.count), wrongly counted \(wrong.count)")
         }
     }
 
@@ -526,8 +581,9 @@ enum NativeMemoryGate {
                 counts.fabricatedCompletions += 1
             }
         }
-        if let decisive, !observation.recalled.contains(where: { sources[$0] == decisive }) {
-            counts.citationErrors = 1
+        if let decisive {
+            let lines = observation.entries.enumerated().filter { $0.element.id.map { sources[$0] == decisive } ?? false }
+            if lines.isEmpty || lines.contains(where: { $0.element.marker != citationOffset + $0.offset }) { counts.citationErrors = 1 }
         }
         return counts
     }
@@ -542,15 +598,31 @@ enum NativeMemoryGate {
                 !phrase.isEmpty && words.count >= phrase.count
                     && (0...(words.count - phrase.count)).contains { Array(words[$0..<($0 + phrase.count)]) == phrase }
             }) else { continue }
-            for (index, word) in words.enumerated() where claims.contains(word) {
-                let cancelled = words[..<index].enumerated().contains { offset, token in
-                    if token == "not", offset + 1 < words.count, ["only", "just"].contains(words[offset + 1]) { return false }
-                    return negations.contains(token) || hedges.contains(token) || token.hasSuffix("n't")
-                }
-                if !cancelled { return true }
+            for (index, word) in words.enumerated() where claims.contains(word) && !governed(words, claim: index) {
+                return true
             }
         }
         return false
+    }
+
+    static func governed(_ words: [String], claim index: Int) -> Bool {
+        var start = index
+        while start > 0 {
+            let token = words[start - 1]
+            guard auxiliaries.contains(token) || modals.contains(token) || adverbs.contains(token)
+                    || verbNegations.contains(token) || token.hasSuffix("n't") else { break }
+            start -= 1
+        }
+        let group = words[start..<index]
+        if group.contains(where: { verbNegations.contains($0) || modals.contains($0) || $0.hasSuffix("n't") }) { return true }
+        return words[max(0, start - subjectWindow)..<start].contains { governors.contains($0) }
+    }
+
+    static var citationOffset: Int { NativeMemoryCitation.offset }
+
+    static func citationMarker(_ line: String) -> Int? {
+        guard let range = line.range(of: #"\[(\d+)\]$"#, options: .regularExpression) else { return nil }
+        return Int(line[range].dropFirst().dropLast())
     }
 
     static func memoryContextLines(_ prompt: String) -> [String] {
@@ -702,8 +774,8 @@ private final class NativeMemoryGateRunner {
     }
 
     private func resurrections() -> [NativeMemoryRanked] {
-        scenario.expectation.absent.sorted { $0.key < $1.key }.compactMap { id, absence in
-            guard absence.resurrects, let record = ledger[id] else { return nil }
+        scenario.expectation.absent.sorted { $0.key < $1.key }.compactMap { id, _ in
+            guard let record = ledger[id] else { return nil }
             return NativeMemoryRanked(record: record, score: 0)
         }
     }
@@ -741,16 +813,17 @@ private final class NativeMemoryGateRunner {
         let prompt = history.first(where: { $0.role == "system" })?.content ?? ""
         let reply = store.conversations.first(where: { $0.id == conversation })?.messages.last
         guard let reply, reply.role == .assistant else { throw failure("no reply was saved") }
+        guard reply.state == .complete, reply.failure == nil, !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw failure("the model request did not complete (\(reply.failure ?? "empty answer"))")
+        }
         let lines = NativeMemoryGate.memoryContextLines(prompt)
         let rendered = ledger.mapValues { NativeMemoryGate.uncited(NativeMemoryRetrieval.renderedLine($0)) }
-        var recalled: [String] = []
-        var unmatched = 0
-        for line in lines {
+        let entries = lines.map { line in
             let text = NativeMemoryGate.uncited(line)
-            if let id = rendered.first(where: { $0.value == text })?.key { recalled.append(id) } else { unmatched += 1 }
+            return NativeMemoryGateEntry(id: rendered.first(where: { $0.value == text })?.key, marker: NativeMemoryGate.citationMarker(line))
         }
         observations.append(NativeMemoryGateObservation(
-            recalled: recalled, unmatchedLines: unmatched, contextLines: lines, reply: reply.text,
+            entries: entries, contextLines: lines, reply: reply.text,
             retrievalMilliseconds: store.memoryRetrievalTraces[conversation]?.elapsedMilliseconds ?? 0))
         return history.filter { $0.role != "system" }.count
     }
