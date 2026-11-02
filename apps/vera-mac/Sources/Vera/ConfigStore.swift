@@ -39,6 +39,7 @@ final class ConfigStore: ObservableObject {
     }
     let nativeMCP: NativeMCPManager
     @Published var nativeMCPConfigurationError: String?
+    @Published var companionShortcutProblem: String?
     private var nativeMCPReplacement: Task<Void, Never>?
     static let nativeMCPServerLimit = 8
     @Published private var nativeAPIKeys: [String: String]
@@ -836,6 +837,15 @@ final class ConfigStore: ObservableObject {
 
     func setMenuBarKeepRunning(_ value: Bool) {
         self[Self.menuBarKey] = value ? "on" : "off"
+    }
+
+    var companionShortcut: CompanionShortcut {
+        let stored = self[CompanionShortcut.configKey]
+        return stored.isEmpty ? .default : (CompanionShortcut(configValue: stored) ?? .default)
+    }
+
+    func setCompanionShortcut(_ shortcut: CompanionShortcut?) {
+        self[CompanionShortcut.configKey] = shortcut?.configValue ?? ""
     }
 
     var voiceBase: URL? {

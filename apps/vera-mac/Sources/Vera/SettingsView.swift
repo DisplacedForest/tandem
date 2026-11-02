@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import SwiftUI
 
 /// The Settings window (⌘,) — every endpoint and identity value editable in-app, written to
@@ -884,9 +885,92 @@ private struct IdentityTab: View {
                     }))
                 .help("Closing the window leaves Tandem in the menu bar so scheduled work keeps running. It turns on by itself once you create a schedule.")
             }
+            Section("Quick ask") {
+                LabeledContent("Shortcut") {
+                    HStack(spacing: 10) {
+                        CompanionShortcutRecorder()
+                        Button("Reset to default") { apply(nil) }
+                            .disabled(config.companionShortcut == .default)
+                    }
+                }
+                if let problem = config.companionShortcutProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
             SaveSection()
         }
         .formStyle(.grouped)
+    }
+
+    private func apply(_ shortcut: CompanionShortcut?) {
+        config.setCompanionShortcut(shortcut)
+        try? config.save()
+        NotificationCenter.default.post(name: .companionShortcutChanged, object: nil)
+    }
+}
+
+struct CompanionShortcutRecorder: View {
+    @EnvironmentObject var config: ConfigStore
+    @State private var recording = false
+    @State private var rejected = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Button(action: toggle) {
+                Text(recording ? "Press a shortcut" : config.companionShortcut.symbols)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(recording ? Theme.accent : Theme.textPrimary)
+                    .frame(minWidth: 96)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(Theme.surface))
+                    .overlay(Capsule().strokeBorder(recording ? Theme.accent : Theme.hairline, lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Press it from any app to open a small composer over the companion thread. Escape hides it.")
+            .accessibilityLabel("Quick ask shortcut")
+            .accessibilityValue(recording ? "Press a shortcut" : config.companionShortcut.displayName)
+            .accessibilityHint("Click, then press the keys you want.")
+            if recording && rejected {
+                Text("Use at least one of Control, Option or Command with a key.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .onDisappear(perform: stop)
+    }
+
+    private func toggle() {
+        recording ? stop() : start()
+    }
+
+    private func start() {
+        stop()
+        recording = true
+        rejected = false
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == UInt16(kVK_Escape) && event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty {
+                stop()
+                return nil
+            }
+            guard let shortcut = CompanionShortcut(event: event) else {
+                rejected = true
+                return nil
+            }
+            config.setCompanionShortcut(shortcut)
+            try? config.save()
+            NotificationCenter.default.post(name: .companionShortcutChanged, object: nil)
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        recording = false
+        rejected = false
     }
 }
 

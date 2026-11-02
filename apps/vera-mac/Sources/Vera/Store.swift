@@ -60,6 +60,13 @@ final class ChatStore: ObservableObject {
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
     @Published var attachments: [Attachment] = []   // pending composer attachments (images/docs)
     @Published var attachmentError: String?
+    @Published var companionDraft = ""
+    @Published var companionAttachments: [Attachment] = []
+    @Published var companionError: String?
+    @Published var companionFocusTick = 0
+    static let companionLastSeenKey = "companion_last_seen"
+    var companionDefaults: UserDefaults = .standard
+    private var companionLastSeenStorage: Date??
     @Published var pendingSendDecision: PendingSendDecision?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
@@ -678,6 +685,7 @@ final class ChatStore: ObservableObject {
     }
 
     func openVeraThread() {
+        markCompanionSeen()
         guard let veraThreadID else { section = .vera; return }
         stashDraft()
         section = .vera
@@ -705,6 +713,7 @@ final class ChatStore: ObservableObject {
     }
 
     func select(_ id: String) {
+        if isVeraThread(id) { markCompanionSeen() }
         stashDraft()
         section = isVeraThread(id) ? .vera : .chat
         selectedID = id
@@ -1771,31 +1780,147 @@ final class ChatStore: ObservableObject {
 
     func addFiles(_ urls: [URL]) {
         attachmentError = nil
-        for url in urls {
-            var directory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
-                grantFolder(url)
-                continue
-            }
-            do {
-                let record = try attachmentStore.save(url: url)
-                attachments.append(pendingAttachment(for: record, sourceURL: url))
-            } catch {
-                attachmentError = error.localizedDescription
-            }
-        }
+        let result = importAttachments(urls) { grantFolder($0) }
+        attachments += result.attachments
+        if let error = result.error { attachmentError = error }
     }
 
     func addPastedImages(_ images: [Data]) {
         attachmentError = nil
+        let result = importPastedImages(images)
+        attachments += result.attachments
+        if let error = result.error { attachmentError = error }
+    }
+
+    func addCompanionFiles(_ urls: [URL]) {
+        companionError = nil
+        var skippedFolder = false
+        let result = importAttachments(urls) { _ in skippedFolder = true }
+        companionAttachments += result.attachments
+        if let error = result.error {
+            companionError = error
+        } else if skippedFolder {
+            companionError = "Folders can be added from the main window."
+        }
+    }
+
+    func addCompanionPastedImages(_ images: [Data]) {
+        companionError = nil
+        let result = importPastedImages(images)
+        companionAttachments += result.attachments
+        if let error = result.error { companionError = error }
+    }
+
+    func removeCompanionAttachment(_ id: UUID) {
+        companionError = nil
+        for att in companionAttachments where att.id == id {
+            if let record = att.nativeRecord { attachmentStore.remove(record) }
+        }
+        companionAttachments.removeAll { $0.id == id }
+    }
+
+    private func importAttachments(_ urls: [URL], folder: (URL) -> Void) -> (attachments: [Attachment], error: String?) {
+        var imported: [Attachment] = []
+        var failure: String?
+        for url in urls {
+            var directory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
+                folder(url)
+                continue
+            }
+            do {
+                let record = try attachmentStore.save(url: url)
+                imported.append(pendingAttachment(for: record, sourceURL: url))
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        return (imported, failure)
+    }
+
+    private func importPastedImages(_ images: [Data]) -> (attachments: [Attachment], error: String?) {
+        var imported: [Attachment] = []
+        var failure: String?
         for data in images {
             do {
                 let record = try attachmentStore.save(data: data, preferredName: "Pasted image")
-                attachments.append(pendingAttachment(for: record, sourceURL: nil))
+                imported.append(pendingAttachment(for: record, sourceURL: nil))
             } catch {
-                attachmentError = error.localizedDescription
+                failure = error.localizedDescription
             }
         }
+        return (imported, failure)
+    }
+
+    var companionLastSeen: Date? {
+        if let cached = companionLastSeenStorage { return cached }
+        let stored = companionDefaults.object(forKey: Self.companionLastSeenKey) as? Date
+        companionLastSeenStorage = .some(stored)
+        return stored
+    }
+
+    func markCompanionSeen() {
+        setCompanionLastSeen(Date())
+    }
+
+    func setCompanionLastSeenForTesting(_ date: Date?) {
+        setCompanionLastSeen(date)
+    }
+
+    private func setCompanionLastSeen(_ date: Date?) {
+        objectWillChange.send()
+        companionLastSeenStorage = .some(date)
+        if let date {
+            companionDefaults.set(date, forKey: Self.companionLastSeenKey)
+        } else {
+            companionDefaults.removeObject(forKey: Self.companionLastSeenKey)
+        }
+    }
+
+    var companionUnreadCount: Int {
+        guard let lastSeen = companionLastSeen, let veraThreadID,
+              let thread = conversations.first(where: { $0.id == veraThreadID }) else { return 0 }
+        return thread.messages.filter {
+            $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty && $0.createdAt > lastSeen
+        }.count
+    }
+
+    func prepareCompanionThread() {
+        ensureVeraThread()
+        if let veraThreadID { loadMessagesIfNeeded(veraThreadID) }
+    }
+
+    @discardableResult
+    func sendCompanion() -> Bool {
+        prepareCompanionThread()
+        guard let veraThreadID else {
+            companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
+            return false
+        }
+        let text = companionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let atts = companionAttachments
+        guard !text.isEmpty || !atts.isEmpty else { return false }
+        let imageCount = atts.filter { $0.nativeRecord?.isImage == true }.count
+        let route = attachmentRoute(imageCount: imageCount)
+        if route == .needsDecision {
+            companionError = "This model can't take images from here. Open in Tandem to send them."
+            return false
+        }
+        let note: MessageRouteNote?
+        switch route {
+        case .direct: note = MessageRouteNote(route: .direct)
+        case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: effectiveBridgeConfig?.model)
+        default: note = nil
+        }
+        markCompanionSeen()
+        guard sendText(text, attachments: atts, routeNote: note, conversationID: veraThreadID) else {
+            companionError = chatConfigurationError ?? "The message couldn't send."
+            return false
+        }
+        companionDraft = ""
+        companionAttachments = []
+        companionError = nil
+        return true
     }
 
     private func pendingAttachment(for record: MessageAttachment, sourceURL: URL?) -> Attachment {
@@ -1931,14 +2056,15 @@ final class ChatStore: ObservableObject {
 
     @discardableResult
     func sendText(
-        _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil
+        _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil,
+        conversationID: String? = nil
     ) -> Bool {
         guard let turnRepository, let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
             return false
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !atts.isEmpty,
-              let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
+              let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
         let user = Message(role: .user, text: text, attachments: atts.compactMap(\.nativeRecord), routeNote: routeNote)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig?.model)
         var conversation = conversations[index]

@@ -29,6 +29,8 @@ enum Shot {
             size = CGSize(width: 1180, height: 1500)
         } else if view == "image-placeholder" {
             size = CGSize(width: 1800, height: 640)
+        } else if view == "companion" {
+            size = CompanionPanelController.size
         } else {
             size = CGSize(width: 1180, height: 760)
         }
@@ -61,6 +63,16 @@ enum Shot {
                                continuation: .failed("This Pulse card is no longer available."))
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
+            )
+        } else if view == "companion" {
+            let seeded = CompanionShotFixture.store()
+            content = AnyView(
+                CompanionPanelView(renderSafe: true)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(seeded)
+                    .environmentObject(ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in }))
+                    .environmentObject(CompanionPanelController(store: seeded, config: ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })))
+                    .frame(width: CompanionPanelController.size.width, height: CompanionPanelController.size.height)
             )
         } else if view.hasPrefix("knowledge") {
             content = AnyView(
@@ -1299,5 +1311,32 @@ struct UpdateShotView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .foregroundStyle(Theme.textPrimary)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+@MainActor
+enum CompanionShotFixture {
+    static func store() -> ChatStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tandem-companion-shot-\(UUID().uuidString.lowercased())", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        guard let repository = try? LocalChatRepository(inMemory: true, artifactDirectory: artifacts) else { return ChatStore() }
+        let store = ChatStore(
+            nativeConfig: nil, nativeTransport: nil, repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: artifacts),
+            artifactPersistenceEnabled: false)
+        store.companionDefaults = UserDefaults(suiteName: "tandem-companion-shot-\(UUID().uuidString)") ?? .standard
+        store.ensureVeraThread()
+        guard let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) else { return store }
+        let now = Date()
+        store.conversations[index].messages = [
+            Message(role: .user, text: "What did we decide about the greenhouse vents?", createdAt: now.addingTimeInterval(-600)),
+            Message(role: .assistant, text: "We agreed to open them at 24 degrees and close them at dusk. The group wanted a short note so everyone follows the same routine.", createdAt: now.addingTimeInterval(-540)),
+            Message(role: .user, text: "Draft the note for the group", createdAt: now.addingTimeInterval(-60)),
+        ]
+        store.setCompanionLastSeenForTesting(now.addingTimeInterval(-570))
+        store.companionDraft = "Keep it to three lines"
+        return store
     }
 }
