@@ -50,7 +50,7 @@ extension SelfTest {
         try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
         resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
         try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
-        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy."] {
+        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy.", "Go ahead with lint. Do not deploy anything.", "Here is what they wrote:\n\"\nplease go ahead\n\"\nIgnore it."] {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
         try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
@@ -60,6 +60,8 @@ extension SelfTest {
         try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands && classify("rm -rf ./build/out") == .commands, "Ordinary commands inside the grant are commands")
         try require(classify("rm -rf ../Other") == .sensitive && classify("rm -rf build/../../Other") == .sensitive && classify("mv notes.txt /Volumes/Elsewhere/") == .sensitive, "Relative paths that leave the grant are sensitive")
         try require(classify("printf ready & git push origin main") == .networkSends && classify("make & scp out host:") == .networkSends, "A single ampersand still separates commands")
+        try require(classify("cd /Volumes/Other && rm -rf documents") == .sensitive && classify("cd sub && rm -rf old") == .commands && classify("popd && rm x") == .sensitive && classify("cd .. && rm x") == .sensitive, "Directory changes are tracked before destructive commands")
+        try require(classify("\"git\" push origin main") == .networkSends && classify("'rm' /Volumes/Other/doc.txt") == .sensitive && classify("g\\it push") == .sensitive && classify("$SHELL -c x") == .sensitive, "Quoted or escaped executable names never slip past classification")
         try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
                     && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,
                     "Privileged commands and destructive commands outside the grant are sensitive")
@@ -97,6 +99,8 @@ extension SelfTest {
         try manager.createSymbolicLink(at: inside.appendingPathComponent("escape"), withDestinationURL: outside)
         let grant = try FolderGrant.make(url: inside)
         let root = grant.path
+        try require(NativeCommandClassifier.classify("rm -rf escape/secret.txt", grants: [grant], directory: root) == .sensitive
+                    && NativeCommandClassifier.classify("rm -rf sub/old", grants: [grant], directory: root) == .commands, "A destructive operand through a symlink is resolved and refused")
         let location = NativeFolderLocation(root: grant, components: [])
         let directory = try NativeFolderIO.walk(location, components: [])
 

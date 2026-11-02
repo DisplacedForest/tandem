@@ -163,6 +163,7 @@ extension ChatStore {
                 resolveTurnConfirmation(execution.record.assistantMessageID, approved: false)
                 execution.task?.cancel()
                 execution.deadline?.cancel()
+                clearTurnDecisions(execution.record)
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
             }
@@ -205,11 +206,17 @@ extension ChatStore {
         }
     }
 
+    func clearTurnDecisions(_ turn: NativeConversationTurn) {
+        turnDeclineSource.clear(turn: turn.id)
+        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+    }
+
     func finishTurnExecution(_ turn: NativeConversationTurn) {
         guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { return }
         execution.deadline?.cancel()
         execution.task = nil
         resolveTurnConfirmation(turn.assistantMessageID, approved: false)
+        clearTurnDecisions(turn)
         if let location = turnLocation(turn) {
             var message = conversations[location.conversation].messages[location.reply]
             if message.state == .streaming {
@@ -237,6 +244,7 @@ extension ChatStore {
                     turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
                     continue
                 }
+                clearTurnDecisions(execution.record)
                 turnExecutions[id] = nil
                 turnStatuses[execution.record.assistantMessageID] = nil
             } catch {
@@ -276,8 +284,7 @@ extension ChatStore {
             return
         }
         resolveTurnConfirmation(messageID, approved: false)
-        turnDeclineSource.clear(turn: turn.id)
-        turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+        clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
         execution?.deadline?.cancel()

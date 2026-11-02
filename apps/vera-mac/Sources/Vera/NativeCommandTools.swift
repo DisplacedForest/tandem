@@ -120,8 +120,12 @@ enum NativeCommandTools {
                 if let requested {
                     location = try folderAccess.locate(requested)
                 } else {
-                    guard folderAccess.roots.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(".") }
-                    location = NativeFolderLocation(root: folderAccess.roots[0], components: [])
+                    guard grantedAtStart.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(".") }
+                    let start = grantedAtStart[0]
+                    guard let still = currentGrants.first(where: { $0.path == start.path && $0.identity == start.identity }) else {
+                        throw NativeToolError.failed("The folder for this command is no longer granted to this chat: \(start.path). It was not run.")
+                    }
+                    location = NativeFolderLocation(root: still, components: [])
                 }
                 let directory = try NativeFolderIO.walk(location, components: location.components)
                 let requestedTimeout = arguments.folderInt("timeout_seconds").map { Duration.seconds(max(1, $0)) } ?? NativeCommandLimits.defaultTimeout
