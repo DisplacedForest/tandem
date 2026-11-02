@@ -128,6 +128,8 @@ final class ChatStore: ObservableObject {
     var nativeTaskTracker: NativeTaskTracker?
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
+    @Published var highlightedTaskID: String?
+    @Published var pendingTaskReveal: String?
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()

@@ -7,6 +7,7 @@ struct NativeTaskCardView: View {
     var stopTitle: String? = nil
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
+    var highlighted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -44,7 +45,9 @@ struct NativeTaskCardView: View {
         .frame(maxWidth: 480, alignment: .leading)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
+        .animation(.easeOut(duration: 0.3), value: highlighted)
     }
 }
 
@@ -54,6 +57,7 @@ struct NativeDisplayBlocksView: View {
     var connectedTaskIDs: Set<String>? = nil
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
+    var highlightedTaskID: String? = nil
     @State private var openReport: NativeResearchArtifact?
 
     var body: some View {
@@ -64,7 +68,8 @@ struct NativeDisplayBlocksView: View {
                     NativeTaskCardView(
                         card: displayCard(card),
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
-                        onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil)
+                        onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
+                        highlighted: highlightedTaskID == card.id)
                 case .link(let link):
                     if let destination = link.destination {
                         Link(destination: destination) {

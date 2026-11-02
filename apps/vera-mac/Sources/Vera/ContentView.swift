@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var search = ""
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
+    @State private var windowWidth: CGFloat = 0
 
     private func select(_ item: AppSection) {
         switch item {
@@ -26,7 +27,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     Group {
                         switch store.section {
-                        case .vera, .chat: ChatPane()
+                        case .vera, .chat: ChatPane(workCollapsed: hasWork && (!wideEnoughForWork || store.showCanvas))
                         case .pulse: PulseView()
                         case .memory: MemoryView()
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -37,9 +38,12 @@ struct ContentView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if store.showCanvas, store.section == .chat || store.section == .vera {
+                    if store.showCanvas, chatSection {
                         Divider()
                         CanvasPanel().frame(width: 480)
+                    } else if chatSection, hasWork, wideEnoughForWork {
+                        OngoingWorkPanel(conversationID: store.selectedID, onSelect: store.revealOngoingWork)
+                            .frame(width: OngoingWorkMetrics.panelWidth)
                     }
                 }
                 .background(Theme.ink)
@@ -51,6 +55,7 @@ struct ContentView: View {
                 VoiceView().transition(.opacity).zIndex(1)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
         .animation(.easeInOut(duration: 0.2), value: voice.isActive)
@@ -70,6 +75,10 @@ struct ContentView: View {
             Text(Self.deletionMessage(pending.artifactCount))
         }
     }
+
+    private var chatSection: Bool { store.section == .chat || store.section == .vera }
+    private var hasWork: Bool { !store.nativeTaskReferences.isEmpty }
+    private var wideEnoughForWork: Bool { windowWidth >= OngoingWorkMetrics.minimumWindowWidth }
 
     private var deletionTitle: String {
         "Delete \u{201C}\(store.pendingConversationDeletion?.title ?? "chat")\u{201D}?"
@@ -171,9 +180,35 @@ struct SidebarRow: View {
 
 private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
+    var workCollapsed = false
     private var conversation: Conversation? { store.selected }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
+    @State private var showingWork = false
+    @State private var openedWorkReport: NativeResearchArtifact?
+
+    private func revealPendingTask(_ proxy: ScrollViewProxy) {
+        guard let taskID = store.pendingTaskReveal, let convo = conversation, !convo.messages.isEmpty,
+              let reference = store.nativeTaskReferences.first(where: { $0.id.uuidString == taskID }),
+              reference.origin.conversationID == convo.id else { return }
+        store.pendingTaskReveal = nil
+        guard let owner = OngoingWork.owningMessageID(taskID: taskID, fallback: reference.origin.assistantMessageID,
+                                                      in: convo.messages) else { return }
+        let artifact = OngoingWork.item(reference).artifact
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(owner, anchor: .center) }
+            store.highlightedTaskID = taskID
+            var remaining = Duration.seconds(2)
+            if let artifact {
+                try? await Task.sleep(for: .milliseconds(350))
+                remaining -= .milliseconds(350)
+                openedWorkReport = artifact
+            }
+            try? await Task.sleep(for: remaining)
+            if store.highlightedTaskID == taskID { store.highlightedTaskID = nil }
+        }
+    }
 
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
         guard let id = store.pendingHighlightMessageID,
@@ -251,12 +286,16 @@ private struct ChatPane: View {
                     .onChange(of: store.selectedID) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                         revealPendingSource(proxy)
+                        revealPendingTask(proxy)
                     }
                     .onChange(of: store.pendingHighlightMessageID) { revealPendingSource(proxy) }
+                    .onChange(of: store.pendingTaskReveal) { revealPendingTask(proxy) }
                     .onAppear {
                         proxy.scrollTo("bottom", anchor: .bottom)
                         revealPendingSource(proxy)
+                        revealPendingTask(proxy)
                     }
+                    .sheet(item: $openedWorkReport) { NativeResearchReportView(artifact: $0) }
                 }
                 if convo.isPersisted, store.isPulseConfigured {
                     HStack(spacing: 12) {
@@ -277,6 +316,22 @@ private struct ChatPane: View {
             }
         }
         .background(Theme.conversationBackground)
+        .overlay(alignment: .topTrailing) {
+            if workCollapsed {
+                OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: conversation?.id)) {
+                    showingWork = true
+                }
+                .padding(.top, 44).padding(.trailing, 20)
+            }
+        }
+        .sheet(isPresented: $showingWork) {
+            OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
+                showingWork = false
+                store.revealOngoingWork(reference)
+            }, onClose: { showingWork = false })
+            .frame(width: 420, height: 560)
+            .environmentObject(store)
+        }
     }
 }
 
@@ -570,7 +625,8 @@ struct MessageRow: View {
                     if nativeActions && !message.displayBlocks.isEmpty {
                         NativeDisplayBlocksView(blocks: message.displayBlocks,
                             connectedTaskIDs: store.connectedNativeTaskIDs,
-                            onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask)
+                            onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
+                            highlightedTaskID: store.highlightedTaskID)
                     }
                     if nativeActions && store.isQueuedAnswer(message.id) {
                         NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",

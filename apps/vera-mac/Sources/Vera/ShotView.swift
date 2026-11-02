@@ -17,6 +17,9 @@ struct ShotView: View {
     var artifactSelection: String? = nil
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
+    var workColumn = false
+    var workCollapsed = false
+    var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
     enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab) }
@@ -31,7 +34,7 @@ struct ShotView: View {
             case .settings(let tab): settingsShot(tab)
             }
         }
-        .frame(width: 1180, height: 760)
+        .frame(width: width, height: 760)
         .foregroundStyle(Theme.textPrimary)
     }
 
@@ -50,7 +53,18 @@ struct ShotView: View {
                     IntegrationsView(initialTab: integrationsSeed?.tab ?? .personal,
                                      initialSearch: integrationsSeed?.search ?? "",
                                      initialSelection: integrationsSeed?.selection)
-                case .vera, .chat: if emptyChat { emptyChatShot } else { chat }
+                case .vera, .chat:
+                    if emptyChat {
+                        emptyChatShot
+                    } else if workColumn {
+                        HStack(spacing: 0) {
+                            chat
+                            OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
+                                .frame(width: OngoingWorkMetrics.panelWidth)
+                        }
+                    } else {
+                        chat
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
@@ -603,6 +617,12 @@ struct ShotView: View {
             .frame(maxWidth: ConversationMetrics.columnWidth)
         }
         .background(Theme.conversationBackground)
+        .overlay(alignment: .topTrailing) {
+            if workCollapsed {
+                OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: store.selectedID)) {}
+                    .padding(.top, 44).padding(.trailing, 20)
+            }
+        }
     }
 
     private var shotMentionCatalog: ComposerMentionCatalog {
