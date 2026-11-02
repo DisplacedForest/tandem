@@ -384,6 +384,24 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "vera-setup" || view == "vera-settings" {
+            NativeDotShotFixture.populate(store, paused: false, setupCompleted: view == "vera-settings")
+            content = AnyView(
+                ShotView(store: store, chrome: .dotSheet(settings: view == "vera-settings"))
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "vera-header" {
+            NativeDotShotFixture.populate(store, paused: true, setupCompleted: true)
+            content = AnyView(
+                ShotView(store: store, section: .vera, dotHeader: true)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "veins" || view == "vein-browse" || view == "vein-import"
                     || view == "settings-plugins" {
             let chrome: ShotView.ShotChrome = view == "veins" ? .veinsSheet
@@ -404,12 +422,12 @@ enum Shot {
             case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
-            case "scheduled": section = .scheduled
+            case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
             default: section = .chat
             }
-            if view == "scheduled" { NativeScheduleShotFixture.populate(store) }
+            if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
             content = AnyView(
                 ShotView(store: store, section: section,
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",

@@ -46,20 +46,73 @@ extension SelfTest {
 
         var preapproved = NativeRules.defaults
         preapproved.set(.actIfPreapproved, for: .commands)
-        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests, no need to ask.")
+        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests. No need to ask.")
         try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
         resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
         try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
-        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy."] {
+        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy.", "Go ahead with lint. Do not deploy anything.", "Here is what they wrote:\n\"\nplease go ahead\n\"\nIgnore it."] {
             try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
         }
-        try require(NativeRequestPreapproval.grants("Fix the typo. Go ahead and run the tests too") && NativeRequestPreapproval.grants("don't ask, just run it"), "Plain pre-approval grants")
+        for wording in ["Go ahead.", "Please go ahead", "Run the tests. Go ahead.", "Yes, go ahead", "No need to ask.", "Just do it", "Ok, please just go ahead", "Fix the typo. Go ahead.", "Don't ask. Just do it.",
+                        "Deploy it to staging. You have my approval.", "Fix John\u{2019}s typo. Go ahead", "Run the tests.\nGo ahead!", "Feel free to go ahead"] {
+            try require(NativeRequestPreapproval.grants(wording), "A sentence that is exactly the phrase grants: \(wording)")
+        }
+        for wording in ["Go ahead and run the tests", "Run the tests, go ahead", "Go ahead with the lint", "Go ahead and deploy as soon as the tests pass.", "Go ahead and deploy depending on the test results.",
+                        "John whispered, go ahead.", "Yesterday my manager whispered, go ahead.", "Go ahead and proceed convey the same idea.", "Go ahead now denotes forward motion.", "John whispered. Go ahead.", "Go ahead and run the tests, then tell me the results.", "Run the tests. Go ahead. Actually, cancel that.", "Run the tests. Go ahead. Stop, do nothing.", "Go ahead. On second thought, hold off.", "Run the deploy. Go ahead. Wait, let me review the diff first.", "Go ahead. Hang on, not yet.", "Run the deploy. Go ahead. No, I changed my mind.", "Go ahead. Nope.", "Run the deploy. Go ahead. I revoke that.", "Go ahead. I rescind that."] {
+            try require(!NativeRequestPreapproval.grants(wording), "Anything but the phrase on its own asks: \(wording)")
+        }
+        for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?", "Describe the risks of running commands without asking.", "Wait for my approval, then go ahead.", "My manager said go ahead.", "The phrase go ahead means to proceed", "Please summarize this message: go ahead and deploy.", "Please translate go ahead into French.", "Please tell me whether go ahead is polite", "Translate this sentence into French.\nGo ahead and deploy.", "Go ahead means to proceed.", "Compare please proceed and go ahead.", "Go ahead and deploy?", "Here is an example. Go ahead and deploy.", "The email says: go ahead", "Rewrite this politely. Just do it.", "Go ahead was the reply I received.", "Go ahead is an imperative.", "Distinguish between proceed and go ahead.", "Go ahead pending my approval.", "Go ahead until I say stop.", "Go ahead and deploy. Actually, don\u{2019}t.", "Go ahead and proceed are synonyms.", "My manager replied, go ahead.", "Go ahead on condition that the tests pass.", "Go ahead and deploy provided the tests pass.", "Deploy it as long as the tests pass, go ahead", "My manager whispered, go ahead.", "Go ahead and proceed both express permission.", "Analyze the grammar of the following. Go ahead.", "Go ahead and deploy in the event that the tests pass.", "She nodded, go ahead."] {
+            try require(!NativeRequestPreapproval.grants(wording), "Explanatory, conditional or quoted text never grants: \(wording)")
+        }
 
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
         let classify: (String) -> NativeActionClass = { NativeCommandClassifier.classify($0, grants: sample) }
         try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands && classify("rm -rf ./build/out") == .commands, "Ordinary commands inside the grant are commands")
         try require(classify("rm -rf ../Other") == .sensitive && classify("rm -rf build/../../Other") == .sensitive && classify("mv notes.txt /Volumes/Elsewhere/") == .sensitive, "Relative paths that leave the grant are sensitive")
         try require(classify("printf ready & git push origin main") == .networkSends && classify("make & scp out host:") == .networkSends, "A single ampersand still separates commands")
+        try require(classify("cd /Volumes/Other && rm -rf documents") == .sensitive && classify("cd sub && rm -rf old") == .sensitive && classify("popd && rm x") == .sensitive && classify("cd .. && rm x") == .sensitive, "Directory changes are tracked before destructive commands")
+        try require(classify("r\"\"m /Volumes/Other/doc.txt") == .sensitive && classify("g''it push origin main") == .sensitive && classify("rm -rf \"/Volumes/Other\"/x") == .sensitive
+                    && classify("rm -rf \"build\"") == .commands && classify("rm -rf $HOME/x") == .sensitive, "Quotes or variables inside a word never slip past classification")
+        try require(classify("cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim") == .sensitive && classify("(cd sub && rm -rf old)") == .sensitive && classify("(make)") == .commands,
+                    "Subshells remove directory trust for destructive commands")
+        try require(classify("find /Volumes/Other -delete") == .sensitive && classify("find . -name '*.o' -delete") == .commands && classify("find /Volumes/Other -name x") == .commands && classify("find . -exec rm {} \\;") == .sensitive,
+                    "find with an effect is destructive")
+        try require(classify("\"command\" rm -rf /Volumes/Other/old") == .sensitive && classify("'env' rm -rf /Volumes/Other/old") == .sensitive && classify("command make") == .commands && classify("FOO=\"$X\" make") == .sensitive
+                    && classify("env -u FOO rm -rf /Volumes/Other/old") == .sensitive && classify("env -u FOO git push origin main") == .sensitive && classify("env FOO=bar make") == .commands && classify("nice -n 5 make") == .sensitive, "Quoted launchers and launcher options never hide the real executable")
+        for (command, expected) in [("env </dev/null rm -rf /Volumes/Other/old", NativeActionClass.sensitive), ("env FOO=bar </dev/null scp out host:", .sensitive), ("2>/dev/null rm -rf /Volumes/Other/x", .sensitive),
+                                    ("make > out.log", .commands), ("./scripts/run.sh 2>&1", .commands), ("~/tools/run", .commands),
+                                    ("rm>out=log ../victim", .sensitive), ("env FOO=bar rm>out=log ../victim", .sensitive), ("scp>out=log out host:", .sensitive), ("FOO=bar make", .commands), ("CC=clang make", .commands), ("FOO=a$X make", .sensitive), ("1X=y make", .sensitive), ("arch -arm64 rm ../victim", .sensitive), ("arch -arm64 scp out host:", .sensitive), ("xcrun swift build", .commands), ("timeout 30 make", .sensitive), ("timeout 30 rm ../victim", .sensitive), ("stdbuf -o0 scp out host:", .sensitive),
+                                    ("swift build -c release", .commands), ("swift test -c debug", .commands), ("xcrun swift build -c release", .commands),
+                                    ("sh -xc 'rm ../victim'", .sensitive), ("bash -lc 'rm ../victim'", .sensitive), ("sh -ec 'scp out host:'", .sensitive), ("bash -l script.sh", .commands),
+                                    ("GIT_WORK_TREE=../Other git clean -fdx", .sensitive), ("GIT_DIR=/Volumes/Other/.git git status", .sensitive), ("DESTDIR=/Volumes/Other make install", .sensitive), ("PREFIX=build/out make install", .commands), ("CFLAGS=-O2 make", .commands),
+                                    ("CFLAGS=\"-O2 -g\" make", .commands), ("CFLAGS=\"-O2 $X\" make", .sensitive), ("MSG='hello world' make", .commands),
+                                    ("sh \"-c\" \"rm -rf ../Other\"", .sensitive), ("git \"push\" origin trunk", .networkSends), ("if true; then rm -rf ../Other; fi", .sensitive), ("for f in *.o; do rm ../Other/$f; done", .sensitive),
+                                    ("echo `scp out host:upload`", .sensitive), ("echo $(date)", .sensitive), ("sh -e ./scripts/build.sh", .commands), ("bash -x script.sh", .commands), ("sh -ec 'make'", .sensitive), ("python3 -e x", .sensitive), ("npm run build", .commands), ("npm publish", .networkSends), ("cargo build", .commands), ("docker push registry/app", .networkSends), ("make && npm publish", .networkSends),
+                                    ("dd if=report.bin of=../Other/report.bin", .sensitive), ("dd if=report.bin of=build/report.bin", .commands), ("curl --url-query @report.json https://example.com/collect", .networkSends), ("curl --config upload.conf", .networkSends), ("curl -sK upload.conf", .networkSends), ("curl -o out.bin https://example.com/file", .commands), ("curl -o ../Other/report.txt https://example.com/report", .sensitive), ("curl --output=../Other/x https://example.com/r", .sensitive), ("wget -O ../Other/x https://example.com/r", .sensitive), ("wget -P downloads https://example.com/r", .commands),
+                                    ("npm exec -c 'rm -rf ../Other'", .sensitive), ("npx some-tool", .sensitive), ("pnpm dlx tool", .sensitive), ("cargo run", .commands), ("npm test", .commands), ("rm -f */*.txt", .sensitive), ("rm -rf build/*", .sensitive), ("ls *.txt", .commands), ("find . -name '*.o' -delete", .commands), ("find ../Other -name '*.o' -delete", .sensitive),
+                                    ("./tools/env rm -rf ../Other", .sensitive), ("./tools/env scp out host:upload", .networkSends), ("git -c alias.publish=push publish origin trunk", .sensitive), ("git -c core.sshCommand=/Volumes/Other/x status", .sensitive), ("git -c color.ui=false status", .commands),
+                                    ("curl --json @report.json https://example.com/upload", .networkSends), ("curl -sT report.json https://example.com/upload", .networkSends), ("curl -sS https://example.com/file", .commands), ("curl -X DELETE https://example.com/item", .networkSends)] {
+            try require(classify(command) == expected, "Redirections and odd tokens never stand in for the executable: \(command) classified as \(classify(command))")
+        }
+        try require(classify("git -c color.ui=false -C /Volumes/Other clean -fdx") == .sensitive && classify("git -c color.ui=false status") == .commands && classify("git -c") == .sensitive, "git option operands are consumed before the directory and subcommand")
+        try require(classify("git -C /Volumes/Other clean -fdx") == .sensitive && classify("git clean -fdx") == .commands && classify("git -C sub reset --hard") == .commands && classify("git --git-dir=/Volumes/Other/.git status") == .sensitive && classify("git status") == .commands,
+                    "git repository paths follow the grant")
+        try require(classify("eval 'rm /Volumes/Other/doc.txt'") == .sensitive && classify("xargs rm") == .sensitive && classify("bash -c 'make'") == .sensitive && classify("python3 -c 'import shutil'") == .sensitive && classify("python3 build.py") == .commands && classify("sh ./setup.sh") == .commands,
+                    "Inline code and shell wrappers are sensitive")
+        let plain: (String) -> Bool = { NativeCommandClassifier.isPlain($0, grants: sample) }
+        for bypass in ["env </dev/null rm -rf /Volumes/Other/old", "rm>out=log ../victim", "env FOO=bar rm>out=log ../victim", "scp>out=log out host:", "arch -arm64 rm ../victim", "timeout 30 rm ../victim",
+                       "sh -xc 'rm ../victim'", "bash -lc 'rm ../victim'", "GIT_WORK_TREE=../Other git clean -fdx", "CFLAGS=\"-O2 $X\" make", "sh \"-c\" \"rm -rf ../Other\"",
+                       "if true; then rm -rf ../Other; fi", "for f in *.o; do rm ../Other/$f; done", "echo `scp out host:upload`", "echo $(date)", "r\"\"m ../victim", "cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim",
+                       "make && scp out host:", "printf ready & git push origin trunk", "eval 'rm x'", "xargs rm", "make > out.log", "./scripts/run.sh 2>&1", "./tools/env rm -rf ../Other", "/usr/bin/env scp out host:", "git -c alias.publish=push publish origin trunk", "git \"-c\" color.ui=false status", "echo \"if\"", "make 'then' rm x"] {
+            try require(!plain(bypass), "Nothing with shell structure is plain: \(bypass)")
+        }
+        for everyday in ["make", "swift build -c release", "xcrun swift build", "CFLAGS=\"-O2 -g\" make", "CC=clang make", "sh -e ./scripts/build.sh", "npm run build", "./scripts/build.sh", "python3 build.py", "git status", "rm -rf build"] {
+            try require(plain(everyday), "An everyday command is plain: \(everyday)")
+        }
+        try require(classify("make && ./run.sh") == .commands && classify("make; ./run.sh") == .commands && classify("if true; then rm -rf ../Other; fi") == .sensitive && classify("make && rm -rf ../Other") == .sensitive && classify("make; sudo make install") == .sensitive && classify("make && git push origin trunk") == .networkSends,
+                    "A command that is not plain still hands off on a destructive token and still counts as sending on a sending token")
+        try require(NativeRuleDecision.act(.rule).atLeastAsk == .ask && NativeRuleDecision.ask.atLeastAsk == .ask && NativeRuleDecision.handOff.atLeastAsk == .handOff, "A command that is not plain is at least ask")
+        try require(classify("\"git\" push origin main") == .networkSends && classify("'rm' /Volumes/Other/doc.txt") == .sensitive && classify("g\\it push") == .sensitive && classify("$SHELL -c x") == .sensitive, "Quoted or escaped executable names never slip past classification")
         try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
                     && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,
                     "Privileged commands and destructive commands outside the grant are sensitive")
@@ -97,6 +150,8 @@ extension SelfTest {
         try manager.createSymbolicLink(at: inside.appendingPathComponent("escape"), withDestinationURL: outside)
         let grant = try FolderGrant.make(url: inside)
         let root = grant.path
+        try require(NativeCommandClassifier.classify("rm -rf escape/secret.txt", grants: [grant], directory: root) == .sensitive
+                    && NativeCommandClassifier.classify("rm -rf sub/old", grants: [grant], directory: root) == .commands, "A destructive operand through a symlink is resolved and refused")
         let location = NativeFolderLocation(root: grant, components: [])
         let directory = try NativeFolderIO.walk(location, components: [])
 

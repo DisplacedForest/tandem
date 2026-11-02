@@ -171,10 +171,20 @@ struct SidebarRow: View {
 
 private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var config: ConfigStore
     private var conversation: Conversation? { store.selected }
     private var generating: Bool { store.generating }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
+    @State private var showingDotSetup = false
+
+    private var needsDotSetup: Bool {
+        store.isVeraThread(conversation?.id) && store.dotProfileLoaded && !store.dotProfile.setupCompleted
+    }
+
+    private func refreshDotSetup() {
+        if needsDotSetup != showingDotSetup { showingDotSetup = needsDotSetup }
+    }
 
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
         guard let id = store.pendingHighlightMessageID,
@@ -195,6 +205,9 @@ private struct ChatPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.isVeraThread(conversation?.id) {
+                DotHeaderView()
+            }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
@@ -282,6 +295,13 @@ private struct ChatPane: View {
             } else {
                 EmptyChatView()
             }
+        }
+        .onAppear(perform: refreshDotSetup)
+        .onChange(of: store.selectedID) { refreshDotSetup() }
+        .onChange(of: store.dotProfile) { refreshDotSetup() }
+        .onChange(of: store.dotProfileLoaded) { refreshDotSetup() }
+        .sheet(isPresented: $showingDotSetup) {
+            DotSetupView().environmentObject(store).environmentObject(config)
         }
     }
 }
