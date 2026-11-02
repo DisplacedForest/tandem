@@ -215,12 +215,26 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "once ", "after ", "later", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "once ", "after ", "later", "pending", "until", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
     static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
-    static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "correct", "review", "phrase", "sentence", "wording", "text", "message", "email", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "here is", "here's", "this is", "like this", "such as"]
+    static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as"]
+    static let continuations = ["and ", "with ", "to ", "on ", "then ", "now", ","]
+
+    static func quoted(_ text: String) -> Bool {
+        let characters = Array(text)
+        for (index, character) in characters.enumerated() where quoteCharacters.contains(character) {
+            if character == "'" || character == "’" {
+                let before = index > 0 && characters[index - 1].isLetter
+                let after = index + 1 < characters.count && characters[index + 1].isLetter
+                if before && after { continue }
+            }
+            return true
+        }
+        return false
+    }
 
     static func words(_ text: String) -> [String] {
         text.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
@@ -238,9 +252,12 @@ enum NativeRequestPreapproval {
 
     static func sentenceGrants(_ sentence: String) -> Bool {
         var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        if phrases.contains(where: { rest.hasSuffix(", " + $0) || rest.hasSuffix(" and " + $0) || rest.hasSuffix(", and " + $0) }) { return true }
+        if phrases.contains(where: { rest.hasSuffix(", " + $0) }) { return true }
         while true {
-            if phrases.contains(where: { rest.hasPrefix($0) }) { return true }
+            if let phrase = phrases.first(where: { rest.hasPrefix($0) }) {
+                let after = String(rest.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
+                return after.isEmpty || continuations.contains { after.hasPrefix($0) }
+            }
             guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
             rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
         }
@@ -251,7 +268,7 @@ enum NativeRequestPreapproval {
         guard phrases.contains(where: { lowered.contains($0) }) else { return false }
         var remainder = lowered
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
-        if remainder.contains(where: { quoteCharacters.contains($0) }) { return false }
+        if quoted(remainder) { return false }
         if negated(remainder) { return false }
         if lowered.contains("?") { return false }
         let wordList = " " + words(lowered).joined(separator: " ") + " "
@@ -283,8 +300,8 @@ enum NativeCommandClassifier {
 
     static func executable(_ segment: [String]) -> (name: String, arguments: [String]) {
         var tokens = segment[...]
-        while let first = tokens.first, first.contains("="), !first.hasPrefix("-"), !first.hasPrefix("/") {
-            if first.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+        while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
+            guard isPlainAssignment(first) else { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
         }
         let launchers = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate"]
@@ -292,8 +309,8 @@ enum NativeCommandClassifier {
             if stripOuterQuotes(first) != first { return ("?", Array(tokens.dropFirst())) }
             tokens = tokens.dropFirst()
             if let next = tokens.first, next.hasPrefix("-") { return ("?", Array(tokens.dropFirst())) }
-            while let next = tokens.first, next.contains("="), !next.hasPrefix("/") {
-                if next.contains(where: { unsafeCharacters.contains($0) }) { return ("?", Array(tokens.dropFirst())) }
+            while let next = tokens.first, next.contains("=") {
+                guard isPlainAssignment(next) else { return ("?", Array(tokens.dropFirst())) }
                 tokens = tokens.dropFirst()
             }
         }
@@ -302,6 +319,14 @@ enum NativeCommandClassifier {
         if unquoted.isEmpty || unquoted.contains(where: { !($0.isLetter || $0.isNumber || "._+-/~".contains($0)) }) { return ("?", Array(tokens.dropFirst())) }
         let name = unquoted.split(separator: "/").last.map(String.init) ?? unquoted
         return (name, Array(tokens.dropFirst()))
+    }
+
+    static func isPlainAssignment(_ token: String) -> Bool {
+        guard let equals = token.firstIndex(of: "=") else { return false }
+        let name = token[token.startIndex..<equals]
+        let value = token[token.index(after: equals)...]
+        guard let head = name.first, head.isLetter || head == "_", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return false }
+        return value.allSatisfy { $0.isLetter || $0.isNumber || "._+-/~:,@%".contains($0) }
     }
 
     static func stripOuterQuotes(_ token: String) -> String {
