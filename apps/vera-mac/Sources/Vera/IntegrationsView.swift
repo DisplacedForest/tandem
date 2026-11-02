@@ -38,9 +38,7 @@ enum IntegrationsText {
         return "Not connected"
     }
 
-    static func needsSignInDetails(_ configuration: NativeMCPServerConfiguration) -> Bool {
-        configuration.authentication == .oauth && configuration.oauth == nil
-    }
+    static let accountSignInNote = "Account sign-in needs details from the publisher in the configuration file; see the setup guide."
 
     static func message(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? "The change could not be saved."
@@ -90,6 +88,7 @@ private struct IntegrationsDestination: View {
     @State private var oauthReview: NativeMCPOAuthReview?
     @State private var readTest: NativeMCPReadTestController?
     @State private var temporaryTokens: [String: String] = [:]
+    @State private var consentError: String?
 
     init(manager: NativeMCPManager, initialTab: IntegrationsTab, initialSearch: String, initialSelection: String?) {
         self.manager = manager
@@ -297,9 +296,6 @@ private struct IntegrationsDestination: View {
                 Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if IntegrationsText.needsSignInDetails(configuration) {
-                IntegrationsNotice(text: "Sign-in details from the publisher are needed under Manage before signing in.")
-            }
             if configuration.authentication == .bearer && !server.connected && !server.connecting {
                 VStack(alignment: .leading, spacing: 6) {
                     IntegrationsSecureField(placeholder: "Temporary access token", text: Binding(
@@ -320,6 +316,9 @@ private struct IntegrationsDestination: View {
             }
             IntegrationsSection(title: "Available in") {
                 Text(IntegrationsText.scopes(configuration.scopes)).font(.system(size: 13))
+            }
+            if let consentError {
+                IntegrationsNotice(text: consentError)
             }
             IntegrationsSection(title: "Reads") {
                 if server.tools.isEmpty {
@@ -350,8 +349,7 @@ private struct IntegrationsDestination: View {
                 Task { await manager.disconnect(server.id) }
             }
         } else if server.configuration.authentication == .oauth {
-            IntegrationsAction(title: "Sign in", symbol: "person.badge.key", prominent: true,
-                               disabled: IntegrationsText.needsSignInDetails(server.configuration)) {
+            IntegrationsAction(title: "Sign in", symbol: "person.badge.key", prominent: true) {
                 oauthReview = manager.beginOAuthReview(server.id)
             }
         } else {
@@ -366,10 +364,8 @@ private struct IntegrationsDestination: View {
         let enabled = config.nativeSettings.enabledToolIDs.contains(tool.id)
         let canTry = !renderSafe && NativeMCPReadTestController.scope(authority: manager.authority, record: tool) != nil
         return HStack(alignment: .top, spacing: 10) {
-            IntegrationsSwitch(isOn: Binding(get: { enabled }, set: {
-                config.setNativeTool(tool.id, enabled: $0)
-                store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
-            }), label: tool.remoteName, disabled: !tool.callable)
+            IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool.id, enabled: $0) }),
+                               label: tool.remoteName, disabled: !tool.callable)
             VStack(alignment: .leading, spacing: 3) {
                 Text(tool.remoteName).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(tool.callable ? Theme.textPrimary : Theme.textSecondary)
@@ -388,6 +384,20 @@ private struct IntegrationsDestination: View {
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func setTool(_ id: String, enabled: Bool) {
+        let previous = config.nativeSettings.enabledToolIDs.contains(id)
+        config.setNativeTool(id, enabled: enabled)
+        store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
+        do {
+            try config.save()
+            consentError = nil
+        } catch {
+            config.setNativeTool(id, enabled: previous)
+            store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
+            consentError = "The change couldn't be saved: \(IntegrationsText.message(error))"
+        }
     }
 
     private func entryCard(_ entry: NativeMCPStarterEntry) -> some View {
@@ -456,19 +466,25 @@ struct IntegrationsInstallSheet: View {
             }
             Text("Only the reads you approve here become available. You can change this later under Manage.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
+            if entry.authentication == .oauth {
+                Text(IntegrationsText.accountSignInNote).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
             if let error { Text(error).font(.callout).foregroundStyle(Theme.accent) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Install", action: install)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(reads.isEmpty || scopes.isEmpty)
+                if entry.authentication != .oauth {
+                    Button("Install", action: install)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(reads.isEmpty || scopes.isEmpty)
+                }
             }
         }
         .padding(24).frame(width: 480)
     }
 
     private func install() {
+        guard entry.authentication != .oauth else { return }
         guard let catalogue = try? IntegrationsCatalogue.loaded.get() else {
             error = "The integration catalogue could not be loaded."
             return
@@ -506,6 +522,10 @@ struct IntegrationsManageSheet: View {
         config.nativeMCPServerRows.first { ($0["id"] as? String)?.lowercased() == target.id }
     }
 
+    private var hasSignInDetails: Bool {
+        target.existing && existingRow?["oauth"] != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(target.existing ? "Manage \(name.isEmpty ? "service" : name)" : "Add a service").font(.title2)
@@ -526,12 +546,20 @@ struct IntegrationsManageSheet: View {
             }
             HStack(alignment: .top, spacing: 20) {
                 IntegrationsField(label: "Sign-in") {
-                    Picker("Sign-in", selection: $authentication) {
-                        Text("No sign-in").tag(NativeMCPServerConfiguration.Authentication.none)
-                        Text("Access token").tag(NativeMCPServerConfiguration.Authentication.bearer)
-                        Text("Sign in with an account").tag(NativeMCPServerConfiguration.Authentication.oauth)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("Sign-in", selection: $authentication) {
+                            Text("No sign-in").tag(NativeMCPServerConfiguration.Authentication.none)
+                            Text("Access token").tag(NativeMCPServerConfiguration.Authentication.bearer)
+                            if hasSignInDetails {
+                                Text("Sign in with an account").tag(NativeMCPServerConfiguration.Authentication.oauth)
+                            }
+                        }
+                        .labelsHidden().fixedSize()
+                        if !hasSignInDetails {
+                            Text(IntegrationsText.accountSignInNote).font(.caption).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    .labelsHidden().fixedSize()
                 }
                 IntegrationsField(label: "Timeout in seconds") {
                     TextField("20", text: $timeout).textFieldStyle(.roundedBorder).frame(width: 80)
@@ -565,7 +593,8 @@ struct IntegrationsManageSheet: View {
         endpoint = row["url"] as? String ?? ""
         reads = (row["read_tools"] as? [String] ?? []).joined(separator: "\n")
         scopes = Set(row["scopes"] as? [String] ?? ["focused", "assistant"])
-        authentication = NativeMCPServerConfiguration.Authentication(rawValue: row["authentication"] as? String ?? "none") ?? .none
+        let stored = NativeMCPServerConfiguration.Authentication(rawValue: row["authentication"] as? String ?? "none") ?? .none
+        authentication = stored == .oauth && row["oauth"] == nil ? .none : stored
         if let seconds = row["timeout_seconds"] as? Double {
             timeout = seconds == seconds.rounded() ? String(Int(seconds)) : String(seconds)
         }
@@ -586,6 +615,10 @@ struct IntegrationsManageSheet: View {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
         row["scopes"] = IntegrationsText.scopeOrder.map(\.key).filter { scopes.contains($0) }
         row["timeout_seconds"] = seconds
+        if authentication == .oauth && !hasSignInDetails {
+            error = IntegrationsText.accountSignInNote
+            return
+        }
         if authentication == .none { row.removeValue(forKey: "authentication") } else { row["authentication"] = authentication.rawValue }
         if authentication != .oauth { row.removeValue(forKey: "oauth") }
         do {

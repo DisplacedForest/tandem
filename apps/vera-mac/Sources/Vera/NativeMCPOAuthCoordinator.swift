@@ -145,6 +145,24 @@ extension NativeMCPManager {
         flow.owner.cancel()
     }
 
+    @discardableResult
+    func applyConfigurationSynchronously(_ servers: [NativeMCPServerConfiguration]) -> [String: UUID] {
+        let stale = authority.access.reconcileServers(servers)
+        let current = Set(servers.map(\.id))
+        for id in Set(oauthReviews.keys).union(oauthFlows.keys) where stale[id] != nil || !current.contains(id) { cancelOAuthLocally(id) }
+        refresh()
+        return stale
+    }
+
+    func retireConfiguration(_ stale: [String: UUID]) async {
+        await authority.retire(stale)
+        refresh()
+    }
+
+    func reconcileConfiguration(_ servers: [NativeMCPServerConfiguration]) async {
+        await retireConfiguration(applyConfigurationSynchronously(servers))
+    }
+
     func replaceConfiguration(_ servers: [NativeMCPServerConfiguration]) async {
         configurationGeneration = UUID()
         replacingConfiguration = true

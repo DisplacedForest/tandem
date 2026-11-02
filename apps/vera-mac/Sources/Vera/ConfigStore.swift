@@ -154,23 +154,7 @@ final class ConfigStore: ObservableObject {
     var nativeMCPServerRows: [[String: Any]] { raw["native_mcp_servers"] as? [[String: Any]] ?? [] }
 
     func replaceNativeMCPServers(_ rows: [[String: Any]]) throws {
-        guard rows.count <= Self.nativeMCPServerLimit else {
-            throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
-        }
-        let (servers, failure) = NativeMCPServerConfiguration.load(["native_mcp_servers": rows])
-        if let failure { throw NativeToolError.failed(failure) }
-        var updated = raw
-        if rows.isEmpty { updated.removeValue(forKey: "native_mcp_servers") } else { updated["native_mcp_servers"] = rows }
-        do { try writeConfiguration(updated) }
-        catch { throw NativeToolError.failed("The connected services could not be saved. Try again.") }
-        raw = updated
-        nativeMCPConfigurationError = nil
-        let previous = nativeMCPReplacement
-        let manager = nativeMCP
-        nativeMCPReplacement = Task {
-            await previous?.value
-            await manager.replaceConfiguration(servers)
-        }
+        try commitNativeMCPServers(rows, pruning: [])
     }
 
     func addNativeMCPServer(_ row: [String: Any]) throws {
@@ -178,7 +162,7 @@ final class ConfigStore: ObservableObject {
         guard rows.count < Self.nativeMCPServerLimit else {
             throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
         }
-        try replaceNativeMCPServers(rows + [row])
+        try commitNativeMCPServers(rows + [row], pruning: [])
     }
 
     func updateNativeMCPServer(_ row: [String: Any]) throws {
@@ -188,10 +172,9 @@ final class ConfigStore: ObservableObject {
             throw NativeToolError.failed("That service is no longer connected.")
         }
         let before = nativeMCPToolIDs(serverID: id)
-        rows[index] = row
-        try replaceNativeMCPServers(rows)
         let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.map(server.toolID) })
-        try pruneNativeMCPTools(before.subtracting(after))
+        rows[index] = row
+        try commitNativeMCPServers(rows, pruning: before.subtracting(after))
     }
 
     func removeNativeMCPServer(id: String) throws {
@@ -199,9 +182,39 @@ final class ConfigStore: ObservableObject {
         let rows = nativeMCPServerRows
         let remaining = rows.filter { ($0["id"] as? String)?.lowercased() != id }
         guard remaining.count < rows.count else { throw NativeToolError.failed("That service is no longer connected.") }
-        let stale = nativeMCPToolIDs(serverID: id)
-        try replaceNativeMCPServers(remaining)
-        try pruneNativeMCPTools(stale)
+        try commitNativeMCPServers(remaining, pruning: nativeMCPToolIDs(serverID: id))
+    }
+
+    private func commitNativeMCPServers(_ rows: [[String: Any]], pruning stale: Set<String>) throws {
+        guard rows.count <= Self.nativeMCPServerLimit else {
+            throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
+        }
+        let (servers, failure) = NativeMCPServerConfiguration.load(["native_mcp_servers": rows])
+        if let failure { throw NativeToolError.failed(failure) }
+        var updated = raw
+        if rows.isEmpty { updated.removeValue(forKey: "native_mcp_servers") } else { updated["native_mcp_servers"] = rows }
+        if !stale.isEmpty, var nativeChat = updated["native_chat"] as? [String: Any],
+           let saved = nativeChat["enabledToolIDs"] as? [String], !stale.isDisjoint(with: saved) {
+            nativeChat["enabledToolIDs"] = saved.filter { !stale.contains($0) }
+            updated["native_chat"] = nativeChat
+        }
+        do { try writeConfiguration(updated) }
+        catch { throw NativeToolError.failed("The connected services could not be saved. Try again.") }
+        raw = updated
+        nativeMCPConfigurationError = nil
+        let pruned = stale.intersection(nativeSettings.enabledToolIDs)
+        if !pruned.isEmpty {
+            var settings = nativeSettings
+            settings.enabledToolIDs.subtract(pruned)
+            nativeSettings = settings
+        }
+        let retired = nativeMCP.applyConfigurationSynchronously(servers)
+        let previous = nativeMCPReplacement
+        let manager = nativeMCP
+        nativeMCPReplacement = Task {
+            await previous?.value
+            await manager.retireConfiguration(retired)
+        }
     }
 
     private func nativeMCPToolIDs(serverID: String) -> Set<String> {
@@ -209,13 +222,6 @@ final class ConfigStore: ObservableObject {
         let declared = configured.flatMap { server in server.readTools.map(server.toolID) }
         let discovered = nativeMCP.servers.filter { $0.id == serverID }.flatMap { $0.tools.map(\.id) }
         return Set(declared + discovered)
-    }
-
-    private func pruneNativeMCPTools(_ ids: Set<String>) throws {
-        let enabled = ids.intersection(nativeSettings.enabledToolIDs)
-        guard !enabled.isEmpty else { return }
-        for id in enabled.sorted() { setNativeTool(id, enabled: false) }
-        try save()
     }
 
     subscript(_ key: String) -> String {
