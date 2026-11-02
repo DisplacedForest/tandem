@@ -2020,9 +2020,8 @@ final class ChatStore: ObservableObject {
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
         let (authority, consented) = turnToolAuthority(for: turn)
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)),
-            hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
-        allowed = NativeScheduleTools.enabledIDs(allowed, consented: turn.enabledToolIDs.intersection(consented), authority: authority, hasStore: nativeScheduleStore != nil)
+        var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: turn.enabledToolIDs, consented: consented, authority: authority,
+            hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil, hasStore: nativeScheduleStore != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
@@ -2133,11 +2132,9 @@ final class ChatStore: ObservableObject {
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let (authority, consented) = turnToolAuthority(for: turn)
         var enabledToolIDs = capabilityProfile.supportsTools
-            ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)), hasEngine: nativeTaskEngine.base != nil,
-                                         hasRepository: nativeTaskRepository != nil) : []
-        if capabilityProfile.supportsTools {
-            enabledToolIDs = NativeScheduleTools.enabledIDs(enabledToolIDs, consented: turn.enabledToolIDs.intersection(consented), authority: authority, hasStore: nativeScheduleStore != nil)
-        }
+            ? NativeScheduleTools.turnEnabledIDs(snapshot: turn.enabledToolIDs, consented: consented, authority: authority,
+                                                 hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil,
+                                                 hasStore: nativeScheduleStore != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
         if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {

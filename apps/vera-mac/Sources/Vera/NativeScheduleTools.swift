@@ -7,6 +7,14 @@ enum NativeScheduleTools {
     static let repeatKinds = ["daily", "weekdays", "weekly", "every_hours", "once"]
     static let argumentNames: Set<String> = ["title", "worker_type", "instruction", "results_to", "repeat", "time", "weekday", "hours", "at"]
 
+    static func turnEnabledIDs(snapshot: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority,
+                               hasEngine: Bool, hasRepository: Bool, hasStore: Bool) -> Set<String> {
+        let current = snapshot.intersection(consented)
+        var allowed = NativeTaskTools.enabledIDs(authority.filter(current), hasEngine: hasEngine, hasRepository: hasRepository)
+        if !authority.allowsBackground { allowed.remove(NativeTaskTools.toolID) }
+        return enabledIDs(allowed, consented: current, authority: authority, hasStore: hasStore)
+    }
+
     static func enabledIDs(_ existing: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority, hasStore: Bool) -> Set<String> {
         let base = existing.subtracting([toolID])
         guard consented.contains(NativeWebTools.researchToolID), authority.allowsSchedule, hasStore else { return base }

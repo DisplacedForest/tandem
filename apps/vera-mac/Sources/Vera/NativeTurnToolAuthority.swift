@@ -38,28 +38,36 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
 
     func filter(_ ids: Set<String>) -> Set<String> {
         guard allowsTools else { return [] }
-        var kept = allowsBackground ? ids : ids.subtracting([NativeWebTools.researchToolID, NativeTaskTools.toolID])
+        var kept = ids
+        if !allowsBackground {
+            kept.remove(NativeTaskTools.toolID)
+            if !allowsSchedule { kept.remove(NativeWebTools.researchToolID) }
+        }
         if !allowsSchedule { kept.remove(NativeScheduleTools.toolID) }
         return kept
     }
 
-    static let scheduleIntent = #"\b(?:schedule|every\s+(?:day|morning|afternoon|evening|night|weekday|week|month|other\s+day|few\s+hours|\d+\s+(?:hours?|hrs?)|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|each\s+(?:day|morning|evening|week|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|weekdays|nightly|hourly|recurring|regularly|on\s+a\s+schedule|once\s+a\s+(?:day|week)|(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s|tomorrow\s+(?:morning|afternoon|evening|night|at)|later\s+(?:today|tonight|this\s+(?:morning|afternoon|evening))|tonight\s+at|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|o'clock)?\s+(?:tomorrow|tonight|every|each|on)\b)"#
+    static let scheduleIntent = #"\b(?:every\s+(?:day|morning|afternoon|evening|night|weekday|week|month|other\s+day|few\s+hours|\d+\s+(?:hours?|hrs?)|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|each\s+(?:day|morning|evening|week|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|weekdays|nightly|hourly|recurring|regularly|on\s+a\s+schedule|once\s+a\s+(?:day|week)|(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s|tomorrow\s+(?:morning|afternoon|evening|night)|later\s+(?:today|tonight|this\s+(?:morning|afternoon|evening))|(?:tomorrow|tonight)\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|o'clock)?|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|o'clock)?\s+(?:tomorrow|tonight|every|each|on)\b)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|o'clock)?)?"#
+    static let scheduleVerb = #"\b(?:schedule|set\s+up)\s+(?:a|an|the|me|us|it|this|that|some|something|another|daily|weekly|nightly|hourly|recurring|regular|research|work)\b"#
+    static let scheduleQuestion = #"^\s*(?:what|why|how|when|where|who|which|whose|is|are|was|were|do|does|did|should|explain|describe|define|tell\s+me\s+(?:what|why|how|when|about))\b"#
+    static let scheduleSubject = #"\b(?:why|how|whether|if|that|who|whom|which|what)\b"#
+    static let scheduleLead = #"^\s*(?:(?:please|also|and|then|now|can\s+you|could\s+you|would\s+you|will\s+you|i\s+want\s+you\s+to|i'?d\s+like\s+you\s+to|i\s+would\s+like\s+you\s+to|i\s+need\s+you\s+to)\s*,?\s*)*$"#
+    static let scheduleTail = #"^\s*(?:$|[,;:]|(?:and|then|with|please|thanks|starting|beginning|from|until|for|so|to)\b)"#
 
     static func schedulesWork(_ text: String) -> Bool {
         let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
         for raw in sentences {
             let sentence = raw.trimmingCharacters(in: .whitespaces)
-            guard let cadence = sentence.range(of: scheduleIntent, options: [.regularExpression, .caseInsensitive]) else { continue }
             if matches(sentence, scheduleQuestion) { continue }
+            if matches(sentence, scheduleVerb) { return true }
+            guard let cadence = sentence.range(of: scheduleIntent, options: [.regularExpression, .caseInsensitive]) else { continue }
             let before = String(sentence[sentence.startIndex..<cadence.lowerBound])
+            let after = String(sentence[cadence.upperBound...])
             if matches(before, scheduleSubject) { continue }
-            return true
+            if matches(before, scheduleLead) || matches(after, scheduleTail) { return true }
         }
         return false
     }
-
-    static let scheduleQuestion = #"^\s*(?:what|why|how|when|where|who|which|whose|is|are|was|were|do|does|did|should|explain|describe|define|tell\s+me\s+(?:what|why|how|when|about))\b"#
-    static let scheduleSubject = #"\b(?:why|how|whether|if|that|who|whom|which|what|about)\b"#
 
     private static func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil

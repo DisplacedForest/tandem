@@ -87,32 +87,47 @@ extension SelfTest {
         let asksSchedule = NativeTurnToolAuthority("Every weekday at 7 research semiconductor export policy")
         let asksResearch = NativeTurnToolAuthority("Research NASA")
         let asksNeither = NativeTurnToolAuthority("Tell me about tea")
-        func composed(_ consented: Set<String>, _ authority: NativeTurnToolAuthority, hasStore: Bool = true) -> Set<String> {
-            var allowed = NativeTaskTools.enabledIDs(authority.filter(consented), hasEngine: true, hasRepository: true)
-            allowed = NativeScheduleTools.enabledIDs(allowed, consented: consented, authority: authority, hasStore: hasStore)
+        func composed(_ consented: Set<String>, _ authority: NativeTurnToolAuthority, mentions: Set<String> = [], hasStore: Bool = true) -> Set<String> {
+            let turnConsent = consented.union(mentions)
+            let snapshot = authority.filter(turnConsent)
+            var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: snapshot, consented: turnConsent, authority: authority,
+                                                             hasEngine: true, hasRepository: true, hasStore: hasStore)
             allowed.remove(research)
             return allowed
         }
         try require(composed([research], asksSchedule) == [NativeScheduleTools.toolID], "The ticket's own example offers the schedule tool and nothing else")
         try require(composed([research], asksResearch) == [NativeTaskTools.toolID], "A plain research request offers background work, never the schedule tool")
+        try require(composed([research], NativeTurnToolAuthority("Research daily trading volume")) == [NativeTaskTools.toolID],
+                    "A cadence word inside the subject offers background work only")
+        try require(composed([research], NativeTurnToolAuthority("Research news about NASA every weekday at 7")).isSuperset(of: [NativeScheduleTools.toolID]),
+                    "A recurring request with a subject word before the cadence still offers the schedule tool")
         try require(composed([research], asksNeither).isEmpty, "An ordinary message offers neither")
         try require(composed([], asksSchedule).isEmpty, "Nothing enables the tool without background work")
         try require(composed([research], asksSchedule, hasStore: false).isEmpty, "No store, no tool")
         try require(composed(["apple-reminders"], asksSchedule) == ["apple-reminders"], "Other tools do not enable it")
         try require(composed([research], NativeTurnToolAuthority("Do not use tools. Every day research NASA")).isEmpty, "No tools means no schedule tool")
-        try require(composed([research], NativeTurnToolAuthority("make it recurring", mentions: [NativeScheduleTools.toolID])) == [NativeScheduleTools.toolID],
+        let mentionAuthority = NativeTurnToolAuthority("make it recurring", mentions: [NativeScheduleTools.toolID])
+        try require(composed([research], mentionAuthority, mentions: [NativeScheduleTools.toolID]) == [NativeScheduleTools.toolID],
                     "A mention enables the tool when background work is consented")
+        try require(NativeScheduleTools.turnEnabledIDs(snapshot: asksSchedule.filter([research]), consented: [], authority: asksSchedule,
+                                                       hasEngine: true, hasRepository: true, hasStore: true).isEmpty,
+                    "Consent revoked after the send drops the tool")
 
         let allowed = ["Every weekday at 7 research semiconductor export policy", "Schedule a daily summary of my saved articles",
                        "Each morning write me a short memo on overnight news", "Once a week check lumber prices",
-                       "Tomorrow at 9 research the weather outlook", "Can you research NASA every 6 hours"]
+                       "Tomorrow at 9 research the weather outlook", "Can you research NASA every 6 hours",
+                       "Research news about NASA every weekday at 7", "Please set up a daily digest of my saved articles",
+                       "Check lumber prices every 6 hours and send me a summary", "Research the Mars mission every Monday at 9am, please",
+                       "every weekday at 7, research overnight chip export news"]
         for text in allowed {
             try require(NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is allowed for: \(text)")
         }
         let refused = ["Research NASA", "Tell me about tea", "What did I ask?", "Do not schedule anything. Research NASA.",
                        "Do not use tools. Every day research NASA", "What is a schedule?", "Research why people drink coffee every morning.",
                        "Why do markets move every Monday?", "Explain how weekly sprints work", "Is the market open on Mondays?",
-                       "Write a memo about what happens every day at the plant", "Tell me how recurring billing works"]
+                       "Write a memo about what happens every day at the plant", "Tell me how recurring billing works",
+                       "Research daily trading volume", "Summarize the weekly report I attached", "My schedule is full this week",
+                       "Research what people do every morning"]
         for text in refused {
             try require(!NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is refused for: \(text)")
         }
