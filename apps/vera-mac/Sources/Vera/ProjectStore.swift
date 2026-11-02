@@ -122,7 +122,7 @@ extension LocalChatRepository: ProjectRepository {
     }
 
     func addProjectFile(_ projectID: String, from url: URL) throws -> ProjectFile {
-        guard try project(projectID) != nil else { throw ProjectStoreError.notFound }
+        guard let existing = try project(projectID) else { throw ProjectStoreError.notFound }
         let name = url.lastPathComponent
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
         guard values?.isRegularFile == true, let size = values?.fileSize else { throw ProjectStoreError.unreadable(name) }
@@ -130,8 +130,11 @@ extension LocalChatRepository: ProjectRepository {
         let directory = projectFilesDirectory(projectID)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID().uuidString.lowercased()
-        let ext = url.pathExtension.lowercased()
-        let fileName = ext.isEmpty ? id : "\(id).\(ext)"
+        let taken = Set(existing.files.map { $0.fileName.lowercased() })
+        let fileName = Self.availableFileName(for: name) { candidate in
+            taken.contains(candidate.lowercased())
+                || FileManager.default.fileExists(atPath: directory.appendingPathComponent(candidate).path)
+        }
         let destination = directory.appendingPathComponent(fileName)
         do {
             try FileManager.default.copyItem(at: url, to: destination)
@@ -174,6 +177,35 @@ extension LocalChatRepository: ProjectRepository {
         if let removed {
             try? FileManager.default.removeItem(at: projectFilesDirectory(projectID).appendingPathComponent(removed.fileName))
         }
+    }
+
+    static func storedFileName(for original: String) -> (stem: String, ext: String) {
+        let separators: Set<Character> = ["/", ":", "\\"]
+        let cleaned = String(original.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+            .map(Character.init).filter { !separators.contains($0) })
+        let undotted = String(cleaned.drop(while: { $0 == "." || $0.isWhitespace }))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var stem = undotted
+        var ext = ""
+        if let dot = undotted.lastIndex(of: "."), dot != undotted.startIndex {
+            stem = String(undotted[..<dot])
+            ext = String(undotted[undotted.index(after: dot)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        stem = String(stem.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if stem.isEmpty { stem = "File" }
+        return (stem, String(ext.prefix(32)))
+    }
+
+    static func availableFileName(for original: String, taken: (String) -> Bool) -> String {
+        let (stem, ext) = storedFileName(for: original)
+        func compose(_ suffix: Int) -> String {
+            let base = suffix == 1 ? stem : "\(stem) \(suffix)"
+            return ext.isEmpty ? base : "\(base).\(ext)"
+        }
+        var suffix = 1
+        while taken(compose(suffix)) { suffix += 1 }
+        return compose(suffix)
     }
 
     private static func fetchProject(_ id: String, db: Database) throws -> ProjectRecord? {

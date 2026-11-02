@@ -53,7 +53,7 @@ enum ProjectStoreSelftest {
         let file = try repository.addProjectFile("project-a", from: source)
         let folder = repository.projectFilesDirectory("project-a")
         try check(folder == projects.appendingPathComponent("project-a/files", isDirectory: true), "Project files live under the projects directory")
-        try check(file.name == "Planting Notes.MD" && file.fileName == "\(file.id).md" && file.byteSize == bytes.count, "The file entry records name, stored name and size")
+        try check(file.name == "Planting Notes.MD" && file.fileName == "Planting Notes.MD" && file.byteSize == bytes.count, "The file entry records name, stored name and size")
         try check(try Data(contentsOf: folder.appendingPathComponent(file.fileName)) == bytes, "The bytes are copied into the project folder")
         let permissions = try manager.attributesOfItem(atPath: folder.appendingPathComponent(file.fileName).path)[.posixPermissions] as? NSNumber
         try check(permissions?.intValue == 0o444, "The copied file is read-only")
@@ -68,6 +68,7 @@ enum ProjectStoreSelftest {
         }
         try repository.removeProjectFile("project-a", fileID: file.id)
         try check(try repository.project("project-a")?.files.isEmpty == true, "Removing a file drops its entry")
+        try checkReadableNames(repository, base: base, folder: folder)
         try check(!manager.fileExists(atPath: folder.appendingPathComponent(file.fileName).path), "Removing a file deletes its bytes")
         let second = try repository.addProjectFile("project-a", from: source)
 
@@ -97,6 +98,48 @@ enum ProjectStoreSelftest {
         try check(!manager.fileExists(atPath: folder.appendingPathComponent(second.fileName).path), "A read-only project file is removed with its project")
         let remaining = try repository.listConversations()
         try check(remaining.count == 3 && remaining.allSatisfy { $0.projectID == nil }, "Conversations survive with no project")
+    }
+
+    static func checkReadableNames(_ repository: LocalChatRepository, base: URL, folder: URL) throws {
+        let manager = FileManager.default
+        let sources = base.appendingPathComponent("sources", isDirectory: true)
+        let again = base.appendingPathComponent("sources-again", isDirectory: true)
+        try manager.createDirectory(at: sources, withIntermediateDirectories: true)
+        try manager.createDirectory(at: again, withIntermediateDirectories: true)
+        let budget2026 = Data("year,total\n2026,10\n".utf8)
+        let budget2027 = Data("year,total\n2027,20\n".utf8)
+        let revised = Data("year,total\n2026,12\n".utf8)
+        try budget2026.write(to: sources.appendingPathComponent("Budget-2026.csv"))
+        try budget2027.write(to: sources.appendingPathComponent("Budget-2027.csv"))
+        try revised.write(to: again.appendingPathComponent("Budget-2026.csv"))
+        let first = try repository.addProjectFile("project-a", from: sources.appendingPathComponent("Budget-2026.csv"))
+        let second = try repository.addProjectFile("project-a", from: sources.appendingPathComponent("Budget-2027.csv"))
+        try check(first.fileName == "Budget-2026.csv" && first.name == "Budget-2026.csv", "An attachment keeps its original name on disk")
+        try check(second.fileName == "Budget-2027.csv", "A second attachment keeps its own name")
+        try check(try Data(contentsOf: folder.appendingPathComponent(first.fileName)) == budget2026, "The first stored file holds its own bytes")
+        try check(try Data(contentsOf: folder.appendingPathComponent(second.fileName)) == budget2027, "The second stored file holds its own bytes")
+        let duplicate = try repository.addProjectFile("project-a", from: again.appendingPathComponent("Budget-2026.csv"))
+        try check(duplicate.fileName == "Budget-2026 2.csv" && duplicate.name == "Budget-2026.csv", "A repeated name gets a numeric suffix")
+        try check(try Data(contentsOf: folder.appendingPathComponent(duplicate.fileName)) == revised, "The suffixed file holds the new bytes")
+        try check(try Data(contentsOf: folder.appendingPathComponent(first.fileName)) == budget2026, "The original file is untouched")
+
+        let hidden = sources.appendingPathComponent(".a:b notes.txt")
+        try Data("hidden".utf8).write(to: hidden)
+        let dotted = try repository.addProjectFile("project-a", from: hidden)
+        try check(dotted.name == ".a:b notes.txt" && dotted.fileName == "ab notes.txt", "A leading dot and a separator are removed: \(dotted.fileName)")
+        let stored = folder.appendingPathComponent(dotted.fileName).standardizedFileURL
+        try check(stored.deletingLastPathComponent().path == folder.standardizedFileURL.path && manager.fileExists(atPath: stored.path), "The sanitized file lands inside the project folder")
+
+        let traversal = LocalChatRepository.storedFileName(for: "../../etc/pass\u{0}wd\n.txt")
+        try check(traversal.stem == "etcpasswd" && traversal.ext == "txt", "Path separators, dots and control characters are dropped: \(traversal)")
+        let long = LocalChatRepository.storedFileName(for: String(repeating: "a", count: 300) + ".pdf")
+        try check(long.stem.count == 120 && long.ext == "pdf", "A long stem is capped at 120 characters")
+        try check(LocalChatRepository.storedFileName(for: "...").stem == "File", "A name with nothing left falls back to File")
+        try check(LocalChatRepository.availableFileName(for: "notes", taken: { $0 == "notes" || $0 == "notes 2" }) == "notes 3", "Suffixes count up past taken names")
+        for added in [first, second, duplicate, dotted] {
+            try repository.removeProjectFile("project-a", fileID: added.id)
+        }
+        try check(try repository.project("project-a")?.files.isEmpty == true, "Removing files drops their entries")
     }
 
     static func checkReadOnlyFolderTools(base: URL) throws {
