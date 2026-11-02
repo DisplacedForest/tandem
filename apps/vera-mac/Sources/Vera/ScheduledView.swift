@@ -104,6 +104,7 @@ struct ScheduledView: View {
             VStack(spacing: 8) {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
+                                ownerLabel: schedule.owner == .dot ? store.assistantName : "its own chat",
                                 running: (store.scheduleRuns[schedule.id] ?? []).contains { $0.outcome == .running })
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
@@ -137,6 +138,7 @@ struct ScheduledView: View {
 private struct ScheduleRow: View {
     let schedule: NativeSchedule
     let selected: Bool
+    let ownerLabel: String
     let running: Bool
 
     var body: some View {
@@ -145,7 +147,7 @@ private struct ScheduleRow: View {
                 .font(.system(size: 15)).foregroundStyle(Theme.accent).frame(width: 22).padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(schedule.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
-                Text(schedule.cadenceSummary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Text("\(schedule.cadenceSummary). Results go to \(ownerLabel)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text(statusLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 36)

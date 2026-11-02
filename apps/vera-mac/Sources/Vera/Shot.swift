@@ -348,7 +348,7 @@ enum Shot {
             case "pulse": section = .pulse
             case "agentic": section = .agentic
             case "vera": section = .vera
-            case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command": section = .chat
+            case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule": section = .chat
             case "projects": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled": section = .scheduled
@@ -364,6 +364,7 @@ enum Shot {
                          streaming: view == "chats-streaming",
                          folder: view == "chats-folder",
                          command: view == "chats-command",
+                         schedule: view == "chats-schedule",
                          collapsedSidebar: view == "sidebar-collapsed",
                          mentions: view == "chats-mentions",
                          artifactSelection: artifactSeed?.selection)

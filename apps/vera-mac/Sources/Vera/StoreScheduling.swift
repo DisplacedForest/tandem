@@ -118,6 +118,20 @@ extension ChatStore {
         }
     }
 
+    func scheduleFromChat(_ draft: NativeScheduleDraft) throws -> NativeSchedule {
+        if let created = createSchedule(draft) { return created }
+        throw NativeScheduleError.invalid(scheduleError ?? "The schedule couldn't be saved.")
+    }
+
+    func scheduleToolDefinition() -> NativeToolDefinition? {
+        guard nativeScheduleStore != nil else { return nil }
+        let name = assistantName
+        return NativeScheduleTools.definition(assistantName: { name }, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
+            guard let self else { throw NativeScheduleError.invalid("Tandem is closing.") }
+            return try await self.scheduleFromChat(draft)
+        })
+    }
+
     func updateSchedule(_ id: String, with draft: NativeScheduleDraft) {
         guard let store = nativeScheduleStore, let existing = try? store.get(id) else { return }
         do {

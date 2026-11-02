@@ -500,7 +500,7 @@ struct MessageRow: View {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
-                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation),
+                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: store.assistantName),
                                 onDecision: { onToolDecision?($0 ? .approve : .decline) },
                                 onApproveSimilar: NativeToolConfirmationBar.similarPrefix(for: pendingConfirmation).map { _ in { onToolDecision?(.approveSimilar) } })
                         }
@@ -721,15 +721,21 @@ struct NativeToolConfirmationBar: View {
             default: return nil
             }
         }
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+            return NativeScheduleTools.prompt(for: draft)
+        }
         return nil
     }
 
-    static func detail(for request: NativeToolConfirmationRequest) -> String? {
+    static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
         if request.toolID == NativeCommandTools.toolID {
             let directory = NativeCommandTools.directory(inRequest: request.request)
             return directory.map { "In \($0). Your rules ask before commands run." } ?? "Your rules ask before commands run."
         }
         if request.toolID == NativeFolderTools.toolID { return "Your rules ask before this kind of change." }
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+            return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
+        }
         return nil
     }
 
