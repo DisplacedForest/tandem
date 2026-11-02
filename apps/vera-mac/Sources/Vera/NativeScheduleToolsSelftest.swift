@@ -74,20 +74,34 @@ extension SelfTest {
         let prompt = NativeScheduleTools.prompt(for: parsed, timeZone: zone)
         try require(prompt.contains("Morning policy check") && prompt.contains("weekdays at") && prompt.hasSuffix("?"),
                     "The confirmation prompt names the schedule and its cadence")
-        let detail = NativeScheduleTools.detail(for: parsed, assistantName: "Vera")
+        let detail = NativeScheduleTools.detail(for: parsed, assistantName: "Sol")
         try require(detail.contains("Results go to its own chat") && detail.contains("Nothing is saved until you approve"),
                     "The confirmation detail names the destination and that nothing is saved yet")
         var threaded = parsed
         threaded.owner = .dot
-        try require(NativeScheduleTools.detail(for: threaded, assistantName: "Vera").contains("the Vera thread"),
+        try require(NativeScheduleTools.detail(for: threaded, assistantName: "Sol").contains("the Sol thread"),
                     "The confirmation detail names the assistant thread")
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 
         let research = NativeWebTools.researchToolID
-        try require(NativeScheduleTools.enabledIDs([], hasStore: true).isEmpty, "Nothing enables the tool without background work")
-        try require(!NativeScheduleTools.enabledIDs([research], hasStore: false).contains(NativeScheduleTools.toolID), "No store, no tool")
-        try require(NativeScheduleTools.enabledIDs([research], hasStore: true).contains(NativeScheduleTools.toolID), "Background work and a store enable the tool")
-        try require(!NativeScheduleTools.enabledIDs(["apple-reminders"], hasStore: true).contains(NativeScheduleTools.toolID), "Other tools do not enable it")
+        let asksSchedule = NativeTurnToolAuthority("Every weekday at 7 research semiconductor export policy")
+        let asksResearch = NativeTurnToolAuthority("Research NASA")
+        let asksNeither = NativeTurnToolAuthority("Tell me about tea")
+        func composed(_ consented: Set<String>, _ authority: NativeTurnToolAuthority, hasStore: Bool = true) -> Set<String> {
+            var allowed = NativeTaskTools.enabledIDs(authority.filter(consented), hasEngine: true, hasRepository: true)
+            allowed = NativeScheduleTools.enabledIDs(allowed, consented: consented, authority: authority, hasStore: hasStore)
+            allowed.remove(research)
+            return allowed
+        }
+        try require(composed([research], asksSchedule) == [NativeScheduleTools.toolID], "The ticket's own example offers the schedule tool and nothing else")
+        try require(composed([research], asksResearch) == [NativeTaskTools.toolID], "A plain research request offers background work, never the schedule tool")
+        try require(composed([research], asksNeither).isEmpty, "An ordinary message offers neither")
+        try require(composed([], asksSchedule).isEmpty, "Nothing enables the tool without background work")
+        try require(composed([research], asksSchedule, hasStore: false).isEmpty, "No store, no tool")
+        try require(composed(["apple-reminders"], asksSchedule) == ["apple-reminders"], "Other tools do not enable it")
+        try require(composed([research], NativeTurnToolAuthority("Do not use tools. Every day research NASA")).isEmpty, "No tools means no schedule tool")
+        try require(composed([research], NativeTurnToolAuthority("make it recurring", mentions: [NativeScheduleTools.toolID])) == [NativeScheduleTools.toolID],
+                    "A mention enables the tool when background work is consented")
 
         let allowed = ["Every weekday at 7 research semiconductor export policy", "Schedule a daily summary of my saved articles",
                        "Each morning write me a short memo on overnight news", "Once a week check lumber prices",
@@ -96,7 +110,9 @@ extension SelfTest {
             try require(NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is allowed for: \(text)")
         }
         let refused = ["Research NASA", "Tell me about tea", "What did I ask?", "Do not schedule anything. Research NASA.",
-                       "Do not use tools. Every day research NASA"]
+                       "Do not use tools. Every day research NASA", "What is a schedule?", "Research why people drink coffee every morning.",
+                       "Why do markets move every Monday?", "Explain how weekly sprints work", "Is the market open on Mondays?",
+                       "Write a memo about what happens every day at the plant", "Tell me how recurring billing works"]
         for text in refused {
             try require(!NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is refused for: \(text)")
         }
@@ -146,6 +162,18 @@ extension SelfTest {
         } catch let error as NativeToolError {
             try require(error == .failed("Pick a time that is still ahead."), "A failed save surfaces its reason")
         }
+
+        let hourlyWire = "{\"title\":\"Hourly check\",\"worker_type\":\"document\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":1}"
+        let hourlyArguments = try definition.validatedArguments(hourlyWire)
+        try require(hourlyArguments["hours"] == .number(1), "A JSON 1 stays a number on the wire")
+        try require(try draft(hourlyArguments).cadence == .everyHours(1), "Hourly projects through the real JSON path")
+        try require(NativeScheduleTools.prompt(for: NativeScheduleTools.draft(inRequest: hourlyWire, now: now, timeZone: zone)!, timeZone: zone).contains("every hour"),
+                    "The confirmation card renders an hourly schedule")
+        let hourlySaved = try await definition.execute(hourlyArguments)
+        guard case .object(let hourlyResult) = hourlySaved else { throw NativeTaskFixture.Failure.assertion("An hourly schedule returns an object") }
+        try require(hourlyResult["saved"] == .bool(true), "An hourly schedule saves")
+        let flagWire = "{\"title\":\"Hourly check\",\"worker_type\":\"document\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":true}"
+        try require((try? draft(try definition.validatedArguments(flagWire))) == nil, "A JSON true is not an hour count")
 
         let missingRepeat = "{\"title\":\"Morning policy check\",\"worker_type\":\"research\",\"instruction\":\"Summarize.\",\"time\":\"07:00\"}"
         try require((try? definition.validatedArguments(missingRepeat)) == nil, "The generic validator requires repeat")

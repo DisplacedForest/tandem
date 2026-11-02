@@ -2022,7 +2022,7 @@ final class ChatStore: ObservableObject {
         let (authority, consented) = turnToolAuthority(for: turn)
         var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)),
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
-        allowed = NativeScheduleTools.enabledIDs(allowed, hasStore: nativeScheduleStore != nil)
+        allowed = NativeScheduleTools.enabledIDs(allowed, consented: turn.enabledToolIDs.intersection(consented), authority: authority, hasStore: nativeScheduleStore != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
@@ -2135,7 +2135,9 @@ final class ChatStore: ObservableObject {
         var enabledToolIDs = capabilityProfile.supportsTools
             ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)), hasEngine: nativeTaskEngine.base != nil,
                                          hasRepository: nativeTaskRepository != nil) : []
-        enabledToolIDs = NativeScheduleTools.enabledIDs(enabledToolIDs, hasStore: nativeScheduleStore != nil)
+        if capabilityProfile.supportsTools {
+            enabledToolIDs = NativeScheduleTools.enabledIDs(enabledToolIDs, consented: turn.enabledToolIDs.intersection(consented), authority: authority, hasStore: nativeScheduleStore != nil)
+        }
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
         if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {

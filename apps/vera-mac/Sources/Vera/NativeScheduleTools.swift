@@ -7,9 +7,9 @@ enum NativeScheduleTools {
     static let repeatKinds = ["daily", "weekdays", "weekly", "every_hours", "once"]
     static let argumentNames: Set<String> = ["title", "worker_type", "instruction", "results_to", "repeat", "time", "weekday", "hours", "at"]
 
-    static func enabledIDs(_ existing: Set<String>, hasStore: Bool) -> Set<String> {
+    static func enabledIDs(_ existing: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority, hasStore: Bool) -> Set<String> {
         let base = existing.subtracting([toolID])
-        guard base.contains(NativeWebTools.researchToolID), hasStore else { return base }
+        guard consented.contains(NativeWebTools.researchToolID), authority.allowsSchedule, hasStore else { return base }
         return base.union([toolID])
     }
 
