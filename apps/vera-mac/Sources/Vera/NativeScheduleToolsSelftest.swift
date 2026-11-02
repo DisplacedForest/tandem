@@ -102,6 +102,12 @@ extension SelfTest {
         try require(composed([research], NativeTurnToolAuthority("Research news about NASA every weekday at 7")).isSuperset(of: [NativeScheduleTools.toolID]),
                     "A recurring request with a subject word before the cadence still offers the schedule tool")
         try require(composed([research], asksNeither).isEmpty, "An ordinary message offers neither")
+        for text in ["Please set up a printer", "Write a guide to set up a home server", "Set up the project folder"] {
+            try require(!composed([research], NativeTurnToolAuthority(text)).contains(NativeScheduleTools.toolID),
+                        "A generic set up request does not offer the schedule tool: \(text)")
+        }
+        try require(composed([research], NativeTurnToolAuthority("Set up a weekly digest of my saved articles")) == [NativeScheduleTools.toolID],
+                    "Set up with a cadence offers the schedule tool")
         try require(composed([], asksSchedule).isEmpty, "Nothing enables the tool without background work")
         try require(composed([research], asksSchedule, hasStore: false).isEmpty, "No store, no tool")
         try require(composed(["apple-reminders"], asksSchedule) == ["apple-reminders"], "Other tools do not enable it")
@@ -127,7 +133,7 @@ extension SelfTest {
                        "Why do markets move every Monday?", "Explain how weekly sprints work", "Is the market open on Mondays?",
                        "Write a memo about what happens every day at the plant", "Tell me how recurring billing works",
                        "Research daily trading volume", "Summarize the weekly report I attached", "My schedule is full this week",
-                       "Research what people do every morning"]
+                       "Research what people do every morning", "Please set up a printer", "Write a guide to set up a home server"]
         for text in refused {
             try require(!NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is refused for: \(text)")
         }
