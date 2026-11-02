@@ -124,7 +124,8 @@ extension LocalChatRepository {
         try database.read { try Self.domainEntries(entity, scope: scope, db: $0) }
     }
 
-    func stageDomainProposal(_ entry: NativeDomainEntry, label: String, proposalID: String = UUID().uuidString) throws -> NativeMemoryProposal? {
+    func stageDomainProposal(_ entry: NativeDomainEntry, label: String, proposalID: String = UUID().uuidString,
+                             projectID: String? = nil) throws -> NativeMemoryProposal? {
         try entry.validate()
         guard entry.status == .supported || entry.status == .uncertain || entry.status == .disputed,
               let source = entry.source, !label.isEmpty, label.count <= 80,
@@ -144,7 +145,8 @@ extension LocalChatRepository {
             try db.execute(sql: "INSERT OR IGNORE INTO native_domain_streams(entity_id, scope, label) VALUES (?, ?, ?)", arguments: [entry.entityID.uuidString, entry.scope, "Saved record"])
             guard let stream = try Row.fetchOne(db, sql: "SELECT revision, disabled FROM native_domain_streams WHERE entity_id = ? AND scope = ?", arguments: [entry.entityID.uuidString, entry.scope]),
                   (stream["disabled"] as Int) == 0 else { throw NativeDomainError.changed }
-            let proposal = try Self.domainProposal(entry, label: label, proposalID: proposalID, learned: Date(), revision: stream["revision"], db: db)
+            var proposal = try Self.domainProposal(entry, label: label, proposalID: proposalID, learned: Date(), revision: stream["revision"], db: db)
+            proposal.projectID = projectID
             try db.execute(sql: """
                 INSERT INTO native_memory_proposals(id, kind, status, target_ids_json, source_conversation_id, source_message_id, created_at, proposal_json)
                 VALUES (?, 'create', 'pending', '[]', ?, ?, ?, ?)
@@ -223,6 +225,7 @@ extension LocalChatRepository {
             if let revision, (try? entry.validate()) != nil, var rebuilt = try? domainProposal(entry, label: domain.label, proposalID: previous.id,
                 learned: entry.learnedAt, revision: revision, db: db) {
                 rebuilt.createdAt = previous.createdAt
+                rebuilt.projectID = previous.projectID
                 try db.execute(sql: "UPDATE native_memory_proposals SET proposal_json = ? WHERE id = ?", arguments: [try domainJSON(rebuilt), previous.id])
             } else {
                 try db.execute(sql: "DELETE FROM native_memory_proposals WHERE id = ?", arguments: [previous.id])
@@ -242,11 +245,12 @@ extension LocalChatRepository {
             guard let domain = previous.domain, domain.expectedRevision != revision else { continue }
             let known = try String.fetchOne(db, sql: "SELECT id FROM native_domain_entries WHERE id = ? OR source_key = ?",
                 arguments: [domain.entry.id.uuidString, try domainKey(domain.entry)]) != nil
-            guard !known, let rebuilt = try? domainProposal(domain.entry, label: domain.label, proposalID: previous.id,
+            guard !known, var rebuilt = try? domainProposal(domain.entry, label: domain.label, proposalID: previous.id,
                 learned: domain.entry.learnedAt, revision: revision, db: db) else {
                 try db.execute(sql: "DELETE FROM native_memory_proposals WHERE id = ?", arguments: [previous.id])
                 continue
             }
+            rebuilt.projectID = previous.projectID
             try db.execute(sql: "UPDATE native_memory_proposals SET proposal_json = ? WHERE id = ?", arguments: [try domainJSON(rebuilt), previous.id])
         }
         try releaseDomainDependents(db: db)
@@ -354,6 +358,13 @@ extension LocalChatRepository {
             sourceConversationID: primary?.source?.conversationID, sourceMessageID: primary?.source?.messageID,
             createdAt: existing?.createdAt ?? now, updatedAt: existing?.updatedAt ?? now, domainEntityID: entity,
             domainRevision: stream["revision"])
+        memory.projectID = try primary.flatMap { entry in
+            try String.fetchOne(db, sql: """
+                SELECT json_extract(proposal_json, '$.projectID') FROM native_memory_proposals
+                WHERE json_extract(proposal_json, '$.domain.entry.id') = ? AND json_extract(proposal_json, '$.projectID') IS NOT NULL
+                LIMIT 1
+                """, arguments: [entry.id.uuidString])
+        }
         if var previous = existing {
             previous.embedding = nil
             if previous == memory { return }

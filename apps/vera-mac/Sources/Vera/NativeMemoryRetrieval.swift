@@ -245,6 +245,11 @@ enum NativeMemoryRetrieval {
         return selected
     }
 
+    static func preferProject(_ ordered: [NativeMemoryCandidate], projectID: String?) -> [NativeMemoryCandidate] {
+        guard let projectID else { return ordered }
+        return ordered.filter { $0.record.projectID == projectID } + ordered.filter { $0.record.projectID != projectID }
+    }
+
     static func applyRerank(_ ordered: [NativeMemoryCandidate], scores: [NativeMemoryRerankScore]) -> [NativeMemoryCandidate] {
         var reranked = ordered
         for score in scores where reranked.indices.contains(score.index) { reranked[score.index].rerank = score.score }

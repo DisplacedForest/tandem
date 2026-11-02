@@ -46,7 +46,8 @@ extension ChatStore {
 
     func retrieveApprovedMemory(_ text: String, history: [NativeTurnHistoryMessage] = [],
                                 settings: NativeMemorySettings? = nil,
-                                service: (any NativeMemoryServing)? = nil) async -> NativeMemoryRetrievalResult {
+                                service: (any NativeMemoryServing)? = nil,
+                                projectID: String? = nil) async -> NativeMemoryRetrievalResult {
         let settings = settings ?? nativeMemorySettings
         guard settings.enabled, nativeMemorySettings.enabled, let local = repository as? LocalChatRepository else {
             return NativeMemoryRetrievalResult(selected: [], trace: nil)
@@ -163,6 +164,11 @@ extension ChatStore {
             }
             guard settingsUnchanged() else { return abandoned() }
             ordered = try stillEligible(ordered)
+            if let projectID {
+                let preferred = NativeMemoryRetrieval.preferProject(ordered, projectID: projectID)
+                if preferred.map(\.record.id) != ordered.map(\.record.id) { trace.notes.append("Project facts ranked first.") }
+                ordered = preferred
+            }
             let budgeted = NativeMemoryRetrieval.budget(ordered)
             let ranked = budgeted.map { NativeMemoryRanked(record: $0.record, score: $0.rerank ?? $0.fused, revision: $0.revision) }
             let selected = try local.eligibleMemory(ranked, bankScope: nativeMemorySettings.bankScope, now: nativeMemoryNow(), sensitive: sensitive)

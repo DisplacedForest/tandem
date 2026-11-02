@@ -104,7 +104,20 @@ struct ArtifactsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-        .onAppear { if !renderSafe { store.reloadArtifacts() } }
+        .onAppear {
+            if !renderSafe { store.reloadArtifacts() }
+            openRequested()
+        }
+        .onChange(of: store.requestedArtifactID) { _, _ in openRequested() }
+    }
+
+    private func openRequested() {
+        guard let id = store.requestedArtifactID else { return }
+        guard let record = store.artifactRecords.first(where: { $0.id == id }) else { return }
+        if !filter.matches(record.kind) { filter = .all }
+        search = ""
+        selectedID = record.id
+        store.requestedArtifactID = nil
     }
 
     private var listColumn: some View {

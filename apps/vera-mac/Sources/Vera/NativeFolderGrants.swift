@@ -6,13 +6,29 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     var name: String
     var bookmark: Data?
     var identity: NativeFolderIdentity?
+    var readOnly: Bool = false
 
-    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil, identity: NativeFolderIdentity? = nil) {
+    init(id: String = UUID().uuidString.lowercased(), path: String, name: String? = nil, bookmark: Data? = nil, identity: NativeFolderIdentity? = nil, readOnly: Bool = false) {
         self.id = id
         self.path = path
         self.name = name ?? URL(fileURLWithPath: path).lastPathComponent
         self.bookmark = bookmark
         self.identity = identity
+        self.readOnly = readOnly
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, path, name, bookmark, identity, readOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        path = try container.decode(String.self, forKey: .path)
+        name = try container.decode(String.self, forKey: .name)
+        bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
+        identity = try container.decodeIfPresent(NativeFolderIdentity.self, forKey: .identity)
+        readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
     }
 
     static func make(url: URL) throws -> FolderGrant {
@@ -61,6 +77,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     case binary(String)
     case tooLarge(String, Int)
     case invalidPath(String)
+    case readOnly(String)
 
     var errorDescription: String? {
         switch self {
@@ -74,6 +91,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
         case .binary(let path): return "\(path) is not a text file."
         case .tooLarge(let path, let limit): return "\(path) is larger than the \(limit / 1024) KB limit."
         case .invalidPath(let path): return "\(path) is not a valid path."
+        case .readOnly(let path): return "\(path) is read-only in this chat."
         }
     }
 }
@@ -93,6 +111,18 @@ struct NativeFolderAccess: Sendable {
         path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
+    func readOnlyRoot(under path: String) -> FolderGrant? {
+        roots.first { $0.readOnly && Self.contains(root: path, path: $0.path) }
+    }
+
+    func containsReadOnlyRoot(under path: String) -> Bool {
+        readOnlyRoot(under: path) != nil
+    }
+
+    func requireNoReadOnlyRoot(under location: NativeFolderLocation) throws {
+        if let protected = readOnlyRoot(under: location.path) { throw NativeFolderAccessError.readOnly(protected.path) }
+    }
+
     func locate(_ requested: String) throws -> NativeFolderLocation {
         guard !requested.isEmpty, !requested.contains("\0"), !requested.contains("\n"), !requested.contains("\r"), requested.utf8.count <= 4096,
               !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: Self.reserved) else {
@@ -110,12 +140,13 @@ struct NativeFolderAccess: Sendable {
         }
         let candidates = [URL(fileURLWithPath: absolute).standardizedFileURL.path,
                           URL(fileURLWithPath: absolute).standardizedFileURL.resolvingSymlinksInPath().path]
-        for candidate in candidates {
-            for root in roots where Self.contains(root: root.path, path: candidate) {
-                let relative = String(candidate.dropFirst(root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-                guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
-                return NativeFolderLocation(root: root, components: relative)
-            }
+        let matches = candidates.flatMap { candidate in
+            roots.filter { Self.contains(root: $0.path, path: candidate) }.map { (root: $0, path: candidate) }
+        }
+        if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
+            let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
+            return NativeFolderLocation(root: best.root, components: relative)
         }
         throw NativeFolderAccessError.outsideGrants(requested)
     }

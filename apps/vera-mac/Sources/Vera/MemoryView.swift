@@ -6,6 +6,7 @@ struct MemoryView: View {
     @State private var search = ""
     @State private var selectedGroup: NativeMemoryGroup?
     @State private var selectedBank: String?
+    @State private var selectedProject: String?
     @State private var selectedCategory: NativeMemoryCategory?
     @State private var selectedStatus: NativeMemoryStatus? = .approved
     @State private var selectedExpiry = NativeMemoryExpiryFilter.all
@@ -22,8 +23,12 @@ struct MemoryView: View {
     private var visible: [NativeMemoryRecord] {
         let filter = NativeMemoryLibraryFilter(
             query: search, group: selectedGroup, bank: selectedBank,
-            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry)
+            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry, project: selectedProject)
         return store.memoryRecords.filter { filter.matches($0) }
+    }
+
+    private var selectedProjectName: String? {
+        selectedProject.flatMap { store.project($0)?.name }
     }
 
     private var banks: [String] {
@@ -33,9 +38,9 @@ struct MemoryView: View {
     private var visibleUpcoming: [NativeUpcomingSubject] {
         let filter = NativeMemoryLibraryFilter(
             query: search, group: selectedGroup, bank: selectedBank,
-            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry)
+            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry, project: selectedProject)
         return upcomingSubjects.compactMap { subject in
-            guard filter.matches(subject) else { return nil }
+            guard selectedProject == nil, filter.matches(subject) else { return nil }
             return NativeUpcomingSubject(entityID: subject.entityID, scope: subject.scope, label: subject.label,
                 entries: filter.matchingEntries(subject), sources: subject.sources)
         }
@@ -258,6 +263,16 @@ struct MemoryView: View {
                 }
                 .accessibilityLabel("Filter by bank")
                 .accessibilityValue(selectedBank ?? "All banks")
+                if !store.projects.isEmpty {
+                    Menu(selectedProjectName ?? "Project") {
+                        Button("All projects") { selectedProject = nil }
+                        ForEach(store.projects) { project in
+                            Button(project.name) { selectedProject = project.id }
+                        }
+                    }
+                    .accessibilityLabel("Filter by project")
+                    .accessibilityValue(selectedProjectName ?? "All projects")
+                }
                 Menu(selectedCategory?.rawValue.capitalized ?? "Category") {
                     Button("All categories") { selectedCategory = nil }
                     ForEach(NativeMemoryCategory.allCases) { category in
@@ -813,6 +828,10 @@ struct MemoryDetailView: View {
             }
             Label(durability, systemImage: memory.expiry == nil ? "infinity" : "calendar.badge.clock")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            if let project = memory.projectID.flatMap({ store.project($0) }) {
+                Label("From the \(project.name) project", systemImage: AppSection.projects.icon)
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
             if memory.sensitiveConsent == true {
                 Label("Contains sensitive text", systemImage: "lock")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
