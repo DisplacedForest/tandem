@@ -217,6 +217,10 @@ final class ConfigStore: ObservableObject {
         }
     }
 
+    func settleNativeMCP() async {
+        await nativeMCPReplacement?.value
+    }
+
     private func nativeMCPToolIDs(serverID: String) -> Set<String> {
         let configured = NativeMCPServerConfiguration.load(raw).0.filter { $0.id == serverID }
         let declared = configured.flatMap { server in server.readTools.map(server.toolID) }

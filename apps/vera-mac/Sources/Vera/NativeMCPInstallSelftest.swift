@@ -93,6 +93,158 @@ enum NativeMCPInstallSelftest {
         try await runScopeNarrowing(catalog: catalog, entry: entry)
         try await runReconcile(catalog: catalog, entry: entry)
         try await runFailedWrite(catalog: catalog, entry: entry)
+        try await runUnrelatedChangeKeepsRead(catalog: catalog, entry: entry)
+        try await runNarrowingRefusesRead(catalog: catalog, entry: entry)
+        try await runRemovalCancelsRead(catalog: catalog, entry: entry)
+        try await runReconnectBeforeRetirement(catalog: catalog, entry: entry)
+    }
+
+    actor HeldConnection: NativeMCPConnection {
+        let tools: [NativeMCPDiscoveredTool]
+        var released = false
+        var waiting = 0
+        var closes = 0
+        init(tools: [NativeMCPDiscoveredTool]) { self.tools = tools }
+        func connect() async throws {}
+        func listTools(cursor: String?) async throws -> NativeMCPPage { NativeMCPPage(tools: tools, nextCursor: nil) }
+        func call(name: String, arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
+            waiting += 1
+            defer { waiting -= 1 }
+            while !released { try await Task.sleep(for: .milliseconds(5)) }
+            return .object(["reading": .number(7)])
+        }
+        func disconnect() async { closes += 1 }
+        func release() { released = true }
+        func hold() { released = false }
+        func isWaiting() -> Bool { waiting > 0 }
+        func closeCount() -> Int { closes }
+    }
+
+    final class ConnectionLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var made: [(server: String, connection: HeldConnection)] = []
+        func record(_ server: String, _ connection: HeldConnection) { lock.withLock { made.append((server, connection)) } }
+        func connections(_ server: String) -> [HeldConnection] { lock.withLock { made.filter { $0.server == server }.map(\.connection) } }
+    }
+
+    struct Harness {
+        let config: ConfigStore
+        let manager: NativeMCPManager
+        let log: ConnectionLog
+        let id: String
+        let row: [String: Any]
+        let toolID: String
+    }
+
+    @MainActor
+    static func harness(catalog: NativeMCPStarterCatalog, entry: NativeMCPStarterEntry, scopes: [String]) async throws -> Harness {
+        let log = ConnectionLog()
+        let names = entry.readTools
+        let manager = NativeMCPManager(servers: [], factory: { server in
+            let connection = HeldConnection(tools: names.map { NativeMCPDiscoveredTool(name: $0, description: "Synthetic read.", inputSchema: schema) })
+            log.record(server.id, connection)
+            return connection
+        })
+        let config = store(Disk(), manager)
+        let row = catalog.configurationRow(for: entry, readTools: names, scopes: scopes)
+        guard let id = row["id"] as? String else { throw Failure(description: "row has no id") }
+        try config.addNativeMCPServer(row)
+        await config.settleNativeMCP()
+        await manager.connect(id)
+        guard let configuration = manager.servers.first(where: { $0.id == id })?.configuration, manager.servers.first?.connected == true else {
+            throw Failure(description: "the fixture service did not connect")
+        }
+        let toolID = configuration.toolID(names[0])
+        config.setNativeTool(toolID, enabled: true)
+        return Harness(config: config, manager: manager, log: log, id: id, row: row, toolID: toolID)
+    }
+
+    @MainActor
+    static func startRead(_ harness: Harness, scope: PiModelScope) async throws -> (Task<NativeJSONValue, Error>, HeldConnection) {
+        guard let connection = harness.log.connections(harness.id).last else { throw Failure(description: "no fixture connection") }
+        await connection.hold()
+        let authority = harness.manager.authority
+        let name = harness.toolID
+        let task = Task { try await authority.call(scope: scope, id: UUID().uuidString, name: name, arguments: .object(["query": .string("status")])) }
+        for _ in 0..<200 {
+            if await connection.isWaiting() { return (task, connection) }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        task.cancel()
+        throw Failure(description: "the fixture read did not start")
+    }
+
+    @MainActor
+    static func runUnrelatedChangeKeepsRead(catalog: NativeMCPStarterCatalog, entry: NativeMCPStarterEntry) async throws {
+        let harness = try await harness(catalog: catalog, entry: entry, scopes: ["focused", "worker"])
+        let (read, connection) = try await startRead(harness, scope: try NativeMCPAuthoritySelftest.scope(mode: "focused"))
+        try harness.config.addNativeMCPServer(catalog.configurationRow(for: entry, readTools: entry.readTools, scopes: ["focused"]))
+        await harness.config.settleNativeMCP()
+        await connection.release()
+        let result = try await read.value
+        try check(result.pi("content").pi("reading") == .number(7), "the read on the unchanged service should return normally")
+        try check(harness.manager.servers.first(where: { $0.id == harness.id })?.connected == true, "the unchanged service should stay connected")
+        try check(await connection.closeCount() == 0, "the unchanged service connection should not close")
+    }
+
+    @MainActor
+    static func runNarrowingRefusesRead(catalog: NativeMCPStarterCatalog, entry: NativeMCPStarterEntry) async throws {
+        let harness = try await harness(catalog: catalog, entry: entry, scopes: ["focused", "worker"])
+        let (read, connection) = try await startRead(harness, scope: try NativeMCPAuthoritySelftest.scope("worker"))
+        var narrowed = harness.row
+        narrowed["scopes"] = ["focused"]
+        try harness.config.updateNativeMCPServer(narrowed)
+        await harness.config.settleNativeMCP()
+        await connection.release()
+        do {
+            _ = try await read.value
+            throw Failure(description: "a read in a removed scope should be refused")
+        } catch is NativeToolError {} catch is CancellationError {}
+        try check(harness.manager.servers.first(where: { $0.id == harness.id })?.connected == true, "narrowing should keep the service connected")
+        try check(await connection.closeCount() == 0, "narrowing should not close the connection")
+        let (focusedRead, _) = try await startRead(harness, scope: try NativeMCPAuthoritySelftest.scope(mode: "focused"))
+        await connection.release()
+        _ = try await focusedRead.value
+    }
+
+    @MainActor
+    static func runRemovalCancelsRead(catalog: NativeMCPStarterCatalog, entry: NativeMCPStarterEntry) async throws {
+        let harness = try await harness(catalog: catalog, entry: entry, scopes: ["focused"])
+        let (read, connection) = try await startRead(harness, scope: try NativeMCPAuthoritySelftest.scope(mode: "focused"))
+        try harness.config.removeNativeMCPServer(id: harness.id)
+        await harness.config.settleNativeMCP()
+        do {
+            _ = try await read.value
+            throw Failure(description: "a read on a removed service should be cancelled")
+        } catch is NativeToolError {} catch is CancellationError {}
+        try check(await connection.closeCount() == 1, "removal should tear down the connection once")
+        try check(harness.manager.servers.isEmpty, "removal should drop the service")
+    }
+
+    @MainActor
+    static func runReconnectBeforeRetirement(catalog: NativeMCPStarterCatalog, entry: NativeMCPStarterEntry) async throws {
+        let harness = try await harness(catalog: catalog, entry: entry, scopes: ["focused"])
+        guard let old = harness.log.connections(harness.id).first,
+              let configuration = harness.manager.servers.first?.configuration else { throw Failure(description: "missing first connection") }
+        let moved = try NativeMCPServerConfiguration(id: configuration.id, name: configuration.name, endpoint: URL(string: "https://mcp.example.com/mcp")!,
+                                                     readTools: configuration.readTools, scopes: configuration.scopes)
+        let stale = harness.manager.applyConfigurationSynchronously([moved])
+        try check(stale[harness.id] != nil, "an address change should retire the old connection")
+        await harness.manager.connect(harness.id)
+        let made = harness.log.connections(harness.id)
+        try check(made.count == 2, "reconnecting should open a second connection")
+        try check(harness.manager.servers.first?.connected == true, "the new connection should be live before retirement")
+        await harness.manager.retireConfiguration(stale)
+        try check(await old.closeCount() == 1, "retirement should close exactly the old connection")
+        try check(await made[1].closeCount() == 0, "retirement should leave the new connection open")
+        try check(harness.manager.servers.first?.connected == true, "the new connection should stay live after retirement")
+        let movedToolID = moved.toolID(entry.readTools[0])
+        harness.config.setNativeTool(movedToolID, enabled: true)
+        let current = Harness(config: harness.config, manager: harness.manager, log: harness.log, id: harness.id, row: harness.row, toolID: movedToolID)
+        let (read, connection) = try await startRead(current, scope: try NativeMCPAuthoritySelftest.scope(mode: "focused"))
+        try check(connection === made[1], "reads should use the new connection")
+        await connection.release()
+        _ = try await read.value
     }
 
     static let schema: NativeJSONValue = .object([
@@ -135,13 +287,11 @@ enum NativeMCPInstallSelftest {
         config.setNativeTool(record.id, enabled: true)
         let access = manager.authority.access
         try check(access.allowed(record, scope: "worker") && access.allowed(record, scope: "focused"), "the tool should start allowed in both scopes")
-        let revision = access.permissionRevision()
         var narrowed = row
         narrowed["scopes"] = ["focused"]
         try config.updateNativeMCPServer(narrowed)
         try check(!access.allowed(record, scope: "worker"), "narrowing should revoke the worker scope before any await")
         try check(access.allowed(record, scope: "focused"), "narrowing should keep the focused scope")
-        try check(!access.allowed(record, scope: "focused", revision: revision), "a call holding the old revision should fail closed")
         try check(access.snapshot().first?.connected == true, "narrowing should keep the connection")
         try check(config.nativeSettings.enabledToolIDs.contains(record.id), "narrowing should keep consent")
         await manager.authority.permissionsChanged()
