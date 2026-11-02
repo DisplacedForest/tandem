@@ -250,8 +250,21 @@ struct CompanionFigure: View {
     let eyes: CompanionPose
     let size: CGFloat
 
+    static let clearance: CGFloat = 0.12
+
+    static func inner(for size: CGFloat) -> CGFloat { size * (1 - 2 * clearance) }
+
+    static func bodyBounds(shape: CompanionShape, pose: CompanionPose, size: CGFloat) -> CGRect {
+        let inner = inner(for: size)
+        let inset = size * clearance
+        let path = shape.bodyPath(in: CGRect(x: 0, y: 0, width: inner, height: inner))
+            .applying(pose.transform(origin: CompanionShape.bodyAnchor, unit: inner / 100))
+        return path.boundingRect.offsetBy(dx: inset, dy: inset)
+    }
+
     var body: some View {
-        let unit = size / 100
+        let inner = Self.inner(for: size)
+        let unit = inner / 100
         ZStack {
             CompanionBodyShape(shape: appearance.shape).fill(appearance.color.fill)
             CompanionHighlightShape(shape: appearance.shape).fill(Color.white.opacity(0.15))
@@ -259,8 +272,9 @@ struct CompanionFigure: View {
                 .fill(appearance.color.eyeColor)
                 .transformEffect(face.transform(origin: appearance.shape.faceAnchor, unit: unit))
         }
-        .frame(width: size, height: size)
+        .frame(width: inner, height: inner)
         .transformEffect(bodyPose.transform(origin: CompanionShape.bodyAnchor, unit: unit))
+        .frame(width: size, height: size)
     }
 }
 

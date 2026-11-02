@@ -65,15 +65,3 @@ final class CompanionPresence: ObservableObject {
         if next != state { state = next }
     }
 }
-
-struct LiveCompanionAvatar: View {
-    @EnvironmentObject private var presence: CompanionPresence
-    @Environment(\.companionName) private var name
-    @Environment(\.companionAppearance) private var appearance
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var size: CGFloat
-
-    var body: some View {
-        CompanionAvatarView(appearance: appearance, state: presence.state, size: size, name: name, reduceMotion: reduceMotion)
-    }
-}

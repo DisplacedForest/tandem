@@ -18,10 +18,19 @@ struct CompanionAppearanceDraft: Equatable {
     var nameChanged: Bool { !trimmedName.isEmpty && trimmedName != originalName }
 
     @MainActor
-    func commit(config: ConfigStore, store: any CompanionAppearanceStore) throws {
-        if nameChanged { config["assistant_name"] = trimmedName }
-        try store.save(appearance)
-        try config.save()
+    func commit(config: ConfigStore, store: any CompanionAppearanceStore, chat: ChatStore? = nil) throws {
+        let previousName = config["assistant_name"]
+        let previousAppearance = store.load()
+        do {
+            if nameChanged { config["assistant_name"] = trimmedName }
+            try store.save(appearance)
+            try config.save()
+        } catch {
+            config["assistant_name"] = previousName
+            try? store.save(previousAppearance)
+            throw error
+        }
+        if nameChanged { chat?.adoptAssistantName(trimmedName) }
     }
 }
 
@@ -29,6 +38,7 @@ struct CompanionAppearancePicker: View {
     @ObservedObject var config: ConfigStore
     private let store: any CompanionAppearanceStore
     private let renderSafe: Bool
+    private let chat: ChatStore?
     @State private var draft: CompanionAppearanceDraft
     @State private var failed = false
     @FocusState private var focus: Focus?
@@ -40,9 +50,10 @@ struct CompanionAppearancePicker: View {
         case color(CompanionColor)
     }
 
-    init(config: ConfigStore, store: (any CompanionAppearanceStore)? = nil, renderSafe: Bool = false) {
+    init(config: ConfigStore, store: (any CompanionAppearanceStore)? = nil, chat: ChatStore? = nil, renderSafe: Bool = false) {
         self.config = config
         self.renderSafe = renderSafe
+        self.chat = chat
         let resolved = store ?? ConfigCompanionAppearanceStore(config: config)
         self.store = resolved
         _draft = State(initialValue: CompanionAppearanceDraft(name: config.assistantName, appearance: resolved.load()))
@@ -228,7 +239,7 @@ struct CompanionAppearancePicker: View {
 
     private func save() {
         do {
-            try draft.commit(config: config, store: store)
+            try draft.commit(config: config, store: store, chat: chat)
             failed = false
             dismiss()
         } catch {

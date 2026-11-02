@@ -149,6 +149,54 @@ extension SelfTest {
         try require(fake.saves == 1 && fake.stored == CompanionAppearance(shape: .fold, color: .sky), "Saving writes the appearance once")
         try require(pickerConfig["assistant_name"] == "Wren" && pickerDisk.contents["assistant_name"] as? String == "Wren"
                     && pickerDisk.writes == 1, "Saving writes a changed name")
+        let chat = CompanionShotFixture.store()
+        chat.adoptAssistantName("Juniper")
+        var renaming = CompanionAppearanceDraft(name: "Juniper", appearance: fake.load())
+        renaming.name = "Fern"
+        try renaming.commit(config: pickerConfig, store: fake, chat: chat)
+        try require(chat.assistantName == "Fern", "A saved rename reaches the running chat identity")
+        var untouchedChat = CompanionAppearanceDraft(name: "Fern", appearance: fake.load())
+        untouchedChat.appearance = CompanionAppearance(shape: .mallow, color: .rose)
+        try untouchedChat.commit(config: pickerConfig, store: fake, chat: chat)
+        try require(chat.assistantName == "Fern", "Saving only an appearance leaves the running name alone")
+
+        let brokenDisk = CompanionAppearanceFixtureDisk()
+        brokenDisk.contents = ["assistant_name": "Juniper"]
+        let brokenConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { brokenDisk.contents },
+                                       nativeMCP: NativeMCPManager(servers: []),
+                                       writeConfiguration: { _ in throw NativeTaskFixture.Failure.assertion("disk full") })
+        let brokenStore = ConfigCompanionAppearanceStore(config: brokenConfig)
+        var failing = CompanionAppearanceDraft(name: "Juniper", appearance: brokenStore.load())
+        failing.name = "Moss"
+        failing.appearance = CompanionAppearance(shape: .fold, color: .sky)
+        var threw = false
+        do { try failing.commit(config: brokenConfig, store: brokenStore, chat: chat) } catch { threw = true }
+        try require(threw, "A failed write surfaces as an error")
+        try require(brokenConfig["assistant_name"] == "Juniper" && brokenStore.load() == .default && chat.assistantName == "Fern",
+                    "A failed save restores the previous name and appearance and leaves the running identity alone")
+
+        for size in [CGFloat(20), 36, 120, 220] {
+            let frame = CGRect(x: 0, y: 0, width: size, height: size)
+            for shape in CompanionShape.allCases {
+                for state in CompanionState.allCases {
+                    let motion = CompanionMotion.of(state)
+                    var poses = [motion.body.pose(at: nil)]
+                    if let track = motion.body.track {
+                        for step in 0...120 { poses.append(track.pose(at: track.duration * Double(step) / 120)) }
+                    }
+                    for pose in poses {
+                        let bounds = CompanionFigure.bodyBounds(shape: shape, pose: pose, size: size)
+                        try require(frame.insetBy(dx: -0.01, dy: -0.01).contains(bounds),
+                                    "\(shape.displayName) stays inside a \(Int(size)) point frame while \(state.displayName)")
+                    }
+                }
+            }
+        }
+        try require(VoiceView.companionState(for: .speaking, playing: false) == .thinking
+                    && VoiceView.companionState(for: .speaking, playing: true) == .speaking
+                    && VoiceView.companionState(for: .listening, playing: false) == .listening
+                    && VoiceView.companionState(for: .idle, playing: false) == .ready,
+                    "The voice view shows Speaking only while audio really plays")
 
         let untouched = CompanionAppearanceFixtureDisk()
         let untouchedConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { untouched.contents },
@@ -159,6 +207,6 @@ extension SelfTest {
         try same.commit(config: untouchedConfig, store: CompanionAppearanceFixtureStore())
         try require(untouched.contents["assistant_name"] == nil, "An unchanged name is not written")
 
-        print("  companion appearance OK (shapes, colors, storage, state priority, motion, picker commit)")
+        print("  companion appearance OK (shapes, colors, storage, state priority, motion, frame clearance, picker commit, rename, failed save)")
     }
 }

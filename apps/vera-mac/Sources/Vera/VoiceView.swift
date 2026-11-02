@@ -19,7 +19,7 @@ struct VoiceView: View {
                 .padding(.horizontal, 28).padding(.top, 36)
 
                 Spacer()
-                CompanionAvatarView(appearance: appearance, state: companionState, size: 220,
+                CompanionAvatarView(appearance: appearance, state: Self.companionState(for: voice.state, playing: voice.isPlayingAudio), size: 220,
                                     name: store.assistantName, reduceMotion: reduceMotion)
                 Text(caption)
                     .font(.system(size: 14))
@@ -48,10 +48,10 @@ struct VoiceView: View {
         }
     }
 
-    private var companionState: CompanionState {
-        switch voice.state {
+    static func companionState(for state: VoiceSession.State, playing: Bool) -> CompanionState {
+        switch state {
         case .listening: return .listening
-        case .speaking: return .speaking
+        case .speaking: return playing ? .speaking : .thinking
         case .transcribing, .thinking: return .thinking
         case .idle: return .ready
         }

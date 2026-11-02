@@ -106,10 +106,11 @@ struct CompanionAvatar: View {
     var size: CGFloat
     @Environment(\.companionName) private var name
     @Environment(\.companionAppearance) private var appearance
+    @Environment(\.companionLiveState) private var state
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        CompanionAvatarView(appearance: appearance, state: .ready, size: size, name: name, reduceMotion: reduceMotion)
+        CompanionAvatarView(appearance: appearance, state: state, size: size, name: name, reduceMotion: reduceMotion)
     }
 }
 
@@ -132,5 +133,16 @@ extension EnvironmentValues {
     var companionAppearance: CompanionAppearance {
         get { self[CompanionAppearanceKey.self] }
         set { self[CompanionAppearanceKey.self] = newValue }
+    }
+}
+
+private struct CompanionLiveStateKey: EnvironmentKey {
+    static let defaultValue = CompanionState.ready
+}
+
+extension EnvironmentValues {
+    var companionLiveState: CompanionState {
+        get { self[CompanionLiveStateKey.self] }
+        set { self[CompanionLiveStateKey.self] = newValue }
     }
 }

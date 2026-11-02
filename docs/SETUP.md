@@ -321,7 +321,7 @@ The shortcut is stored as `companion_shortcut` in `~/.vera/config.json`. The val
 
 The companion is the small figure that stands for the assistant. It uses the same assistant name as the rest of the app. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
 
-The figure appears wherever the companion does, including the voice view, where it replaces the old orb. It has six states, each shown through motion rather than text:
+The figure appears wherever the companion does: the sidebar, Settings and the voice view, where it replaces the old orb. Outside the voice view its state follows the conversation you have selected, so a turn running in another chat does not animate it. It has six states, each shown through motion rather than text:
 
 - Ready: a slow breath and an occasional blink.
 - Thinking: a side to side sway while an answer is being generated, or while voice is transcribing or thinking.

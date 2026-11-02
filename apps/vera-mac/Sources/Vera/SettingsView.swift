@@ -912,7 +912,7 @@ private struct IdentityTab: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $changingAppearance) {
-            CompanionAppearancePicker(config: config, store: ConfigCompanionAppearanceStore(config: config))
+            CompanionAppearancePicker(config: config, store: ConfigCompanionAppearanceStore(config: config), chat: store)
         }
     }
 
