@@ -235,7 +235,8 @@ extension LocalChatRepository {
     }
 
     func stageExtractedDomainEntry(_ candidate: NativeDomainCandidate, conversationID: String, messageID: String,
-                                   sourceText: String, fallbackDate: Date, now: Date = Date()) throws -> NativeMemoryProposal? {
+                                   sourceText: String, fallbackDate: Date, now: Date = Date(),
+                                   projectID: String? = nil) throws -> NativeMemoryProposal? {
         let proposalID = Self.domainExtractionID("entry|" + conversationID + "|" + messageID + "|" + (try Self.domainJSON(candidate)))
         let removal = Self.domainRemovalKey(conversationID: conversationID, messageID: messageID,
             subject: candidate.subject, scope: candidate.scope, payload: candidate.payload)
@@ -276,7 +277,7 @@ extension LocalChatRepository {
             evidence: candidate.evidence, entityResolved: true, status: .supported, supersedes: supersedes, payload: candidate.payload)
         do { try entry.validate() } catch { throw NativeDomainExtractionSkip(reason: "the entry is incomplete") }
         do {
-            return try stageDomainProposal(entry, label: candidate.subject, proposalID: proposalID)
+            return try stageDomainProposal(entry, label: candidate.subject, proposalID: proposalID, projectID: projectID)
         } catch NativeDomainError.sourceUnavailable {
             throw NativeDomainExtractionSkip(reason: "the message is no longer available")
         } catch NativeDomainError.changed {

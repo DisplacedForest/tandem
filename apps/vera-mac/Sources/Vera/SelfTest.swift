@@ -402,6 +402,9 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: artifact store \(error)"); exit(1) }
         do { try await ArtifactProducerSelftest.run() }
         catch { print("SELFTEST ERROR: artifact producers \(error)"); exit(1) }
+        do { try await ProjectStoreSelftest.run() }
+        catch { print("SELFTEST ERROR: project store \(error)"); exit(1) }
+        do { try await ProjectContextSelftest.run() } catch { print("SELFTEST ERROR: project context \(error)"); exit(1) }
         do { try runComposerMentions() }
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }

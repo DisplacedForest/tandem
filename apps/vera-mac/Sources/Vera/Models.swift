@@ -59,6 +59,7 @@ struct Conversation: Identifiable, Hashable {
     var titleSource: ConversationTitleSource = .fallback
     var grants: [FolderGrant] = []
     var rules: NativeConversationRules = NativeConversationRules()
+    var projectID: String? = nil
 }
 
 enum ConversationTitleSource: String, Codable, Sendable {
