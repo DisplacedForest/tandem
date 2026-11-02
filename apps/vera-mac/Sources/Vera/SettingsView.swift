@@ -859,6 +859,7 @@ private struct MaintenanceControls: View {
 private struct IdentityTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @State private var changingAppearance = false
     @EnvironmentObject var companion: CompanionCoordinator
     var body: some View {
         Form {
@@ -867,6 +868,14 @@ private struct IdentityTab: View {
                             tip: "How your assistant is named across chat, voice and background work. Tandem is the app; this is the assistant.")
                 ConfigField(label: "Your name", key: "owner_name", placeholder: "how your assistant greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
+            }
+            Section("Companion") {
+                HStack(spacing: 14) {
+                    CompanionAvatar(size: 36)
+                    Text("\(config.companionAppearance.shape.displayName) in \(config.companionAppearance.color.displayName)")
+                    Spacer()
+                    Button("Change appearance") { changingAppearance = true }
+                }
             }
             Section("Appearance") {
                 Picker("Appearance", selection: config.binding("appearance")) {
@@ -902,6 +911,9 @@ private struct IdentityTab: View {
             SaveSection()
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $changingAppearance) {
+            CompanionAppearancePicker(config: config, store: ConfigCompanionAppearanceStore(config: config), chat: store)
+        }
     }
 
     private func apply(_ shortcut: CompanionShortcut?) {
