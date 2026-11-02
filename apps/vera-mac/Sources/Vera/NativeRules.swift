@@ -215,7 +215,7 @@ enum NativeRequestPreapproval {
     ]
 
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
+                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "revoke", "revoked", "rescind", "rescinded", "retracted", "reverse", "strike that", "belay", "void", "nullify", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
 
     static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
@@ -291,6 +291,10 @@ enum NativeCommandClassifier {
     static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
     static let packageManagers: Set<String> = ["npm", "pnpm", "yarn", "cargo", "pip", "pip3", "twine", "gem", "docker", "bun", "poetry", "uv"]
     static let publishing: Set<String> = ["publish", "deploy", "push", "login", "upload", "release"]
+    static let executing: Set<String> = ["exec", "dlx", "x", "create", "init"]
+    static let executors: Set<String> = ["npx", "bunx", "uvx", "pipx"]
+    static let writers: Set<String> = ["curl", "wget"]
+    static let globCharacters: Set<Character> = ["*", "?", "["]
     static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf", "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!"]
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
     static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua"]
@@ -377,7 +381,8 @@ enum NativeCommandClassifier {
     }
 
     static func hasInlineCode(_ name: String, _ arguments: [String]) -> Bool {
-        if wrappers.contains(name) { return true }
+        if wrappers.contains(name) || executors.contains(name) { return true }
+        if packageManagers.contains(name), let first = arguments.first(where: { !$0.hasPrefix("-") }), executing.contains(first), name != "cargo" { return true }
         if shells.contains(name) && arguments.contains(where: { argument in
             if argument.hasPrefix("--") { return argument.contains("command") }
             return argument.hasPrefix("-") && argument.dropFirst().contains("c")
@@ -489,7 +494,10 @@ enum NativeCommandClassifier {
                     index += 1
                 }
             }
-            if name == "find" && arguments.contains(where: { findEffects.contains($0) }) { name = "rm" }
+            if name == "find" && arguments.contains(where: { findEffects.contains($0) }) {
+                name = "rm"
+                arguments = Array(arguments.prefix(while: { !$0.hasPrefix("-") && !$0.hasPrefix("(") && $0 != "!" }))
+            }
             if ["cd", "pushd", "popd", "chdir"].contains(name) {
                 if name == "popd" { working = nil; continue }
                 guard let target = arguments.first(where: { !$0.hasPrefix("-") }) else { working = nil; continue }
@@ -499,6 +507,16 @@ enum NativeCommandClassifier {
             if destructive.contains(name) {
                 guard let segmentWorking, !subshells else { return .sensitive }
                 if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .sensitive }
+                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .sensitive }
+            }
+            if writers.contains(name) {
+                for argument in arguments where !argument.contains("://") {
+                    let value = argument.hasPrefix("--") && argument.contains("=") ? String(argument[argument.index(after: argument.firstIndex(of: "=")!)...]) : argument
+                    if value.hasPrefix("-") { continue }
+                    if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
+                        if pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                    }
+                }
             }
             if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
             if name == "curl" && arguments.contains(where: { argument in
