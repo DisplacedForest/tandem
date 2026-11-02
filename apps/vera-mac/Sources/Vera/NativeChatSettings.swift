@@ -383,7 +383,7 @@ enum NativeChatToolCatalog {
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Background work",
-                summary: "Hands research and document writing to a background task that reports on a card in the chat.",
+                summary: "Hands research and document writing to a background task that reports on a card in the chat, and proposes schedules for recurring work that you confirm before they are saved.",
                 available: true,
                 setup: "Enable this tool to allow background research and documents."),
             NativeImageTools.descriptor(configured: imageConfigured),

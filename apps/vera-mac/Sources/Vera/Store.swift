@@ -2022,6 +2022,7 @@ final class ChatStore: ObservableObject {
         let (authority, consented) = turnToolAuthority(for: turn)
         var allowed = NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)),
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil)
+        allowed = NativeScheduleTools.enabledIDs(allowed, hasStore: nativeScheduleStore != nil)
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
@@ -2033,7 +2034,8 @@ final class ChatStore: ObservableObject {
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
         let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
             + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
-            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
+            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true)
+            + (scheduleToolDefinition().map { [$0] } ?? []))
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2087,6 +2089,9 @@ final class ChatStore: ObservableObject {
                 ])
             }
         }
+        if let scheduleTool = scheduleToolDefinition() {
+            turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [scheduleTool])
+        }
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
@@ -2130,6 +2135,7 @@ final class ChatStore: ObservableObject {
         var enabledToolIDs = capabilityProfile.supportsTools
             ? NativeTaskTools.enabledIDs(authority.filter(turn.enabledToolIDs.intersection(consented)), hasEngine: nativeTaskEngine.base != nil,
                                          hasRepository: nativeTaskRepository != nil) : []
+        enabledToolIDs = NativeScheduleTools.enabledIDs(enabledToolIDs, hasStore: nativeScheduleStore != nil)
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
         if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {

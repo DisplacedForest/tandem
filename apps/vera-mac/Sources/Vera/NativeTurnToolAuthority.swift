@@ -4,6 +4,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
     let allowsTools: Bool
     let allowsResearch: Bool
     let allowsDocument: Bool
+    let allowsSchedule: Bool
 
     var allowsBackground: Bool { allowsResearch || allowsDocument }
 
@@ -27,15 +28,22 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         let after = #"(?:\s+(?!(?:is|was|means|can|should|does|has|had)\b)|\s*(?:[.!?:,;]|$))"#
         let researchExplicit = Self.matches(text, start + polite + researchAction) || Self.matches(text, start + researchAction + after)
         let documentExplicit = Self.matches(text, start + polite + documentAction) || Self.matches(text, start + documentAction + after)
+        let noSchedule = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:set\s+up\s+|create\s+|make\s+)?(?:a\s+|any\s+)?(?:schedules?|recurring)\b|\bno\s+(?:new\s+)?schedules?\b"#)
+        let scheduleExplicit = Self.matches(text, Self.scheduleIntent)
         allowsTools = !noTools
+        allowsSchedule = !noTools && !noSchedule && (scheduleExplicit || mentions.contains(NativeScheduleTools.toolID))
         allowsResearch = !noTools && !noResearch && (researchExplicit || mentions.contains(NativeWebTools.researchToolID))
         allowsDocument = !noTools && !noDocument && (documentExplicit || mentions.contains(NativeTaskTools.toolID))
     }
 
     func filter(_ ids: Set<String>) -> Set<String> {
         guard allowsTools else { return [] }
-        return allowsBackground ? ids : ids.subtracting([NativeWebTools.researchToolID, NativeTaskTools.toolID])
+        var kept = allowsBackground ? ids : ids.subtracting([NativeWebTools.researchToolID, NativeTaskTools.toolID])
+        if !allowsSchedule { kept.remove(NativeScheduleTools.toolID) }
+        return kept
     }
+
+    static let scheduleIntent = #"\b(?:schedule|every\s+(?:day|morning|afternoon|evening|night|weekday|week|month|other\s+day|few\s+hours|\d+\s+(?:hours?|hrs?)|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|each\s+(?:day|morning|evening|week|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|weekdays|nightly|hourly|recurring|regularly|on\s+a\s+schedule|once\s+a\s+(?:day|week)|(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s|tomorrow\s+(?:morning|afternoon|evening|night|at)|later\s+(?:today|tonight|this\s+(?:morning|afternoon|evening))|tonight\s+at|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|o'clock)?\s+(?:tomorrow|tonight|every|each|on)\b)"#
 
     private static func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
