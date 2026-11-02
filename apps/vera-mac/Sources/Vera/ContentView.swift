@@ -404,6 +404,9 @@ private struct ChatPane: View {
         }
         .onAppear(perform: refreshDotSetup)
         .onChange(of: store.dotProfile) { refreshDotSetup() }
+        .onChange(of: workCollapsed) { _, collapsed in
+            if !collapsed, store.isVeraThread(conversation?.id) { showingWork = false }
+        }
         .onChange(of: store.dotProfileLoaded) { refreshDotSetup() }
         .sheet(isPresented: $showingDotSetup) {
             DotSetupView().environmentObject(store).environmentObject(config)

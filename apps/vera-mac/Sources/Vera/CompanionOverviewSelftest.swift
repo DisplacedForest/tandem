@@ -9,7 +9,7 @@ enum CompanionOverviewFixture {
         let state = status == .completed && hasArtifact ? "Ready to open" : status.title(document: document)
         return CompanionActivityItem(id: id.uuidString, title: title, state: state, status: status, isDocument: document,
                                      hasArtifact: hasArtifact, decision: decision, date: Date().addingTimeInterval(-minutesAgo * 60),
-                                     source: .task(id))
+                                     source: .task(id), canOpen: true, canStop: status != .completed && status != .failed && status != .stopped)
     }
 
     static func schedules() -> [NativeSchedule] {
@@ -33,6 +33,8 @@ enum CompanionOverviewFixture {
             NativeScheduleRun(id: "run-linked", scheduleID: "overview-morning", scheduledFor: now.addingTimeInterval(-2 * 3600),
                               startedAt: now.addingTimeInterval(-2 * 3600), outcome: .running, taskReferenceID: visitID.uuidString),
             NativeScheduleRun(id: "run-foreign", scheduleID: "overview-other", scheduledFor: now.addingTimeInterval(-3600), outcome: .completed),
+            NativeScheduleRun(id: "run-orphan", scheduleID: "overview-morning", scheduledFor: now.addingTimeInterval(-50 * 3600),
+                              startedAt: now.addingTimeInterval(-50 * 3600), outcome: .running, conversationID: "thread"),
         ]
     }
 
@@ -62,13 +64,25 @@ enum CompanionOverviewFixture {
 
 @MainActor
 extension SelfTest {
+    private static func missedRunActions(_ model: CompanionOverviewModel) -> Bool {
+        guard let missed = model.selected("run:run-missed") else { return false }
+        return !missed.canOpen && !missed.canStop && !missed.canRetry
+    }
+
     static func runCompanionOverview() throws {
         let require = NativeTaskFixture.require
         let model = CompanionOverviewFixture.model()
         let ids = model.activity.map(\.id)
         try require(ids == [CompanionOverviewFixture.reviewID.uuidString, CompanionOverviewFixture.visitID.uuidString,
-                            CompanionOverviewFixture.layoutID.uuidString, "run:run-missed"],
+                            CompanionOverviewFixture.layoutID.uuidString, "run:run-missed", "run:run-orphan"],
                     "Activity lists the companion's tasks and its own scheduled runs newest first")
+        try require(missedRunActions(model), "A missed run with no chat offers neither Open nor Stop")
+        let orphan = model.selected("run:run-orphan")
+        try require(orphan?.canOpen == true && orphan?.canStop == false && orphan?.canRetry == false,
+                    "A running run without a task reference can be opened but not stopped or retried")
+        try require(model.selected(CompanionOverviewFixture.visitID.uuidString)?.canStop == true
+                    && model.selected(CompanionOverviewFixture.layoutID.uuidString)?.canStop == false,
+                    "Stop is offered for a running task and not for a finished one")
         try require(!ids.contains("run:run-linked"), "A run that produced a task is shown once, as the task")
         try require(!ids.contains("run:run-foreign"), "Runs of schedules the companion does not own stay out")
         let missed = model.selected("run:run-missed")

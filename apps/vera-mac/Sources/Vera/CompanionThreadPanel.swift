@@ -184,11 +184,11 @@ struct CompanionThreadPanel: View {
                 .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous)
                     .stroke(selected ? Theme.sage : Color.clear, lineWidth: 1.5))
                 .accessibilityAddTraits(selected ? .isSelected : [])
-            if selected {
+            if selected, item.canOpen || item.canRetry || item.canStop {
                 HStack(spacing: 8) {
-                    Button("Open") { store.openCompanionActivity(item) }
+                    if item.canOpen { Button("Open") { store.openCompanionActivity(item) } }
                     if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
-                    if item.isOpen { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
+                    if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
                     Spacer(minLength: 0)
                 }
                 .controlSize(.small)

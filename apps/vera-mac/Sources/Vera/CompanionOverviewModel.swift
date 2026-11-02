@@ -15,10 +15,12 @@ struct CompanionActivityItem: Identifiable, Equatable, Sendable {
     let decision: NativeTaskDecision?
     let date: Date
     let source: Source
+    let canOpen: Bool
+    let canStop: Bool
 
     var needsDecision: Bool { status == .needsInput }
     var isOpen: Bool { ![.completed, .failed, .stopped].contains(status) }
-    var canRetry: Bool { decision?.choices.contains("retry") == true }
+    var canRetry: Bool { decision?.choices.contains("retry") == true && taskID != nil }
     var taskID: UUID? {
         if case .task(let id) = source { return id }
         return nil
@@ -68,7 +70,8 @@ struct CompanionOverviewModel: Equatable, Sendable {
         let document = card.workerType == "document"
         let state = card.status == .completed && hasArtifact ? "Ready to open" : card.status.title(document: document)
         return CompanionActivityItem(id: reference.id.uuidString, title: card.title, state: state, status: card.status,
-                                     isDocument: document, hasArtifact: hasArtifact, decision: decision, date: date, source: .task(reference.id))
+                                     isDocument: document, hasArtifact: hasArtifact, decision: decision, date: date, source: .task(reference.id),
+                                     canOpen: true, canStop: card.canCancel)
     }
 
     static func runStatus(_ outcome: NativeScheduleOutcome) -> NativeTaskCardPresentation.Status {
@@ -85,7 +88,8 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static func runItem(_ run: NativeScheduleRun, schedule: NativeSchedule) -> CompanionActivityItem {
         CompanionActivityItem(id: "run:" + run.id, title: schedule.title, state: run.outcome.title, status: runStatus(run.outcome),
                               isDocument: schedule.isDocument, hasArtifact: false, decision: nil,
-                              date: run.finishedAt ?? run.startedAt ?? run.scheduledFor, source: .run(run.id))
+                              date: run.finishedAt ?? run.startedAt ?? run.scheduledFor, source: .run(run.id),
+                              canOpen: run.conversationID != nil, canStop: run.outcome.isOpen && run.taskReferenceID != nil)
     }
 
     static func activity(tasks: [CompanionActivityItem], runs: [NativeScheduleRun], schedules: [NativeSchedule]) -> [CompanionActivityItem] {
