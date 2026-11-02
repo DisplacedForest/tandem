@@ -504,7 +504,8 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     static func errorDetail(_ data: Data, secrets: [String] = []) -> String {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let error = object["error"] as? [String: Any], let message = error["message"] as? String {
-            return NativeDiagnosticRedaction.text(message, secrets: secrets)
+            let summary = NativeTransientFailure.summary(of: NativeDiagnosticRedaction.value(error, secrets: secrets)) ?? message
+            return NativeDiagnosticRedaction.text(summary, secrets: secrets)
         }
         return NativeDiagnosticRedaction.payload(data, secrets: secrets)
     }
