@@ -481,29 +481,43 @@ struct ShotView: View {
 
     private var sidebarMirror: some View {
         VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-            Image(systemName: "sidebar.left").font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
-                .frame(maxWidth: .infinity, alignment: collapsedSidebar ? .center : .trailing)
-                .padding(.top, VeraSidebar.topInset).padding(.bottom, 6)
-            shotNav("New chat", "square.and.pencil", active: false)
+            Group {
+                if collapsedSidebar {
+                    VStack(spacing: 6) {
+                        TandemLogoMark(size: 22).frame(height: SidebarMetrics.rowHeight)
+                        shotGlyph("sidebar.left")
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    HStack(spacing: 8) {
+                        TandemLogoMark(size: 22)
+                        Text("Tandem").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Spacer(minLength: 0)
+                        shotGlyph("ellipsis", active: shotSecondarySelected)
+                        shotGlyph("sidebar.left")
+                    }
+                    .padding(.leading, SidebarMetrics.inset - 2)
+                }
+            }
+            .padding(.top, VeraSidebar.topInset).padding(.bottom, 10)
             if collapsedSidebar {
+                shotNav("New chat", "square.and.pencil", active: false)
                 shotNav("Search chats", "magnifyingglass", active: false)
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    Text("Search chats").font(.system(size: SidebarMetrics.labelSize)).foregroundStyle(Theme.textSecondary)
-                    Spacer()
+                HStack(spacing: 8) {
+                    shotTile("square.and.pencil")
+                    shotTile("magnifyingglass")
                 }
-                .modifier(SidebarFieldChrome())
-                .padding(.vertical, 2)
             }
-            shotRow(SidebarRowLabel(icon: VeraMark(size: 18), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false), selected: section == .vera)
-            shotDivider
-            ForEach(SidebarDestination.defaultPins) { pin in
-                shotNav(pin.title, pin.icon, active: pin.isSelected(section: section, pane: .canvas))
+            shotRow(SidebarRowLabel(icon: CompanionAvatar(size: 20), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false, rowHeight: 36), selected: section == .vera)
+                .padding(.top, 6)
+            ForEach(SidebarDestination.primary) { destination in
+                shotNav(destination.title, destination.icon,
+                        active: destination.isSelected(section: section, pane: .canvas, showingConversation: !collapsedSidebar && !emptyChat))
             }
-            shotNav("More", "ellipsis", active: false)
+            if collapsedSidebar {
+                shotNav("More", "ellipsis", active: shotSecondarySelected)
+            }
             if !collapsedSidebar {
                 shotDivider
                 VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
@@ -521,6 +535,27 @@ struct ShotView: View {
             shotNav("Settings", "gearshape", active: false).padding(.bottom, 10)
         }
         .padding(.horizontal, SidebarMetrics.inset)
+    }
+
+    private func shotGlyph(_ icon: String, active: Bool = false) -> some View {
+        Image(systemName: icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+            .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
+            .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
+            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
+                .fill(SidebarRowStyle.fill(selected: active, hovering: false, pressed: false)))
+    }
+
+    private var shotSecondarySelected: Bool {
+        SidebarDestination.secondary.contains { $0.isSelected(section: section, pane: .canvas) }
+    }
+
+    private func shotTile(_ icon: String) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return Image(systemName: icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity).frame(height: 44)
+            .background(shape.fill(Theme.surface))
+            .overlay(shape.stroke(Theme.hairline, lineWidth: 1))
     }
 
     private var shotDivider: some View {
