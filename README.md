@@ -142,6 +142,10 @@ A waiting run shows its question and the choices, such as Retry, as buttons in S
 
 The scheduler lives in the app, so it only fires while Tandem is running. If a time passes while the app is closed or the Mac is asleep for more than five minutes, that run is recorded as Missed and isn't made up later. If the previous run is still going when the next time arrives, the new one is recorded as Skipped. Once you have a schedule, Tandem stays in the menu bar when you close the window, showing the next run and how many are in progress. You can turn that off in Settings, Identity. Research schedules need the search URL set in Settings, Search. See [Scheduled work in the setup guide](docs/SETUP.md#scheduled-work) for details.
 
+### Quick ask
+
+Press Option Shift Space from any app to open a small quick-ask panel that floats over whatever is in front. It shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. Sending from the panel is the same as sending in that thread, with the same model, tools, rules and memory, and the reply streams into the panel. Open in Tandem jumps to the thread in the main window, and Escape or clicking elsewhere hides the panel. Your draft is kept when it hides. You can change the shortcut in Settings, Identity, under Quick ask. See [Quick ask in the setup guide](docs/SETUP.md#quick-ask) for details.
+
 ### Working in folders
 
 Any chat can work in folders you hand it. There's no mode to switch on. Choose "Work in a folder" from the composer's plus menu or the @ picker, or drop a folder onto the composer (dropping a file still attaches it). Each folder shows as a chip above the composer with its name, and the x on a chip takes the access back. Grants belong to that conversation (a chat inside a project also gets the project's folders) and are still there after a relaunch. A folder inside one you've already granted is refused, and granting a parent replaces any grants inside it.

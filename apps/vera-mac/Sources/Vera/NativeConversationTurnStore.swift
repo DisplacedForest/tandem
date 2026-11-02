@@ -1,12 +1,40 @@
 import Foundation
 
 @MainActor
+enum NativeTurnCheckpointOutcome: Sendable { case saved, failed, superseded }
+
+struct NativeTurnFinalizationRequest: Sendable {
+    let id: UUID
+    let attempt: UUID
+    let state: NativeConversationTurn.State
+    let message: Message
+    let ordinal: Int
+}
+
+enum NativeTurnFinalizationOutcome: Sendable { case finished, superseded, unconfirmed }
+
+struct NativeTurnFinalizationResult: Sendable {
+    let attempt: UUID
+    let outcome: NativeTurnFinalizationOutcome
+}
+
+struct NativeTurnScheduleRead: Sendable {
+    let token: [Int64]
+    let headers: [UUID: NativeConversationTurnHeader]?
+    let updates: [NativeConversationTurn]
+    let finalized: [UUID: NativeTurnFinalizationResult]
+}
+
 final class NativeTurnExecution {
     let record: NativeConversationTurn
     var task: Task<Void, Never>?
     var deadline: Task<Void, Never>?
     var continuation: CheckedContinuation<Bool, Never>?
     var finalization: (state: NativeConversationTurn.State, message: Message, ordinal: Int)?
+    var checkpoint: Task<Void, Never>?
+    var pendingCheckpoint: (message: Message, ordinal: Int)?
+    var checkpointFailingSince: Date?
+    var completing: NativeConversationTurn.State?
 
     init(_ record: NativeConversationTurn) { self.record = record }
 }
@@ -33,12 +61,68 @@ extension ChatStore {
     var pendingProfileAvailable: Bool { currentNativeConfig != nil }
 
     func prepareTurnDispatch(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
-        guard await turnCurrency(turn) == .current, turnAllowsDispatch(turn, activity: activity),
-              let attempt = turn.attempt else { return false }
-        do {
-            try turnRepository?.markTurnDispatch(turn.id, attempt: attempt, activity: activity)
-            return true
-        } catch { return false }
+        guard await turnCurrency(turn) == .current, turnAllowsDispatch(turn, activity: activity) else { return false }
+        guard await markTurnDispatchOffMain(activity, turn: turn) else { return false }
+        return turnAllowsDispatch(turn, activity: activity)
+    }
+
+    func markTurnDispatchOffMain(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
+        guard let attempt = turn.attempt, let turnRepository else { return false }
+        let id = turn.id
+        let marked = await Task.detached(priority: .userInitiated) {
+            do { try turnRepository.markTurnDispatch(id, attempt: attempt, activity: activity); return true } catch { return false }
+        }.value
+        return marked && turnOwned(turn)
+    }
+
+    static let saveWaitingStatus = "Waiting to save this answer."
+    static let checkpointGraceSeconds: TimeInterval = {
+        let raw = ProcessInfo.processInfo.environment["VERA_TURN_CHECKPOINT_GRACE_SECONDS"].flatMap(Double.init)
+        return raw.map { max(1, $0) } ?? 10
+    }()
+
+    func scheduleTurnCheckpoint(_ turn: NativeConversationTurn, message: Message, ordinal: Int) {
+        guard turnOwned(turn), let execution = turnExecutions[turn.id], turnRepository != nil else { return }
+        execution.pendingCheckpoint = (message, ordinal)
+        guard execution.checkpoint == nil else { return }
+        execution.checkpoint = Task { [weak self] in await self?.flushTurnCheckpoints(turn) }
+    }
+
+    func turnCheckpointStalled(_ turn: NativeConversationTurn) -> Bool {
+        guard let since = turnExecutions[turn.id]?.checkpointFailingSince else { return false }
+        return Date().timeIntervalSince(since) >= Self.checkpointGraceSeconds
+    }
+
+    private func flushTurnCheckpoints(_ turn: NativeConversationTurn) async {
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { return }
+        defer { execution.checkpoint = nil }
+        while turnOwned(turn), turnExecutions[turn.id] === execution, let pending = execution.pendingCheckpoint,
+              let turnRepository {
+            execution.pendingCheckpoint = nil
+            let outcome = await Task.detached(priority: .utility) { () -> NativeTurnCheckpointOutcome in
+                do { try turnRepository.checkpointTurn(turn, message: pending.message, ordinal: pending.ordinal); return .saved }
+                catch is CancellationError { return .superseded }
+                catch { return .failed }
+            }.value
+            guard turnOwned(turn), turnExecutions[turn.id] === execution else { return }
+            switch outcome {
+            case .saved:
+                execution.checkpointFailingSince = nil
+            case .failed:
+                if execution.checkpointFailingSince == nil { execution.checkpointFailingSince = Date() }
+                if execution.pendingCheckpoint == nil { execution.pendingCheckpoint = pending }
+                return
+            case .superseded:
+                execution.pendingCheckpoint = nil
+                return
+            }
+        }
+    }
+
+    func awaitTurnCheckpoint(_ turn: NativeConversationTurn) async {
+        guard let execution = turnExecutions[turn.id] else { return }
+        execution.pendingCheckpoint = nil
+        await execution.checkpoint?.value
     }
 
     func turnLocation(_ turn: NativeConversationTurn) -> (conversation: Int, user: Int, reply: Int)? {
@@ -125,40 +209,98 @@ extension ChatStore {
     }
 
     func scheduleConversationTurns() {
-        guard !suspendsTurnScheduling, !isSchedulingTurns, let turnRepository, let repository else { return }
+        guard !suspendsTurnScheduling, turnRepository != nil, repository != nil else { return }
+        if isSchedulingTurns { turnSchedulingRerun = true; return }
         isSchedulingTurns = true
-        defer { isSchedulingTurns = false }
-        let unfinished = conversationTurns.filter { $0.state == .pending || $0.state == .running }
-        var watching = Set(unfinished.map(\.id)).union(turnExecutions.keys)
-        let previous = Dictionary(uniqueKeysWithValues: unfinished.map { ($0.id, $0) })
-        let token: [Int64]
-        let updates: [NativeConversationTurn]
-        var headers = conversationTurnHeaders
-        do {
-            token = try turnRepository.conversationTurnChangeToken()
-            if watching.isEmpty && dirtyTurnConversations.isEmpty && token == conversationTurnToken { return }
-            drainTurnFinalizations()
-            if token != conversationTurnToken {
-                headers = Dictionary(uniqueKeysWithValues: try turnRepository.conversationTurnHeaders().map { ($0.id, $0) })
-                watching.formUnion(headers.values.filter { conversationTurnHeaders[$0.id] != $0 }.map(\.id))
+        Task { [weak self] in
+            guard let self else { return }
+            await self.runTurnSchedulingTick()
+            self.isSchedulingTurns = false
+            if self.turnSchedulingRerun {
+                self.turnSchedulingRerun = false
+                self.scheduleConversationTurns()
             }
-            updates = try turnRepository.pollConversationTurns(watching: watching)
+        }
+    }
+
+    func runTurnSchedulingTick() async {
+        guard !suspendsTurnScheduling, let turnRepository, let repository else { return }
+        let unfinished = conversationTurns.filter { $0.state == .pending || $0.state == .running }
+        let watching = Set(unfinished.map(\.id)).union(turnExecutions.keys)
+        let previous = Dictionary(uniqueKeysWithValues: unfinished.map { ($0.id, $0) })
+        let previousToken = conversationTurnToken
+        let previousHeaders = conversationTurnHeaders
+        let dirtyEmpty = dirtyTurnConversations.isEmpty
+        let finalizations: [NativeTurnFinalizationRequest] = turnExecutions.compactMap { id, execution in
+            guard let finalization = execution.finalization, let attempt = execution.record.attempt else { return nil }
+            return NativeTurnFinalizationRequest(id: id, attempt: attempt, state: finalization.state,
+                                                 message: finalization.message, ordinal: finalization.ordinal)
+        }
+        let read: NativeTurnScheduleRead?
+        do {
+            read = try await Task.detached(priority: .userInitiated) { () -> NativeTurnScheduleRead? in
+                let token = try turnRepository.conversationTurnChangeToken()
+                if watching.isEmpty && dirtyEmpty && token == previousToken && finalizations.isEmpty { return nil }
+                var finalized: [UUID: NativeTurnFinalizationResult] = [:]
+                for request in finalizations {
+                    switch turnRepository.turnCurrency(request.id, attempt: request.attempt) {
+                    case .current:
+                        do {
+                            if request.state == .pending {
+                                try turnRepository.releaseTurn(request.id, attempt: request.attempt)
+                            } else {
+                                try turnRepository.finishTurn(request.id, attempt: request.attempt, state: request.state,
+                                                              message: request.message, ordinal: request.ordinal)
+                            }
+                            finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .finished)
+                        } catch {
+                            finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .unconfirmed)
+                        }
+                    case .superseded:
+                        finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .superseded)
+                    case .unconfirmed:
+                        finalized[request.id] = NativeTurnFinalizationResult(attempt: request.attempt, outcome: .unconfirmed)
+                    }
+                }
+                var headers: [UUID: NativeConversationTurnHeader]?
+                var watched = watching
+                if token != previousToken {
+                    let current = Dictionary(uniqueKeysWithValues: try turnRepository.conversationTurnHeaders().map { ($0.id, $0) })
+                    headers = current
+                    watched.formUnion(current.values.filter { previousHeaders[$0.id] != $0 }.map(\.id))
+                }
+                let updates = try turnRepository.pollConversationTurns(watching: watched)
+                return NativeTurnScheduleRead(token: token, headers: headers, updates: updates, finalized: finalized)
+            }.value
         } catch {
             chatConfigurationError = "Saved answers couldn't refresh. Try again."
             return
         }
-        let changed = token != conversationTurnToken
-        conversationTurnToken = token
-        conversationTurnHeaders = headers
-        let updateIDs = Set(updates.map(\.id))
+        guard let read, !suspendsTurnScheduling else { return }
+        for (id, result) in read.finalized {
+            guard let execution = turnExecutions[id], execution.record.attempt == result.attempt, execution.finalization != nil else { continue }
+            switch result.outcome {
+            case .finished, .superseded:
+                clearTurnDecisions(execution.record)
+                turnExecutions[id] = nil
+                turnStatuses[execution.record.assistantMessageID] = nil
+            case .unconfirmed:
+                turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
+            }
+        }
+        let changed = read.token != conversationTurnToken
+        conversationTurnToken = read.token
+        if let headers = read.headers { conversationTurnHeaders = headers }
+        let updateIDs = Set(read.updates.map(\.id))
         conversationTurns.removeAll { watching.contains($0.id) && !updateIDs.contains($0.id) }
-        for update in updates {
+        for update in read.updates {
             if let index = conversationTurns.firstIndex(where: { $0.id == update.id }) { conversationTurns[index] = update }
             else { conversationTurns.append(update) }
         }
         conversationTurns.sort { $0.createdAt < $1.createdAt }
         for (id, execution) in turnExecutions {
             let saved = conversationTurns.first(where: { $0.id == id })
+            if let completing = execution.completing, saved?.attempt == execution.record.attempt, saved?.state == completing { continue }
             if saved?.state != .running || saved?.attempt != execution.record.attempt {
                 resolveTurnConfirmation(execution.record.assistantMessageID, approved: false)
                 execution.task?.cancel()
@@ -169,46 +311,107 @@ extension ChatStore {
             }
         }
         generating = !turnExecutions.isEmpty
-        let affected = Set(updates.filter { changed || previous[$0.id]?.state != $0.state || previous[$0.id]?.attempt != $0.attempt }
+        let affected = Set(read.updates.filter { changed || previous[$0.id]?.state != $0.state || previous[$0.id]?.attempt != $0.attempt }
             .map(\.conversationID))
         synchronizeTurnMessages(conversationIDs: affected)
         for turn in conversationTurns where turn.state == .pending {
-            guard turnExecutions.count < NativeConversationTurn.maximumActive else { break }
+            guard !suspendsTurnScheduling, turnExecutions.count < NativeConversationTurn.maximumActive else { break }
+            guard turnExecutions[turn.id] == nil, conversationTurns.first(where: { $0.id == turn.id })?.state == .pending else { continue }
             if let ci = conversations.firstIndex(where: { $0.id == turn.conversationID }), conversations[ci].messages.isEmpty {
                 conversations[ci].messages = (try? repository.messages(conversationID: turn.conversationID)) ?? []
             }
-            guard let location = turnLocation(turn) else { continue }
-            let currentProfile = turnProfile(for: turn.history.last?.routeNote)
-            let missing = turn.history.filter { $0.routeNote?.route != .withheld }.flatMap(\.attachments).contains {
-                $0.isImage && attachmentStore.requestDataURL(for: $0) == nil
-            }
-            if turn.profile != currentProfile || !isLive || !pendingProfileAvailable || missing {
-                var message = conversations[location.conversation].messages[location.reply]
-                message.state = .interrupted
-                message.failure = missing ? "An attachment is missing. Restore it before retrying this answer."
-                    : "This saved message needs its original settings. Send a new message to use the current settings."
-                do {
-                    try turnRepository.finishTurn(turn.id, attempt: nil, state: .interrupted, message: message, ordinal: location.reply)
-                    conversations[location.conversation].messages[location.reply] = message
-                    if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .interrupted }
-                } catch { chatConfigurationError = "The saved answer couldn't update. Try again." }
+            guard turnLocation(turn) != nil else { continue }
+            if let failure = pendingTurnFailure(turn) {
+                await interruptPendingTurn(turn, failure: failure)
                 continue
             }
+            let turnID = turn.id
+            let attempt = UUID()
+            let claimed: NativeConversationTurn?
             do {
-                guard let claimed = try turnRepository.claimTurn(turn.id, attempt: UUID()) else { continue }
-                if let index = conversationTurns.firstIndex(where: { $0.id == claimed.id }) { conversationTurns[index] = claimed }
-                turnExecutions[claimed.id] = NativeTurnExecution(claimed)
-                generating = true
-                performTurn(claimed)
+                claimed = try await Task.detached(priority: .userInitiated) {
+                    try turnRepository.claimTurn(turnID, attempt: attempt)
+                }.value
             } catch {
                 chatConfigurationError = "The saved answer couldn't start. Try again."
+                continue
             }
+            guard let claimed else { continue }
+            if let failure = pendingTurnFailure(claimed) {
+                await interruptPendingTurn(claimed, failure: failure)
+                continue
+            }
+            guard !suspendsTurnScheduling, turnExecutions[claimed.id] == nil,
+                  turnExecutions.count < NativeConversationTurn.maximumActive, turnLocation(claimed) != nil else {
+                await releaseTurnClaim(claimed)
+                continue
+            }
+            if let index = conversationTurns.firstIndex(where: { $0.id == claimed.id }) { conversationTurns[index] = claimed }
+            turnExecutions[claimed.id] = NativeTurnExecution(claimed)
+            generating = true
+            performTurn(claimed)
         }
     }
 
     func clearTurnDecisions(_ turn: NativeConversationTurn) {
         turnDeclineSource.clear(turn: turn.id)
         turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+    }
+
+    private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {
+        let missing = turn.history.filter { $0.routeNote?.route != .withheld }.flatMap(\.attachments).contains {
+            $0.isImage && attachmentStore.requestDataURL(for: $0) == nil
+        }
+        if missing { return "An attachment is missing. Restore it before retrying this answer." }
+        if turn.profile != turnProfile(for: turn.history.last?.routeNote) || !isLive || !pendingProfileAvailable {
+            return "This saved message needs its original settings. Send a new message to use the current settings."
+        }
+        return nil
+    }
+
+    private func interruptPendingTurn(_ turn: NativeConversationTurn, failure: String) async {
+        guard let turnRepository, let location = turnLocation(turn) else { return }
+        var message = conversations[location.conversation].messages[location.reply]
+        message.state = .interrupted
+        message.failure = failure
+        let interrupted = message
+        let turnID = turn.id
+        let attempt = turn.attempt
+        let ordinal = location.reply
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try turnRepository.finishTurn(turnID, attempt: attempt, state: .interrupted, message: interrupted, ordinal: ordinal)
+            }.value
+            guard !suspendsTurnScheduling, let current = turnLocation(turn) else { return }
+            conversations[current.conversation].messages[current.reply] = interrupted
+            if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .interrupted }
+        } catch is CancellationError {
+        } catch {
+            guard attempt != nil else { chatConfigurationError = "The saved answer couldn't update. Try again."; return }
+            retainClaimFinalization(turn, state: .interrupted, message: interrupted, ordinal: ordinal)
+        }
+    }
+
+    private func releaseTurnClaim(_ turn: NativeConversationTurn) async {
+        guard let turnRepository, let attempt = turn.attempt else { return }
+        let turnID = turn.id
+        do {
+            try await Task.detached(priority: .userInitiated) { try turnRepository.releaseTurn(turnID, attempt: attempt) }.value
+        } catch is CancellationError {
+        } catch {
+            guard let location = turnLocation(turn) else { return }
+            retainClaimFinalization(turn, state: .pending, message: conversations[location.conversation].messages[location.reply],
+                                    ordinal: location.reply)
+        }
+    }
+
+    private func retainClaimFinalization(_ turn: NativeConversationTurn, state: NativeConversationTurn.State, message: Message, ordinal: Int) {
+        guard turnExecutions[turn.id] == nil else { return }
+        let execution = NativeTurnExecution(turn)
+        execution.finalization = (state, message, ordinal)
+        turnExecutions[turn.id] = execution
+        turnStatuses[turn.assistantMessageID] = Self.savePendingStatus
+        generating = true
     }
 
     func finishTurnExecution(_ turn: NativeConversationTurn) {
@@ -227,30 +430,6 @@ extension ChatStore {
             execution.finalization = (message.state == .complete ? .complete : .interrupted, message, location.reply)
         }
         scheduleConversationTurns()
-    }
-
-    func drainTurnFinalizations() {
-        guard let turnRepository else { return }
-        for (id, execution) in turnExecutions {
-            guard let finalization = execution.finalization, let attempt = execution.record.attempt else { continue }
-            do {
-                switch turnRepository.turnCurrency(id, attempt: attempt) {
-                case .current:
-                    try turnRepository.finishTurn(id, attempt: attempt, state: finalization.state,
-                        message: finalization.message, ordinal: finalization.ordinal)
-                case .superseded:
-                    break
-                case .unconfirmed:
-                    turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
-                    continue
-                }
-                clearTurnDecisions(execution.record)
-                turnExecutions[id] = nil
-                turnStatuses[execution.record.assistantMessageID] = nil
-            } catch {
-                turnStatuses[execution.record.assistantMessageID] = Self.savePendingStatus
-            }
-        }
     }
 
     func cancelToolRun(_ messageID: UUID) {
@@ -279,6 +458,7 @@ extension ChatStore {
         do {
             try turnRepository.finishTurn(turn.id, attempt: turn.attempt, state: .stopped, message: message, ordinal: location.reply)
             conversations[location.conversation].messages[location.reply] = message
+            if let index = conversationTurns.firstIndex(where: { $0.id == turn.id }) { conversationTurns[index].state = .stopped }
         } catch {
             chatConfigurationError = "This answer couldn't be stopped. Try again."
             return
@@ -413,5 +593,25 @@ extension ChatStore {
             turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
         }
         continuation.resume(returning: decision.approved && owned)
+    }
+}
+
+extension ChatStore {
+    func finishTurnOffMain(_ turn: NativeConversationTurn, state: NativeConversationTurn.State, message: Message, ordinal: Int,
+                           updatedAt: Date) async throws {
+        guard let turnRepository else { return }
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { throw CancellationError() }
+        let id = turn.id
+        let attempt = turn.attempt
+        execution.completing = state
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try turnRepository.completeTurn(id, attempt: attempt, state: state, message: message, ordinal: ordinal, updatedAt: updatedAt)
+            }.value
+        } catch {
+            execution.completing = nil
+            throw error
+        }
+        guard turnOwned(turn) else { throw CancellationError() }
     }
 }

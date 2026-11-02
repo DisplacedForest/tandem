@@ -300,6 +300,18 @@ Once a schedule exists, Tandem keeps running in the menu bar after you close the
 
 This is separate from the server scheduler in [section 6](#6-the-scheduler), which drives Pulse and veins on vera-api. In-app schedules only drive research and document runs in the app.
 
+### Quick ask
+
+Quick ask is a small always-on-top panel for talking to the assistant without switching to Tandem. Press the global shortcut, Option Shift Space by default, and the panel opens over whatever app is in front. You can also open it from the menu bar item with **Quick ask**. The menu bar item exists once **Keep running in the menu bar** is on, which happens by itself when a schedule exists.
+
+The panel shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. **Open in Tandem** opens the main window at that thread. Escape or clicking elsewhere hides the panel. The draft is kept when the panel hides and shows again.
+
+Sending from the panel is the same as sending in that thread. It uses the same model, tools, rules and memory, and the reply streams into the panel. Images and files can be pasted or dropped into the panel. Folder grants are not offered there.
+
+To change the shortcut, open Settings, Identity, find **Quick ask**, click the recorder and press the keys. If another app or the system already uses that shortcut, the conflict is reported right there and the previous shortcut stays active. **Reset to default** restores Option Shift Space. The shortcut is registered with the system hot key API, so no Accessibility access is needed.
+
+The shortcut is stored as `companion_shortcut` in `~/.vera/config.json`. The value is lowercase tokens joined with plus signs: any of `control`, `option`, `shift` and `command`, then a key name such as `space`, `k` or `f5`, for example `option+shift+space`. At least one of control, option or command is required unless the key is a function key. When unset, the default applies.
+
 ### Working in folders
 
 Any ordinary chat can work in folders you grant it. There's no mode switch. You can grant a folder three ways: **Work in a folder…** in the composer's plus menu, **Work in a folder** in the @ picker, or dropping a folder onto the composer. Dropping a file still attaches it as before. Grants are per conversation and show as chips above the composer with the folder name. Hover a chip to see the full path, and use its x to revoke it. Grants are saved with the conversation and survive a relaunch. Each one is stored as the folder's resolved path plus a bookmark, so a folder that has moved is found again. Granting a folder that sits inside an already granted folder is refused, and granting a parent replaces any grants inside it.
