@@ -56,7 +56,7 @@ struct ShotView: View {
                     if emptyChat { emptyChatShot }
                     else if dotHeader {
                         VStack(spacing: 0) {
-                            DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused)
+                            DotHeaderBar(name: store.assistantName, paused: store.isDotPaused)
                             chat
                         }
                     } else { chat }

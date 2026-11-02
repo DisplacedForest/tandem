@@ -2,24 +2,15 @@ import SwiftUI
 
 struct DotHeaderBar: View {
     let name: String
-    let goal: String
-    let rules: String
     let paused: Bool
     var onToggle: () -> Void = {}
     var onSettings: () -> Void = {}
+    var trailing: AnyView? = nil
 
     var body: some View {
         HStack(spacing: 10) {
-            VeraMark(size: 18).frame(width: 18, height: 18)
-            Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
-            VStack(alignment: .leading, spacing: 1) {
-                Text(goal.isEmpty ? "No standing goal yet" : goal.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1).truncationMode(.tail)
-                Text(rules)
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1).truncationMode(.tail)
-            }
+            CompanionAvatar(size: 24)
+            Text(name).font(.system(size: 14, weight: .semibold)).lineLimit(1).fixedSize()
             if paused {
                 Text("Paused").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 2)
@@ -27,6 +18,7 @@ struct DotHeaderBar: View {
                     .fixedSize()
             }
             Spacer(minLength: 8)
+            if let trailing { trailing }
             Button(action: onToggle) {
                 HStack(spacing: 5) {
                     Image(systemName: paused ? "play.fill" : "pause.fill").font(.system(size: 9, weight: .semibold))
@@ -58,11 +50,12 @@ struct DotHeaderView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
     @State private var showingSettings = false
+    var trailing: AnyView? = nil
 
     var body: some View {
-        DotHeaderBar(name: store.assistantName, goal: store.dotProfile.goal, rules: store.dotHeaderRules, paused: store.isDotPaused,
+        DotHeaderBar(name: store.assistantName, paused: store.isDotPaused,
                      onToggle: { store.setDotState(store.isDotPaused ? .active : .paused) },
-                     onSettings: { showingSettings = true })
+                     onSettings: { showingSettings = true }, trailing: trailing)
             .sheet(isPresented: $showingSettings) {
                 DotSettingsView().environmentObject(store).environmentObject(config)
             }
