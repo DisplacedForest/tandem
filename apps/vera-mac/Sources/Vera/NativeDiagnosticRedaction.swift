@@ -4,23 +4,30 @@ enum NativeDiagnosticRedaction {
     static let placeholder = "[redacted]"
     static let sensitiveKeyParts = ["key", "token", "secret", "authorization", "password", "cookie", "credential"]
     static let minimumSecretLength = 6
-    static let authorizationValues = #"(?i)\b(?:bearer\s+[A-Za-z0-9._~+/=\-]{8,}|basic\s+[A-Za-z0-9+/=]{8,})"#
     static let credentialAssignment = #"(?i)\b(x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|secret|password|authorization)("?\s*[=:]\s*"?)[^\s&",;}]+"#
-    static let knownKeyShapes = [
-        #"\bsk[-_][A-Za-z0-9_\-]{8,}"#,
-        #"\b[pr]k_(?:live|test)_[A-Za-z0-9]{8,}"#,
-        #"\bAIza[0-9A-Za-z_\-]{35}"#,
-        #"\bgh[opus]_[A-Za-z0-9]{16,}"#,
-        #"\bgithub_pat_[A-Za-z0-9_]{16,}"#,
-        #"\bxox[bpa]-[A-Za-z0-9\-]{10,}"#,
-        #"\bxapp-[A-Za-z0-9\-]{10,}"#,
-        #"\bAKIA[0-9A-Z]{16}\b"#,
-        #"\bya29\.[A-Za-z0-9_\-]{16,}"#,
-        #"\bglpat-[A-Za-z0-9_\-]{16,}"#,
-        #"\bhf_[A-Za-z0-9]{16,}"#,
-        #"\br8_[A-Za-z0-9]{16,}"#,
-        #"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"#,
+    static let minimumTokenLength = 20
+    static let leadingBoundary = #"(?<![/A-Za-z0-9])"#
+    static let trailingBoundary = #"(?![0-9A-Za-z_\-])"#
+    static let knownKeyShapes: [(prefix: String, token: String)] = [
+        (#"(?i:bearer)\s+"#, #"[A-Za-z0-9._~+/=\-]{20,}"#),
+        (#"(?i:basic)\s+"#, #"[A-Za-z0-9+/=]{20,}"#),
+        (#"sk[-_]"#, #"[A-Za-z0-9_\-]{20,}"#),
+        (#"[pr]k_(?:live|test)_"#, #"[A-Za-z0-9]{20,}"#),
+        (#"AIza"#, #"[0-9A-Za-z_\-]{35}"#),
+        (#"gh[opus]_"#, #"[A-Za-z0-9]{20,}"#),
+        (#"github_pat_"#, #"[A-Za-z0-9_]{20,}"#),
+        (#"xox[bpa]-"#, #"[A-Za-z0-9\-]{20,}"#),
+        (#"xapp-"#, #"[A-Za-z0-9\-]{20,}"#),
+        (#"AKIA"#, #"[0-9A-Z]{16}"#),
+        (#"ya29\."#, #"[A-Za-z0-9_\-]{20,}"#),
+        (#"glpat-"#, #"[A-Za-z0-9_\-]{20,}"#),
+        (#"hf_"#, #"[A-Za-z0-9]{20,}"#),
+        (#"r8_"#, #"[A-Za-z0-9]{20,}"#),
+        (#"eyJ"#, #"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"#),
     ]
+    static let keyShapeExpressions: [NSRegularExpression] = knownKeyShapes.compactMap { shape in
+        try? NSRegularExpression(pattern: leadingBoundary + "(?:" + shape.prefix + ")(" + shape.token + ")" + trailingBoundary)
+    }
     static let consolePatterns = [#"[A-Za-z0-9+/=_\-]{24,}"#]
 
     static func isSensitiveKey(_ key: String) -> Bool {
@@ -60,11 +67,23 @@ enum NativeDiagnosticRedaction {
         var output = secrets.filter { $0.count >= minimumSecretLength }.reduce(input) {
             $0.replacingOccurrences(of: $1, with: placeholder)
         }
-        output = output.replacingOccurrences(of: authorizationValues, with: placeholder, options: .regularExpression)
-        output = output.replacingOccurrences(of: credentialAssignment, with: "$1$2" + placeholder, options: .regularExpression)
-        return knownKeyShapes.reduce(output) { current, pattern in
-            current.replacingOccurrences(of: pattern, with: placeholder, options: .regularExpression)
+        output = keyShapeExpressions.reduce(output, maskKeyShape)
+        return output.replacingOccurrences(of: credentialAssignment, with: "$1$2" + placeholder, options: .regularExpression)
+    }
+
+    static func isToken(_ token: Substring, exact: Bool) -> Bool {
+        token.contains(where: \.isNumber) && (exact || token.count >= minimumTokenLength)
+    }
+
+    private static func maskKeyShape(_ input: String, _ expression: NSRegularExpression) -> String {
+        var output = input
+        for match in expression.matches(in: input, range: NSRange(input.startIndex..., in: input)).reversed() {
+            guard let whole = Range(match.range, in: output), let token = Range(match.range(at: 1), in: output) else { continue }
+            let exact = expression.pattern.contains("AKIA") || expression.pattern.contains("AIza")
+            guard isToken(output[token], exact: exact) else { continue }
+            output.replaceSubrange(whole, with: placeholder)
         }
+        return output
     }
 
     static func console(_ input: String, secrets: [String] = []) -> String {

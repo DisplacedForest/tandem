@@ -710,7 +710,8 @@ enum NativeMemoryGate {
         let echoed = NativeChatClient.ClientError.provider(["message": "Rate limited", "code": 429, "metadata": ["api_key": secret]])
         let nested = NativeChatClient.ClientError.provider(["message": "Upstream refused", "metadata": [
             "attempts": [["session_token": "short-value", "headers": ["Authorization": "Basic short"]]], "provider_name": "fixture"]])
-        let inline = NativeChatClient.ClientError.provider(["message": "Invalid key \(secret) and Bearer abc.def-ghi supplied"])
+        let bearerToken = String(repeating: "aB3d", count: 8)
+        let inline = NativeChatClient.ClientError.provider(["message": "Invalid key \(secret) and Bearer \(bearerToken) supplied"])
         let ordinary = "Provider returned error: rate limit exceeded, try again in 20 seconds"
         let longModel = "vendor/name-2025-preview-instruct"
         let longerModel = "vendor/family-name-2025-09-30-preview-instruct-extended"
@@ -734,6 +735,21 @@ enum NativeMemoryGate {
         }
         var slashStored: [String] = [slashHTTP.localizedDescription, slashProvider.localizedDescription]
         if case .provider(_, let raw)? = slashProvider as? NativeChatClient.ClientError { slashStored.append(raw) }
+        let googleTail = "AI" + "za" + String(repeating: "Ab3x5", count: 7) + "Suffix"
+        let untouched = [
+            "Basic authentication is not supported", "Basic configuration requires temperature",
+            "model vendor/sk" + "-instruct-2025 is not available", "hf_" + "sentenceembedding/model is not available",
+            "Unknown parameter: sk" + "_attention_heads", "identifier \(googleTail) is not a key",
+        ]
+        let masked = [
+            "sk" + "-" + String(repeating: "p4Qz9", count: 9), googleKey, githubToken, webToken, awsKey,
+            "Authorization: Bearer " + bearerToken, "Basic " + String(repeating: "dXN1", count: 6),
+        ]
+        let custom = NativeChatRequestOptions(
+            topLevel: [], kwargs: [NativeChatRequestOptions.Entry(key: "sk" + "_attention_heads", value: .number(8), source: .custom)],
+            streamingOverride: nil, contextCeiling: nil)
+        let customRejection = client.sanitized(NativeChatClient.ClientError.http(400, NativeChatClient.errorDetail(
+            Data("{\"error\":{\"message\":\"Unknown parameter: sk_attention_heads\"}}".utf8), secrets: client.redactionSecrets)))
         let parameters = NativeChatRequestOptions(
             topLevel: [NativeChatRequestOptions.Entry(key: "temperature", value: .number(0.7), source: .override),
                        NativeChatRequestOptions.Entry(key: "max_tokens", value: .number(256), source: .override)],
@@ -756,7 +772,7 @@ enum NativeMemoryGate {
         let cases: [(String, Bool)] = [
             ("credential in metadata", !printed.contains { $0.contains(secret) } && printed[0].contains("429") && printed[0].contains("Rate limited")),
             ("nested short credentials", !printed.contains { $0.contains("short-value") || $0.contains("Basic short") } && printed[1].contains("provider_name")),
-            ("inline credentials", !printed[2].contains(secret) && !printed[2].contains("abc.def-ghi") && printed[2].contains("Invalid key")),
+            ("inline credentials", !printed[2].contains(secret) && !printed[2].contains(bearerToken) && printed[2].contains("Invalid key")),
             ("placeholder present", printed.allSatisfy { $0.contains(NativeDiagnosticRedaction.placeholder) }),
             ("http body with nested key", !nestedBody.localizedDescription.contains("short") && !diagnostic(nestedBody).contains("short")
                 && nestedBody.localizedDescription.contains("429")),
@@ -765,6 +781,13 @@ enum NativeMemoryGate {
             ("known key shapes", shapes.allSatisfy { !shapedMessage.contains($0) && !shapedBody.contains($0) }
                 && shapedMessage.contains("were rejected") && shapedBody.contains("today")),
             ("slashed configured key", !(slashStored + slashPrinted).contains { $0.contains(slashed) || $0.contains("c4/d5c4") }),
+            ("bounded shapes leave text alone", untouched.allSatisfy { NativeDiagnosticRedaction.text($0) == $0 }),
+            ("bounded shapes still mask keys", masked.allSatisfy { value in
+                let stored = NativeChatClient.ClientError.provider(["message": "rejected " + value + " today"]).localizedDescription
+                let detail = NativeChatClient.errorDetail(Data(("rejected " + value + " today").utf8))
+                return [stored, detail].allSatisfy { !$0.contains(value) && $0.contains(NativeDiagnosticRedaction.placeholder) && $0.hasSuffix(" today") }
+            }),
+            ("custom parameter found", ModelParameterRejectionClassifier.classify(error: customRejection, options: custom)?.key == "sk" + "_attention_heads"),
             ("parameter names readable", NativeDiagnosticRedaction.text(unsupported) == unsupported && NativeDiagnosticRedaction.text(unknown) == unknown
                 && ModelParameterRejectionClassifier.classify(error: rejectedHTTP, options: parameters)?.key == "temperature"
                 && ModelParameterRejectionClassifier.classify(error: rejectedProvider, options: parameters)?.key == "max_tokens"),
