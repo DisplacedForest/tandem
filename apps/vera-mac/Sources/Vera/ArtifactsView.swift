@@ -306,13 +306,18 @@ private struct ArtifactDetail: View {
             })
             items.append(ActionItem(id: "Revise", symbol: "pencil") { revising = true })
         }
-        items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { saveAs(version) })
+        let contentKept = record.kind != .fileChange || version.details.contentAvailable
+        if contentKept {
+            items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { saveAs(version) })
+        }
         if let reveal = revealURL(version) {
             items.append(ActionItem(id: "Reveal in Finder", symbol: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([reveal])
             })
         }
-        items.append(ActionItem(id: "Copy", symbol: "doc.on.doc") { copy(version) })
+        if contentKept {
+            items.append(ActionItem(id: "Copy", symbol: "doc.on.doc") { copy(version) })
+        }
         return items
     }
 
@@ -346,7 +351,12 @@ private struct ArtifactDetail: View {
         case .image:
             return store.artifactFileURL(version)
         case .fileChange:
-            guard let path = version.details.filePath, FileManager.default.fileExists(atPath: path) else { return nil }
+            let details = version.details
+            let candidates = details.changeKind == .trashed
+                ? [details.movedFrom, details.filePath] : [details.filePath, details.movedFrom]
+            guard let path = candidates.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                return nil
+            }
             return URL(fileURLWithPath: path)
         case .document, .canvas:
             return nil
@@ -545,11 +555,15 @@ private struct ArtifactFileChangeContent: View {
                     Text("from \(movedFrom)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
-            if details.truncated {
-                Text("This change was too large to keep in full.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            if !details.contentAvailable {
+                Text("The file's contents weren't kept.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            } else {
+                if details.truncated {
+                    Text("This change was too large to keep in full.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
+                let rows = rows
+                if !rows.isEmpty { diff(rows) }
             }
-            let rows = rows
-            if !rows.isEmpty { diff(rows) }
         }
     }
 

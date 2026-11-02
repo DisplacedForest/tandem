@@ -2338,6 +2338,9 @@ final class ChatStore: ObservableObject {
                     if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
                         try turnRepository?.checkpointTurn(turn,
                             message: conversations[i].messages[replyIndex], ordinal: replyIndex)
+                        recordCanvasArtifacts(arts, conversationID: id,
+                                              messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                              revising: revisionTarget)
                         lastCheckpoint = Date()
                     }
                 }

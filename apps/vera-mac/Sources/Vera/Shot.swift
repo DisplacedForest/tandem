@@ -350,7 +350,7 @@ enum Shot {
             case "vera": section = .vera
             case "chats", "chats-streaming", "chats-mentions", "chats-folder", "chats-command": section = .chat
             case "projects": section = .projects
-            case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-empty": section = .artifacts
+            case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty": section = .artifacts
             case "scheduled": section = .scheduled
             case "integrations": section = .integrations
             case "memory": section = .memory

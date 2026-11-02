@@ -132,10 +132,16 @@ enum ArtifactProducerSelftest {
         try check(fileVersion.flatMap { store.artifactText($0) } == "# New", "The file change stores the new text")
         try check(fileVersion?.sourceKey == "file:change-1" && fileVersion?.fileName.hasSuffix(".md") == true,
                   "The file change uses its change id and extension")
+        let oversized = String(repeating: "x", count: NativeFileChange.contentCap + 1)
         store.attachDisplayBlock(
-            .fileChange(NativeFileChange(id: "change-3", path: "/tmp/notes/blank.md", kind: .edited)), turn: turn)
-        try check(store.artifactRecords.filter { $0.kind == .fileChange }.count == 1,
-                  "A file change with no captured text records nothing")
+            .fileChange(NativeFileChange(id: "change-3", path: "/tmp/notes/huge.md", kind: .edited,
+                                         before: oversized, after: oversized + "y")), turn: turn)
+        let huge = store.artifactRecords.first { $0.title == "Edited huge.md" }
+        let hugeVersion = huge.flatMap { store.artifactVersions($0.id).first }
+        try check(hugeVersion?.details.contentAvailable == false && hugeVersion?.details.truncated == true
+                  && hugeVersion?.byteSize == 0 && hugeVersion?.details.filePath == "/tmp/notes/huge.md",
+                  "An oversized edit records without its contents")
+        try check(fileVersion?.details.contentAvailable == true, "A captured edit marks its contents available")
         store.attachDisplayBlock(
             .fileChange(NativeFileChange(id: "change-4", path: "/tmp/notes/old.txt", kind: .trashed, before: "Old notes")), turn: turn)
         let trashed = store.artifactRecords.first { $0.title == "Moved old.txt to the Trash" }
@@ -360,6 +366,15 @@ enum ArtifactProducerSelftest {
             store.conversations.first { $0.id == heldChat }?.messages.last?.artifacts.isEmpty == false
         }
         let heldTurn = try lastTurn(heldChat)
+        let trashChange = NativeFileChange(
+            path: "/tmp/notes/old-draft.md", kind: .trashed, movedFrom: "/Volumes/Notes/.Trash/old-draft.md")
+        store.attachDisplayBlock(.fileChange(trashChange), turn: heldTurn)
+        let trashedRecord = store.artifactRecords.first { $0.title == "Moved old-draft.md to the Trash" }
+        let trashedVersion = trashedRecord.flatMap { store.artifactVersions($0.id).first }
+        try check(trashedRecord?.kind == .fileChange && trashedVersion?.details.contentAvailable == false
+                  && trashedVersion?.details.movedFrom == "/Volumes/Notes/.Trash/old-draft.md"
+                  && trashedVersion?.details.changeKind == .trashed,
+                  "A Trash move records without contents and keeps where it went")
         store.stopAnswer(heldTurn.assistantMessageID)
         transport.releaseHeld()
         try check(latestText(store.artifactRecords.first { $0.title == "Held piece" }) == "# Held",
@@ -401,5 +416,29 @@ enum ArtifactProducerSelftest {
                   "The retried revision records the next document version")
         try check(store.artifactRevisionTarget(messageID: failedTurn.userMessageID.uuidString) == nil,
                   "A finished revision clears its request target")
+
+        store.newConversation()
+        transport.queue(.hold(":::vera-artifact id=\"live\" title=\"Live piece\" type=\"markdown\"\n# Live\n:::\nStill writing"))
+        try check(store.sendText("Write a live piece"), "The streaming message sends")
+        guard let liveChat = store.selectedID else { throw Failure(description: "No live chat") }
+        try await waitUntil("A finished block was not recorded while the answer was still streaming") {
+            store.artifactRecords.contains { $0.title == "Live piece" && $0.conversationID == liveChat }
+        }
+        try check(store.conversations.first { $0.id == liveChat }?.messages.last?.state == .streaming,
+                  "The answer is still streaming when its block records")
+        let liveFiles = store.artifactRecords.filter { $0.conversationID == liveChat }
+            .flatMap { store.artifactVersions($0.id) }.map(\.fileName)
+        store.deleteConversation(liveChat)
+        try check(store.pendingConversationDeletion?.id == liveChat, "Deleting the streaming chat asks first")
+        store.confirmDeleteConversation(.delete)
+        transport.releaseHeld()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try check(!store.conversations.contains { $0.id == liveChat }, "The streaming chat is deleted")
+        try check(!store.artifactRecords.contains { $0.conversationID == liveChat || $0.title == "Live piece" },
+                  "Deleting a streaming chat leaves none of its artifacts")
+        let listedFiles = Set(store.artifactRecords.flatMap { store.artifactVersions($0.id) }.map(\.fileName))
+        try check(!liveFiles.isEmpty && liveFiles.allSatisfy { !listedFiles.contains($0)
+                  && !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path) },
+                  "Deleting a streaming chat removes its artifact files")
     }
 }

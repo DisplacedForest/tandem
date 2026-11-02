@@ -123,17 +123,17 @@ extension ChatStore {
     func recordFileChangeArtifact(
         _ change: NativeFileChange, conversationID: String, messageID: String, revising target: String? = nil
     ) {
-        guard artifactRepository != nil, change.kind != .directory,
-              let content = change.after ?? change.before else { return }
+        guard artifactRepository != nil, change.kind != .directory else { return }
+        let content = change.after ?? change.before
         let ext = (change.path as NSString).pathExtension.lowercased()
         recordArtifact(ArtifactDraft(
             kind: .fileChange, title: change.title, conversationID: conversationID,
             originTitle: conversations.first(where: { $0.id == conversationID })?.title, messageID: messageID,
-            sourceKey: "file:\(change.id)", data: Data(content.utf8), mime: "text/plain",
+            sourceKey: "file:\(change.id)", data: Data((content ?? "").utf8), mime: "text/plain",
             fileExtension: ext.isEmpty ? "txt" : ext,
             details: ArtifactDetails(
                 filePath: change.path, changeKind: change.kind, movedFrom: change.movedFrom,
-                beforeText: change.before, truncated: change.truncated)), revising: target)
+                beforeText: change.before, truncated: change.truncated, contentAvailable: content != nil)), revising: target)
     }
 
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
@@ -248,6 +248,12 @@ extension ChatStore {
     func confirmDeleteConversation(_ choice: ArtifactConversationDeletion) {
         guard let pending = pendingConversationDeletion else { return }
         pendingConversationDeletion = nil
+        let wasSuspended = suspendsTurnScheduling
+        suspendsTurnScheduling = true
+        for turn in conversationTurns where turn.conversationID == pending.id {
+            stopAnswer(turn.assistantMessageID)
+        }
+        suspendsTurnScheduling = wasSuspended
         let removed = (try? artifactRepository?.resolveArtifacts(conversationID: pending.id, choice: choice)) ?? []
         for fileName in removed {
             if let url = attachmentStore.url(for: fileName) { try? FileManager.default.removeItem(at: url) }

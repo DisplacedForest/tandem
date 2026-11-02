@@ -42,12 +42,13 @@ struct ArtifactDetails: Hashable, Codable, Sendable {
     var imageSize: String? = nil
     var canvasType: ArtifactType? = nil
     var language: String? = nil
+    var contentAvailable: Bool = true
 
     init(
         filePath: String? = nil, changeKind: NativeFileChangeKind? = nil, movedFrom: String? = nil,
         beforeText: String? = nil, truncated: Bool = false, sources: [PulseSource] = [],
         prompt: String? = nil, imageSize: String? = nil, canvasType: ArtifactType? = nil,
-        language: String? = nil
+        language: String? = nil, contentAvailable: Bool = true
     ) {
         self.filePath = filePath
         self.changeKind = changeKind
@@ -59,6 +60,7 @@ struct ArtifactDetails: Hashable, Codable, Sendable {
         self.imageSize = imageSize
         self.canvasType = canvasType
         self.language = language
+        self.contentAvailable = contentAvailable
     }
 
     init(from decoder: Decoder) throws {
@@ -73,6 +75,7 @@ struct ArtifactDetails: Hashable, Codable, Sendable {
         imageSize = try container.decodeIfPresent(String.self, forKey: .imageSize)
         canvasType = try? container.decodeIfPresent(ArtifactType.self, forKey: .canvasType)
         language = try container.decodeIfPresent(String.self, forKey: .language)
+        contentAvailable = (try? container.decodeIfPresent(Bool.self, forKey: .contentAvailable)) ?? true
     }
 }
 

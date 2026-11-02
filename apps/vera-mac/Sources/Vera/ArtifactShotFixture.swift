@@ -38,6 +38,12 @@ enum ArtifactShotFixture {
             kind: .canvas, title: "Planting calendar", conversationID: nil, originTitle: nil, messageID: nil,
             sourceKey: "shot:canvas", data: Data(canvasText.utf8), mime: "text/markdown", fileExtension: "md",
             details: ArtifactDetails(canvasType: .markdown)))
+        var trashedDetails = ArtifactDetails(filePath: "~/Documents/Garden/old-seed-list.txt", changeKind: .trashed)
+        trashedDetails.contentAvailable = false
+        let trashed = record(ArtifactDraft(
+            kind: .fileChange, title: "old-seed-list.txt", conversationID: conversation.id, originTitle: conversation.title,
+            messageID: nil, sourceKey: "shot:trash", data: Data(), mime: "text/plain", fileExtension: "txt",
+            details: trashedDetails))
         let fileChange = record(ArtifactDraft(
             kind: .fileChange, title: "beds.md", conversationID: conversation.id, originTitle: conversation.title,
             messageID: nil, sourceKey: "shot:file", data: Data(afterText.utf8), mime: "text/markdown", fileExtension: "md",
@@ -64,6 +70,7 @@ enum ArtifactShotFixture {
         switch variant {
         case "artifacts-image": selection = image?.artifactID
         case "artifacts-file-change": selection = fileChange?.artifactID
+        case "artifacts-trashed": selection = trashed?.artifactID
         default: selection = document?.artifactID
         }
         return Seeded(store: store, selection: selection)
