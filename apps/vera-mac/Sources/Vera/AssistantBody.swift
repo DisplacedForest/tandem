@@ -3,62 +3,94 @@ import AppKit
 import MarkdownUI
 
 struct AssistantBody: View {
+    enum Section { case bubble, extras, actions }
+
     @EnvironmentObject var store: ChatStore
     let message: Message
+    var section: Section = .bubble
     var nativeActions = true
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
 
     var body: some View {
-        // A continued Pulse briefing renders as the full rich article (hero, cited paragraphs, photos).
-        if let card = message.pulse {
-            PulseArticleView(card: card, apiBase: store.mediaBase)
-        } else {
-            prose
+        switch section {
+        case .bubble:
+            if let card = message.pulse {
+                PulseArticleView(card: card, apiBase: store.mediaBase)
+            } else {
+                bubble
+            }
+        case .extras:
+            if message.pulse == nil { extras }
+        case .actions:
+            if message.pulse == nil { actions }
         }
     }
 
-    private var prose: some View {
-        let parsed = ToolCallParser.parse(message.text)
-        // Cited replies drop their trailing plain-text "Sources" list — the SourcesRow below
-        // renders the real thing (no-op when the section is absent).
-        let display = message.sources.isEmpty ? parsed.clean : PulseMarkers.stripSourcesSection(parsed.clean)
-        return VStack(alignment: .leading, spacing: 10) {
-            ForEach(ToolCallParser.group(parsed.calls)) { ToolGroupChip(group: $0) }
-            // Interleave prose (markdown — incl. tables) with native chart / stat-card blocks.
-            ForEach(VeraBlocks.segments(display)) { seg in
-                switch seg {
-                case .prose(_, let t):
-                    // Cited replies get the Pulse treatment: refs stripped, chips beneath.
-                    if message.sources.isEmpty { ProseMarkdown(text: t) }
-                    else { CitedProse(text: t, sources: message.sources) }
-                case .chart(_, let spec): ChartBlockView(spec: spec)
-                case .stats(_, let cards): StatCardsView(cards: cards)
-                }
-            }
-            if message.ask != nil {
-                VeraAskCard(message: message, canAnswer: nativeActions && store.canSubmitChat, onAnswer: onAnswer)
-            }
-            ForEach(message.artifacts) { art in
-                Button { onOpenArtifact?(art) } label: { ArtifactChip(artifact: art) }.buttonStyle(.plain)
-            }
-            // Pulse parity: the expandable sources row at the bottom of a cited reply.
-            if !message.sources.isEmpty {
-                SourcesRow(sources: message.sources)
-            }
-            // Response actions — copy + thumbs up/down (ratings feed the preference log).
-            if !parsed.clean.isEmpty {
-                HStack(spacing: 16) {
-                    msgAction("doc.on.doc") { copyText(parsed.clean) }
-                    if nativeActions {
-                    msgAction("hand.thumbsup", on: store.messageRatings[message.id] == "up") { rate("up") }
-                    msgAction("hand.thumbsdown", on: store.messageRatings[message.id] == "down") { rate("down") }
+    private var parsed: (clean: String, calls: [ToolCall]) { ToolCallParser.parse(message.text) }
+
+    @ViewBuilder private var bubble: some View {
+        let clean = parsed.clean
+        let display = message.sources.isEmpty ? clean : PulseMarkers.stripSourcesSection(clean)
+        if !display.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(VeraBlocks.segments(display)) { seg in
+                    switch seg {
+                    case .prose(_, let t):
+                        if message.sources.isEmpty { ProseMarkdown(text: t) }
+                        else { CitedProse(text: t, sources: message.sources) }
+                    case .chart(_, let spec): ChartBlockView(spec: spec)
+                    case .stats(_, let cards): StatCardsView(cards: cards)
                     }
                 }
-                .padding(.top, 2)
             }
+            .padding(.horizontal, ConversationMetrics.bubblePaddingH)
+            .padding(.vertical, ConversationMetrics.bubblePaddingV)
+            .background(Theme.assistantBubble)
+            .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+        } else if message.state == .streaming && message.toolActivities.isEmpty && message.ask == nil {
+            ProgressView().controlSize(.small)
+                .padding(.horizontal, ConversationMetrics.bubblePaddingH)
+                .padding(.vertical, ConversationMetrics.bubblePaddingV)
+                .background(Theme.assistantBubble)
+                .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+                .accessibilityLabel("Working on your answer")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var extras: some View {
+        let groups = ToolCallParser.group(parsed.calls)
+        if !groups.isEmpty || message.ask != nil || !message.artifacts.isEmpty || !message.sources.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(groups) { ToolGroupChip(group: $0) }
+                if message.ask != nil {
+                    VeraAskCard(message: message, canAnswer: nativeActions && store.canSubmitChat, onAnswer: onAnswer)
+                }
+                ForEach(message.artifacts) { art in
+                    Button { onOpenArtifact?(art) } label: { ArtifactChip(artifact: art) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open " + ArtifactChip.displayTitle(art))
+                }
+                if !message.sources.isEmpty {
+                    SourcesRow(sources: message.sources)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        let clean = parsed.clean
+        if !clean.isEmpty {
+            HStack(spacing: 16) {
+                msgAction("doc.on.doc") { copyText(clean) }
+                if nativeActions {
+                    msgAction("hand.thumbsup", on: store.messageRatings[message.id] == "up") { rate("up") }
+                    msgAction("hand.thumbsdown", on: store.messageRatings[message.id] == "down") { rate("down") }
+                }
+            }
+            .padding(.top, 2)
+        }
     }
 
     private func rate(_ sentiment: String) {
@@ -73,14 +105,13 @@ struct AssistantBody: View {
     private func msgAction(_ icon: String, on: Bool = false, _ go: @escaping () -> Void) -> some View {
         Button(action: go) {
             Image(systemName: on ? icon + ".fill" : icon)
-                .font(.system(size: 13)).foregroundStyle(on ? Theme.accent : Theme.textSecondary)
+                .font(.system(size: 13)).foregroundStyle(on ? Theme.sage : Theme.warmTextSecondary)
                 .frame(width: 24, height: 20)
         }
         .buttonStyle(.plain).pointerCursor()
     }
 }
 
-/// A prose segment rendered as themed markdown (tidies bare-URL source walls first).
 struct ProseMarkdown: View {
     let text: String
     var body: some View {
@@ -91,8 +122,8 @@ struct ProseMarkdown: View {
 private struct StableProseMarkdown: View, Equatable {
     let text: String
     private static let proseTheme = MarkdownUI.Theme.basic
-        .text { ForegroundColor(Theme.textPrimary); FontSize(14) }
-        .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
+        .text { ForegroundColor(Theme.warmTextPrimary); FontSize(ConversationMetrics.bodySize) }
+        .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.cardFill) }
         .link { ForegroundColor(Theme.accent) }
 
     var body: some View {

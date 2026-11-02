@@ -172,11 +172,15 @@ final class TranscriptionStream: @unchecked Sendable {
         }
         await currentTail().value   // ensure all audio chunks have shipped
         try await client.send(type: "audio-stop")
-        for await ev in client.events where ev.type == "transcript" {
+        return try await Self.transcript(from: client.events)
+    }
+
+    static func transcript<Events: AsyncSequence>(from events: Events) async throws -> String where Events.Element == WyomingEvent {
+        for try await ev in events where ev.type == "transcript" {
             let text = (ev.data?["text"] as? String) ?? ""
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return ""
+        throw VoiceError.noTranscript
     }
 }
 
@@ -184,11 +188,13 @@ enum VoiceError: Error, LocalizedError {
     case http(String, Int)
     case mic(String)
     case notConfigured
+    case noTranscript
     var errorDescription: String? {
         switch self {
         case .http(let what, let code): return "\(what) failed (HTTP \(code))"
         case .mic(let m): return m
         case .notConfigured: return "Voice service not configured. Set its URL in Settings"
+        case .noTranscript: return "The voice service stopped before it answered."
         }
     }
 }

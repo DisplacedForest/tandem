@@ -44,6 +44,7 @@ struct VoiceView: View {
                 .buttonStyle(.plain)
                 .padding(.bottom, 40)
                 .help("End voice session")
+                .accessibilityLabel("End voice session")
             }
         }
     }
