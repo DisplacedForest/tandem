@@ -385,21 +385,22 @@ extension SelfTest {
                     fail("HTTP error body leaked a credential: \(description)")
                 }
             }
-            let alphabet = [UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "0")...UInt8(ascii: "9")]
-                .flatMap { $0.map { Character(UnicodeScalar($0)) } }
-            let bearer = String((0..<40).map { _ in alphabet.randomElement()! })
-            MemoryEndpointWire.state.reset()
-            MemoryEndpointWire.state.modelsStatus = 500
-            MemoryEndpointWire.state.modelsBody = Data("upstream said Bearer \(bearer)".utf8)
-            do {
-                _ = try await keyed.probe()
-                fail("probe accepted a 500")
-            } catch let error as NativeMemoryServiceError {
-                let description = error.localizedDescription
-                guard description.contains("HTTP 500"), !description.contains(bearer),
-                      description.contains("upstream said"),
-                      description.contains(NativeDiagnosticRedaction.placeholder) else {
-                    fail("plain-text error body leaked a bearer token: \(description)")
+            let digitBearer = String(repeating: "Qz7", count: 14)
+            let letterBearer = String(repeating: "QzWxyLmnoPab", count: 4)
+            for bearer in [digitBearer, letterBearer] {
+                MemoryEndpointWire.state.reset()
+                MemoryEndpointWire.state.modelsStatus = 500
+                MemoryEndpointWire.state.modelsBody = Data("upstream said Bearer \(bearer)".utf8)
+                do {
+                    _ = try await keyed.probe()
+                    fail("probe accepted a 500")
+                } catch let error as NativeMemoryServiceError {
+                    let description = error.localizedDescription
+                    guard description.contains("HTTP 500"), !description.contains(bearer),
+                          description.contains("upstream said"),
+                          description.contains(NativeDiagnosticRedaction.placeholder) else {
+                        fail("plain-text error body leaked a bearer token: \(description)")
+                    }
                 }
             }
         } catch {
