@@ -71,6 +71,7 @@ final class ChatStore: ObservableObject {
     @Published var pendingConversationDeletion: PendingConversationDeletion?
     var recordedArtifactSourceKeys: Set<String> = []
     @Published var projects: [ProjectRecord] = []
+    @Published var requestedArtifactID: String?
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
@@ -1141,6 +1142,7 @@ final class ChatStore: ObservableObject {
                     target.sourceConversationID = source
                     target.sourceMessageID = message
                 }
+                if let projectID = proposal.projectID { target.projectID = projectID }
                 target = try boundConsent(target, grant: sensitive)
                 target.updatedAt = Date()
                 try memoryRepository.saveMemory(

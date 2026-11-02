@@ -180,7 +180,8 @@ enum ProjectContextSelftest {
         try checkPreferProject()
         try await checkProjectRecall(store, repository: repository)
         try checkFailedMove(base: base)
-        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, typed tagging, queued replay, replay scope, new chat reuse, recall preference, read-only files folder, failed moves)")
+        try await checkUpdateRetagging(store, repository: repository)
+        print("  project context OK (instructions, folders, files grant, move out and back, delete keeps chats and artifacts, proposal tagging, typed tagging, queued replay, replay scope, new chat reuse, recall preference, read-only files folder, failed moves, update retagging)")
     }
 
     @MainActor
@@ -241,6 +242,53 @@ enum ProjectContextSelftest {
         }
         try check(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("written.txt").path),
                   "Nothing is written into the project files folder")
+    }
+
+    @MainActor
+    static func checkUpdateRetagging(_ store: ChatStore, repository: LocalChatRepository) async throws {
+        let now = Date()
+        func fact(_ id: String, title: String, detail: String, project: String?) -> NativeMemoryRecord {
+            var record = NativeMemoryRecord(
+                id: id, title: title, summary: detail, details: [detail], group: .areas, category: .preference,
+                bank: "personal", durability: .durable, expiry: nil, status: .approved, embedding: nil,
+                sourceConversationID: nil, sourceMessageID: nil, createdAt: now, updatedAt: now)
+            record.projectID = project
+            return record
+        }
+        func update(_ target: String, title: String, detail: String, project: String?) -> NativeMemoryProposal {
+            var proposal = NativeMemoryProposal(
+                id: UUID().uuidString, kind: .update, title: title, summary: detail, details: [detail],
+                group: .areas, category: .preference, bank: "personal", durability: .durable, expiry: nil,
+                targetIDs: [target], sourceConversationID: nil, sourceMessageID: nil, createdAt: now, status: .pending)
+            proposal.projectID = project
+            return proposal
+        }
+        try repository.saveMemory(fact("trellis-shared", title: "Trellis height", detail: "Trellis height guidance", project: nil),
+                                  decision: .accepted, note: "Test approval")
+        try repository.saveMemory(fact("trellis-other", title: "Trellis width", detail: "Trellis height guidance", project: "retag-other"),
+                                  decision: .accepted, note: "Test approval")
+        try repository.saveMemory(fact("hedge-tagged", title: "Hedge trim", detail: "Hedge trim schedule", project: "retag-kept"),
+                                  decision: .accepted, note: "Test approval")
+        store.reloadNativeMemory()
+
+        let tagging = update("trellis-shared", title: "Trellis height", detail: "Trellis height guidance revised", project: "retag-one")
+        try repository.saveProposal(tagging)
+        store.reloadNativeMemory()
+        try check(store.acceptMemoryProposal(tagging), "A project-tagged update is accepted")
+        try check(store.memoryRecords.first { $0.id == "trellis-shared" }?.projectID == "retag-one",
+                  "A project-tagged update moves a shared fact into the project")
+        let recalled = await store.retrieveApprovedMemory("trellis height guidance", projectID: "retag-one")
+        try check(recalled.selected.first?.record.id == "trellis-shared",
+                  "The retagged fact is preferred inside its project, got \(recalled.selected.map(\.record.id))")
+
+        let plain = update("hedge-tagged", title: "Hedge trim", detail: "Hedge trim schedule revised", project: nil)
+        try repository.saveProposal(plain)
+        store.reloadNativeMemory()
+        try check(store.acceptMemoryProposal(plain), "An untagged update is accepted")
+        try check(store.memoryRecords.first { $0.id == "hedge-tagged" }?.projectID == "retag-kept",
+                  "An untagged update keeps the fact's project")
+        for id in ["trellis-shared", "trellis-other", "hedge-tagged"] { try repository.deleteMemory(id) }
+        store.reloadNativeMemory()
     }
 
     @MainActor

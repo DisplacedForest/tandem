@@ -349,6 +349,7 @@ private struct ProjectDetail: View {
         return ProjectSection(title: "Artifacts") {
             ForEach(artifacts) { record in
                 ProjectLinkRow(symbol: record.kind.symbol, title: record.title, detail: record.kind.label) {
+                    store.requestedArtifactID = record.id
                     store.section = .artifacts
                 }
             }
