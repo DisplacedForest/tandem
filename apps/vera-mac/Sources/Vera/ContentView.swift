@@ -449,11 +449,14 @@ private struct ChatLoadingSkeleton: View {
     }
 }
 
-private struct EmptyChatView: View {
+struct EmptyChatView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
 
+    private var project: ProjectRecord? { store.selectedID.flatMap(store.projectForConversation) }
+
     private var greeting: String {
+        if project != nil { return "What should we work on?" }
         if store.isVeraThread(store.selectedID) { return "What are we working on?" }
         let h = Calendar.current.component(.hour, from: Date())
         let part = h < 12 ? "morning" : (h < 18 ? "afternoon" : "evening")
@@ -470,7 +473,9 @@ private struct EmptyChatView: View {
             Spacer()
             VStack(spacing: 22) {
                 HStack(spacing: 14) {
-                    ConversationFigureView(figure: ConversationPresence.greetingFigure(companionThread: store.isVeraThread(store.selectedID)), size: 56)
+                    if project == nil {
+                        ConversationFigureView(figure: ConversationPresence.greetingFigure(companionThread: store.isVeraThread(store.selectedID)), size: 56)
+                    }
                     Text(greeting).font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
@@ -478,9 +483,9 @@ private struct EmptyChatView: View {
                 if let error = store.chatConfigurationError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                } else if store.isLive {
+                } else if store.isLive && project == nil {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
-                } else {
+                } else if !store.isLive {
                     Button { config.showOnboarding = true } label: {
                         Label("\(store.conversationAssistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
@@ -1107,6 +1112,8 @@ struct ComposerField: View {
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @FocusState private var focused: Bool
+    @State private var editingProject: ProjectRecord?
+    @State private var managingProjectFiles: ProjectRecord?
     @State private var dropTargeted = false
     @State private var pasteMonitor: Any?
     @State private var mentionSelectionID: String?
@@ -1173,7 +1180,41 @@ struct ComposerField: View {
         return .handled
     }
 
+    private var project: ProjectRecord? { store.selectedID.flatMap(store.projectForConversation) }
+
     var body: some View {
+        VStack(spacing: 0) {
+            composer
+            if let project {
+                HStack(spacing: 18) {
+                    Button { editingProject = project } label: {
+                        Label(project.name, systemImage: "folder").lineLimit(1).truncationMode(.middle)
+                    }.accessibilityLabel("Edit project \(project.name)").help(project.name)
+                    Menu {
+                        Button("Add files to this chat", action: pickFiles)
+                        Button("Work in a folder…", action: pickFolder)
+                        Button("Manage project files") { managingProjectFiles = project }
+                    } label: {
+                        Label("Files", systemImage: "doc.on.doc")
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel("Files for \(project.name)")
+                    Button { store.section = .integrations } label: {
+                        Label("Plugins", systemImage: "puzzlepiece.extension")
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 13)).foregroundStyle(Theme.textPrimary).buttonStyle(.plain)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(Theme.surface, in: UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16))
+                .padding(.horizontal, 12)
+            }
+        }
+        .sheet(item: $editingProject) { ProjectEditor(project: $0) }
+        .sheet(item: $managingProjectFiles) { ProjectFilesEditor(projectID: $0.id) }
+    }
+
+    private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = store.attachmentError {
                 HStack(spacing: 6) {
@@ -1254,7 +1295,7 @@ struct ComposerField: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: ConversationMetrics.bodySize))
                     .foregroundStyle(Theme.warmTextPrimary)
-                    .lineLimit(1...8)
+                    .lineLimit(project != nil && store.selected?.messages.isEmpty == true ? 3...8 : 1...8)
                     .focused($focused)
                     .padding(.vertical, 6)
                     .frame(minHeight: ComposerControlGlyph.sendSize)
