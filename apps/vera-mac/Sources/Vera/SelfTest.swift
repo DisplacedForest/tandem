@@ -300,6 +300,11 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["VERA_PROJECT_CONTEXT_SELFTEST"] == "1" {
+            do { try await ProjectContextSelftest.checkProviderProjectContext(); print("PROJECT PROVIDER CONTEXT OK") }
+            catch { print("PROJECT PROVIDER CONTEXT FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if let raw = ProcessInfo.processInfo.environment["VERA_TASK_TRANSPORT_FIXTURE"] {
             do { try await NativeTaskTransportFixture.run(raw); exit(0) }
             catch { print("TASK TRANSPORT FIXTURE FAILED"); exit(1) }

@@ -171,6 +171,7 @@ enum ProjectContextSelftest {
         try check(folderPaths().contains(folderPath) && store.grants(for: chat).contains { $0.name == "Garden files" },
                   "Moving back restores the project folders")
 
+        try await checkProviderProjectContext()
         try await checkNavigationContinuity(store, repository: repository, projectID: project.id)
         try checkFilesGrantStaysReadOnly(store, chat: chat, projectID: project.id)
         try await checkProposalTagging(store, service: service, chat: chat, projectID: project.id)
@@ -416,6 +417,65 @@ enum ProjectContextSelftest {
         try repository.refreshDomainProjections()
         let refreshed = try repository.approvedMemories().first { $0.domainEntityID == proposal.domain?.entry.entityID }
         try check(refreshed?.projectID == projectID, "A projection refresh keeps the project")
+    }
+
+    @MainActor
+    static func checkProviderProjectContext() async throws {
+        let wire = DomainExtractionWire.state
+        wire.reset()
+        defer { wire.reset() }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DomainExtractionWire.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let config = NativeChatConfig(baseURL: URL(string: "https://fixture.invalid/v1")!, apiKey: nil, model: "fixture",
+                                      chatTemplateKwargs: nil, streaming: false)
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = ChatStore(nativeConfig: config, nativeTransport: NativeChatClient(config: config, session: session),
+                              repository: repository, artifactPersistenceEnabled: false)
+        defer { store.conversationTurnLoop?.cancel() }
+        guard let first = store.createProject(name: "Garden \"north\"\nnotes"),
+              let second = store.createProject(name: "Workshop") else { throw Failure(description: "Cannot create provider context projects") }
+        store.setProjectInstructions(first.id, "Measure seed spacing.")
+        store.setProjectInstructions(second.id, "Measure saw cuts.")
+        store.newConversation(inProject: first.id)
+        let firstChat = store.selectedID!
+        store.newConversation(inProject: second.id)
+        let secondChat = store.selectedID!
+        store.newConversation()
+        let plainChat = store.selectedID!
+        for (chat, expected) in [(firstChat, first.name), (firstChat, second.name), (secondChat, second.name), (plainChat, nil as String?)] {
+            let question = "What project is this chat in?"
+            store.suspendsTurnScheduling = true
+            store.select(chat)
+            let route = NativeComposerRoute(store: store, assistant: nil)
+            route.draft = question
+            route.send()
+            if chat == firstChat && expected == first.name { store.moveConversation(chat, toProject: second.id) }
+            store.select(chat == firstChat ? secondChat : firstChat)
+            let before = wire.bodies.count
+            store.suspendsTurnScheduling = false
+            store.scheduleConversationTurns()
+            try await NativeSessionFixture.eventually("The project query reached the provider and completed") {
+                wire.bodies.count > before && !store.isSchedulingTurns && store.turnExecutions.isEmpty && !store.conversationTurns.contains { $0.state == .running || $0.state == .pending }
+            }
+            guard wire.bodies.count == before + 1, let raw = wire.bodies.last,
+                  let payload = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                  let messages = payload["messages"] as? [[String: Any]],
+                  let system = messages.first(where: { $0["role"] as? String == "system" })?["content"] as? String else {
+                throw Failure(description: "Missing serialized provider context")
+            }
+            try check(messages.last?["content"] as? String == question, "Project context does not rewrite the user's request")
+            let labels = system.components(separatedBy: "\n").filter { $0.hasPrefix("Project name: ") }
+            try check(system.contains("Measure seed spacing.") == (expected == first.name) && system.contains("Measure saw cuts.") == (expected == second.name),
+                      "Project instructions and name travel together for a queued message and the next message after moving")
+            if let expected {
+                let encoded = try JSONEncoder().encode(expected)
+                try check(labels == ["Project name: " + String(decoding: encoded, as: UTF8.self)], "Only the dispatched chat's quoted project name reaches the provider")
+            } else {
+                try check(labels.isEmpty && !system.contains("Workshop") && !system.contains("Garden"), "Plain chat carries neither project")
+            }
+        }
     }
 
     @MainActor
