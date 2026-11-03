@@ -24,7 +24,7 @@ enum BridgeContractTest {
         }
         store.setDraft("What are you working on?")
         await store.send()
-        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with an active task")
+        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with an active task: messages=\(store.messages.count), pending=\(store.pending != nil), error=\(store.conversationError ?? "none"), connection=\(store.connectionError ?? "none")")
         if requireActiveWorker {
             await store.refresh()
             try PrototypeSelfTest.require(store.connectionError == nil && store.visibleTasks.contains { $0.id == first.id && $0.state == "running" },
@@ -123,7 +123,7 @@ enum BridgeContractTest {
         await reopened.send()
         await reopened.refresh()
         try PrototypeSelfTest.require(reopened.pending == nil && reopened.canSend && reopened.conversationError == nil,
-                                      "Explicit fresh message succeeds after interruption")
+                                      "Explicit fresh message succeeds after interruption: pending=\(reopened.pending != nil), canSend=\(reopened.canSend), error=\(reopened.conversationError ?? "none"), connection=\(reopened.connectionError ?? "none")")
         try PrototypeSelfTest.require(Set(reopened.visibleTasks.map(\.id)) == originalTaskIDs,
                                       "Fresh status message does not duplicate interrupted tasks")
         let freshMessages = reopened.messages.filter { $0.role == "user" && !previousMessageIDs.contains($0.id) }
