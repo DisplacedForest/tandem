@@ -49,7 +49,13 @@ enum Shot {
         }
 
         let content: AnyView
-        if view == "voice" {
+        if view == "projects-preview", let project = store.projects.first {
+            content = AnyView(ProjectPreview(project: project, onEdit: {})
+                .environmentObject(store).environment(\.renderSafe, true))
+        } else if view == "projects-editor", let project = store.projects.first {
+            content = AnyView(ProjectEditor(project: project)
+                .environmentObject(store).environment(\.renderSafe, true))
+        } else if view == "voice" {
             let voice = VoiceSession.preview(state: .listening, level: 0.6, store: store)
             content = AnyView(
                 VoiceView()
