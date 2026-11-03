@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import signal
+import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -71,16 +72,7 @@ class PiProcess:
         finally:
             for task in (exchange_task, cancel_task):
                 task.cancel()
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            await asyncio.sleep(0.05)
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+            await self.stop(process)
             self.pids.discard(process.pid)
             _, unsettled = await asyncio.wait({exchange_task, cancel_task}, timeout=0.2)
             if unsettled:
@@ -89,3 +81,29 @@ class PiProcess:
                 await asyncio.gather(exchange_task, cancel_task, return_exceptions=True)
             finally:
                 self.cleanup_blocked = False
+
+    async def stop(self, process: asyncio.subprocess.Process) -> None:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                await process.wait()
+                return
+            deadline = loop.time() + 2.0
+            probe_denied = False
+            while loop.time() < deadline:
+                try:
+                    os.killpg(process.pid, 0)
+                    probe_denied = False
+                except ProcessLookupError:
+                    await process.wait()
+                    return
+                except PermissionError:
+                    if sys.platform != 'darwin':
+                        raise
+                    probe_denied = True
+                await asyncio.sleep(.02)
+            if probe_denied:
+                raise PermissionError('Owned worker group status remained unavailable')
+        raise PiFailure('worker_cleanup_incomplete')
