@@ -162,6 +162,7 @@ struct VeraApp: App {
 
         Settings {
             SettingsView()
+                .modifier(CompanionAttentionWindow())
                 .environmentObject(config)
                 .environmentObject(store)
                 .environmentObject(updates)

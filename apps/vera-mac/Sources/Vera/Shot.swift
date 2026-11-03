@@ -6,6 +6,10 @@ import AppKit
 @MainActor
 enum Shot {
     static func render(view: String, to path: String, appearance: String = "dark") {
+        if view == "companion-attention" {
+            CompanionAttentionShot.render(to: path)
+            return
+        }
         if view.hasPrefix("composer-") {
             ComposerShot.render(view: view, to: path, appearance: appearance)
             return

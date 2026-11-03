@@ -59,6 +59,7 @@ final class CompanionPanelController: ObservableObject {
         panel.isOpaque = false
         panel.hasShadow = true
         let root = CompanionPanelView()
+            .modifier(CompanionAttentionWindow())
             .environmentObject(store)
             .environmentObject(config)
             .environmentObject(self)
@@ -357,6 +358,7 @@ struct CompanionPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
                 TextEditor(text: $store.companionDraft)
+                    .modifier(CompanionComposerAttention(focused: editorFocused, draft: store.companionDraft))
                     .font(.system(size: 14))
                     .scrollContentBackground(.hidden)
                     .focused($editorFocused)

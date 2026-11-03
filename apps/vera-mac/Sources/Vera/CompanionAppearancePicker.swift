@@ -70,6 +70,7 @@ struct CompanionAppearancePicker: View {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 footer
             }
+            .modifier(CompanionAttentionWindow())
             .frame(width: 680, height: 470)
             .background(Theme.surface)
         }
