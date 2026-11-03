@@ -48,12 +48,50 @@ extension ChatStore {
         if case .task(let id) = item.source { retryNativeTask(id.uuidString) }
     }
 
-    func openCompanionActivity(_ item: CompanionActivityItem) {
+    func companionActivityDetail(_ item: CompanionActivityItem) -> CompanionActivityDetail {
         switch item.source {
-        case .task:
-            openVeraThread()
+        case .task(let id):
+            guard let reference = nativeTaskReferences.first(where: { $0.id == id }) else {
+                return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
+            }
+            let projection = repository as? any NativeTaskProjectionRepository
+            let saved = try? projection?.taskProjection(id: id)
+            let snapshot = saved?.snapshot ?? reference.snapshot
+            let conversation = companionActivityConversation(reference.origin.conversationID)
+            let request = conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
+            let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
+                                                           connectionNote: saved?.connectionNote)
+            let outcome = display?.artifact?.report ?? display?.card.milestone
+            return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
+                                           canOpen: conversation != nil)
+        case .run(let id):
+            guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
+                return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
+            }
+            let reference = nativeTaskReferences.first { $0.id.uuidString.lowercased() == run.taskReferenceID?.lowercased() }
+            return CompanionActivityDetail(request: reference?.request.objective, outcome: run.detail,
+                                           canOpen: run.conversationID.flatMap(companionActivityConversation) != nil)
+        }
+    }
+
+    private func companionActivityConversation(_ id: String) -> Conversation? {
+        conversations.first { $0.id == id } ?? (try? repository?.listConversations().first { $0.id == id })
+    }
+
+    @discardableResult
+    func openCompanionActivity(_ item: CompanionActivityItem) -> Bool {
+        switch item.source {
+        case .task(let id):
+            guard let reference = nativeTaskReferences.first(where: { $0.id == id }),
+                  let conversation = companionActivityConversation(reference.origin.conversationID) else { return false }
+            if !conversations.contains(where: { $0.id == conversation.id }) { conversations.insert(conversation, at: 0) }
+            revealOngoingWork(reference)
+            return true
         case .run(let runID):
-            if let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == runID }) { openScheduleRun(run) }
+            guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == runID }),
+                  let id = run.conversationID, companionActivityConversation(id) != nil else { return false }
+            openScheduleRun(run)
+            return selectedID == id
         }
     }
 

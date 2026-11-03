@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownUI
 
 enum CompanionThreadPanelMetrics {
     static let width = OngoingWorkMetrics.panelWidth
@@ -27,6 +28,7 @@ struct CompanionThreadPanel: View {
     @State private var showingAllActivity = false
     @State private var editingProfile = false
     @State private var editingAppearance = false
+    @State private var navigationError: String?
 
     init(fixed: CompanionOverviewModel? = nil, selectedID: String? = nil, onClose: (() -> Void)? = nil) {
         self.fixed = fixed
@@ -82,11 +84,13 @@ struct CompanionThreadPanel: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 22) {
-            identity
-            thisMac
-            activity
-            rules
-            outputs
+            if let item = current.selected(selectedID) {
+                activityDetail(item)
+            } else {
+                identity
+                if !current.activity.isEmpty { activity }
+                if !current.outputs.isEmpty { outputs }
+            }
         }
     }
 
@@ -106,9 +110,10 @@ struct CompanionThreadPanel: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(current.name), \(stateLine)")
-                Text(current.goal.isEmpty ? CompanionOverviewModel.noGoal : current.goal)
-                    .font(.system(size: 13)).foregroundStyle(current.goal.isEmpty ? Theme.warmTextSecondary : Theme.warmTextPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !current.goal.isEmpty {
+                    Text(current.goal).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack(spacing: 8) {
                     Button {
                         store.setDotState(current.paused ? .active : .paused)
@@ -141,30 +146,12 @@ struct CompanionThreadPanel: View {
         }
     }
 
-    private var thisMac: some View {
-        card {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(CompanionOverviewModel.thisMac, systemImage: "desktopcomputer")
-                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                Text(current.services).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !current.rules.isEmpty {
-                    Text(current.rules).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
     private var visibleActivity: [CompanionActivityItem] {
         showingAllActivity ? current.activity : Array(current.activity.prefix(CompanionOverviewModel.activityPreview))
     }
 
     private var activity: some View {
         section("Recent activity") {
-            if current.activity.isEmpty {
-                empty(CompanionOverviewModel.noActivity)
-            }
             ForEach(visibleActivity) { item in
                 activityRow(item)
             }
@@ -175,48 +162,58 @@ struct CompanionThreadPanel: View {
     }
 
     private func activityRow(_ item: CompanionActivityItem) -> some View {
-        let selected = selectedID == item.id
         let shown = OngoingWork.presentation(status: item.status, document: item.isDocument, hasArtifact: item.hasArtifact)
         let row = OngoingWorkItem(id: item.id, conversationID: store.veraThreadID ?? "", title: item.title, state: item.state,
                                   glyph: shown.glyph, artifact: nil, reference: nil)
-        return VStack(alignment: .leading, spacing: 8) {
-            OngoingWorkCard(item: row) { selectedID = selected ? nil : item.id }
-                .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous)
-                    .stroke(selected ? Theme.sage : Color.clear, lineWidth: 1.5))
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            if selected, item.canOpen || item.canRetry || item.canStop {
-                HStack(spacing: 8) {
-                    if item.canOpen { Button("Open") { store.openCompanionActivity(item) } }
-                    if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
-                    if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
-                    Spacer(minLength: 0)
-                }
-                .controlSize(.small)
-                .padding(.leading, 4)
-            }
-        }
+        return OngoingWorkCard(item: row) { navigationError = nil; selectedID = item.id }
+            .accessibilityLabel("Details for \(item.title)")
     }
 
-    private var rules: some View {
-        card {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Rules for this task").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                if let title = current.rulesTitle(selected: selectedID) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
-                    Text(CompanionOverviewModel.noTaskRules).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
-                } else {
-                    Text(CompanionOverviewModel.selectWorkHint).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+    private func activityDetail(_ item: CompanionActivityItem) -> some View {
+        let detail = store.companionActivityDetail(item)
+        return VStack(alignment: .leading, spacing: 20) {
+            Button { navigationError = nil; selectedID = nil } label: {
+                Label("Back", systemImage: "chevron.left")
             }
-        }
+            .buttonStyle(.plain).accessibilityLabel("Back to overview")
+            Text(item.title).font(.system(size: 18, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            if let request = detail.request {
+                Text(request).font(.system(size: 13)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius))
+            }
+            Text(item.state).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+            if let outcome = detail.outcome {
+                Markdown(outcome)
+                    .markdownTextStyle { ForegroundColor(Theme.warmTextPrimary); FontSize(13) }
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if item.canRetry || item.canStop {
+                HStack {
+                    if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
+                    if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
+                }.controlSize(.small)
+            }
+            if let navigationError {
+                Text(navigationError).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+            }
+            if detail.canOpen {
+                Button {
+                    if store.openCompanionActivity(item) { onClose?() }
+                    else { navigationError = "This chat is no longer available." }
+                } label: {
+                    Label("Go to chat", systemImage: "bubble.left")
+                        .frame(maxWidth: .infinity)
+                }.buttonStyle(.bordered).controlSize(.large)
+            }
+        }.foregroundStyle(Theme.warmTextPrimary)
     }
 
     private var outputs: some View {
         section("Outputs") {
-            if current.outputs.isEmpty {
-                empty(CompanionOverviewModel.noOutputs)
-            }
             ForEach(current.outputs.prefix(CompanionOverviewModel.outputPreview)) { result in
                 Button { store.openCompanionResult(result.id) } label: {
                     ConversationResultRow(title: result.title)
@@ -246,8 +243,4 @@ struct CompanionThreadPanel: View {
             .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous).stroke(Theme.cardStroke, lineWidth: 1))
     }
 
-    private func empty(_ text: String) -> some View {
-        Text(text).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
 }

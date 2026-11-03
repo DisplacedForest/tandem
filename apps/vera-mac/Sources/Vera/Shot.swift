@@ -42,6 +42,8 @@ enum Shot {
             size = CGSize(width: 640, height: 560)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 520)
+        } else if view == "companion-activity-detail" {
+            size = CGSize(width: 340, height: 700)
         } else if view == "companion-thread" {
             size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" {
@@ -408,6 +410,20 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-activity-detail" {
+            let fixture = OngoingWorkFixture.store()
+            let reference = fixture.nativeTaskReferences.last!
+            let display = try! NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
+            let item = CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: nil,
+                                                       hasArtifact: true, date: Date())
+            let model = CompanionOverviewModel(name: "Ada", goal: "", services: "", rules: "", paused: false,
+                                               activity: [item], outputs: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                CompanionThreadPanel(fixed: model, selectedID: item.id)
+                    .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
+                    .frame(width: 340, height: 700).background(Theme.bg)
+            )
         } else if view == "companion-thread" || view == "companion-thread-empty" {
             let populated = view == "companion-thread"
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
@@ -420,7 +436,7 @@ enum Shot {
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
                 ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
-                         companionSelection: populated ? CompanionOverviewFixture.visitID.uuidString : nil, height: size.height)
+                         companionSelection: nil, height: size.height)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .environmentObject(config)
