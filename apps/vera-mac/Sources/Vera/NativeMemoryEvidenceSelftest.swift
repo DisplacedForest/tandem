@@ -4,6 +4,22 @@ import GRDB
 
 @MainActor
 enum NativeMemoryEvidenceSelftest {
+    static func waitForTurn(_ store: ChatStore) async throws {
+        guard let replyID = store.selected?.messages.last?.id,
+              let turn = store.conversationTurns.last(where: { $0.assistantMessageID == replyID }) else {
+            throw NativeMemoryEvidenceError.unavailable
+        }
+        for _ in 0..<200 {
+            if let reply = store.selected?.messages.first(where: { $0.id == replyID }),
+               reply.state == .complete || reply.state == .interrupted,
+               !store.isSchedulingTurns, store.turnExecutions[turn.id] == nil {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(false, "memory fixture turn did not finish")
+    }
+
     static func run() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("vera-memory-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -67,7 +83,7 @@ enum NativeMemoryEvidenceSelftest {
             repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
         await store.connect()
         store.sendText("What is the current livestock and planned care?")
-        for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitForTurn(store)
         let prompt = transport.histories.last?.first?.content ?? ""
         try require(prompt.contains("ten hens") && !prompt.contains("twelve hens"), "native chat did not receive corrected cross-chat evidence")
         try require(service.embedCalls == 0 && service.extractionCalls == 0, "lexical recall called a model service")
@@ -86,7 +102,8 @@ enum NativeMemoryEvidenceSelftest {
             repository: repository, nativeMemorySettings: .fresh, nativeMemoryService: service)
         await off.connect()
         off.sendText("What is the current livestock?")
-        for _ in 0..<200 where off.generating { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitForTurn(off)
+        try require(!noMemoryTransport.histories.isEmpty, "memory-off fixture never sent its request")
         try require(!(noMemoryTransport.histories.last?.first?.content ?? "").contains("USER-APPROVED MEMORY CONTEXT"), "memory off still retrieved")
         try repository.deleteConversation("chat-a")
         try require(try repository.memoryEvidence(stock.id).last?.sourceText == nil, "deleted original chat survived in archive")
@@ -237,7 +254,7 @@ enum NativeMemoryEvidenceSelftest {
                 store.updateNativeMemory(settings: settings, service: nil)
             }
             await gate.release()
-            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await waitForTurn(store)
             try require(!transport.histories.isEmpty, "held lookup never resumed")
             try require(!(transport.histories.last?.first?.content ?? "").contains("USER-APPROVED MEMORY CONTEXT"), "memory survived held lookup after " + change)
         }
@@ -278,7 +295,7 @@ enum NativeMemoryEvidenceSelftest {
                     store.updateNativeMemory(settings: settings, service: nil)
                 }
                 NativeMemoryAdmissionProtocol.state.allow()
-                for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+                try await waitForTurn(store)
                 try require(!store.generating && store.selected?.messages.last?.failure != nil, "revoked queued request did not stop visibly")
                 try require(NativeMemoryAdmissionProtocol.state.completions == 0, "stale memory reached HTTP after admission")
             }
@@ -307,7 +324,7 @@ enum NativeMemoryEvidenceSelftest {
         try require(await gate.arrived, "held tool never ran")
         try repository.deleteMemory(memory.id)
         await gate.release()
-        for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitForTurn(store)
         try require(transport.histories.count == 1, "later tool round resent removed memory")
         print("  memory dispatch: PASS (real client queued admission, streaming/nonstreaming remove/exclude/off, later tool round; zero model HTTP requests in admission fixtures)")
     }
@@ -442,7 +459,7 @@ enum NativeMemoryEvidenceSelftest {
             }
             store.newConversation()
             store.sendText("I like morning walks before work")
-            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await waitForTurn(store)
             try await Task.sleep(for: .milliseconds(300))
             watcher.cancel()
             if flip {
@@ -512,7 +529,7 @@ enum NativeMemoryEvidenceSelftest {
                 let store = makeStore(repository, settings, service)
                 store.newConversation()
                 store.sendText(user)
-                for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+                try await waitForTurn(store)
                 try await Task.sleep(for: .milliseconds(300))
                 let pending = try repository.pendingProposals()
                 if handling == .reviewOnly && user == sensitiveUser {
@@ -585,7 +602,7 @@ enum NativeMemoryEvidenceSelftest {
                 sourceMessageID: nil, createdAt: now, updatedAt: now), decision: .accepted, note: "Synthetic embedded fixture")
         }
         func settle(_ store: ChatStore) async throws {
-            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await waitForTurn(store)
             try await Task.sleep(for: .milliseconds(300))
         }
         var base = NativeMemorySettings.fresh
@@ -724,7 +741,7 @@ enum NativeMemoryEvidenceSelftest {
                 repository: repository, nativeMemorySettings: settings, nativeMemoryService: SelfTestMemoryService())
         }
         func settle(_ store: ChatStore) async throws {
-            for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+            try await waitForTurn(store)
             try await Task.sleep(for: .milliseconds(300))
         }
         var base = NativeMemorySettings.fresh
