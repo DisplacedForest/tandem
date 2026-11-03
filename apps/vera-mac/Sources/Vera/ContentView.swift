@@ -191,13 +191,17 @@ private struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     var workCollapsed = false
     @EnvironmentObject var config: ConfigStore
-    private var conversation: Conversation? { store.selected }
+    private var conversation: Conversation? {
+        if store.section == .vera { return store.conversations.first { $0.id == store.veraThreadID } }
+        return store.selected
+    }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
     @State private var showingWork = false
     @State private var openedWorkReport: NativeResearchArtifact?
     @State private var revealTask: Task<Void, Never>?
     @State private var revealConversationID: String?
+    @StateObject private var transcriptContinuity = CompanionTranscriptContinuity()
 
     private func cancelTaskReveal() {
         revealTask?.cancel()
@@ -243,7 +247,12 @@ private struct ChatPane: View {
     }
 
     private func refreshCompanionOpening() {
-        if store.isVeraThread(conversation?.id) { store.prepareCompanionOpening() }
+        if store.section == .vera {
+            store.prepareCompanionThread()
+            if store.selectedID != store.veraThreadID { store.openVeraThread() }
+        } else if store.isVeraThread(conversation?.id) {
+            store.prepareCompanionOpening()
+        }
     }
 
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
@@ -314,21 +323,46 @@ private struct ChatPane: View {
                             }
                             Color.clear.frame(height: 1).id("bottom")
                         }
+                        .scrollTargetLayout()
                         .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)
                         .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
-                    .onChange(of: convo.messages.last?.text ?? "") { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: convo.messages.count) { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
-                    .onChange(of: store.selectedID) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                        revealPendingSource(proxy)
-                        revealPendingTask(proxy)
+                    .onScrollPhaseChange { _, phase in
+                        transcriptContinuity.scrollPhaseChanged(phase)
+                    }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
+                    } action: { _, nearBottom in
+                        if store.isVeraThread(convo.id) { transcriptContinuity.observe(nearBottom: nearBottom, conversationID: convo.id) }
+                    }
+                    .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0) { visible in
+                        if store.isVeraThread(convo.id) {
+                            transcriptContinuity.observe(visible: visible, ordered: convo.messages.map(\.id), conversationID: convo.id)
+                        }
+                    }
+                    .onChange(of: convo.messages.last?.text ?? "") {
+                        if !store.isVeraThread(convo.id) || transcriptContinuity.shouldFollowLatest { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .onChange(of: convo.messages.count) {
+                        if store.isVeraThread(convo.id) {
+                            if transcriptContinuity.shouldFollowLatest { proxy.scrollTo("bottom", anchor: .bottom) }
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                        }
                     }
                     .onChange(of: store.pendingHighlightMessageID) { revealPendingSource(proxy) }
                     .onChange(of: store.pendingTaskReveal) { revealPendingTask(proxy) }
-                    .onAppear {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                    .task(id: convo.id) {
+                        let companion = store.isVeraThread(convo.id)
+                        let anchor = companion ? transcriptContinuity.begin(conversationID: convo.id, messages: convo.messages.map(\.id)) : nil
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                        else { proxy.scrollTo("bottom", anchor: .bottom) }
+                        try? await Task.sleep(for: .milliseconds(100))
+                        guard !Task.isCancelled else { return }
+                        if companion { transcriptContinuity.finishRestoring(conversationID: convo.id) }
                         revealPendingSource(proxy)
                         revealPendingTask(proxy)
                     }
@@ -341,6 +375,16 @@ private struct ChatPane: View {
                     }
                     .frame(maxWidth: ConversationMetrics.columnWidth)
                     .padding(.horizontal, 28).padding(.top, 4)
+                }
+                ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
+            } else if store.section == .vera || store.isVeraThread(conversation?.id) {
+                CompanionOpeningView(error: store.companionOpeningError,
+                                     needsConnection: store.repository != nil && !store.pendingProfileAvailable,
+                                     canRetry: store.repository != nil) {
+                    store.chatConfigurationError = nil
+                    store.prepareCompanionThread()
+                    store.openVeraThread()
                 }
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: ConversationMetrics.columnWidth)
