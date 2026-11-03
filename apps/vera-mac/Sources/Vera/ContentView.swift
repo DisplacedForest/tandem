@@ -61,6 +61,7 @@ struct ContentView: View {
                 VoiceView().transition(.opacity).zIndex(1)
             }
         }
+        .modifier(CompanionAttentionWindow())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
@@ -1402,6 +1403,7 @@ struct ComposerField: View {
             dictation.detach(voice)
         }
         .onChange(of: store.selectedID) { _, _ in dictation.detach(voice) }
+        .modifier(CompanionComposerAttention(focused: focused, draft: store.draft))
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .onChange(of: store.grantConsentTick) { _, _ in
             let missing = [NativeFolderTools.toolID, NativeCommandTools.toolID].filter { !config.nativeSettings.enabledToolIDs.contains($0) }

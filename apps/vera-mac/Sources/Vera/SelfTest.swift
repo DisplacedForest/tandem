@@ -300,6 +300,11 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["VERA_ATTENTION_SELFTEST"] == "1" {
+            do { try runCompanionAttention(); print("COMPANION ATTENTION SELFTEST OK") }
+            catch { print("COMPANION ATTENTION SELFTEST FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if ProcessInfo.processInfo.environment["VERA_PROJECT_CONTEXT_SELFTEST"] == "1" {
             do { try await ProjectContextSelftest.checkProviderProjectContext(); print("PROJECT PROVIDER CONTEXT OK") }
             catch { print("PROJECT PROVIDER CONTEXT FAILED: \(error)"); exit(1) }
@@ -379,6 +384,7 @@ enum SelfTest {
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
+        do { try runCompanionAttention() } catch { print("SELFTEST ERROR: companion attention \(error)"); exit(1) }
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }

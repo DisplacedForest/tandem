@@ -350,6 +350,8 @@ The figure appears wherever the companion does: the sidebar, Settings and the vo
 - Resting: settled low with closed eyes while the app is inactive.
 - Needs you: only while a real question is waiting for your decision. It hops once and then holds the pose until the question is answered.
 
+In the active app window, the companion glances toward the pointer and then toward the composer while you type. Its eyes stay within the selected shape, and voice and resting cues keep priority. Pointer position stays in the app and is never recorded or sent to a model.
+
 With Reduce Motion on in System Settings, each state is a still pose. Animation also stops while a view is hidden, so a figure you can't see costs nothing.
 
 The choice is stored in `~/.vera/config.json` under `companion_shape` and `companion_color`, using the lowercase names (for example `"companion_shape": "fold"` and `"companion_color": "periwinkle"`). When either key is unset or unrecognized, the companion uses Pebble and Sage.

@@ -289,6 +289,9 @@ struct CompanionAvatarView: View {
     @State private var visible = false
     @State private var hostVisible = false
     @State private var entered = Date()
+    @State private var attention = CompanionAttentionMotion()
+    @State private var attentionFrame = CGRect.zero
+    @Environment(\.companionAttentionInput) private var attentionInput
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.renderSafe) private var renderingShot
 
@@ -303,7 +306,16 @@ struct CompanionAvatarView: View {
     }
 
     private var paused: Bool {
-        renderSafe || renderingShot || (reduceMotion ?? systemReduceMotion) || !visible || !hostVisible
+        renderSafe || renderingShot || (reduceMotion ?? systemReduceMotion) || !visible || !hostVisible || !attentionInput.active
+    }
+
+    private func eyePose(motion: CompanionMotion, elapsed: Double?, still: Bool) -> CompanionPose {
+        var pose = motion.eyes.pose(at: elapsed)
+        if !still && state != .resting {
+            if state == .ready { pose.sy = attention.blink }
+            else { pose.sy *= attention.blink }
+        }
+        return pose
     }
 
     var body: some View {
@@ -312,16 +324,23 @@ struct CompanionAvatarView: View {
         TimelineView(.animation(minimumInterval: nil, paused: still)) { context in
             let elapsed: Double? = still ? nil : max(0, context.date.timeIntervalSince(entered))
             CompanionFigure(appearance: appearance,
-                            bodyPose: motion.body.pose(at: elapsed),
-                            face: motion.face.pose(at: elapsed),
-                            eyes: motion.eyes.pose(at: elapsed),
+                            bodyPose: still ? motion.body.pose(at: nil) : attention.body(motion.body.pose(at: elapsed)),
+                            face: CompanionAttentionMotion.containedFace(still ? motion.face.pose(at: nil) : attention.face(motion.face.pose(at: elapsed)),
+                                eyes: eyePose(motion: motion, elapsed: elapsed, still: still), shape: appearance.shape),
+                            eyes: eyePose(motion: motion, elapsed: elapsed, still: still),
                             size: size)
+                .onChange(of: context.date) { _, _ in
+                    attention.step(now: ProcessInfo.processInfo.systemUptime, input: attentionInput, frame: attentionFrame,
+                                   state: state, enabled: !still, random: { Double.random(in: 0...1) })
+                }
         }
         .frame(width: size, height: size)
+        .background { if !renderSafe && !renderingShot { CompanionAttentionGeometry { attentionFrame = $0 } } }
         .background { if !renderSafe && !renderingShot { TandemHostVisibilityProbe { hostVisible = $0 } } }
         .onAppear { visible = true }
         .onDisappear { visible = false }
         .onChange(of: state) { entered = Date() }
+        .onChange(of: paused) { _, _ in attention.reset(); entered = Date() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.accessibilityLabel(name: name))
         .accessibilityAddTraits(.isImage)
