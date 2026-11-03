@@ -322,7 +322,8 @@ enum NativeTurnCurrencyFixture {
         store.suspendsTurnScheduling = false
         store.scheduleConversationTurns()
         try await NativeSessionFixture.eventually("The released claim runs on a later tick") {
-            !store.isSchedulingTurns && (try? base.conversationTurns().first { $0.id == pending.id }?.state) == .complete
+            !store.isSchedulingTurns && store.turnExecutions.isEmpty
+                && (try? base.conversationTurns().first { $0.id == pending.id }?.state) == .complete
         }
         try require(transport.histories.count == 1 && store.turnExecutions.isEmpty, "The released turn ran exactly once")
         store.conversationTurnLoop?.cancel()

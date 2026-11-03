@@ -71,7 +71,8 @@ enum ArtifactProducerSelftest {
     static func waitForReply(_ store: ChatStore, conversationID: String) async throws {
         for _ in 0..<500 {
             if let reply = store.conversations.first(where: { $0.id == conversationID })?.messages.last,
-               reply.role == .assistant, reply.state == .complete || reply.state == .interrupted {
+               reply.role == .assistant, reply.state == .complete || reply.state == .interrupted,
+               !store.turnExecutions.values.contains(where: { $0.record.conversationID == conversationID }) {
                 return
             }
             try await Task.sleep(nanoseconds: 10_000_000)
