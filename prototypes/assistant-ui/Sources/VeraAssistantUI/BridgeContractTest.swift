@@ -123,7 +123,7 @@ enum BridgeContractTest {
         await reopened.send()
         await reopened.refresh()
         try PrototypeSelfTest.require(reopened.pending == nil && reopened.canSend && reopened.conversationError == nil,
-                                      "Explicit fresh message succeeds after interruption")
+                                      "Explicit fresh message succeeds after interruption: pending=\(reopened.pending != nil), canSend=\(reopened.canSend), error=\(reopened.conversationError ?? "none"), connection=\(reopened.connectionError ?? "none")")
         try PrototypeSelfTest.require(Set(reopened.visibleTasks.map(\.id)) == originalTaskIDs,
                                       "Fresh status message does not duplicate interrupted tasks")
         let freshMessages = reopened.messages.filter { $0.role == "user" && !previousMessageIDs.contains($0.id) }

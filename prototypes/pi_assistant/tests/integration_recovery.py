@@ -71,7 +71,9 @@ uvicorn.run(app,host='127.0.0.1',port=int(sys.argv[3]),access_log=False,log_leve
             except (OSError, urllib.error.URLError):
                 time.sleep(.05)
         raise AssertionError('Test bridge unavailable')
-    process = subprocess.Popen([sys.executable, str(launcher), str(runtime_root), str(marker), str(port)], cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    bridge_log = root / 'bridge.log'
+    bridge_output = bridge_log.open('wb')
+    process = subprocess.Popen([sys.executable, str(launcher), str(runtime_root), str(marker), str(port)], cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=bridge_output)
     restarted = None
     def send():
         try:
@@ -92,20 +94,20 @@ uvicorn.run(app,host='127.0.0.1',port=int(sys.argv[3]),access_log=False,log_leve
         process.kill()
         process.wait(timeout=3)
         sending.join(timeout=3)
-        restarted = subprocess.Popen([sys.executable, str(repo / 'prototypes/pi_assistant/bridge.py'), '--data-root', str(runtime_root), '--port', str(port)], cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        restarted = subprocess.Popen([sys.executable, str(repo / 'prototypes/pi_assistant/bridge.py'), '--data-root', str(runtime_root), '--port', str(port)], cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=bridge_output)
         ready(restarted)
         before = read('/tasks')['tasks']
         assert len(before) == 1 and before[0]['id'] == accepted['task_id']
         binary = repo / 'prototypes/assistant-ui/.build/debug/VeraPrototype'
         run = subprocess.run([str(binary), '--recovery-contract-test', '--data-root', str(ui_root), '--endpoint', endpoint, '--workspace-root', str(runtime_root / 'workspaces')], cwd=repo, text=True, capture_output=True, timeout=15)
         record_file('integrated-recovery-consumer.log', run.stdout + run.stderr)
-        assert run.returncode == 0, run.stdout + run.stderr
+        assert run.returncode == 0, run.stdout + run.stderr + bridge_log.read_text()
         after = read('/tasks')['tasks']
         assert len(after) == 1 and after[0]['id'] == accepted['task_id']
         assert after[0]['state'] in {'queued', 'needs_decision'}
         regular = subprocess.run([str(binary), '--contract-test', '--data-root', str(root / 'regular-ui'), '--endpoint', endpoint, '--workspace-root', str(runtime_root / 'workspaces')], cwd=repo, text=True, capture_output=True, timeout=15)
         record_file('integrated-http-consumer.log', regular.stdout + regular.stderr)
-        assert regular.returncode == 0, regular.stdout + regular.stderr
+        assert regular.returncode == 0, regular.stdout + regular.stderr + bridge_log.read_text()
         final_tasks = read('/tasks')['tasks']
         assert len(final_tasks) == 3
         assert sum(item['id'] == accepted['task_id'] for item in final_tasks) == 1
@@ -124,3 +126,4 @@ uvicorn.run(app,host='127.0.0.1',port=int(sys.argv[3]),access_log=False,log_leve
                 except subprocess.TimeoutExpired:
                     item.kill()
                     item.wait(timeout=3)
+        bridge_output.close()
