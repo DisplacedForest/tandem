@@ -24,7 +24,7 @@ enum BridgeContractTest {
         }
         store.setDraft("What are you working on?")
         await store.send()
-        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with an active task")
+        try PrototypeSelfTest.require(store.messages.count >= 4 && store.pending == nil, "Foreground remains responsive with an active task: messages=\(store.messages.count), pending=\(store.pending != nil), error=\(store.conversationError ?? "none"), connection=\(store.connectionError ?? "none")")
         if requireActiveWorker {
             await store.refresh()
             try PrototypeSelfTest.require(store.connectionError == nil && store.visibleTasks.contains { $0.id == first.id && $0.state == "running" },
