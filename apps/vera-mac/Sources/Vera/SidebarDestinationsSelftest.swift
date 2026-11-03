@@ -6,8 +6,8 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let primary = SidebarDestination.primary
         let secondary = SidebarDestination.secondary
-        try require(primary == [.chats, .projects, .library, .scheduled, .integrations], "The rail lists Chats, Projects, Library, Scheduled and Integrations in order")
-        try require(secondary == [.pulse, .workflows, .activity, .memory], "The More menu lists Pulse, Workflows, Activity and Memory in order")
+        try require(primary == [.chats, .library, .scheduled, .integrations], "The global rail lists Home, Library, Scheduled and Plugins")
+        try require(secondary == [.projects, .pulse, .workflows, .activity, .memory], "The More menu preserves Projects, Pulse, Workflows, Activity and Memory")
         try require(Set(primary).isDisjoint(with: secondary), "No destination appears in both the rail and the More menu")
         try require(Set(primary).union(secondary) == Set(SidebarDestination.allCases) && primary.count + secondary.count == SidebarDestination.allCases.count, "Every destination is reachable exactly once")
 
@@ -28,6 +28,10 @@ extension SelfTest {
             try require(shown == 1, "Exactly one sidebar row is selected for \(section.rawValue) while a conversation row is shown")
         }
         try require(SidebarDestination.allCases.allSatisfy { !$0.title.isEmpty && !$0.icon.isEmpty }, "Every destination has a title and an icon")
+        for section in [AppSection.chat, .vera, .projects] {
+            try require(SidebarDestination.primary.filter { $0.isRailSelected(section: section, pane: .canvas) } == [.chats],
+                        "Home stays selected through ordinary, companion and project navigation")
+        }
         try require(AppSection.artifacts.title == "Library", "The artifacts section is called Library")
     }
 }
