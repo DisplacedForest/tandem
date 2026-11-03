@@ -458,7 +458,7 @@ struct ShotView: View {
 
     private func shotComposerRow(text: String, typed: Bool, active: Bool, stop: Bool) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
-            ComposerControlGlyph(kind: .plus).padding(.bottom, 1)
+            ComposerControlGlyph(kind: .plus)
             Text(text).font(.system(size: ConversationMetrics.bodySize))
                 .foregroundStyle(typed ? Theme.warmTextPrimary : Theme.warmTextSecondary)
                 .padding(.vertical, 6)
@@ -466,7 +466,6 @@ struct ShotView: View {
             if voiceAvailability.any {
                 ComposerVoiceControls(availability: voiceAvailability, dictating: dictating,
                                       assistantName: store.conversationAssistantName, animated: false)
-                    .padding(.bottom, 2)
             }
             if stop {
                 ComposerControlGlyph(kind: .stop(enabled: true))
