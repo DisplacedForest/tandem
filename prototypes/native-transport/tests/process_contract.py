@@ -41,7 +41,8 @@ def wait_reserved(root: Path, process: subprocess.Popen[bytes]) -> None:
         if rows and rows[0][1] == "reserved":
             return
         if process.poll() is not None:
-            raise AssertionError("mock helper exited before reservation")
+            output, error = process.communicate(timeout=3)
+            raise AssertionError(f"mock helper exited before reservation ({process.returncode}): {output.decode(errors='replace')} {error.decode(errors='replace')}")
         time.sleep(0.01)
     raise AssertionError("mock helper did not reserve")
 

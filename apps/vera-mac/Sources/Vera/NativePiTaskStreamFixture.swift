@@ -171,8 +171,10 @@ enum NativePiTaskStreamFixture {
             catch PiBrokerError.unauthorized {}
         }
         stage = "reopened cursor"
-        try await quiet(probe)
+        try await wait { !cursors.cursors().isEmpty }
         try piCheck(cursors.cursors().first == String(cursor))
+        stage = "reopened idle stream"
+        try await quiet(probe)
         try piCheck(await candidate.provider.calls() == 0)
         var result = report
         result["reopened"] = true
@@ -212,8 +214,11 @@ enum NativePiTaskStreamFixture {
                 report = try await initial(candidate, presentation, probe, cursors)
                 try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: file, options: .atomic)
             }
-            try NativePiCandidate.verifyNoCredentialFiles(candidate.root.url)
+            stage = "shutdown"
             if mode != "--hold" { await presentation.stop() }
+            stage = "credential file scan"
+            try NativePiCandidate.verifyNoCredentialFiles(candidate.root.url)
+            stage = "report serialization"
             FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) + Data([10]))
             if mode == "--hold" {
                 try await Task.sleep(for: .seconds(30))
@@ -222,7 +227,8 @@ enum NativePiTaskStreamFixture {
             }
         } catch {
             if let current { await current.stop() }
-            FileHandle.standardError.write(Data("Native task stream fixture failed during \(stage): \(type(of: error))\n".utf8))
+            let detail = error as NSError
+            FileHandle.standardError.write(Data("Native task stream fixture failed during \(stage): \(detail.domain) \(detail.code)\n".utf8))
             exit(1)
         }
     }

@@ -841,6 +841,12 @@ enum NativeMemoryGate {
     }
 
     static func artifactCheck(_ base: NativeMemoryGateFixtureDriver, scenario: NativeMemoryGateScenario) async throws {
+        if let fixtureHome = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] {
+            let expected = URL(fileURLWithPath: fixtureHome).resolvingSymlinksInPath().path + "/"
+            guard NativeAttachmentStore.standardDirectory.resolvingSymlinksInPath().path.hasPrefix(expected) else {
+                throw NativeMemoryGateError.setup("artifacts", "the attachment directory escaped the fixture home")
+            }
+        }
         func listing() -> Set<String> {
             Set((try? FileManager.default.contentsOfDirectory(atPath: NativeAttachmentStore.standardDirectory.path)) ?? [])
         }
