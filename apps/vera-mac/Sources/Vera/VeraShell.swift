@@ -115,7 +115,6 @@ struct VeraSidebar: View {
     @State private var expandedProjects: Set<String> = []
     @State private var projectName = ""
     @State private var creatingProject = false
-    @State private var renamingProject: ProjectRecord?
     @Binding var collapsed: Bool
     @Binding var search: String
     @ObservedObject var workflowEditor: WorkflowEditorStore
@@ -165,14 +164,6 @@ struct VeraSidebar: View {
                 else if store.projectError == nil { store.projectError = "The project couldn't be created. Try again." }
             }.disabled(projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {}
-        }
-        .alert("Rename project", isPresented: Binding(get: { renamingProject != nil }, set: { if !$0 { renamingProject = nil } })) {
-            TextField("Project name", text: $projectName)
-            Button("Save") {
-                if let project = renamingProject { store.renameProject(project.id, name: projectName) }
-                renamingProject = nil
-            }.disabled(projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) { renamingProject = nil }
         }
     }
 
@@ -303,9 +294,6 @@ struct VeraSidebar: View {
                           }, onNewChat: {
                               expandedProjects.insert(project.id)
                               store.newConversation(inProject: project.id)
-                          }, onRename: {
-                              projectName = project.name
-                              renamingProject = project
                           })
     }
 
@@ -419,8 +407,13 @@ struct SidebarProjectRow: View {
     let selected: Bool
     let onExpand: () -> Void
     let onNewChat: () -> Void
-    let onRename: () -> Void
+    @EnvironmentObject var store: ChatStore
     @State private var hovering = false
+    @State private var previewing = false
+    @State private var previewPinned = false
+    @State private var insidePreview = false
+    @State private var editing = false
+    @State private var dismissal: Task<Void, Never>?
     private enum Focus: Hashable { case row, options, newChat }
     @FocusState private var focused: Focus?
 
@@ -440,9 +433,10 @@ struct SidebarProjectRow: View {
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Show or hide project chats")
             Menu {
-                Button("New chat", action: onNewChat)
+                Button("New chat", action: createChat)
                 Button(expanded ? "Collapse" : "Expand", action: onExpand)
-                Button("Rename", action: onRename)
+                Button("Project details", action: showPreview)
+                Button("Edit project") { editing = true }
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 28)
             }
@@ -450,7 +444,7 @@ struct SidebarProjectRow: View {
             .opacity(hovering || focused != nil ? 1 : 0)
             .focused($focused, equals: .options)
             .help("Project options").accessibilityLabel("Options for \(project.name)")
-            Button(action: onNewChat) {
+            Button(action: createChat) {
                 Image(systemName: "square.and.pencil").font(.system(size: 13)).frame(width: 24, height: 28)
             }
             .buttonStyle(.plain).opacity(hovering || focused != nil ? 1 : 0)
@@ -459,10 +453,57 @@ struct SidebarProjectRow: View {
         }
         .foregroundStyle(Theme.textSecondary)
         .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius).fill(selected ? Theme.surfaceSelected : hovering ? Theme.surfaceHover : .clear))
-        .onHover { hovering = $0 }
+        .onHover { entered in
+            hovering = entered
+            if entered {
+                dismissal?.cancel()
+                if !editing { previewing = true }
+            } else { scheduleDismissal() }
+        }
+        .popover(isPresented: $previewing, arrowEdge: .trailing) {
+            ProjectPreview(project: store.project(project.id) ?? project) {
+                previewing = false
+                editing = true
+            }
+            .onHover { entered in
+                insidePreview = entered
+                if entered { dismissal?.cancel() } else { scheduleDismissal() }
+            }
+        }
+        .sheet(isPresented: $editing) { ProjectEditor(project: store.project(project.id) ?? project) }
+        .onChange(of: previewing) { _, visible in
+            if !visible { insidePreview = false; previewPinned = false; dismissal?.cancel() }
+        }
+        .onChange(of: editing) { _, visible in
+            if visible { previewing = false }
+        }
+        .onDisappear { dismissal?.cancel() }
+        .accessibilityAction(named: "Project details", showPreview)
         .contextMenu {
-            Button("New chat", action: onNewChat)
-            Button("Rename", action: onRename)
+            Button("New chat", action: createChat)
+            Button("Project details", action: showPreview)
+            Button("Edit project") { editing = true }
+        }
+    }
+
+    private func createChat() {
+        dismissal?.cancel()
+        previewing = false
+        onNewChat()
+    }
+
+    private func showPreview() {
+        dismissal?.cancel()
+        previewPinned = true
+        previewing = true
+    }
+
+    private func scheduleDismissal() {
+        dismissal?.cancel()
+        dismissal = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, !hovering, !insidePreview, !previewPinned else { return }
+            previewing = false
         }
     }
 }

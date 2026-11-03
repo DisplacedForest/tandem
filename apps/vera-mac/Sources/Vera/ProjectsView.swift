@@ -1,370 +1,179 @@
 import SwiftUI
 import AppKit
 
-enum ProjectDateLabel {
-    static func text(_ date: Date, now: Date = Date()) -> String {
-        let label = ArtifactDateLabel.text(date, now: now)
-        return label == "Today" || label == "Yesterday" ? label.lowercased() : label
-    }
-
-    static func size(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-    }
-}
-
-struct ProjectsView: View {
+struct ProjectPreview: View {
     @EnvironmentObject var store: ChatStore
-    @Environment(\.renderSafe) private var renderSafe
-    @State private var selectedID: String?
-    @State private var creating = false
-    @State private var newName = ""
-    @FocusState private var nameFocused: Bool
-
-    init(initialSelection: String? = nil) {
-        _selectedID = State(initialValue: initialSelection)
-    }
-
-    private var selected: ProjectRecord? {
-        store.projects.first { $0.id == selectedID }
-    }
+    let project: ProjectRecord
+    let onEdit: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            listColumn.frame(width: 300)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            detailColumn.frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
-        .onAppear {
-            guard !renderSafe else { return }
-            store.reloadProjects()
-            store.reloadArtifacts()
-        }
-    }
-
-    private var listColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if selected == nil, let error = store.projectError {
-                ProjectErrorLine(text: error) { store.clearProjectError() }
-            }
-            if creating && !renderSafe {
-                nameField
-            } else {
-                newProjectButton
-            }
-            ShotSafeScroll(renderSafe: renderSafe) {
-                VStack(spacing: 2) {
-                    ForEach(store.projects) { project in
-                        ProjectRow(project: project, chats: store.projectConversations(project.id).count,
-                                   selected: project.id == selectedID)
-                            .contentShape(Rectangle())
-                            .onTapGesture { selectedID = project.id }
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityAction { selectedID = project.id }
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            Label(project.name, systemImage: "folder").font(.system(size: 16, weight: .semibold))
+            let count = store.projectConversations(project.id).count
+            Label("\(count) \(count == 1 ? "chat" : "chats")", systemImage: "bubble.left")
+                .foregroundStyle(Theme.textSecondary)
+            if !project.grants.isEmpty {
+                Divider()
+                ForEach(project.grants) { grant in
+                    Label(grant.path, systemImage: "folder")
+                        .lineLimit(2).truncationMode(.middle)
                 }
-                .padding(.bottom, 12)
             }
-            .modifier(ProjectTopAnchored())
+            Divider()
+            Button(action: onEdit) { Label("Edit project", systemImage: "gearshape") }
+                .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12).padding(.top, 20)
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    @ViewBuilder
-    private var newProjectButton: some View {
-        let label = HStack(spacing: 6) {
-            Image(systemName: "plus").font(.system(size: 12, weight: .medium))
-            Text("New project").font(.system(size: 13, weight: .medium))
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(Theme.accent)
-        .padding(.horizontal, 10).padding(.vertical, 7)
+        .font(.system(size: 13))
+        .foregroundStyle(Theme.textPrimary)
+        .padding(18).frame(width: 340, alignment: .leading)
         .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-        if renderSafe {
-            label
-        } else {
-            Button {
-                newName = ""
-                creating = true
-                nameFocused = true
-            } label: { label.contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New project")
-        }
-    }
-
-    private var nameField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: AppSection.projects.icon).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            TextField("Project name", text: $newName)
-                .textFieldStyle(.plain).font(.system(size: 13))
-                .focused($nameFocused)
-                .onSubmit(create)
-                .onExitCommand { creating = false }
-                .accessibilityLabel("Project name")
-        }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent, lineWidth: 1))
-        .onChange(of: nameFocused) { _, focused in
-            if !focused && newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { creating = false }
-        }
-    }
-
-    private func create() {
-        if let project = store.createProject(name: newName) { selectedID = project.id }
-        newName = ""
-        creating = false
-    }
-
-    @ViewBuilder
-    private var detailColumn: some View {
-        if store.projects.isEmpty {
-            DestinationPlaceholder(section: .projects)
-        } else if let selected {
-            VStack(spacing: 0) {
-                if let error = store.projectError {
-                    ProjectErrorLine(text: error) { store.clearProjectError() }
-                        .padding(.horizontal, 24).padding(.top, 16)
-                }
-                ProjectDetail(project: selected) { selectedID = nil }.id(selected.id)
-            }
-        } else {
-            Text("Select a project").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
     }
 }
 
-private struct ProjectRow: View {
-    let project: ProjectRecord
-    let chats: Int
-    let selected: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: AppSection.projects.icon).font(.system(size: 13)).foregroundStyle(Theme.accent)
-                .frame(width: 18).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(project.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text("\(chats) \(chats == 1 ? "chat" : "chats") · updated \(ProjectDateLabel.text(project.updatedAt))")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(selected ? Theme.surfaceSelected : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
-private struct ProjectDetail: View {
-    @EnvironmentObject var store: ChatStore
+struct ProjectEditor: View {
     @Environment(\.renderSafe) private var renderSafe
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
     let project: ProjectRecord
-    let onDeleted: () -> Void
+    @State private var name: String
     @State private var instructions: String
-    @State private var renaming = false
-    @State private var renameText = ""
+    @State private var grants: [FolderGrant]
+    @State private var error: String?
+    @State private var managingFiles = false
     @State private var confirmingDelete = false
-    @FocusState private var instructionsFocused: Bool
 
-    init(project: ProjectRecord, onDeleted: @escaping () -> Void) {
+    init(project: ProjectRecord) {
         self.project = project
-        self.onDeleted = onDeleted
+        _name = State(initialValue: project.name)
         _instructions = State(initialValue: project.instructions)
-    }
-
-    private var instructionsChanged: Bool {
-        instructions.trimmingCharacters(in: .whitespacesAndNewlines) != project.instructions
+        _grants = State(initialValue: project.grants)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header.padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 14)
-            Rectangle().fill(Theme.hairline).frame(height: 1)
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Edit project").font(.system(size: 20, weight: .semibold))
             ShotSafeScroll(renderSafe: renderSafe) {
-                VStack(alignment: .leading, spacing: 24) {
-                    instructionsSection
-                    foldersSection
-                    filesSection
-                    conversationsSection
-                    tasksSection
-                    artifactsSection
-                }
-                .frame(maxWidth: 720, alignment: .leading)
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .modifier(ProjectTopAnchored())
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .alert("Rename project", isPresented: $renaming) {
-            TextField("Name", text: $renameText)
-            Button("Rename") { store.renameProject(project.id, name: renameText) }
-            Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog("Delete \u{201C}\(project.name)\u{201D}?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                store.deleteProject(project.id)
-                onDeleted()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its chats and artifacts are kept; they just stop being grouped.")
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(project.name).font(.system(size: 17, weight: .semibold)).lineLimit(2)
-                    .textSelection(.enabled)
-                    .onTapGesture(count: 2, perform: beginRename)
-                Text("Created \(ProjectDateLabel.text(project.createdAt))")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            HStack(spacing: 14) {
-                ProjectAction(title: "New chat", symbol: "square.and.pencil", prominent: true) {
-                    store.newConversation(inProject: project.id)
-                }
-                ProjectAction(title: "Rename", symbol: "pencil", action: beginRename)
-                ProjectAction(title: "Delete…", symbol: "trash") { confirmingDelete = true }
-            }
-        }
-    }
-
-    private func beginRename() {
-        renameText = project.name
-        renaming = true
-    }
-
-    private func saveInstructions() {
-        guard instructionsChanged else { return }
-        store.setProjectInstructions(project.id, instructions)
-    }
-
-    private var instructionsSection: some View {
-        ProjectSection(title: "Instructions") {
-            ZStack(alignment: .topLeading) {
-                if renderSafe {
-                    Text(instructions.isEmpty ? " " : instructions).font(.system(size: 13))
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.horizontal, 5).padding(.vertical, 8)
-                } else {
-                    TextEditor(text: $instructions)
-                        .font(.system(size: 13))
-                        .scrollContentBackground(.hidden)
-                        .focused($instructionsFocused)
-                        .padding(.vertical, 8)
-                        .accessibilityLabel("Project instructions")
-                        .onChange(of: instructionsFocused) { _, focused in
-                            if !focused { saveInstructions() }
+                VStack(alignment: .leading, spacing: 18) {
+                    if renderSafe {
+                        Text(name).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8).background(Theme.bg, in: RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        TextField("Project name", text: $name)
+                            .textFieldStyle(.roundedBorder).accessibilityLabel("Project name")
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Source folders").fontWeight(.medium)
+                        ForEach(grants) { grant in
+                            HStack {
+                                Label(grant.name, systemImage: "folder")
+                                    .help(grant.path)
+                                Spacer()
+                                Button { grants.removeAll { $0.id == grant.id } } label: {
+                                    Image(systemName: "xmark")
+                                }
+                                .buttonStyle(.plain).accessibilityLabel("Remove \(grant.name)")
+                            }.padding(10).background(Theme.surfaceHover, in: RoundedRectangle(cornerRadius: 8))
                         }
+                        Button(action: addFolder) { Label("Add folder", systemImage: "folder.badge.plus") }
+                            .buttonStyle(.plain)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Instructions").fontWeight(.medium)
+                        Group {
+                            if renderSafe {
+                                Text(instructions).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            } else {
+                                TextEditor(text: $instructions).scrollContentBackground(.hidden)
+                                    .accessibilityLabel("Project instructions")
+                            }
+                        }
+                        .font(.system(size: 13)).padding(8).frame(height: 100)
+                        .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    Button { managingFiles = true } label: {
+                        Label("Manage project files", systemImage: "doc.on.doc")
+                    }.buttonStyle(.plain)
                 }
-                if instructions.isEmpty {
-                    Text("What should every chat in this project know?")
-                        .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 5).padding(.vertical, 8)
-                        .allowsHitTesting(false)
-                }
+            }.frame(maxHeight: 360)
+            if let error {
+                Text(error).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
             }
-            .frame(minHeight: 96, alignment: .topLeading)
-            .padding(.horizontal, 8)
-            .background(Theme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-            if instructionsChanged {
-                HStack(spacing: 14) {
-                    ProjectAction(title: "Save", symbol: "checkmark", prominent: true, action: saveInstructions)
-                    ProjectAction(title: "Discard", symbol: "arrow.uturn.backward") { instructions = project.instructions }
-                }
+            HStack {
+                Button("Delete project", role: .destructive) { confirmingDelete = true }
+                    .buttonStyle(.plain)
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save", action: save).keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+        .font(.system(size: 13)).padding(24).frame(width: 520)
+        .foregroundStyle(Theme.textPrimary).background(Theme.surface)
+        .sheet(isPresented: $managingFiles) { ProjectFilesEditor(projectID: project.id) }
+        .confirmationDialog("Delete \(project.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                store.clearProjectError()
+                store.deleteProject(project.id)
+                if store.project(project.id) == nil { dismiss() } else { error = store.projectError }
+            }
+        } message: {
+            Text("Its chats and saved work are kept. They stop being grouped in this project.")
         }
     }
 
-    private var foldersSection: some View {
-        let folders = project.grants.filter { !$0.readOnly }
-        return ProjectSection(title: "Folders") {
-            ForEach(folders) { grant in
-                ProjectItemRow(symbol: "folder", title: grant.name, detail: grant.path, removeLabel: "Remove \(grant.name)") {
-                    store.removeProjectFolder(project.id, grantID: grant.id)
-                }
-            }
-            if folders.isEmpty { ProjectEmptyLine(text: "No folders yet.") }
-            ProjectAction(title: "Add folder…", symbol: "folder.badge.plus", action: addFolder)
-        }
-    }
-
-    private var filesSection: some View {
-        ProjectSection(title: "Files") {
-            ForEach(project.files) { file in
-                ProjectItemRow(symbol: "doc", title: file.name, detail: ProjectDateLabel.size(file.byteSize),
-                               removeLabel: "Remove \(file.name)") {
-                    store.removeProjectFile(project.id, fileID: file.id)
-                }
-            }
-            if project.files.isEmpty { ProjectEmptyLine(text: "No files yet.") }
-            Text("Chats in this project can read these files but not change them.")
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-            ProjectAction(title: "Add files…", symbol: "doc.badge.plus", action: addFiles)
-        }
-    }
-
-    private var conversationsSection: some View {
-        let chats = store.projectConversations(project.id)
-        return ProjectSection(title: "Chats") {
-            ForEach(chats) { chat in
-                ProjectLinkRow(symbol: "bubble.left", title: chat.title, detail: ProjectDateLabel.text(chat.updatedAt)) {
-                    store.select(chat.id)
-                }
-            }
-            if chats.isEmpty { ProjectEmptyLine(text: "No chats yet.") }
-        }
-    }
-
-    private var tasksSection: some View {
-        let tasks = store.projectTaskReferences(project.id)
-        return ProjectSection(title: "Background work") {
-            ForEach(tasks) { task in
-                let document = task.createRequest.workerType == "document"
-                let status = (try? NativeTaskProjection.display(reference: task, snapshot: task.snapshot))?.card.status
-                ProjectItemRow(symbol: status?.symbol(document: document) ?? "clock",
-                               title: task.request.displayTitle,
-                               detail: status?.title(document: document))
-            }
-            if tasks.isEmpty { ProjectEmptyLine(text: "No background work yet.") }
-        }
-    }
-
-    private var artifactsSection: some View {
-        let artifacts = store.projectArtifacts(project.id)
-        return ProjectSection(title: "Artifacts") {
-            ForEach(artifacts) { record in
-                ProjectLinkRow(symbol: record.kind.symbol, title: record.title, detail: record.kind.label) {
-                    store.requestedArtifactID = record.id
-                    store.section = .artifacts
-                }
-            }
-            if artifacts.isEmpty { ProjectEmptyLine(text: "No artifacts yet.") }
-        }
+    private func save() {
+        if store.saveProjectEdits(project.id, name: name, instructions: instructions, grants: grants) {
+            dismiss()
+        } else { error = store.projectError }
     }
 
     private func addFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
         panel.prompt = "Add"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        store.addProjectFolder(project.id, url: url)
+        do {
+            let grant = try FolderGrant.make(url: url)
+            if !grants.contains(where: { $0.path == grant.path }) { grants.append(grant) }
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct ProjectFilesEditor: View {
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    let projectID: String
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Project files").font(.system(size: 20, weight: .semibold))
+            Text("Chats can read these files. Adding or removing a file saves immediately.")
+                .foregroundStyle(Theme.textSecondary)
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(store.project(projectID)?.files ?? []) { file in
+                        HStack {
+                            Label(file.name, systemImage: "doc").lineLimit(1)
+                            Spacer()
+                            Button("Remove") {
+                                store.clearProjectError()
+                                store.removeProjectFile(projectID, fileID: file.id)
+                                error = store.projectError
+                            }.accessibilityLabel("Remove \(file.name)")
+                        }
+                    }
+                }
+            }.frame(maxHeight: 240)
+            if let error { Text(error).foregroundStyle(Theme.textSecondary) }
+            HStack {
+                Button("Add files", action: addFiles)
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }.font(.system(size: 13)).padding(24).frame(width: 480)
+            .foregroundStyle(Theme.textPrimary).background(Theme.surface)
     }
 
     private func addFiles() {
@@ -374,157 +183,60 @@ private struct ProjectDetail: View {
         panel.allowsMultipleSelection = true
         panel.prompt = "Add"
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls { store.addProjectFile(project.id, url: url) }
-    }
-}
-
-private struct ProjectErrorLine: View {
-    @Environment(\.renderSafe) private var renderSafe
-    let text: String
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(Theme.accent)
-            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if renderSafe {
-                Text("Dismiss").font(.system(size: 12)).foregroundStyle(Theme.accent)
-            } else {
-                Button("Dismiss", action: onDismiss)
-                    .buttonStyle(.borderless).font(.system(size: 12))
-                    .accessibilityLabel("Dismiss")
-            }
+        store.clearProjectError()
+        for url in panel.urls {
+            store.addProjectFile(projectID, url: url)
+            if let failure = store.projectError { error = failure; return }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-        .accessibilityElement(children: .contain)
+        error = nil
     }
 }
 
-private struct ProjectTopAnchored: ViewModifier {
-    func body(content: Content) -> some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .top) { content }
-            .clipped()
-    }
-}
-
-private struct ProjectSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 13, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
-            content()
-        }
-    }
-}
-
-private struct ProjectEmptyLine: View {
-    let text: String
-
-    var body: some View {
-        Text(text).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-    }
-}
-
-private struct ProjectAction: View {
+struct ProjectsView: View {
     @Environment(\.renderSafe) private var renderSafe
-    let title: String
-    let symbol: String
-    var prominent = false
-    let action: () -> Void
+    @EnvironmentObject var store: ChatStore
+    @State private var editing: ProjectRecord?
+    @State private var creating = false
+    @State private var name = ""
+    let initialSelection: String?
+
+    init(initialSelection: String? = nil) { self.initialSelection = initialSelection }
 
     var body: some View {
-        if renderSafe {
-            if prominent {
-                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Theme.accent).clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                Label(title, systemImage: symbol).font(.system(size: 12)).foregroundStyle(Theme.accent)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Text("Projects").font(.system(size: 22, weight: .semibold))
+                Spacer()
+                Button("New project") { name = ""; creating = true }
             }
-        } else if prominent {
-            Button(title, action: action)
-                .buttonStyle(.borderedProminent).controlSize(.small).font(.system(size: 12))
-                .accessibilityLabel(title)
-        } else {
-            Button(action: action) { Label(title, systemImage: symbol) }
-                .buttonStyle(.borderless).font(.system(size: 12))
-                .accessibilityLabel(title)
-        }
-    }
-}
-
-private struct ProjectItemRow: View {
-    @Environment(\.renderSafe) private var renderSafe
-    let symbol: String
-    let title: String
-    let detail: String?
-    var removeLabel: String? = nil
-    var onRemove: (() -> Void)? = nil
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(Theme.accent).frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13)).lineLimit(1)
-                if let detail {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 8)
-            if let onRemove {
-                if renderSafe {
-                    Image(systemName: "minus.circle").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                } else {
-                    Button(action: onRemove) {
-                        Image(systemName: "minus.circle").font(.system(size: 13))
+            if let error = store.projectError { Text(error).foregroundStyle(Theme.textSecondary) }
+            ShotSafeScroll(renderSafe: renderSafe) {
+                VStack(spacing: 4) {
+                    ForEach(store.projects) { project in
+                        HStack(spacing: 14) {
+                            Button { editing = project } label: {
+                                Label(project.name, systemImage: "folder")
+                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityLabel("Edit \(project.name)")
+                            Button { store.newConversation(inProject: project.id) } label: {
+                                Image(systemName: "square.and.pencil")
+                            }.buttonStyle(.plain).help("New chat in \(project.name)")
+                                .accessibilityLabel("New chat in \(project.name)")
+                        }.padding(12).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.textSecondary)
-                    .help(removeLabel ?? "Remove")
-                    .accessibilityLabel(removeLabel ?? "Remove")
                 }
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-    }
-}
-
-private struct ProjectLinkRow: View {
-    let symbol: String
-    let title: String
-    let detail: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(Theme.accent).frame(width: 18)
-                Text(title).font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Spacer(minLength: 8)
-                Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Theme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-            .contentShape(Rectangle())
+        .padding(28).frame(maxWidth: 620).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .foregroundStyle(Theme.textPrimary).background(Theme.bg)
+        .sheet(item: $editing) { ProjectEditor(project: $0) }
+        .alert("New project", isPresented: $creating) {
+            TextField("Project name", text: $name)
+            Button("Create") { if let project = store.createProject(name: name) { editing = project } }
+            Button("Cancel", role: .cancel) {}
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(detail)")
+        .onAppear {
+            if !renderSafe, let initialSelection { editing = store.project(initialSelection) }
+        }
     }
 }
