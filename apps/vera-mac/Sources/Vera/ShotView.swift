@@ -61,12 +61,17 @@ struct ShotView: View {
                                      initialSearch: integrationsSeed?.search ?? "",
                                      initialSelection: integrationsSeed?.selection)
                 case .vera, .chat:
-                    if emptyChat, companionPanel == nil {
+                    if emptyChat, companionPanel == nil, section != .vera {
                         emptyChatShot
                     } else {
                         HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 0) {
-                                if emptyChat { emptyChatShot } else { chat }
+                                if emptyChat && section == .vera {
+                                    CompanionOpeningView(error: store.chatConfigurationError, retry: {})
+                                    shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
+                                        .modifier(ShotComposerPill())
+                                        .padding(.horizontal, 28).padding(.bottom, 18)
+                                } else if emptyChat { emptyChatShot } else { chat }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .clipped()

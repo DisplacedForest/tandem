@@ -6,6 +6,10 @@ import AppKit
 @MainActor
 enum Shot {
     static func render(view: String, to path: String, appearance: String = "dark") {
+        if view.hasPrefix("message-layout-") {
+            ConversationShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("composer-") {
             ComposerShot.render(view: view, to: path, appearance: appearance)
             return
@@ -424,11 +428,12 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-thread-empty", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if ["companion-thread", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
-            let populated = view != "companion-thread-empty"
+            let populated = view != "companion-thread-empty" && view != "companion-thread-error"
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
+            if view == "companion-thread-error" { store.chatConfigurationError = "Messages couldn’t load. Try opening the conversation again." }
             if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
                 store.conversations[index].messages = []
             }

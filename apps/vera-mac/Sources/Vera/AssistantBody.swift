@@ -8,6 +8,7 @@ struct AssistantBody: View {
     @EnvironmentObject var store: ChatStore
     let message: Message
     var section: Section = .bubble
+    var companionThread = false
     var nativeActions = true
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
@@ -44,16 +45,16 @@ struct AssistantBody: View {
                     }
                 }
             }
-            .padding(.horizontal, ConversationMetrics.bubblePaddingH)
-            .padding(.vertical, ConversationMetrics.bubblePaddingV)
-            .background(Theme.assistantBubble)
-            .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+            .padding(.horizontal, companionThread ? ConversationMetrics.bubblePaddingH : 0)
+            .padding(.vertical, companionThread ? ConversationMetrics.bubblePaddingV : 0)
+            .background(companionThread ? Theme.assistantBubble : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: companionThread ? ConversationMetrics.bubbleRadius : 0, style: .continuous))
         } else if message.state == .streaming && message.toolActivities.isEmpty && message.ask == nil {
             ProgressView().controlSize(.small)
-                .padding(.horizontal, ConversationMetrics.bubblePaddingH)
-                .padding(.vertical, ConversationMetrics.bubblePaddingV)
-                .background(Theme.assistantBubble)
-                .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+                .padding(.horizontal, companionThread ? ConversationMetrics.bubblePaddingH : 0)
+                .padding(.vertical, companionThread ? ConversationMetrics.bubblePaddingV : 0)
+                .background(companionThread ? Theme.assistantBubble : .clear)
+                .clipShape(RoundedRectangle(cornerRadius: companionThread ? ConversationMetrics.bubbleRadius : 0, style: .continuous))
                 .accessibilityLabel("Working on your answer")
         }
     }
@@ -83,10 +84,10 @@ struct AssistantBody: View {
         let clean = parsed.clean
         if !clean.isEmpty {
             HStack(spacing: 16) {
-                msgAction("doc.on.doc") { copyText(clean) }
+                msgAction("doc.on.doc", label: "Copy response") { copyText(clean) }
                 if nativeActions {
-                    msgAction("hand.thumbsup", on: store.messageRatings[message.id] == "up") { rate("up") }
-                    msgAction("hand.thumbsdown", on: store.messageRatings[message.id] == "down") { rate("down") }
+                    msgAction("hand.thumbsup", label: "Good response", on: store.messageRatings[message.id] == "up") { rate("up") }
+                    msgAction("hand.thumbsdown", label: "Bad response", on: store.messageRatings[message.id] == "down") { rate("down") }
                 }
             }
             .padding(.top, 2)
@@ -102,13 +103,15 @@ struct AssistantBody: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func msgAction(_ icon: String, on: Bool = false, _ go: @escaping () -> Void) -> some View {
+    private func msgAction(_ icon: String, label: String, on: Bool = false, _ go: @escaping () -> Void) -> some View {
         Button(action: go) {
             Image(systemName: on ? icon + ".fill" : icon)
                 .font(.system(size: 13)).foregroundStyle(on ? Theme.sage : Theme.warmTextSecondary)
                 .frame(width: 24, height: 20)
         }
         .buttonStyle(.plain).pointerCursor()
+        .accessibilityLabel(label)
+        .help(label)
     }
 }
 
@@ -125,6 +128,12 @@ private struct StableProseMarkdown: View, Equatable {
         .text { ForegroundColor(Theme.warmTextPrimary); FontSize(ConversationMetrics.bodySize) }
         .code { FontFamilyVariant(.monospaced); BackgroundColor(Theme.cardFill) }
         .link { ForegroundColor(Theme.accent) }
+        .table { configuration in
+            ScrollView(.horizontal) {
+                configuration.label.fixedSize(horizontal: true, vertical: false)
+            }
+            .markdownMargin(top: 0, bottom: 16)
+        }
 
     var body: some View {
         Markdown(SourceFormatter.apply(text))
