@@ -22,28 +22,28 @@ extension NSColor {
 }
 
 enum Theme {
-    static let ink = Color(light: "#F6F2EA", dark: "#1C1B19")
-    static let sidebar = Color(light: "#EEE9DF", dark: "#141311")
-    static let surface = Color(light: "#FDFBF6", dark: "#262522")
-    static let surfaceHover = Color(light: "#E9E3D7", dark: "#2E2C29")
-    static let surfaceSelected = Color(light: "#E0D8C9", dark: "#383530")
-    static let hairline = Color(light: "#E2DBCD", dark: "#2B2A27")
-    static let accent = Color(light: "#A05A2C", dark: "#C97E4C")
-    static let accentGlow = Color(light: "#C77B4A", dark: "#E8A97E")
-    static let onAccent = Color(light: "#FFF8F0", dark: "#1A120C")
-    static let userBubble = Color(light: "#E9E3D7", dark: "#343532")
-    static let textPrimary = Color(light: "#1E1C19", dark: "#ECE8DF")
-    static let textSecondary = Color(light: "#6F685D", dark: "#9A958B")
+    static let ink = Color(light: "#F7F7F7", dark: "#181818")
+    static let sidebar = Color(light: "#EFEFEF", dark: "#202020")
+    static let surface = Color(light: "#FFFFFF", dark: "#2A2A2A")
+    static let surfaceHover = Color(light: "#E7E7E7", dark: "#303030")
+    static let surfaceSelected = Color(light: "#DCDCDC", dark: "#383838")
+    static let hairline = Color(light: "#D5D5D5", dark: "#383838")
+    static let accent = Color(light: "#286D36", dark: "#86C78A")
+    static let accentGlow = Color(light: "#3C8248", dark: "#A4D7A7")
+    static let onAccent = Color(light: "#FFFFFF", dark: "#142016")
+    static let userBubble = Color(light: "#E7E7E7", dark: "#343434")
+    static let textPrimary = Color(light: "#202020", dark: "#ECECEC")
+    static let textSecondary = Color(light: "#606060", dark: "#ABABAB")
 
-    static let conversationBackground = Color(light: "#F7F5F0", dark: "#1E1F1C")
-    static let assistantBubble = Color(light: "#EFECE5", dark: "#2A2B28")
-    static let cardFill = Color(light: "#FBFAF6", dark: "#262724")
-    static let cardStroke = Color(light: "#E0DDD3", dark: "#35362F")
-    static let sage = Color(light: "#5E7F4A", dark: "#A9C98F")
-    static let onSage = Color(light: "#FFFFFF", dark: "#1A2114")
-    static let statusGreen = Color(light: "#4F8A3C", dark: "#8FBF7A")
-    static let warmTextPrimary = Color(light: "#23221E", dark: "#ECEAE4")
-    static let warmTextSecondary = Color(light: "#6E6E66", dark: "#A3A49C")
+    static let conversationBackground = ink
+    static let assistantBubble = Color(light: "#EEEEEE", dark: "#282828")
+    static let cardFill = surface
+    static let cardStroke = hairline
+    static let sage = accent
+    static let onSage = onAccent
+    static let statusGreen = Color(light: "#286D36", dark: "#86C78A")
+    static let warmTextPrimary = textPrimary
+    static let warmTextSecondary = textSecondary
 
     static let bg = ink
 }
