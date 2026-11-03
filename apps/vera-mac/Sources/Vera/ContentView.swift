@@ -242,14 +242,8 @@ private struct ChatPane: View {
         }
     }
 
-    @State private var showingDotSetup = false
-
-    private var needsDotSetup: Bool {
-        store.isVeraThread(conversation?.id) && store.dotProfileLoaded && !store.dotProfile.setupCompleted
-    }
-
-    private func refreshDotSetup() {
-        if needsDotSetup != showingDotSetup { showingDotSetup = needsDotSetup }
+    private func refreshCompanionOpening() {
+        if store.isVeraThread(conversation?.id) { store.prepareCompanionOpening() }
     }
 
     private func revealPendingSource(_ proxy: ScrollViewProxy) {
@@ -361,7 +355,7 @@ private struct ChatPane: View {
         .background(Theme.conversationBackground)
         .onChange(of: store.selectedID) {
             if let revealConversationID, revealConversationID != store.selectedID { cancelTaskReveal() }
-            refreshDotSetup()
+            refreshCompanionOpening()
         }
         .overlay(alignment: .topTrailing) {
             if workCollapsed, store.isVeraThread(conversation?.id) {
@@ -390,15 +384,12 @@ private struct ChatPane: View {
                     .environmentObject(config)
             }
         }
-        .onAppear(perform: refreshDotSetup)
-        .onChange(of: store.dotProfile) { refreshDotSetup() }
+        .onAppear(perform: refreshCompanionOpening)
+        .onChange(of: store.dotProfile) { refreshCompanionOpening() }
         .onChange(of: workCollapsed) { _, collapsed in
             if !collapsed, store.isVeraThread(conversation?.id) { showingWork = false }
         }
-        .onChange(of: store.dotProfileLoaded) { refreshDotSetup() }
-        .sheet(isPresented: $showingDotSetup) {
-            DotSetupView().environmentObject(store).environmentObject(config)
-        }
+        .onChange(of: store.dotProfileLoaded) { refreshCompanionOpening() }
     }
 }
 
@@ -921,6 +912,7 @@ struct NativeToolConfirmationBar: View {
     @Environment(\.renderSafe) private var renderSafe
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
+        if let prompt = NativeCompanionProfileTools.prompt(request) { return prompt }
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return "Run this command?\n" + command
         }

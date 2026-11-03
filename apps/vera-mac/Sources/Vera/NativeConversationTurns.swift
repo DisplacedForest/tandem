@@ -76,6 +76,7 @@ struct NativeConversationTurn: Codable, Sendable, Identifiable {
     var ownerBirth: String?
     var mayHaveEffect = false
     var dotContext: String?
+    var companionEvent: NativeCompanionEvent?
 
     static func processBirth(_ pid: Int32) -> String? {
         var info = kinfo_proc()
@@ -123,6 +124,7 @@ protocol NativeConversationTurnRepository: Sendable {
     func conversationTurnHeaders() throws -> [NativeConversationTurnHeader]
     func pollConversationTurns(watching: Set<UUID>) throws -> [NativeConversationTurn]
     func acceptTurn(_ turn: NativeConversationTurn, conversation: Conversation, user: Message, reply: Message) throws
+    func acceptCompanionTurn(_ turn: NativeConversationTurn, conversation: Conversation, reply: Message) throws -> Bool
     func claimTurn(_ id: UUID, attempt: UUID) throws -> NativeConversationTurn?
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws
     func turnIsCurrent(_ id: UUID, attempt: UUID) throws -> Bool
@@ -135,6 +137,10 @@ protocol NativeConversationTurnRepository: Sendable {
 }
 
 extension NativeConversationTurnRepository {
+    func acceptCompanionTurn(_ turn: NativeConversationTurn, conversation: Conversation, reply: Message) throws -> Bool {
+        throw NativeToolError.failed("This conversation cannot start yet.")
+    }
+
     func turnCurrency(_ id: UUID, attempt: UUID) -> NativeTurnCurrency {
         do { return try turnIsCurrent(id, attempt: attempt) ? .current : .superseded }
         catch { return .unconfirmed }
@@ -187,7 +193,7 @@ extension LocalChatRepository: NativeConversationTurnRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET state=excluded.state, attempt=excluded.attempt,
                 owner_pid=excluded.owner_pid, record_json=excluded.record_json
-            """, arguments: [turn.id.uuidString, turn.conversationID, turn.userMessageID.uuidString,
+            """, arguments: [turn.id.uuidString, turn.conversationID, turn.companionEvent == nil ? turn.userMessageID.uuidString : nil,
                 turn.assistantMessageID.uuidString, turn.mode.rawValue, turn.state.rawValue,
                 turn.attempt?.uuidString, turn.ownerPID, turn.createdAt.timeIntervalSince1970,
                 String(decoding: try JSONEncoder().encode(turn), as: UTF8.self)])
@@ -251,6 +257,28 @@ extension LocalChatRepository: NativeConversationTurnRepository {
         }
     }
 
+    func acceptCompanionTurn(_ turn: NativeConversationTurn, conversation: Conversation, reply: Message) throws -> Bool {
+        guard let event = turn.companionEvent else { throw CancellationError() }
+        return try database.write { db in
+            let existing = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_conversation_turns WHERE conversation_id=? AND companion_event=?", arguments: [conversation.id, event.key]) ?? 0
+            guard existing == 0 else { return false }
+            let waiting = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_conversation_turns WHERE state='pending'") ?? 0
+            guard waiting < NativeConversationTurn.maximumPending else {
+                throw NativeToolError.failed("Other messages are waiting. Try opening this conversation again when there is space.")
+            }
+            let active = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_conversation_turns WHERE conversation_id=? AND state IN ('pending','running')", arguments: [conversation.id]) ?? 0
+            guard active == 0 else { return false }
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE conversation_id=?", arguments: [conversation.id]) ?? 0
+            if event.isOpening && count != 0 { return false }
+            try Self.saveConversation(conversation, db: db)
+            let ordinal = (try Int.fetchOne(db, sql: "SELECT MAX(ordinal) FROM messages WHERE conversation_id=?", arguments: [conversation.id]) ?? -1) + 1
+            try Self.saveMessage(reply, conversationID: conversation.id, ordinal: ordinal, db: db)
+            try Self.writeTurn(turn, db: db)
+            try db.execute(sql: "UPDATE native_conversation_turns SET companion_event=? WHERE id=?", arguments: [event.key, turn.id.uuidString])
+            return true
+        }
+    }
+
     func enrollLegacyTurn(_ turn: NativeConversationTurn) throws {
         try database.write { db in
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_conversation_turns WHERE state='pending'") ?? 0
@@ -282,7 +310,7 @@ extension LocalChatRepository: NativeConversationTurnRepository {
                     AND rowid < (SELECT rowid FROM native_conversation_turns WHERE id=?)
                 """, arguments: [turn.conversationID, turn.id.uuidString]) ?? 0
             guard earlier == 0 else { return nil }
-            if turn.mode == .chat {
+            if turn.mode == .chat && turn.companionEvent == nil {
                 let rows = try Row.fetchAll(db, sql: """
                     SELECT * FROM messages WHERE conversation_id=? AND ordinal <
                         (SELECT ordinal FROM messages WHERE id=?) ORDER BY ordinal

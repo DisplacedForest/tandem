@@ -194,8 +194,9 @@ extension SelfTest {
         store.openVeraThread()
         store.resetDot()
         guard let freshID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("A fresh Vera thread exists after reset") }
-        try require(freshID != veraID && (try repository.messages(conversationID: freshID)).isEmpty
-                    && (try repository.messages(conversationID: veraID)).isEmpty, "Reset replaces the thread with an empty one")
+        try require(freshID != veraID && (try repository.messages(conversationID: freshID)).count == 1
+                    && (try repository.messages(conversationID: freshID)).first?.role == .assistant
+                    && (try repository.messages(conversationID: veraID)).isEmpty, "Reset replaces the thread with its durable assistant opening")
         try require(store.selectedID == freshID && store.section == .vera, "The fresh thread is selected when the old one was showing")
         try require(store.conversations.filter { $0.originType == ChatStore.veraThreadOriginType && $0.originID == ChatStore.veraThreadOriginID }.count == 1,
                     "Exactly one Vera thread remains")
@@ -209,8 +210,13 @@ extension SelfTest {
         try require(store.artifactLibrary == artifactsBefore, "Artifacts stay")
         let keptArtifact = try repository.artifact(threadArtifact.artifactID)
         try require(keptArtifact != nil && keptArtifact?.conversationID == nil, "An artifact made in the Vera thread stays in Artifacts, detached from the removed thread")
-        try require(store.dotProfile == NativeDotProfile(updatedAt: store.dotProfile.updatedAt) && !store.dotProfile.setupCompleted
-                    && (try NativeDotProfileStore(database: repository.database).load()) == nil, "The profile returns to defaults and setup shows again")
+        var resetProfile = NativeDotProfile(updatedAt: store.dotProfile.updatedAt)
+        resetProfile.needsIntroduction = true
+        let savedReset = try NativeDotProfileStore(database: repository.database).load()
+        try require(store.dotProfile == resetProfile && !store.dotProfile.setupCompleted
+                    && savedReset?.needsIntroduction == true && savedReset?.goal == ""
+                    && savedReset?.connectedToolIDs == nil && savedReset?.setupCompleted == false,
+                    "Reset persists the introduction request with default profile choices")
         try require(store.conversationRules(for: freshID).isEmpty, "The fresh thread starts with the global rules")
         try checkHeaderSummary()
         try checkScheduleControls()
