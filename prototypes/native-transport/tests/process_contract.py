@@ -90,6 +90,8 @@ def run(binary: Path) -> None:
                 started = time.monotonic()
                 if mode == "sigkill":
                     os.killpg(process.pid, signal.SIGKILL)
+                    status = process.wait(timeout=3)
+                    assert status == -signal.SIGKILL, status
                     out, err = process.communicate(timeout=3)
                     rows = snapshot(root)
                     assert rows[0][1] == "reserved", (rows, out, err)
