@@ -169,7 +169,7 @@ extension NativePiRuntimeToolFixture {
                 if let body { request.httpMethod = "POST"; request.httpBody = try body.piData() }
                 let (data, status) = try await owner.http(request)
                 if status != 200 {
-                    let detail = (try? PiValue.piRead(data).pi("detail").piString) ?? "unavailable"
+                    let detail = (try? PiValue.piRead(data).pi("detail").piString) ?? String(decoding: data.prefix(256), as: UTF8.self)
                     print("FAIL: host tool contract \(request.httpMethod ?? "GET") \(path), mode=\(body?.pi("mode").piString ?? "none"), HTTP \(status), detail=\(String(detail.prefix(256)))")
                 }
                 try NativePiModelBrokerFixture.check(status == 200)
