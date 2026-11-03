@@ -3,6 +3,7 @@ import Foundation
 extension ChatStore {
     func reloadNativeTaskReferences() {
         nativeTaskReferences = (try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? []
+        prepareCompanionRefinement()
     }
 
     func startNativeTaskRecovery() {

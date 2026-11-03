@@ -143,6 +143,8 @@ final class ChatStore: ObservableObject {
     @Published var dotProfile = NativeDotProfile()
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
+    var companionNameWriter: ((String) throws -> Void)?
+    var companionHasSavedName = false
     var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
@@ -705,6 +707,7 @@ final class ChatStore: ObservableObject {
         selectedID = veraThreadID
         draft = drafts[veraThreadID] ?? ""
         loadMessagesIfNeeded(veraThreadID)
+        prepareCompanionOpening()
         focusTick &+= 1
     }
 
@@ -1958,6 +1961,7 @@ final class ChatStore: ObservableObject {
     func prepareCompanionThread() {
         ensureVeraThread()
         if let veraThreadID { loadMessagesIfNeeded(veraThreadID) }
+        prepareCompanionOpening()
     }
 
     @discardableResult
@@ -2135,6 +2139,9 @@ final class ChatStore: ObservableObject {
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !atts.isEmpty,
               let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
+        for active in conversationTurns.filter({ $0.conversationID == id && $0.companionEvent?.kind == .refinement && ($0.state == .pending || $0.state == .running) }) {
+            stopAnswer(active.assistantMessageID, reason: "Stopped to answer your message.")
+        }
         let user = Message(role: .user, text: text, attachments: atts.compactMap(\.nativeRecord), routeNote: routeNote)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig?.model)
         var conversation = conversations[index]
@@ -2263,12 +2270,21 @@ final class ChatStore: ObservableObject {
             allowed.remove(NativeFolderTools.toolID)
             allowed.remove(NativeCommandTools.toolID)
         }
+        let profileTool = companionProfileTool(for: turn)
+        if profileTool != nil && supportsTools && authority.allowsTools { allowed.insert(NativeCompanionProfileTools.toolID) }
+        if turn.companionEvent != nil { allowed = [] }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
-        let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
-            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
-            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true)
-            + (scheduleToolDefinition().map { [$0] } ?? []))
+        var definitions: [NativeToolDefinition] = nativeToolRegistry.definitions
+        if turn.mode != .continuous {
+            let serviceDefinitions: [NativeToolDefinition] = nativeMCP?.authority.definitions(scope: "focused") ?? []
+            definitions.append(contentsOf: serviceDefinitions)
+        }
+        definitions.append(contentsOf: folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
+        definitions.append(contentsOf: commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
+        if let scheduleTool = scheduleToolDefinition() { definitions.append(scheduleTool) }
+        if let profileTool { definitions.append(profileTool) }
+        let registry = NativeToolRegistry(definitions: definitions)
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
@@ -2299,10 +2315,10 @@ final class ChatStore: ObservableObject {
         guard let repository, let nativeTransport, let nativeConfig,
               let location = turnLocation(turn), turnOwned(turn) else { return }
         let id = turn.conversationID
-        let user = conversations[location.conversation].messages[location.user]
-        let text = user.text
-        let records = user.attachments
-        let routeNote = user.routeNote
+        let user = location.user.map { conversations[location.conversation].messages[$0] }
+        let text = user?.text ?? ""
+        let records = user?.attachments ?? []
+        let routeNote = user?.routeNote
         parameterRejection = nil
         setTurnStatus("Thinking…", turn: turn)
         generating = true
@@ -2348,6 +2364,8 @@ final class ChatStore: ObservableObject {
                 },
                 alwaysAvailable: true))
         }
+        let profileTool = companionProfileTool(for: turn)
+        if let profileTool { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [profileTool]) }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2377,6 +2395,8 @@ final class ChatStore: ObservableObject {
         if !(capabilityProfile.supportsTools && authority.allowsTools && commandsConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeCommandTools.toolID)
         }
+        if profileTool != nil && capabilityProfile.supportsTools && authority.allowsTools { enabledToolIDs.insert(NativeCompanionProfileTools.toolID) }
+        if turn.companionEvent != nil { enabledToolIDs = [] }
         let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
             ? NativeFolderTools.grantNote(turnGrants) : nil
         let bridgeConfig = effectiveBridgeConfig
@@ -2445,9 +2465,8 @@ final class ChatStore: ObservableObject {
                     let disclosure = VisionBridgeDisclosure.block(
                         descriptions: descriptions, bridgeModel: bridgeConfig.model)
                     try await ensureTurnCurrent(turn)
-                    if let location = turnLocation(turn) {
+                    if let location = turnLocation(turn), let userIndex = location.user {
                         let i = location.conversation
-                        let userIndex = location.user
                         conversations[i].messages[userIndex].routeNote = MessageRouteNote(
                             route: .bridged, bridgeModel: bridgeConfig.model, disclosure: disclosure)
                         try? repository.saveMessage(
@@ -2456,8 +2475,8 @@ final class ChatStore: ObservableObject {
                     setTurnStatus("Thinking…", turn: turn)
                 }
                 var turnMessages = turn.history.map(\.message)
-                if let location = turnLocation(turn), let current = turnMessages.firstIndex(where: { $0.id == turn.userMessageID }) {
-                    turnMessages[current].routeNote = conversations[location.conversation].messages[location.user].routeNote
+                if let location = turnLocation(turn), let userIndex = location.user, let current = turnMessages.firstIndex(where: { $0.id == turn.userMessageID }) {
+                    turnMessages[current].routeNote = conversations[location.conversation].messages[userIndex].routeNote
                 }
                 var selectedMemories: [NativeMemoryRanked] = []
                 let retrieval = await retrieveApprovedMemory(text, history: turn.history.filter { $0.id != turn.userMessageID },
@@ -2532,8 +2551,8 @@ final class ChatStore: ObservableObject {
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
                     assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
-                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them.",
+                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
@@ -2618,10 +2637,9 @@ final class ChatStore: ObservableObject {
                         == conversations[i].messages.first(where: { $0.role == .assistant })?.id {
                         generateTitleIfNeeded(conversationID: id)
                     }
-                    if repository is any NativeMemoryRepository {
+                    if repository is any NativeMemoryRepository, let userIndex = settled.user {
                         let completedAssistant = conversations[i].messages[replyIndex]
                         let conversationExcluded = conversations[i].memoryExcluded
-                        let userIndex = settled.user
                         let sourceDate = conversations[i].messages.indices.contains(userIndex)
                             ? conversations[i].messages[userIndex].createdAt : Date()
                         Task {
@@ -2651,7 +2669,7 @@ final class ChatStore: ObservableObject {
                         ? "This answer stopped before another step could run. Check its settings before retrying."
                         : NativeTransientFailure.describe(error)
                     conversations[i].updatedAt = Date()
-                    if userIndex >= 0, userIndex < conversations[i].messages.count,
+                    if let userIndex, userIndex >= 0, userIndex < conversations[i].messages.count,
                        conversations[i].messages[userIndex].routeNote?.route == .bridged,
                        conversations[i].messages[userIndex].routeNote?.disclosure == nil {
                         conversations[i].messages[userIndex].routeNote = nil
