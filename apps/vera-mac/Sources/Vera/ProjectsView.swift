@@ -140,7 +140,7 @@ struct ProjectEditor: View {
     }
 }
 
-private struct ProjectFilesEditor: View {
+struct ProjectFilesEditor: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) private var dismiss
     let projectID: String
