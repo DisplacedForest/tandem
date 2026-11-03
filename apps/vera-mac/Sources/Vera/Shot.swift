@@ -455,6 +455,7 @@ enum Shot {
             case "memory": section = .memory
             default: section = .chat
             }
+            store.section = section
             if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
             content = AnyView(
                 ShotView(store: store, section: section,

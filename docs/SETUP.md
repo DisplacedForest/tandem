@@ -97,6 +97,8 @@ This preserves Keychain item continuity. Ad-hoc app builds still have changing c
 
 ### Native session recovery
 
+The narrow global rail stays visible when you collapse the chat sidebar. Home returns to conversations; Library, Scheduled and Plugins open their own destinations. More contains Projects management, Pulse, Workflows, Activity and Memory. Expand a named project in the adjacent sidebar to open its chats. Hover or focus its row for New chat and project options. The plus beside Projects creates a project.
+
 Choose your assistant's name in the companion row near the top of the sidebar to return to the ongoing assistant thread, which keeps its own history and draft. Choose **New chat** at the top of the sidebar for a separate ordinary conversation. Drafts are kept per conversation, and there is no per-chat mode switch. Ordinary answers run in order within their conversation; a queued follow-up captures completed predecessor context when it starts. Reopened conversations saved by earlier versions use the same ordered behavior for new messages. Previously accepted work and explicit retries retain their saved execution state.
 
 The app persists the user message, reply placeholder, and pending turn in one local SQLite transaction. Two foreground turns may run across app instances, with at most eight pending messages. A running turn has a five-minute outer deadline in addition to individual tool limits. Claims are atomic and bind the original endpoint, model, saved profile, options, tool selection, and attachment route. Changed or unavailable settings pause the saved message instead of sending it elsewhere. Text turns do not depend on an unused vision bridge. A keyed bridge without a stable saved binding requires a new message after restart when an image actually uses it.
@@ -331,7 +333,7 @@ The conversation header shows the assistant's avatar and name with a status line
 
 Actions that need your permission appear inline as a card with **Approve** and **Decline**. A declined action is shown as declined rather than failed.
 
-The **Ongoing work** panel on the right lists the background work of the current chat, each with a title and its state. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** lists the work from every chat. On narrower windows the panel turns into an **Ongoing work** button at the top of the conversation, with a count of the tasks that are running or waiting. The canvas and the panel share the right column, so an open canvas piece takes precedence over the panel.
+The **Ongoing work** panel on the right lists the background work of the current chat, each with a title and its state. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** lists the work from every chat. On narrower windows, work stays accessible through its cards in the conversation, including progress, approval, retry and stop controls. The canvas and the panel share the right column, so an open canvas piece takes precedence over the panel.
 
 ### Companion appearance
 

@@ -22,9 +22,6 @@ enum ConversationPresence {
         wide && !canvasOpen && !OngoingWork.items(references, conversationID: conversationID).isEmpty
     }
 
-    static func showsWorkButton(references: [NativeTaskReference], conversationID: String?, wide: Bool, canvasOpen: Bool) -> Bool {
-        !references.isEmpty && !showsWorkPanel(references: references, conversationID: conversationID, wide: wide, canvasOpen: canvasOpen)
-    }
 }
 
 struct ConversationFigureView: View {
