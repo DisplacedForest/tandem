@@ -86,6 +86,16 @@ struct VeraApp: App {
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
+        storeInstance.companionHasSavedName = !configInstance["assistant_name"].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        storeInstance.companionNameWriter = { name in
+            let previous = configInstance["assistant_name"]
+            configInstance["assistant_name"] = name
+            do { try configInstance.save() }
+            catch {
+                configInstance["assistant_name"] = previous
+                throw error
+            }
+        }
         storeInstance.generatesConversationTitles = fixture == nil
         storeInstance.menuBarPreference = configInstance.menuBarKeepRunning
         if fixture == nil {

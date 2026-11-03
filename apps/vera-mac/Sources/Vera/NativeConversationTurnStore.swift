@@ -125,10 +125,11 @@ extension ChatStore {
         await execution.checkpoint?.value
     }
 
-    func turnLocation(_ turn: NativeConversationTurn) -> (conversation: Int, user: Int, reply: Int)? {
+    func turnLocation(_ turn: NativeConversationTurn) -> (conversation: Int, user: Int?, reply: Int)? {
         guard let ci = conversations.firstIndex(where: { $0.id == turn.conversationID }),
-              let ui = conversations[ci].messages.firstIndex(where: { $0.id == turn.userMessageID }),
               let ri = conversations[ci].messages.firstIndex(where: { $0.id == turn.assistantMessageID }) else { return nil }
+        let ui = conversations[ci].messages.firstIndex(where: { $0.id == turn.userMessageID })
+        guard ui != nil || turn.companionEvent != nil else { return nil }
         return (ci, ui, ri)
     }
 

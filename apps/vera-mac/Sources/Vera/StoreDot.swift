@@ -193,6 +193,9 @@ extension ChatStore {
             chatConfigurationError = "\(assistantName)'s settings couldn't be cleared: \(error.localizedDescription)"
         }
         dotProfile = NativeDotProfile()
+        dotProfile.needsIntroduction = true
+        do { try nativeDotProfileStore?.save(dotProfile) }
+        catch { chatConfigurationError = "The fresh profile couldn't save: \(error.localizedDescription)" }
         ensureVeraThread()
         syncRuleSource()
         reloadNativeMemory()

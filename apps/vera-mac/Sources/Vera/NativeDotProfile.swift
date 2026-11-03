@@ -12,6 +12,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
     var connectedToolIDs: Set<String>? = nil
     var state: NativeDotState = .active
     var setupCompleted: Bool = false
+    var needsIntroduction: Bool = false
     var updatedAt: Date = Date()
     var resumedAt: Date? = nil
 
@@ -23,6 +24,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         case connectedToolIDs = "connected_tool_ids"
         case state
         case setupCompleted = "setup_completed"
+        case needsIntroduction = "needs_introduction"
         case updatedAt = "updated_at"
         case resumedAt = "resumed_at"
     }
@@ -51,6 +53,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
             state = .active
         }
         setupCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .setupCompleted)) ?? false
+        needsIntroduction = (try? container.decodeIfPresent(Bool.self, forKey: .needsIntroduction)) ?? false
         updatedAt = ((try? container.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil).map(Date.init(timeIntervalSince1970:)) ?? Date()
         resumedAt = ((try? container.decodeIfPresent(Double.self, forKey: .resumedAt)) ?? nil).map(Date.init(timeIntervalSince1970:))
     }
@@ -61,6 +64,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         try container.encodeIfPresent(connectedToolIDs.map { $0.sorted() }, forKey: .connectedToolIDs)
         try container.encode(state.rawValue, forKey: .state)
         try container.encode(setupCompleted, forKey: .setupCompleted)
+        try container.encode(needsIntroduction, forKey: .needsIntroduction)
         try container.encode(updatedAt.timeIntervalSince1970, forKey: .updatedAt)
         try container.encodeIfPresent(resumedAt?.timeIntervalSince1970, forKey: .resumedAt)
     }
