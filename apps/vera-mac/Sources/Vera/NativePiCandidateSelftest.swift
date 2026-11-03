@@ -23,6 +23,7 @@ enum NativePiCandidateSelftest {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pi-candidate-selftest-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            try await credentialScan(root.appendingPathComponent("scan"))
             let profileID = UUID().uuidString.lowercased()
             let credentials = PiCandidateCredentials(profile: profileID)
             var failWrite = false
@@ -96,6 +97,31 @@ enum NativePiCandidateSelftest {
             FileHandle.standardError.write(Data("Candidate selftest failed: \(type(of: error))\n".utf8))
             exit(1)
         }
+    }
+    static func credentialScan(_ root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("fixture")
+        try Data("temporary".utf8).write(to: file)
+        var removed = false
+        try NativePiCandidate.verifyNoCredentialFiles(root) { path in
+            try FileManager.default.removeItem(at: path)
+            removed = true
+        }
+        try piCheck(removed && !FileManager.default.fileExists(atPath: file.path))
+        try Data(PiCandidateCredentials.key.utf8).write(to: file)
+        try await rejected(.storage) { try NativePiCandidate.verifyNoCredentialFiles(root) }
+        try Data("ordinary".utf8).write(to: file)
+        for code in [NSFileReadNoSuchFileError, NSFileReadNoPermissionError] {
+            do {
+                try NativePiCandidate.verifyNoCredentialFiles(root) { _ in throw NSError(domain: NSCocoaErrorDomain, code: code) }
+                throw PiBrokerError.invalid
+            } catch {
+                let detail = error as NSError
+                try piCheck(detail.domain == NSCocoaErrorDomain && detail.code == code)
+            }
+        }
+        try NativePiCandidate.verifyNoCredentialFiles(root)
+        print("PASS: credential scan tolerates removed temporary files, rejects persistent secrets and preserves read errors")
     }
     static func scopeTimeout(_ arguments: [String]) async throws {
         let candidate = try await NativePiCandidate.create(arguments)
