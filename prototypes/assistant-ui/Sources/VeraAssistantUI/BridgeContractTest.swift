@@ -15,7 +15,7 @@ enum BridgeContractTest {
                                       "Workflow requires a fresh assistant workspace")
         store.setDraft("/task Verify addition in the isolated example")
         await store.send()
-        try PrototypeSelfTest.require(store.pending == nil && store.messages.count == 2, "Bridge accepted assistant message")
+        try PrototypeSelfTest.require(store.pending == nil && store.messages.count == 2, "Bridge accepted assistant message: messages=\(store.messages.count), pending=\(store.pending != nil), error=\(store.conversationError ?? "none"), connection=\(store.connectionError ?? "none")")
         let first = try await awaitTask(store, state: "needs_decision")
         await store.reply(first, approved: true)
         try PrototypeSelfTest.require(store.taskErrors[first.id] == nil, "Approval accepted")
