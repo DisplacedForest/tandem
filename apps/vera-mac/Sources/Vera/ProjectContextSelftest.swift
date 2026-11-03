@@ -171,6 +171,7 @@ enum ProjectContextSelftest {
         try check(folderPaths().contains(folderPath) && store.grants(for: chat).contains { $0.name == "Garden files" },
                   "Moving back restores the project folders")
 
+        try await checkNavigationContinuity(store, repository: repository, projectID: project.id)
         try checkFilesGrantStaysReadOnly(store, chat: chat, projectID: project.id)
         try await checkProposalTagging(store, service: service, chat: chat, projectID: project.id)
         try await checkTypedTagging(store, service: service, repository: repository, projectID: project.id)
@@ -415,6 +416,46 @@ enum ProjectContextSelftest {
         try repository.refreshDomainProjections()
         let refreshed = try repository.approvedMemories().first { $0.domainEntityID == proposal.domain?.entry.entityID }
         try check(refreshed?.projectID == projectID, "A projection refresh keeps the project")
+    }
+
+    @MainActor
+    static func checkNavigationContinuity(_ store: ChatStore, repository: LocalChatRepository, projectID: String) async throws {
+        store.newConversation(inProject: projectID)
+        let first = store.selectedID!
+        store.draft = "Keep these garden notes"
+        guard let secondProject = store.createProject(name: "Workshop") else { throw Failure(description: "Missing second project") }
+        store.newConversation(inProject: secondProject.id)
+        let second = store.selectedID!
+        try check(store.projectForConversation(second)?.id == secondProject.id, "Project identity is available before the first send")
+        store.draft = "Keep these workshop notes"
+        store.select(first)
+        try check(store.draft == "Keep these garden notes" && store.selected?.projectID == projectID,
+                  "Switching projects restores the correct draft and identity")
+        store.select(second)
+        try check(store.draft == "Keep these workshop notes", "Each project chat keeps its own draft")
+        store.newConversation()
+        try check(store.selected?.projectID == nil, "An ordinary chat does not inherit the previous project")
+        store.select(first)
+        store.draft = "Summarize the plan."
+        store.send()
+        for _ in 0..<200 {
+            if store.selected?.messages.contains(where: { $0.role == .assistant && $0.state == .complete }) == true { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let saved = try repository.listConversations().first { $0.id == first }
+        try check(saved?.projectID == projectID, "The first send persists project membership")
+        let restored = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository)
+        await restored.connect()
+        restored.nativeSchedulerLoop?.cancel()
+        await restored.nativeSchedulerLoop?.value
+        restored.nativeSchedulerLoop = nil
+        restored.conversationTurnLoop?.cancel()
+        await restored.conversationTurnLoop?.value
+        restored.conversationTurnLoop = nil
+        restored.select(first)
+        try check(restored.projectForConversation(first)?.id == projectID,
+                  "Reopened conversations recover visible project membership")
+        store.select(first)
     }
 
     @MainActor

@@ -78,8 +78,8 @@ extension SelfTest {
             throw NativeTaskFixture.Failure.assertion("an assistant reply exists")
         }
         try NativeTaskFixture.require(reply.state == .complete && !reply.text.isEmpty, "the reply completes with text")
-        try NativeTaskFixture.require(store.companionUnreadCount == 1,
-                                      "a reply that finishes after the panel was shown counts as new")
+        try NativeTaskFixture.require(store.companionUnreadCount == 2,
+                                      "the opening and reply that finish after the panel was shown count as new")
         store.markCompanionSeen()
         try NativeTaskFixture.require(store.companionUnreadCount == 0 && store.companionSeenReplyID == reply.id.uuidString,
                                       "looking again acknowledges the finished reply")
@@ -89,7 +89,7 @@ extension SelfTest {
                                       "a panel never seen shows nothing new even with a finished reply")
 
         store.setCompanionSeenReplyForTesting("")
-        try NativeTaskFixture.require(store.companionUnreadCount == completed().count && completed().count == 1,
+        try NativeTaskFixture.require(store.companionUnreadCount == completed().count && completed().count == 2,
                                       "seen with no replies yet counts every finished reply")
         try NativeTaskFixture.require(defaults.string(forKey: ChatStore.companionSeenKey) == "",
                                       "the empty marker is saved")
@@ -101,7 +101,7 @@ extension SelfTest {
         await rebuilt.connect()
         rebuilt.prepareCompanionThread()
         try NativeTaskFixture.require(rebuilt.veraThreadID == threadID, "a rebuilt store finds the same assistant thread")
-        try NativeTaskFixture.require(rebuilt.companionSeenReplyID == "" && rebuilt.companionUnreadCount == 1,
+        try NativeTaskFixture.require(rebuilt.companionSeenReplyID == "" && rebuilt.companionUnreadCount == 2,
                                       "a rebuilt store reads the saved marker and the same new count")
 
         store.markCompanionSeen()
@@ -130,7 +130,7 @@ extension SelfTest {
                                       "leaving the thread acknowledges the reply that arrived while it was open")
         try NativeTaskFixture.require(store.sendText("after leaving", conversationID: threadID), "a reply arrives after leaving")
         try await settle()
-        try NativeTaskFixture.require(completed().count == 3 && store.companionUnreadCount == 1,
+        try NativeTaskFixture.require(completed().count == 4 && store.companionUnreadCount == 1,
                                       "only the reply after leaving the thread counts as new")
         try NativeTaskFixture.require(store.selectedID == otherID, "replies in the thread keep the main selection")
 

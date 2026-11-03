@@ -401,7 +401,7 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "vera-setup" || view == "vera-settings" {
+        } else if view == "vera-settings" {
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: view == "vera-settings")
             content = AnyView(
                 ShotView(store: store, chrome: .dotSheet(settings: view == "vera-settings"))
@@ -424,13 +424,21 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if view == "companion-thread" || view == "companion-thread-empty" {
-            let populated = view == "companion-thread"
+        } else if ["companion-thread", "companion-thread-empty", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+            let introduction = view == "companion-introduction" || view == "vera-setup"
+            let refinement = view == "companion-refinement"
+            let populated = view != "companion-thread-empty"
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
             if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
                 store.conversations[index].messages = []
             }
-            let model = populated ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
+            if introduction || refinement, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
+                store.conversations[index].messages = [Message(role: .assistant, text: introduction
+                    ? "Hi, I'm Ada. What would you like to call me?"
+                    : "Would it help if I focused the weekly greenhouse note on what needs your attention?")]
+                if introduction { store.dotProfile = NativeDotProfile() }
+            }
+            let model = populated && !introduction && !refinement ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
                 : CompanionOverviewModel.build(name: NativeDotShotFixture.name, profile: store.dotProfile, services: "Can reach every service that is turned on.",
                                                rules: store.companionRulesSummary, activity: [], results: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
