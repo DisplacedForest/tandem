@@ -331,7 +331,7 @@ The conversation header shows the assistant's avatar and name with a status line
 
 Actions that need your permission appear inline as a card with **Approve** and **Decline**. A declined action is shown as declined rather than failed.
 
-The **Ongoing work** panel on the right lists the background work of the current chat, each with a title and its state. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** lists the work from every chat. On narrower windows the panel turns into an **Ongoing work** button at the top of the conversation, with a count of the tasks that are running or waiting. The canvas and the panel share the right column, so an open canvas piece takes precedence over the panel.
+The **Ongoing work** panel on the right lists the background work of the current chat, each with a title and its state. Selecting one scrolls to its card, and selecting a finished one opens its result. **View all work** lists the work from every chat. On narrower windows, work stays accessible through its cards in the conversation, including progress, approval, retry and stop controls. The canvas and the panel share the right column, so an open canvas piece takes precedence over the panel.
 
 ### Companion appearance
 

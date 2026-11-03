@@ -28,9 +28,7 @@ struct ContentView: View {
                     Group {
                         switch store.section {
                         case .vera: ChatPane(workCollapsed: companionPlacement == .header)
-                        case .chat: ChatPane(workCollapsed: ConversationPresence.showsWorkButton(
-                            references: store.nativeTaskReferences, conversationID: store.selectedID,
-                            wide: wideEnoughForWork, canvasOpen: store.showCanvas))
+                        case .chat: ChatPane(workCollapsed: false)
                         case .pulse: PulseView()
                         case .memory: MemoryView()
                         case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -382,11 +380,6 @@ private struct ChatPane: View {
                 .help("\(store.assistantName)'s state, activity and results")
                 .accessibilityLabel("Details for \(store.assistantName)")
                 .padding(.top, 44).padding(.trailing, 20)
-            } else if workCollapsed {
-                OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: conversation?.id)) {
-                    showingWork = true
-                }
-                .padding(.top, 44).padding(.trailing, 20)
             }
         }
         .sheet(isPresented: $showingWork) {
@@ -395,20 +388,6 @@ private struct ChatPane: View {
                     .frame(width: 420, height: 640)
                     .environmentObject(store)
                     .environmentObject(config)
-            } else if OngoingWork.items(store.nativeTaskReferences, conversationID: conversation?.id).isEmpty {
-                OngoingWorkAllSheet(onGo: { reference in
-                    showingWork = false
-                    store.revealOngoingWork(reference)
-                })
-                .frame(width: 420, height: 560)
-                .environmentObject(store)
-            } else {
-                OngoingWorkPanel(conversationID: conversation?.id, onSelect: { reference in
-                    showingWork = false
-                    store.revealOngoingWork(reference)
-                }, onClose: { showingWork = false })
-                .frame(width: 420, height: 560)
-                .environmentObject(store)
             }
         }
         .onAppear(perform: refreshDotSetup)
