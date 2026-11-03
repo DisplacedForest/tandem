@@ -67,8 +67,18 @@ enum NativeTurnCurrencyFixture {
         return (url, repository, store, turn)
     }
 
+    static func controlConnection(_ url: URL, stage: String = #function) throws -> DatabaseQueue {
+        var configuration = Configuration()
+        configuration.busyMode = .timeout(2)
+        do { return try DatabaseQueue(path: url.path, configuration: configuration) }
+        catch {
+            print("FAIL: turn currency control connection at \(stage): \(error)")
+            throw error
+        }
+    }
+
     static func holdExclusive(_ url: URL, seconds: TimeInterval, exclusive: Bool = true) async throws -> Task<Void, Error> {
-        let other = try DatabaseQueue(path: url.path)
+        let other = try controlConnection(url)
         let held = NativeTurnCurrencyFlag()
         let holder = Task.detached {
             try other.writeWithoutTransaction { db in
@@ -149,7 +159,7 @@ enum NativeTurnCurrencyFixture {
         stale.state = .complete
         store2.turnExecutions[turn2.id]?.finalization = (.complete, stale, location2.reply)
         store2.suspendsTurnScheduling = false
-        let other = try DatabaseQueue(path: url2.path)
+        let other = try controlConnection(url2)
         let held = NativeTurnCurrencyFlag()
         let superseder = Task.detached {
             try other.writeWithoutTransaction { db in
@@ -546,7 +556,7 @@ enum NativeTurnCurrencyFixture {
         let (store, pending) = try pendingTurn(repository)
         let turn = try repository.claimTurn(pending.id, attempt: UUID())!
         store.turnExecutions[turn.id] = NativeTurnExecution(turn)
-        let other = try DatabaseQueue(path: url.path)
+        let other = try controlConnection(url)
         let held = NativeTurnCurrencyFlag()
         let holder = Task.detached {
             try other.writeWithoutTransaction { db in
