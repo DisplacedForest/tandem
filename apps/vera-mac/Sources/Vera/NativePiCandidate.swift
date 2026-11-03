@@ -82,11 +82,19 @@ final class NativePiCandidate {
             throw error
         }
     }
-    static func verifyNoCredentialFiles(_ root: URL) throws {
+    static func verifyNoCredentialFiles(_ root: URL, beforeRead: (URL) throws -> Void = { _ in }) throws {
         let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey])!
         for case let file as URL in enumerator {
-            if try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
-                try piCheck(try Data(contentsOf: file).range(of: Data(PiCandidateCredentials.key.utf8)) == nil, .storage)
+            do {
+                if try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                    try beforeRead(file)
+                    try piCheck(try Data(contentsOf: file).range(of: Data(PiCandidateCredentials.key.utf8)) == nil, .storage)
+                }
+            } catch {
+                let detail = error as NSError
+                if detail.domain == NSCocoaErrorDomain && detail.code == NSFileReadNoSuchFileError
+                    && !FileManager.default.fileExists(atPath: file.path) { continue }
+                throw error
             }
         }
     }
@@ -119,7 +127,7 @@ final class NativePiCandidate {
                 throw PiBrokerError.invalid
             }
         } catch {
-            FileHandle.standardError.write(Data("The isolated Vera candidate could not complete. Its saved work was preserved.\n".utf8))
+            FileHandle.standardError.write(Data("The isolated Vera candidate could not complete: \(error.localizedDescription). Its saved work was preserved.\n".utf8))
             exit(1)
         }
     }

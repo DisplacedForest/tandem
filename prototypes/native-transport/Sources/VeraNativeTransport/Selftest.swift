@@ -24,12 +24,14 @@ final class FixtureCredential: CredentialSource, @unchecked Sendable {
 actor FixtureHTTP: HTTPTransport {
     let delay: Duration
     let scripted: Bool
+    let workerGate: URL?
+    let inferenceReady: URL?
     var paid = 0
     var stopped = 0
     var body: Data?
     var response: Data?
     var usage: Decimal
-    init(delay: Duration = .zero, response: Data? = nil, usage: Decimal = 0, scripted: Bool = false) { self.scripted = scripted; self.delay = delay; self.response = response; self.usage = usage }
+    init(delay: Duration = .zero, response: Data? = nil, usage: Decimal = 0, scripted: Bool = false, workerGate: URL? = nil, inferenceReady: URL? = nil) { self.inferenceReady = inferenceReady; self.workerGate = workerGate; self.scripted = scripted; self.delay = delay; self.response = response; self.usage = usage }
     static let catalog: J = .object(["data": .array([.object(["id": .string(modelID), "supported_parameters": .array(["tools", "max_tokens", "reasoning"].map(J.string)), "reasoning": .object(["mandatory": .bool(false)]), "pricing": .object(["prompt": .string("0.000001"), "completion": .string("0.000002")])])])])
     static let answer: J = .object(["model": .string(modelID), "choices": .array([.object(["finish_reason": .string("stop"), "message": .object(["role": .string("assistant"), "content": .string("Fixture response")])])]), "usage": .object(["prompt_tokens": .number(20), "completion_tokens": .number(4), "cost": .number(Decimal(string: "0.000028")!)])])
     static func script(_ body: J) throws -> J {
@@ -60,7 +62,16 @@ actor FixtureHTTP: HTTPTransport {
         if path == "key" { return try J.object(["data": .object(["usage": .number(usage)])]).data() }
         paid += 1
         self.body = body
-        do { try await Task.sleep(for: delay) }
+        do {
+            if let inferenceReady { try Data().write(to: inferenceReady, options: .atomic) }
+            if scripted, let workerGate, let body,
+               try J.parse(body)["tools"].array?.contains(where: { $0["function"]["name"].string == "read_file" }) == true {
+                while FileManager.default.fileExists(atPath: workerGate.path) {
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            try await Task.sleep(for: delay)
+        }
         catch { stopped += 1; throw error }
         if scripted, let body { return try Self.script(J.parse(body)).data() }
         return try response ?? Self.answer.data()

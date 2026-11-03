@@ -110,7 +110,7 @@ run = "apps/vera-mac/.build/debug/Vera --memory-evidence-selftest"
 
 [tasks.native-memory-gate-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --memory-gate-selftest"
+run = "sh apps/vera-mac/scripts/test-native-memory-gate.sh"
 
 [tasks.memory-gate-live]
 depends = ["mac-build"]

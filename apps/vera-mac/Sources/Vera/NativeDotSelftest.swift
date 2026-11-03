@@ -11,6 +11,9 @@ extension SelfTest {
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
                               nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
         await store.connect()
+        store.nativeSchedulerLoop?.cancel()
+        await store.nativeSchedulerLoop?.value
+        store.nativeSchedulerLoop = nil
 
         try require(store.dotProfileLoaded && !store.dotProfile.setupCompleted && store.dotProfile.goal.isEmpty
                     && store.dotProfile.state == .active && store.dotProfile.connectedToolIDs == nil, "A fresh install starts with an empty profile that still needs setup")
@@ -27,6 +30,9 @@ extension SelfTest {
         let reopened = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try LocalChatRepository(url: url),
                                  nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
         await reopened.connect()
+        reopened.nativeSchedulerLoop?.cancel()
+        await reopened.nativeSchedulerLoop?.value
+        reopened.nativeSchedulerLoop = nil
         try require(reopened.dotProfile.goal == goal && reopened.dotProfile.state == .paused && reopened.dotProfile.setupCompleted,
                     "A second store over the same database loads the same goal and state")
         let partial = try JSONDecoder().decode(NativeDotProfile.self, from: Data("{\"goal\":\"Plan the garden\"}".utf8))

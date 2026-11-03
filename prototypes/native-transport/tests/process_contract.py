@@ -34,16 +34,18 @@ def snapshot(root: Path) -> list[tuple[str, str, int]]:
         return []
 
 
-def wait_reserved(root: Path, process: subprocess.Popen[bytes]) -> None:
+def wait_inference_ready(root: Path, process: subprocess.Popen[bytes]) -> None:
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
-        rows = snapshot(root)
-        if rows and rows[0][1] == "reserved":
+        if (root / 'ledger/inference.ready').exists():
+            rows = snapshot(root)
+            assert rows and rows[0][1] == "reserved", rows
             return
         if process.poll() is not None:
-            raise AssertionError("mock helper exited before reservation")
+            output, error = process.communicate(timeout=3)
+            raise AssertionError(f"mock helper exited before inference ({process.returncode}): {output.decode(errors='replace')} {error.decode(errors='replace')}")
         time.sleep(0.01)
-    raise AssertionError("mock helper did not reserve")
+    raise AssertionError("mock helper did not enter inference")
 
 
 def run(binary: Path) -> None:
@@ -84,12 +86,13 @@ def run(binary: Path) -> None:
                 assert process.stdin is not None
                 process.stdin.write(encode(request) + b"\n")
                 process.stdin.flush()
-                wait_reserved(root, process)
+                wait_inference_ready(root, process)
                 started = time.monotonic()
                 if mode == "sigkill":
                     os.killpg(process.pid, signal.SIGKILL)
                     out, err = process.communicate(timeout=3)
-                    assert snapshot(root)[0][1] == "reserved"
+                    rows = snapshot(root)
+                    assert rows[0][1] == "reserved", (rows, out, err)
                     fresh = dict(request, request_id=identifier())
                     authorize(fresh)
                     process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

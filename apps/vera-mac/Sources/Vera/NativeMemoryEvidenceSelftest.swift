@@ -346,23 +346,34 @@ enum NativeMemoryEvidenceSelftest {
             let store = ChatStore(nativeConfig: NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!,
                 apiKey: nil, model: "local-model", chatTemplateKwargs: nil), nativeTransport: SelfTestNativeTransport(),
                 repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
-            store.newConversation()
-            store.sendText("I like morning walks before work")
-            if queued {
-                for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.acquires == 0 {
+            let extraction = Task {
+                await store.learnFromCompletedTurn(
+                    user: "I like morning walks before work", assistant: Message(role: .assistant, text: "Noted."),
+                    source: nil, turnKey: "extraction-\(queued)", conversationExcluded: false)
+            }
+            do {
+                if queued {
+                    for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.acquires == 0 {
+                        try await Task.sleep(for: .milliseconds(10))
+                    }
+                    try require(NativeMemoryAdmissionProtocol.state.acquires > 0, "extraction never queued for admission")
+                    try exclude()
+                    NativeMemoryAdmissionProtocol.state.allow()
+                }
+                for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.bodies.isEmpty {
                     try await Task.sleep(for: .milliseconds(10))
                 }
-                try require(NativeMemoryAdmissionProtocol.state.acquires > 0, "extraction never queued for admission")
-                try exclude()
+                let body = NativeMemoryAdmissionProtocol.state.bodies.joined()
+                try require(body.contains(kept.summary), "extraction request lost eligible memory")
+                try require(!body.contains(revoked.summary) && !body.contains(revoked.details[0]) && !body.contains(revoked.id),
+                            "excluded source reached extraction " + (queued ? "after queued admission" : "request"))
+                await extraction.value
+                try require(NativeMemoryAdmissionProtocol.state.releases == 1, "extraction did not finish admission cleanup before teardown")
+            } catch {
                 NativeMemoryAdmissionProtocol.state.allow()
+                await extraction.value
+                throw error
             }
-            for _ in 0..<300 where NativeMemoryAdmissionProtocol.state.bodies.isEmpty {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            let body = NativeMemoryAdmissionProtocol.state.bodies.joined()
-            try require(body.contains(kept.summary), "extraction request lost eligible memory")
-            try require(!body.contains(revoked.summary) && !body.contains(revoked.details[0]) && !body.contains(revoked.id),
-                        "excluded source reached extraction " + (queued ? "after queued admission" : "request"))
         }
         print("  memory extraction: PASS (excluded source absent from extraction before and during queued admission)")
     }
@@ -804,12 +815,15 @@ private final class NativeMemoryAdmissionState: @unchecked Sendable {
     private var admitted = false
     private var acquireCount = 0
     private var completionCount = 0
+    private var releaseCount = 0
     private var completionBodies: [String] = []
     var acquires: Int { lock.withLock { acquireCount } }
     var completions: Int { lock.withLock { completionCount } }
+    var releases: Int { lock.withLock { releaseCount } }
     var bodies: [String] { lock.withLock { completionBodies } }
-    func reset() { lock.withLock { admitted = false; acquireCount = 0; completionCount = 0; completionBodies = [] } }
+    func reset() { lock.withLock { admitted = false; acquireCount = 0; completionCount = 0; releaseCount = 0; completionBodies = [] } }
     func allow() { lock.withLock { admitted = true } }
+    func release() { lock.withLock { releaseCount += 1 } }
     func acquire() -> String { lock.withLock { acquireCount += 1; return admitted ? "admitted" : "pending" } }
     func complete(_ body: Data) { lock.withLock { completionCount += 1; completionBodies.append(String(decoding: body, as: UTF8.self)) } }
 }
@@ -838,6 +852,7 @@ private final class NativeMemoryAdmissionProtocol: URLProtocol, @unchecked Senda
                 "generation_seconds_remaining": 30, "lease_seconds_remaining": 30, "poll_seconds": 0.01,
                 "queue_seconds": 30, "queue_wait_seconds": 0]
         } else if url.path.hasSuffix("/release") {
+            Self.state.release()
             body = ["request_id": url.deletingLastPathComponent().lastPathComponent, "state": "released",
                 "generation_seconds_remaining": 30, "lease_seconds_remaining": 30, "poll_seconds": 0.01,
                 "queue_seconds": 30, "queue_wait_seconds": 0]

@@ -113,6 +113,8 @@ async def test_actual_sdk_native_worker_foreground_receipts_and_reopen(tmp_path)
 async def test_native_cancel_preserves_other_role_and_uncertain_budget(tmp_path):
     runtime = Runtime(tmp_path, NODE, native_mock_helper=HELPER)
     await runtime.start()
+    worker_gate = tmp_path / 'native-transport/ledger/worker.gate'
+    worker_gate.touch(mode=0o600)
     request = body()
     foreground = None
     try:
