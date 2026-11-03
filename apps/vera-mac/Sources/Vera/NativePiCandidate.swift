@@ -58,7 +58,7 @@ final class NativePiCandidate {
         nativeMCP?.setEnabled(config.nativeSettings.enabledToolIDs)
         let binding = try config.piSelectedProfileBinding()
         let accounting = try PiSharedAccounting(root: root.url.appendingPathComponent("accounting"), baselineNanos: 0)
-        let provider = PiCandidateProviderFixture()
+        let provider = PiCandidateProviderFixture(crashGate: root.url.appendingPathComponent("crash-inference.gate"))
         let admission = PiAdmissionFixtureProtocol.admission()
         let executor = try config.piSelectedProfileOperation(binding: binding, admission: admission, accounting: accounting) { outgoing, request in
             try await provider.send(outgoing, request: request)
