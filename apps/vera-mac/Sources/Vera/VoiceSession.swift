@@ -12,6 +12,7 @@ final class VoiceSession: ObservableObject {
     enum State: Equatable { case idle, listening, transcribing, thinking, speaking }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var activeConversationID: String?
     @Published private(set) var isPlayingAudio = false
     @Published private(set) var level: Float = 0    // mic level 0...1 for the orb pulse
     @Published var lastError: String?
@@ -159,13 +160,17 @@ final class VoiceSession: ObservableObject {
 
     func start() {
         guard state == .idle, !opening, !isDictating, dictationTail == nil else { return }
+        activeConversationID = store.selectedID
         lastError = nil
         entryError = nil
         opening = true
         chatGeneration &+= 1
         let generation = chatGeneration
         Task {
-            defer { opening = false }
+            defer {
+                opening = false
+                if generation == chatGeneration && state == .idle { activeConversationID = nil }
+            }
             let token: Int
             switch await openCapture(isCurrent: { [weak self] in self?.chatGeneration == generation }) {
             case .stale: return
@@ -217,6 +222,7 @@ final class VoiceSession: ObservableObject {
         endCapture()
         level = 0
         state = .idle
+        activeConversationID = nil
     }
 
     private func beginListening(with stream: (any VoiceTranscript)? = nil) {
@@ -418,6 +424,7 @@ final class VoiceSession: ObservableObject {
     }
 
     private func streamReply(socket: VeraSocket, chatID: String, messages: [[String: Any]], generation: Int) {
+        activeConversationID = chatID
         let messageID = UUID().uuidString
         var content = ""
         var spokenUpTo = 0   // character cursor into `content` already sent to TTS
