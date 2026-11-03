@@ -670,7 +670,7 @@ struct MessageRow: View {
                         .padding(.top, 4)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    AssistantBody(message: message, section: .bubble, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    AssistantBody(message: message, section: .bubble, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
                         let awaiting = pendingConfirmation?.id == activity.id
                         switch NativeToolActivityPresentation.forActivity(activity) {

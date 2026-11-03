@@ -6,6 +6,10 @@ import AppKit
 @MainActor
 enum Shot {
     static func render(view: String, to path: String, appearance: String = "dark") {
+        if view.hasPrefix("message-layout-") {
+            ConversationShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("composer-") {
             ComposerShot.render(view: view, to: path, appearance: appearance)
             return
