@@ -8,11 +8,11 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .chats: "Chats"
+        case .chats: "Home"
         case .projects: "Projects"
         case .library: "Library"
         case .scheduled: "Scheduled"
-        case .integrations: "Integrations"
+        case .integrations: "Plugins"
         case .pulse: "Pulse"
         case .workflows: "Workflows"
         case .activity: "Activity"
@@ -22,10 +22,10 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .chats: "bubble.left"
+        case .chats: "house"
         case .projects: AppSection.projects.icon
         case .library: AppSection.artifacts.icon
-        case .scheduled: AppSection.scheduled.icon
+        case .scheduled: "clock"
         case .integrations: AppSection.integrations.icon
         case .pulse: AppSection.pulse.icon
         case .workflows: "point.3.connected.trianglepath.dotted"
@@ -34,8 +34,13 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    static let primary: [SidebarDestination] = [.chats, .projects, .library, .scheduled, .integrations]
-    static let secondary: [SidebarDestination] = [.pulse, .workflows, .activity, .memory]
+    static let primary: [SidebarDestination] = [.chats, .library, .scheduled, .integrations]
+    static let secondary: [SidebarDestination] = [.projects, .pulse, .workflows, .activity, .memory]
+
+    func isRailSelected(section: AppSection, pane: AgenticPane) -> Bool {
+        if self == .chats { return [.chat, .vera, .projects].contains(section) }
+        return isSelected(section: section, pane: pane)
+    }
 
     func isSelected(section: AppSection, pane: AgenticPane, showingConversation: Bool = false) -> Bool {
         switch self {

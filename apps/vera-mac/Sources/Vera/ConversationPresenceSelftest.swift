@@ -25,11 +25,8 @@ extension SelfTest {
         try require(!ConversationPresence.showsWorkPanel(references: references, conversationID: owned, wide: true, canvasOpen: true)
                     && !ConversationPresence.showsWorkPanel(references: references, conversationID: owned, wide: false, canvasOpen: false),
                     "The canvas and a narrow window both hide the panel")
-        try require(ConversationPresence.showsWorkButton(references: references, conversationID: other, wide: true, canvasOpen: false),
-                    "View all work stays reachable from the header button when other chats have work")
-        try require(!ConversationPresence.showsWorkButton(references: [], conversationID: other, wide: true, canvasOpen: false)
-                    && !ConversationPresence.showsWorkPanel(references: [], conversationID: other, wide: true, canvasOpen: false),
-                    "With no work anywhere neither the panel nor the button appears")
+        try require(!ConversationPresence.showsWorkPanel(references: [], conversationID: other, wide: true, canvasOpen: false),
+                    "A chat without work has no work panel")
 
         let repository = try LocalChatRepository(inMemory: true)
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(),

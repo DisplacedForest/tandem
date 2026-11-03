@@ -515,115 +515,13 @@ struct ShotView: View {
 
     private var shellChrome: some View {
         HStack(spacing: 0) {
-            sidebarMirror
-                .frame(width: collapsedSidebar ? VeraSidebar.collapsedWidth : VeraSidebar.expandedWidth)
-                .frame(maxHeight: .infinity, alignment: .top).background(Theme.sidebar)
+            VeraSidebar(collapsed: .constant(collapsedSidebar), search: .constant(""),
+                        workflowEditor: WorkflowEditorStore(), onSelect: { _ in })
+                .environmentObject(store)
+                .environment(\.renderSafe, true)
             Rectangle().fill(Theme.hairline).frame(width: 1)
         }
         .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private var sidebarMirror: some View {
-        VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-            Group {
-                if collapsedSidebar {
-                    VStack(spacing: 6) {
-                        TandemLogoMark(size: 22).frame(height: SidebarMetrics.rowHeight)
-                        shotGlyph("sidebar.left")
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    HStack(spacing: 8) {
-                        TandemLogoMark(size: 22)
-                        Text("Tandem").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Spacer(minLength: 0)
-                        shotGlyph("ellipsis", active: shotSecondarySelected)
-                        shotGlyph("sidebar.left")
-                    }
-                    .padding(.leading, SidebarMetrics.inset - 2)
-                }
-            }
-            .padding(.top, VeraSidebar.topInset).padding(.bottom, 10)
-            if collapsedSidebar {
-                shotNav("New chat", "square.and.pencil", active: false)
-                shotNav("Search chats", "magnifyingglass", active: false)
-            } else {
-                HStack(spacing: 8) {
-                    shotTile("square.and.pencil")
-                    shotTile("magnifyingglass")
-                }
-            }
-            shotRow(SidebarRowLabel(icon: CompanionAvatar(size: 20), title: "Vera", selected: section == .vera, collapsed: collapsedSidebar, tintsIcon: false, rowHeight: 36), selected: section == .vera)
-                .padding(.top, 6)
-            ForEach(SidebarDestination.primary) { destination in
-                shotNav(destination.title, destination.icon,
-                        active: destination.isSelected(section: section, pane: .canvas, showingConversation: !collapsedSidebar && !emptyChat))
-            }
-            if collapsedSidebar {
-                shotNav("More", "ellipsis", active: shotSecondarySelected)
-            }
-            if !collapsedSidebar {
-                shotDivider
-                VStack(alignment: .leading, spacing: SidebarMetrics.spacing) {
-                    SidebarSectionHeader(title: "Pinned")
-                    shotChatRow("Greenhouse irrigation plan", selected: false, hovering: false, pinned: true)
-                    SidebarSectionHeader(title: "Today")
-                    shotChatRow("Weather watch", selected: section == .chat && !emptyChat, hovering: false, pinned: false)
-                    shotChatRow("Local LLM and AMD GPU news", selected: false, hovering: section == .chat && !emptyChat, pinned: false)
-                    SidebarSectionHeader(title: "Previous 7 days")
-                    shotChatRow("Sourdough starter notes", selected: false, hovering: false, pinned: false)
-                    shotChatRow("Server rebuild plan", selected: false, hovering: false, pinned: false)
-                }
-            }
-            Spacer(minLength: 0)
-            shotNav("Settings", "gearshape", active: false).padding(.bottom, 10)
-        }
-        .padding(.horizontal, SidebarMetrics.inset)
-    }
-
-    private func shotGlyph(_ icon: String, active: Bool = false) -> some View {
-        Image(systemName: icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-            .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
-            .frame(width: SidebarMetrics.rowHeight, height: SidebarMetrics.rowHeight)
-            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
-                .fill(SidebarRowStyle.fill(selected: active, hovering: false, pressed: false)))
-    }
-
-    private var shotSecondarySelected: Bool {
-        SidebarDestination.secondary.contains { $0.isSelected(section: section, pane: .canvas) }
-    }
-
-    private func shotTile(_ icon: String) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        return Image(systemName: icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
-            .frame(maxWidth: .infinity).frame(height: 44)
-            .background(shape.fill(Theme.surface))
-            .overlay(shape.stroke(Theme.hairline, lineWidth: 1))
-    }
-
-    private var shotDivider: some View {
-        Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6).padding(.horizontal, SidebarMetrics.inset)
-    }
-
-    private func shotRow<Label: View>(_ label: Label, selected: Bool, hovering: Bool = false) -> some View {
-        label
-            .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
-                .fill(SidebarRowStyle.fill(selected: selected, hovering: hovering, pressed: false)))
-    }
-
-    private func shotNav(_ title: String, _ icon: String, active: Bool) -> some View {
-        shotRow(SidebarRowLabel(icon: Image(systemName: icon), title: title, selected: active, collapsed: collapsedSidebar), selected: active)
-    }
-
-    private func shotChatRow(_ title: String, selected: Bool, hovering: Bool, pinned: Bool) -> some View {
-        shotRow(SidebarChatRowLabel(title: title, selected: selected) {
-            if hovering {
-                Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-            } else if pinned {
-                Image(systemName: "pin").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textSecondary)
-            }
-        }, selected: selected, hovering: hovering)
     }
 
     private var chat: some View {
@@ -656,12 +554,7 @@ struct ShotView: View {
             .frame(maxWidth: ConversationMetrics.columnWidth)
         }
         .background(Theme.conversationBackground)
-        .overlay(alignment: .topTrailing) {
-            if workCollapsed {
-                OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: store.selectedID)) {}
-                    .padding(.top, 44).padding(.trailing, 20)
-            }
-        }
+
     }
 
     private var shotMentionCatalog: ComposerMentionCatalog {
