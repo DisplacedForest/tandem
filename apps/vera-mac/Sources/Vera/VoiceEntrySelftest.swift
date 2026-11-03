@@ -2,7 +2,10 @@ import Foundation
 
 @MainActor
 enum VoiceEntrySelftest {
+    private static var stores: [ChatStore] = []
+
     static func run() async throws {
+        defer { stores.removeAll() }
         let require = NativeTaskFixture.require
         try requireMerge(require)
         try requireGate(require)
@@ -122,16 +125,22 @@ enum VoiceEntrySelftest {
     private static func requireVoiceChatFailure(_ require: (Bool, String) throws -> Void) async throws {
         let capture = FakeCapture()
         capture.authorized = false
-        let session = makeSession(capture, FakeTranscriptSource(["unused"]))
+        let store = fixtureStore()
+        store.selectedID = "voice-origin"
+        let session = VoiceSession(client: VoiceClient(host: "voice.test"), socket: nil, store: store,
+                                   capture: capture, transcription: { try FakeTranscriptSource(["unused"]).open() })
         session.start()
         try await waitFor { session.entryError != nil }
         try require(session.entryError == VoiceEntryFailure.microphoneDenied.message, "Voice chat explains a denied microphone")
-        try require(session.state == .idle && !session.isActive, "Voice chat stays closed after a failed start")
+        try require(session.state == .idle && !session.isActive && session.activeConversationID == nil,
+                    "Voice chat stays closed and clears its origin after a failed start")
     }
 
     private static func fixtureStore() -> ChatStore {
-        ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try? LocalChatRepository(inMemory: true),
-                  artifactPersistenceEnabled: false)
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try? LocalChatRepository(inMemory: true),
+                              artifactPersistenceEnabled: false)
+        stores.append(store)
+        return store
     }
 
     private static func requireFinishFailures(_ require: (Bool, String) throws -> Void) async throws {
@@ -312,10 +321,14 @@ enum VoiceEntrySelftest {
             let source = FakeTranscriptSource(replies: [.delayed(reply, gate)])
             let store = fixtureStore()
             let before = store.conversations.count
+            store.selectedID = "voice-origin"
             let session = VoiceSession(client: VoiceClient(host: "voice.test"), socket: socket, store: store,
                                        capture: capture, transcription: { try source.open() })
             session.start()
             try await waitFor { session.state == .listening }
+            try require(session.activeConversationID == "voice-origin", "Voice capture belongs to its starting conversation")
+            store.selectedID = "other-conversation"
+            try require(session.activeConversationID == "voice-origin", "Navigation does not reassign active voice capture")
             session.utteranceEnded()
             try await waitFor { session.state == .transcribing }
             if label == "text" {
@@ -327,7 +340,7 @@ enum VoiceEntrySelftest {
             try await waitFor { source.completed == 1 }
             try await Task.sleep(for: .milliseconds(60))
             try require(store.conversations.count == before, "A late \(label) transcript never begins a turn")
-            try require(session.state == .idle && !capture.listening && source.opened == 1,
+            try require(session.state == .idle && !capture.listening && source.opened == 1 && session.activeConversationID == nil,
                         "A late \(label) transcript never re-enters listening")
         }
     }
