@@ -1081,7 +1081,9 @@ private final class NativeMemoryGateRunner {
     }
 
     func run() async throws -> (result: NativeMemoryGateScenarioResult, observations: [NativeMemoryGateObservation], artifactFiles: Int) {
-        defer { try? FileManager.default.removeItem(at: directory) }
+        defer {
+            if (try? repository.database.close()) != nil { try? FileManager.default.removeItem(at: directory) }
+        }
         let started = ContinuousClock.now
         var failed: NativeMemoryGateFailure?
         do {
@@ -1192,6 +1194,7 @@ private final class NativeMemoryGateRunner {
             guard sent * 2 <= stored + 1 else { throw failure("the long chat was sent without folding (\(sent) of \(stored + 1) messages)") }
             guard driver.tolerant || sent > 2 else { throw failure("folding dropped every earlier turn (\(sent) of \(stored + 1) messages)") }
         case .restart:
+            try repository.database.close()
             repository = try LocalChatRepository(url: directory.appendingPathComponent("gate.sqlite"), artifactDirectory: artifacts)
         }
     }
@@ -1229,7 +1232,9 @@ private final class NativeMemoryGateRunner {
                 selected + revived.filter { item in !selected.contains { $0.record.id == item.record.id } }
             }
         }
-        await store.connect()
+        store.conversations = try repository.listConversations()
+        store.reloadNativeMemory()
+        defer { store.suspendsTurnScheduling = true }
         if driver.memoryService.supportsSemanticRecall {
             store.backfillMemoryVectorsIfNeeded()
             let ready = try await wait(driver.backfillTimeout) {
@@ -1238,21 +1243,29 @@ private final class NativeMemoryGateRunner {
             guard ready else { throw failure("vectors were not prepared") }
         }
         if let chat { store.select(chat) } else { store.newConversation() }
-        guard let conversation = store.selectedID, store.sendText(scenario.question) else { throw failure("the query could not be sent") }
+        guard let conversation = store.selectedID, store.sendText(scenario.question),
+              let replyID = store.selected?.messages.last?.id,
+              let turn = store.conversationTurns.first(where: { $0.assistantMessageID == replyID }) else {
+            throw failure("the query could not be sent")
+        }
         let finished = try await wait(driver.replyTimeout) {
-            guard !store.generating, let last = store.conversations.first(where: { $0.id == conversation })?.messages.last else { return false }
-            return last.role == .assistant && last.state != .streaming
+            guard !store.isSchedulingTurns, store.turnExecutions[turn.id] == nil,
+                  let saved = store.conversationTurns.first(where: { $0.id == turn.id }) else { return false }
+            return saved.state == .complete || saved.state == .interrupted || saved.state == .stopped
         }
         diagnostic = capture.lastError.map(NativeMemoryGate.diagnostic)
-        guard finished else { throw requestFailure("the reply did not finish", .replyTimedOut) }
+        guard finished else {
+            store.stopAnswer(replyID)
+            throw requestFailure("the reply did not finish", .replyTimedOut)
+        }
         artifactFiles = max(artifactFiles, ((try? FileManager.default.contentsOfDirectory(atPath: artifacts.path)) ?? []).count)
-        guard let history = capture.histories.last else { throw requestFailure("no request reached the transport") }
-        let prompt = history.first(where: { $0.role == "system" })?.content ?? ""
-        let reply = store.conversations.first(where: { $0.id == conversation })?.messages.last
-        guard let reply, reply.role == .assistant else { throw failure("no reply was saved") }
+        guard let reply = try repository.messages(conversationID: conversation).first(where: { $0.id == replyID }),
+              reply.role == .assistant else { throw failure("no reply was saved") }
         guard reply.state == .complete, reply.failure == nil, !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw requestFailure("the model request did not complete (\(reply.failure ?? "empty answer"))")
         }
+        guard let history = capture.histories.last else { throw requestFailure("no request reached the transport") }
+        let prompt = history.first(where: { $0.role == "system" })?.content ?? ""
         let answer = NativeMemoryGate.parseAnswer(reply.text, fields: scenario.fields)
         if answer == nil, !driver.tolerant { throw failure("the model answer did not parse") }
         let lines = NativeMemoryGate.memoryContextLines(prompt)
