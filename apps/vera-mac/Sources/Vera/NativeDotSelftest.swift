@@ -194,9 +194,10 @@ extension SelfTest {
         store.openVeraThread()
         store.resetDot()
         guard let freshID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("A fresh Vera thread exists after reset") }
-        try require(freshID != veraID && (try repository.messages(conversationID: freshID)).count == 1
-                    && (try repository.messages(conversationID: freshID)).first?.role == .assistant
-                    && (try repository.messages(conversationID: veraID)).isEmpty, "Reset replaces the thread with its durable assistant opening")
+        try require(freshID != veraID && (try repository.messages(conversationID: freshID)).isEmpty
+                    && store.companionOpeningError?.contains("Settings") == true
+                    && (try repository.messages(conversationID: veraID)).isEmpty,
+                    "An unconfigured reset keeps the fresh thread ready and explains how to connect")
         try require(store.selectedID == freshID && store.section == .vera, "The fresh thread is selected when the old one was showing")
         try require(store.conversations.filter { $0.originType == ChatStore.veraThreadOriginType && $0.originID == ChatStore.veraThreadOriginID }.count == 1,
                     "Exactly one Vera thread remains")

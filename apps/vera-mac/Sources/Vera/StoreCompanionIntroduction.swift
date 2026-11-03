@@ -11,6 +11,10 @@ extension ChatStore {
             _ = try nativeDotProfileStore?.load()
             let messages = try repository.messages(conversationID: id)
             guard messages.isEmpty else { return }
+            guard pendingProfileAvailable else {
+                chatConfigurationError = "Choose a chat connection in Settings to start the conversation."
+                return
+            }
             let configured = !dotProfile.needsIntroduction && (dotProfile.setupCompleted || dotProfile.hasGoal || dotProfile.connectedToolIDs != nil
                 || companionHasSavedName || assistantName != ConfigStore.defaultAssistantName)
             let event = NativeCompanionEvent(kind: configured ? .welcome : .introduction, key: "opening")
