@@ -62,7 +62,7 @@ enum NativeRuntimeMemorySelftest {
             repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
         store.newConversation()
         store.sendText("Current livestock?")
-        for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+        try await NativeMemoryEvidenceSelftest.waitForTurn(store)
         let focusedSources = store.selected?.messages.last?.sources ?? []
         try piCheck(focusedSources.count == 1 && NativeMemoryCitation.recordID(focusedSources[0].url) == record.id)
         let assistant = UUID().uuidString.lowercased()

@@ -3612,7 +3612,8 @@ enum SelfTest {
     }
 
     private static func waitForGeneration(_ store: ChatStore) async {
-        for _ in 0..<100 where store.generating {
+        for _ in 0..<100 where store.generating || store.isSchedulingTurns || !store.turnExecutions.isEmpty
+            || store.conversationTurns.contains(where: { $0.state == .pending || $0.state == .running }) {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
     }

@@ -933,6 +933,10 @@ extension SelfTest {
         try await firstRun.start()
         let survivor = try await firstRun.submit("Relaunch research")
         let reached = try await firstRun.waitAsync { await gate.count("synthesize-seen") >= 1 }
+        if !reached {
+            let saved = try firstRun.engine.store.get(survivor.remoteTaskID!)
+            print("Relaunch synthesis wait failed: state=\(saved.state.rawValue), checkpoint=\(String(decoding: saved.checkpoint, as: UTF8.self)), decision=\(String(decoding: saved.decision ?? Data(), as: UTF8.self)), plans=\(await relaunchCounter.count("generate:plan")), searches=\(await relaunchCounter.count("search"))")
+        }
         try require(reached, "The first run reaches synthesis")
         await firstRun.crash()
         let interrupted = try firstRun.engine.store.get(survivor.remoteTaskID!)
