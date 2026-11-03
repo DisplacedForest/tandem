@@ -15,6 +15,19 @@ extension SelfTest {
                     && ConversationPresence.replyFigure(companionThread: true) == .companion,
                     "Only the companion thread shows the companion figure")
 
+        try require(ConversationPresence.assistantName(companionThread: false, savedName: "Vera") == "Tandem",
+                    "An ordinary composer uses the product name even with an old companion name")
+        try require(ConversationPresence.assistantName(companionThread: false, savedName: "Cedar") == "Tandem",
+                    "A custom companion name never replaces ordinary chat identity")
+        try require(ConversationPresence.assistantName(companionThread: true, savedName: "Cedar") == "Cedar"
+                    && ConversationPresence.assistantName(companionThread: true, savedName: "Vera") == "Vera",
+                    "Companion identity preserves the saved name without renaming user data")
+        try require(ConversationPresence.headerTitle(conversationTitle: "Vera migration notes") == "Vera migration notes",
+                    "Existing chat titles remain intact, including intentional historical product references")
+        try require(ConversationPresence.headerTitle(conversationTitle: nil) == "Tandem"
+                    && ConversationPresence.headerTitle(conversationTitle: "  ") == "Tandem",
+                    "Missing chat titles fall back to the product name")
+
         let owned = "chat-with-work"
         let references = [try OngoingWorkFixture.reference(conversationID: owned, title: "Compare insulation options", state: "running")]
         let other = "no-work-" + UUID().uuidString

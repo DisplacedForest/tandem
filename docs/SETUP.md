@@ -329,7 +329,7 @@ With no address set, neither control appears, and the composer's plus menu has a
 
 ### The conversation and ongoing work
 
-The conversation header shows the assistant's avatar and name with a status line: Ready, Working on your answer, Waiting for your approval, or the current step of the reply. Replies appear in bubbles beside a small avatar, and your messages are right-aligned. A reply that produces a document, report, image or canvas piece gets a result row with an **Open** button. Reports and documents open in their reader, and canvas pieces open the canvas.
+The conversation header shows its title. Replies appear in bubbles, and your messages are right-aligned. A reply that produces a document, report, image or canvas piece gets a result row with an **Open** button. Reports and documents open in their reader, and canvas pieces open the canvas.
 
 Actions that need your permission appear inline as a card with **Approve** and **Decline**. A declined action is shown as declined rather than failed.
 
@@ -337,7 +337,7 @@ The **Ongoing work** panel on the right lists the background work of the current
 
 ### Companion appearance
 
-The companion is the small figure that stands for the assistant. It uses the same assistant name as the rest of the app. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
+The companion is the small figure that stands for the assistant. Its conversation and sidebar entry use its saved name. Ordinary chat composers say **Message Tandem**. Renaming the companion keeps your conversation titles and history intact. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
 
 The figure appears wherever the companion does: the sidebar, Settings and the voice view, where it replaces the old orb. Outside the voice view its state follows the conversation you have selected, so a turn running in another chat does not animate it. It has six states, each shown through motion rather than text:
 

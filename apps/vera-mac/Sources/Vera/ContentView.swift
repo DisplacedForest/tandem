@@ -277,7 +277,7 @@ private struct ChatPane: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsHeader, ConversationPresence.headerKind(companionThread: store.isVeraThread(conversation?.id)) == .conversation {
-                ConversationHeader(name: store.assistantName, status: store.conversationStatusLine)
+                ConversationHeader(name: ConversationPresence.headerTitle(conversationTitle: conversation?.title), status: store.conversationStatusLine)
             }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
@@ -491,7 +491,7 @@ private struct EmptyChatView: View {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else {
                     Button { config.showOnboarding = true } label: {
-                        Label("\(store.assistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label("\(store.conversationAssistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())
@@ -1255,7 +1255,7 @@ struct ComposerField: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Add files, grant a folder, or insert a saved prompt")
                 .padding(.bottom, 1)
-                TextField("Message \(store.assistantName)", text: draft, axis: .vertical)
+                TextField("Message \(store.conversationAssistantName)", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: ConversationMetrics.bodySize))
                     .foregroundStyle(Theme.warmTextPrimary)
@@ -1285,7 +1285,7 @@ struct ComposerField: View {
                     }
                 if voiceAvailability.any {
                     ComposerVoiceControls(availability: voiceAvailability, dictating: voice.isDictating,
-                                          assistantName: store.assistantName,
+                                          assistantName: store.conversationAssistantName,
                                           onDictate: toggleDictation, onVoiceChat: { voice.start() })
                         .padding(.bottom, 2)
                 }

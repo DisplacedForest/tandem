@@ -439,7 +439,7 @@ struct ShotView: View {
                             shotSkeletonCard
                         }
                     }
-                    shotComposerRow(text: attachDemo ? "What do you make of these?" : "Message \(store.assistantName)",
+                    shotComposerRow(text: attachDemo ? "What do you make of these?" : "Message \(store.conversationAssistantName)",
                                     typed: attachDemo, active: attachDemo, stop: false)
                 }
                 .modifier(ShotComposerPill())
@@ -465,7 +465,7 @@ struct ShotView: View {
                 .frame(maxWidth: .infinity, minHeight: ComposerControlGlyph.sendSize, alignment: .leading)
             if voiceAvailability.any {
                 ComposerVoiceControls(availability: voiceAvailability, dictating: dictating,
-                                      assistantName: store.assistantName, animated: false)
+                                      assistantName: store.conversationAssistantName, animated: false)
                     .padding(.bottom, 2)
             }
             if stop {
@@ -479,7 +479,7 @@ struct ShotView: View {
     private var shotComposerText: String {
         if mentions { return "@" }
         if dictating { return "Move the dentist appointment to Thursday and remind me the day before" }
-        return "Message \(store.assistantName)"
+        return "Message \(store.conversationAssistantName)"
     }
 
     private var shotStatusLine: String {
@@ -527,7 +527,7 @@ struct ShotView: View {
     private var chat: some View {
         VStack(spacing: 0) {
             if ConversationPresence.headerKind(companionThread: store.isVeraThread(store.selectedID)) == .conversation, companionPanel == nil {
-                ConversationHeader(name: store.assistantName, status: shotStatusLine)
+                ConversationHeader(name: ConversationPresence.headerTitle(conversationTitle: store.selected?.title), status: shotStatusLine)
             }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
