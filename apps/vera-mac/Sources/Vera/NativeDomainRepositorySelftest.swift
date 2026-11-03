@@ -307,7 +307,7 @@ enum NativeDomainRepositorySelftest {
             repository: repository, nativeMemorySettings: settings, nativeMemoryService: service)
         store.newConversation()
         store.sendText("Current livestock and care?")
-        for _ in 0..<200 where store.generating { try await Task.sleep(for: .milliseconds(10)) }
+        try await NativeMemoryEvidenceSelftest.waitForTurn(store)
         let nativePrompt = model.histories.last?.first?.content ?? ""
         try require(nativePrompt.contains("Current count: 10") && nativePrompt.contains("planned, not completed"), "native foreground missed typed state")
         let bridge = NativeRuntimeMemoryBridge(store: store)
