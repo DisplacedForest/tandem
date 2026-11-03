@@ -651,7 +651,8 @@ struct ComposerControlGlyph: View {
             .foregroundStyle(tint)
             .frame(width: diameter, height: diameter)
             .background(Circle().fill(fill))
-            .contentShape(Circle())
+            .frame(width: Self.sendSize, height: Self.sendSize)
+            .contentShape(Rectangle())
     }
 }
 
@@ -1252,9 +1253,11 @@ struct ComposerField: View {
                 } label: {
                     ComposerControlGlyph(kind: .plus)
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .frame(width: ComposerControlGlyph.sendSize, height: ComposerControlGlyph.sendSize)
+                .contentShape(Rectangle())
                 .help("Add files, grant a folder, or insert a saved prompt")
-                .padding(.bottom, 1)
+                .accessibilityLabel("Add attachments")
                 TextField("Message \(store.conversationAssistantName)", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: ConversationMetrics.bodySize))
@@ -1287,7 +1290,6 @@ struct ComposerField: View {
                     ComposerVoiceControls(availability: voiceAvailability, dictating: voice.isDictating,
                                           assistantName: store.conversationAssistantName,
                                           onDictate: toggleDictation, onVoiceChat: { voice.start() })
-                        .padding(.bottom, 2)
                 }
                 if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
                     Button { store.stopAnswer(stoppable) } label: {
