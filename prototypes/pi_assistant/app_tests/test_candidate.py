@@ -75,6 +75,9 @@ def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path
     from test_app_broker import descendants, gone, wait_for
 
     root = tmp_path / 'candidate'
+    root.mkdir(mode=0o700)
+    crash_gate = root / 'crash-inference.gate'
+    crash_gate.touch(mode=0o600)
     process = subprocess.Popen([str(BINARY), contract, *arguments(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     state_file = root / 'ui/assistant-ui.json'
     ledger = root / 'model/broker.sqlite'
@@ -103,7 +106,9 @@ def test_candidate_sigkill_preserves_identity_and_uncertain_usage(tmp_path: Path
                 pass
             time.sleep(.002)
         assert original is not None, 'Did not observe concurrent worker and pending foreground before kill'
+        assert process.wait(timeout=8) == -signal.SIGKILL
         process.communicate(timeout=8)
+        crash_gate.unlink()
         wait_for(lambda: all(gone(pid) for pid in children), bool, timeout=8)
         result = run(recovery, arguments(root))
         assert result.returncode == 0, result.stderr
