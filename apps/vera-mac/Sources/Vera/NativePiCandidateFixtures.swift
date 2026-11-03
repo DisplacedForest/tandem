@@ -14,6 +14,8 @@ final class PiCandidateCredentials: NativeCredentialStore {
 
 actor PiCandidateProviderFixture {
     private var count = 0
+    private let crashGate: URL?
+    init(crashGate: URL? = nil) { self.crashGate = crashGate }
     private var activeDocuments = 0
     private var documentCount = 0
     func documentCalls() -> Int { documentCount }
@@ -30,6 +32,11 @@ actor PiCandidateProviderFixture {
         if request.scope.role == "foreground", request.toolCount > 0,
            request.messages.contains(where: { $0.pi("role").piString == "user" && ($0.pi("content").piString?.contains("Slow acknowledgment fixture.") ?? false) }) {
             try await Task.sleep(for: .seconds(4))
+        }
+        if request.scope.role == "worker" || request.messages.contains(where: { $0.pi("role").piString == "user" && $0.pi("content").piString == "What are you working on?" }) {
+            while let crashGate, FileManager.default.fileExists(atPath: crashGate.path) {
+                try await Task.sleep(for: .milliseconds(5))
+            }
         }
         let fixture = try await PiFixtureModel().complete(request)
         let block = fixture.pi("content").piArray![0]
