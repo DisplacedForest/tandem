@@ -656,12 +656,7 @@ struct ShotView: View {
             .frame(maxWidth: ConversationMetrics.columnWidth)
         }
         .background(Theme.conversationBackground)
-        .overlay(alignment: .topTrailing) {
-            if workCollapsed {
-                OngoingWorkButton(activeCount: OngoingWork.activeCount(store.nativeTaskReferences, conversationID: store.selectedID)) {}
-                    .padding(.top, 44).padding(.trailing, 20)
-            }
-        }
+
     }
 
     private var shotMentionCatalog: ComposerMentionCatalog {

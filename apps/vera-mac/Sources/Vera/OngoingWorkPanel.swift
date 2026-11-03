@@ -318,36 +318,6 @@ struct OngoingWorkAllSheet: View {
     }
 }
 
-struct OngoingWorkButton: View {
-    let activeCount: Int
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "list.bullet.rectangle")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Ongoing work")
-                    .font(.system(size: 13, weight: .medium))
-                if activeCount > 0 {
-                    Text("\(activeCount)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.onSage)
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(Capsule().fill(Theme.sage))
-                }
-            }
-            .foregroundStyle(Theme.warmTextPrimary)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(Capsule().fill(Theme.cardFill))
-            .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(activeCount > 0 ? "Ongoing work, \(activeCount) in progress or waiting" : "Ongoing work")
-    }
-}
-
 struct OngoingWorkFooter: View {
     let title: String
     let action: () -> Void
