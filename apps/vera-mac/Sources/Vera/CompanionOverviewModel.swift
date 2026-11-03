@@ -122,3 +122,15 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     var needsYouCount: Int { activity.filter(\.needsDecision).count }
 }
+
+struct CompanionActivityDetail: Equatable, Sendable {
+    let request: String?
+    let outcome: String?
+    let canOpen: Bool
+
+    init(request: String?, outcome: String?, canOpen: Bool) {
+        self.request = request.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        self.outcome = outcome.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        self.canOpen = canOpen
+    }
+}

@@ -129,6 +129,47 @@ extension SelfTest {
         store.openCompanionOutputs()
         try require(store.section == .artifacts && store.pendingLibraryConversationID == store.veraThreadID,
                     "Show more hands the companion's thread to the Library filter")
+        let navigation = OngoingWorkFixture.store()
+        let originID = navigation.selectedID
+        let reference = navigation.nativeTaskReferences.last!
+        let item = CompanionOverviewModel.taskItem(card: try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card,
+                                                  reference: reference, decision: nil, hasArtifact: true, date: Date())
+        navigation.newConversation()
+        let unrelatedID = navigation.selectedID
+        let detail = navigation.companionActivityDetail(item)
+        try require(detail.request == reference.request.objective && detail.outcome?.contains("The plan is ready") == true,
+                    "Activity details use the saved request and validated result")
+        try require(navigation.selectedID == unrelatedID && navigation.pendingTaskReveal == nil,
+                    "Reading details leaves the current conversation in place")
+        navigation.openCompanionActivity(item)
+        try require(navigation.selectedID == originID && navigation.pendingTaskReveal == reference.id.uuidString,
+                    "Go to chat opens the actual origin and reveals the task card")
+        let savedOrigin = navigation.conversations.first { $0.id == originID }!
+        try navigation.repository?.saveConversation(savedOrigin)
+        navigation.newConversation()
+        navigation.conversations.removeAll { $0.id == originID }
+        try require(navigation.companionActivityDetail(item).canOpen && navigation.openCompanionActivity(item)
+                    && navigation.selectedID == originID && navigation.pendingTaskReveal == reference.id.uuidString,
+                    "Stored task origins can reopen even when they are not loaded in the conversation list")
+        let missingItem = CompanionOverviewFixture.tasks()[0]
+        try require(!navigation.companionActivityDetail(missingItem).canOpen,
+                    "A missing task cannot offer a misleading chat action")
+        navigation.schedules = CompanionOverviewFixture.schedules()
+        navigation.scheduleRuns = ["overview-morning": CompanionOverviewFixture.runs()]
+        let scheduledDetail = navigation.companionActivityDetail(model.selected("run:run-missed")!)
+        try require(scheduledDetail.request == nil && scheduledDetail.outcome == "Tandem was closed.",
+                    "A run without a saved task does not substitute today's schedule instruction for its original request")
+        let deletedRun = NativeScheduleRun(id: "deleted-chat", scheduleID: "overview-morning", scheduledFor: Date(),
+                                           outcome: .completed, conversationID: "deleted")
+        navigation.scheduleRuns["overview-morning", default: []].append(deletedRun)
+        let deletedItem = CompanionOverviewModel.runItem(deletedRun, schedule: navigation.schedules[0])
+        let beforeMissingOpen = navigation.selectedID
+        try require(!navigation.companionActivityDetail(deletedItem).canOpen && !navigation.openCompanionActivity(deletedItem)
+                    && navigation.selectedID == beforeMissingOpen,
+                    "Deleted scheduled chats offer no navigation and preserve the current conversation")
+        let blankDetail = CompanionActivityDetail(request: "  ", outcome: "", canOpen: false)
+        try require(blankDetail.request == nil && blankDetail.outcome == nil, "Missing detail fields are omitted")
+
         for width in [CGFloat(700), 1119, 1120, 1600] {
             for canvas in [false, true] {
                 try require(CompanionPanelPlacement.decide(isCompanionThread: false, windowWidth: width, canvasShowing: canvas) == .none,
