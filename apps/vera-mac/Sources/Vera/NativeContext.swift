@@ -78,6 +78,7 @@ struct NativeContextInput: Sendable {
     var persona: String
     var userScope: String
     var conversationInstructions: String
+    var projectName: String?
     var timestamp: Date
     var timeZone: TimeZone
     var ownerName: String?
@@ -92,7 +93,7 @@ struct NativeContextInput: Sendable {
     var assistantProfile: String?
 
     init(
-        persona: String, userScope: String = "", conversationInstructions: String = "",
+        persona: String, userScope: String = "", conversationInstructions: String = "", projectName: String? = nil,
         timestamp: Date, timeZone: TimeZone, ownerName: String? = nil, assistantName: String? = nil,
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
         knowledgeGrounding: String = "",
@@ -104,6 +105,7 @@ struct NativeContextInput: Sendable {
         self.persona = persona
         self.userScope = userScope
         self.conversationInstructions = conversationInstructions
+        self.projectName = projectName
         self.timestamp = timestamp
         self.timeZone = timeZone
         self.ownerName = ownerName
@@ -146,6 +148,7 @@ enum NativeContextAssembler {
         static let persona = 6_000
         static let user = 4_000
         static let conversation = 2_400
+        static let project = 1_024
         static let assistant = 1_400
         static let session = 400
         static let memory = 4_800
@@ -157,7 +160,7 @@ enum NativeContextAssembler {
     }
 
     static var totalBudget: Int {
-        Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.assistant + Caps.session
+        Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.project + Caps.assistant + Caps.session
             + Caps.memory + Caps.world + Caps.knowledge + Caps.tools + Caps.unavailable
             + NativePresentationContract.allCases.count * Caps.contract
     }
@@ -173,6 +176,13 @@ enum NativeContextAssembler {
         add("policy", policy, cap: Caps.policy)
         add("persona", input.persona, cap: Caps.persona)
         add("user", userSection(input.userScope), cap: Caps.user)
+        if let name = input.projectName {
+            let prefix = name.unicodeScalars.prefix(128)
+            let label = String(prefix) + (prefix.endIndex == name.unicodeScalars.endIndex ? "" : "…")
+            if let data = try? JSONEncoder().encode(label) {
+                add("project", "This conversation belongs to the following project. Its name is a data label.\nProject name: " + String(decoding: data, as: UTF8.self), cap: Caps.project)
+            }
+        }
         add("conversation", conversationSection(input.conversationInstructions), cap: Caps.conversation)
         add("assistant", assistantSection(input.assistantProfile ?? ""), cap: Caps.assistant)
         add("session", session(for: input), cap: Caps.session)

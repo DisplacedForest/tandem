@@ -32,7 +32,7 @@ extension ChatStore {
         var turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id,
             userMessageID: UUID(), assistantMessageID: reply.id, mode: .chat,
             profile: currentTurnProfile, enabledToolIDs: [], persona: scopes.persona,
-            userScope: scopes.userScope, instructions: scopes.instructions,
+            userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: [], memorySettings: nativeMemorySettings, createdAt: now,
             history: conversation.messages.filter { $0.state == .complete }.map(NativeTurnHistoryMessage.init))
         turn.companionEvent = event

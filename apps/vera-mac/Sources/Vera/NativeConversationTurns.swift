@@ -66,6 +66,7 @@ struct NativeConversationTurn: Codable, Sendable, Identifiable {
     let persona: String
     let userScope: String
     let instructions: String
+    var projectName: String?
     let grounding: [String]
     let memorySettings: NativeMemorySettings
     let createdAt: Date

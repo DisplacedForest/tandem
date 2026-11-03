@@ -1571,6 +1571,7 @@ final class ChatStore: ObservableObject {
         var persona: String
         var userScope: String
         var instructions: String
+        var projectName: String?
     }
 
     func resolvePromptScopes(conversationID: String?) -> ResolvedPromptScopes {
@@ -1588,10 +1589,11 @@ final class ChatStore: ObservableObject {
         }
         let own = conversationID
             .flatMap { id in conversations.first(where: { $0.id == id })?.instructions } ?? ""
-        let shared = conversationID.flatMap { projectForConversation($0)?.instructions }?
+        let project = conversationID.flatMap(projectForConversation)
+        let shared = project?.instructions
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let instructions = [shared, own].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        return ResolvedPromptScopes(persona: persona, userScope: userScope, instructions: instructions)
+        return ResolvedPromptScopes(persona: persona, userScope: userScope, instructions: instructions, projectName: project?.name)
     }
 
     func setConversationInstructions(_ id: String, _ text: String) {
@@ -2156,7 +2158,7 @@ final class ChatStore: ObservableObject {
         var turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
             profile: turnProfile(for: user.routeNote), enabledToolIDs: baseToolIDs,
-            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
+            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
         turn.dotContext = dotContext(for: id, requestText: text)
@@ -2197,7 +2199,7 @@ final class ChatStore: ObservableObject {
         var turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: conversation.mode,
             profile: turnProfile(for: user.routeNote), enabledToolIDs: isVeraThread(conversation.id) ? dotToolIDs(base: replayable) : replayable,
-            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions,
+            persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(Array(conversation.messages.prefix(ri - 1)), current: user))
         turn.dotContext = dotContext(for: conversation.id, requestText: user.text)
@@ -2541,7 +2543,7 @@ final class ChatStore: ObservableObject {
                 }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, userScope: scopes.userScope,
-                    conversationInstructions: scopes.instructions,
+                    conversationInstructions: scopes.instructions, projectName: turn.projectName,
                     timestamp: Date(), timeZone: .current,
                     ownerName: ownerName, assistantName: assistantName, memories: selectedMemories,
                     knowledgeGrounding: groundingAssembly?.block ?? "",
