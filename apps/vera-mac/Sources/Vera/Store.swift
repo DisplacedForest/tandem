@@ -2275,10 +2275,16 @@ final class ChatStore: ObservableObject {
         if turn.companionEvent != nil { allowed = [] }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
-        let registry = NativeToolRegistry(definitions: nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
-            + folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true)
-            + commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true)
-            + (scheduleToolDefinition().map { [$0] } ?? []) + (profileTool.map { [$0] } ?? []))
+        var definitions: [NativeToolDefinition] = nativeToolRegistry.definitions
+        if turn.mode != .continuous {
+            let serviceDefinitions: [NativeToolDefinition] = nativeMCP?.authority.definitions(scope: "focused") ?? []
+            definitions.append(contentsOf: serviceDefinitions)
+        }
+        definitions.append(contentsOf: folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
+        definitions.append(contentsOf: commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
+        if let scheduleTool = scheduleToolDefinition() { definitions.append(scheduleTool) }
+        if let profileTool { definitions.append(profileTool) }
+        let registry = NativeToolRegistry(definitions: definitions)
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
     }
 
