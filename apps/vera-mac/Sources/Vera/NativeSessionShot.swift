@@ -30,7 +30,7 @@ struct NativeSessionShotSurface: View {
     let mode: NativeSessionMode
     var body: some View {
         VStack(alignment: .leading, spacing: 26) {
-            Text("A conversation with Vera").font(.system(size: 20, weight: .medium)).foregroundStyle(Theme.textPrimary)
+            Text("Match report and meal ideas").font(.system(size: 20, weight: .medium)).foregroundStyle(Theme.textPrimary)
             Text("Can you check the match report?")
                 .padding(12).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(Theme.textPrimary).frame(maxWidth: .infinity, alignment: .trailing)
@@ -49,7 +49,7 @@ struct NativeSessionShotSurface: View {
             }
             Spacer(minLength: 20)
             VStack(alignment: .leading, spacing: 12) {
-                Text("Message Vera…").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                Text("Message Tandem").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
             }
             .padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 18))
         }

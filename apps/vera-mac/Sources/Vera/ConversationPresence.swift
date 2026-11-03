@@ -12,6 +12,15 @@ enum ConversationHeaderKind: Equatable {
 }
 
 enum ConversationPresence {
+    static func assistantName(companionThread: Bool, savedName: String) -> String {
+        companionThread ? savedName : "Tandem"
+    }
+
+    static func headerTitle(conversationTitle: String?) -> String {
+        guard let title = conversationTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Tandem" }
+        return title
+    }
+
     static func headerKind(companionThread: Bool) -> ConversationHeaderKind { companionThread ? .none : .conversation }
     static func headerFigure(companionThread: Bool) -> ConversationFigure { companionThread ? .companion : .none }
     static func headerShowsStatus(companionThread: Bool) -> Bool { companionThread }
@@ -37,5 +46,12 @@ struct ConversationFigureView: View {
         case .mark: TandemLogoMark(size: size)
         case .none: EmptyView()
         }
+    }
+}
+
+@MainActor
+extension ChatStore {
+    var conversationAssistantName: String {
+        ConversationPresence.assistantName(companionThread: isVeraThread(selectedID), savedName: assistantName)
     }
 }

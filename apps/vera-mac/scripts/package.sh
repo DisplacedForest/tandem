@@ -69,8 +69,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-  <key>NSMicrophoneUsageDescription</key><string>Vera listens to your voice for hands-free conversation.</string>
-  <key>NSRemindersFullAccessUsageDescription</key><string>Vera reads and writes your Reminders lists.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Tandem listens to your voice for hands-free conversation.</string>
+  <key>NSRemindersFullAccessUsageDescription</key><string>Tandem reads and writes your Reminders lists.</string>
 </dict>
 </plist>
 PLIST
