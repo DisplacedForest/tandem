@@ -94,7 +94,7 @@ actor Requests {
             let ledger = try Ledger(root: URL(fileURLWithPath: options["--ledger-root"]!))
             let credentials: any CredentialSource
             let http: any HTTPTransport
-            if args[0] == "--mock-pi-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .milliseconds(350), scripted: true) }
+            if args[0] == "--mock-pi-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .milliseconds(350), scripted: true, workerGate: URL(fileURLWithPath: options["--ledger-root"]!).appendingPathComponent("worker.gate")) }
             else if args[0] == "--mock-stdio" { credentials = FixtureCredential(); http = FixtureHTTP(delay: .seconds(10)) }
             else {
                 credentials = SelectedCredential(profileURL: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera/config.json"))
