@@ -108,7 +108,7 @@ Revise asks what should change and sends that request into the conversation the 
 
 ### Projects
 
-A project groups related work. It has a name, instructions, granted folders and attached files, and it holds the conversations that belong to it. The **Projects** destination in the rail lists your projects. Opening one shows its conversations, the background tasks they started and the artifacts they produced, with **New chat** inside the project, rename and delete. Deleting a project keeps its conversations and artifacts, which simply stop being grouped, and the confirmation says so.
+A project groups related chats, instructions, source folders and attached files. Expand its name in the sidebar to open a chat, or use its New chat button. Hover the project for a compact preview without leaving your conversation. Project options provides the same details from the keyboard. Edit project stages its name, instructions and folder changes until Save; Cancel discards them. Manage project files opens a separate manager with immediate add/remove actions. Projects under More provides the same editing controls. Deleting a project keeps its chats and saved work, which stop being grouped.
 
 A chat opened inside a project follows the project's instructions, applied after your persona and before the chat's own instructions. It can read and edit files in the project's folders without you granting them again, alongside any folders granted to the chat itself. Attached files can be read through the file tools as a read-only folder, and the tools refuse to change them and say so. A conversation belongs to at most one project. From the chat list, **Move to project** and **Remove from project** change membership, and the next turn gains or loses the project context.
 

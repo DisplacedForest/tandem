@@ -42,6 +42,31 @@ extension ChatStore {
         reloadProjects()
     }
 
+    @discardableResult
+    func saveProjectEdits(_ id: String, name: String, instructions: String, grants: [FolderGrant]) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { projectError = "Enter a project name."; return false }
+        guard let projectRepository else { projectError = "Projects aren't available."; return false }
+        do {
+            let text = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+            try NativePromptValidation.validateInstructions(text)
+            guard var record = try projectRepository.project(id) else { throw ProjectStoreError.notFound }
+            record.name = trimmed
+            record.instructions = text
+            record.grants = grants
+            record.updatedAt = Date()
+            try projectRepository.saveProject(record)
+            projects.removeAll { $0.id == id }
+            projects.insert(record, at: 0)
+            projectError = nil
+            refreshProjectGrants(id)
+            return true
+        } catch {
+            projectError = "The project couldn't save: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func renameProject(_ id: String, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

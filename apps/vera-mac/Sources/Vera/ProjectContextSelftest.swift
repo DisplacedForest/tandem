@@ -53,12 +53,18 @@ final class ProjectMoveFailingRepository: ChatRepository, ProjectRepository, @un
     let inner: LocalChatRepository
     private let lock = NSLock()
     private var failing = false
+    private var savingFails = false
 
     init(inner: LocalChatRepository) { self.inner = inner }
 
     var failMoves: Bool {
         get { lock.lock(); defer { lock.unlock() }; return failing }
         set { lock.lock(); failing = newValue; lock.unlock() }
+    }
+
+    var failSaves: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return savingFails }
+        set { lock.lock(); savingFails = newValue; lock.unlock() }
     }
 
     func listConversations() throws -> [Conversation] { try inner.listConversations() }
@@ -81,7 +87,10 @@ final class ProjectMoveFailingRepository: ChatRepository, ProjectRepository, @un
 
     func listProjects() throws -> [ProjectRecord] { try inner.listProjects() }
     func project(_ id: String) throws -> ProjectRecord? { try inner.project(id) }
-    func saveProject(_ project: ProjectRecord) throws { try inner.saveProject(project) }
+    func saveProject(_ project: ProjectRecord) throws {
+        if failSaves { throw ProjectStoreError.unreadable("Project") }
+        try inner.saveProject(project)
+    }
     func deleteProject(_ id: String) throws -> [String] { try inner.deleteProject(id) }
     func conversationIDs(projectID: String) throws -> [String] { try inner.conversationIDs(projectID: projectID) }
     func setConversationProject(_ conversationID: String, projectID: String?) throws {
@@ -334,6 +343,34 @@ enum ProjectContextSelftest {
         try check(store.conversations.first { $0.id == chat }?.projectID == project.id, "A working move joins the project")
         try check(store.projectError == nil, "A working move sets no error")
         let inside = store.grants(for: chat)
+        guard let before = store.project(project.id) else { throw Failure(description: "Missing project before editing") }
+        var staged = before
+        staged.name = "Updated orchard"
+        staged.instructions = "Keep answers concise."
+        staged.grants = []
+        try check(try inner.project(project.id) == before, "Staged edits do not persist before Save")
+        repository.failSaves = true
+        try check(!store.saveProjectEdits(project.id, name: staged.name, instructions: staged.instructions, grants: staged.grants),
+                  "A failed project save reports failure")
+        try check(try inner.project(project.id) == before, "Failed staged save keeps every stored field")
+        try check(store.grants(for: chat) == inside, "Failed staged save keeps effective permissions")
+        repository.failSaves = false
+        try check(!store.saveProjectEdits(project.id, name: " ", instructions: staged.instructions, grants: []),
+                  "An empty project name is rejected")
+        try check(!store.saveProjectEdits(project.id, name: staged.name,
+                                         instructions: String(repeating: "x", count: NativePromptValidation.instructionsLimit + 1), grants: []),
+                  "Invalid instructions reject the whole edit")
+        try check(try inner.project(project.id) == before, "Validation failure cannot partially rename or revoke folders")
+        try check(store.saveProjectEdits(project.id, name: staged.name, instructions: staged.instructions, grants: []),
+                  "Valid staged edits save together")
+        try check(store.project(project.id)?.name == staged.name && store.project(project.id)?.instructions == staged.instructions,
+                  "Save persists the edited name and instructions")
+        try check(store.nativeGrantSource.grants(for: chat).isEmpty, "Save applies folder revocation to existing chats")
+        try check(store.selectedID == chat && store.projectForConversation(chat)?.id == project.id,
+                  "Editing keeps the current conversation and its membership")
+        try check(store.saveProjectEdits(project.id, name: before.name, instructions: before.instructions, grants: before.grants),
+                  "The project can restore its approved folders")
+
         try check(inside.contains { $0.path == folderPath }, "A joined chat sees the project folder")
 
         repository.failMoves = true
