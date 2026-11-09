@@ -175,6 +175,7 @@ extension ChatStore {
 
     func syncRuleSource() {
         nativeRuleSource.replaceAll(conversations.map { ($0.id, $0.rules) })
+        syncRuleProjects()
     }
 
     func tightenConversationRule(_ choice: NativeRuleChoice, for action: NativeActionClass, conversationID: String? = nil) {

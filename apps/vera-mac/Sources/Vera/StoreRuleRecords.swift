@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 extension ChatStore {
     var nativeRuleRecordStore: NativeRuleRecordStore? {
@@ -7,14 +8,31 @@ extension ChatStore {
 
     func prepareRuleRecords() {
         guard let store = nativeRuleRecordStore else { return }
-        if let epoch = try? store.advanceEpoch() { nativeRuleSource.setEpoch(epoch) }
+        let launch = NativeRuleSource.launchEpoch(now: Date()) { try store.advanceEpoch() }
+        if launch.fellBack {
+            Logger(subsystem: "Vera", category: "rules").error("rules_epoch_fallback \(launch.epoch, privacy: .public)")
+        }
+        nativeRuleSource.setEpoch(launch.epoch)
         _ = try? store.expireDue()
         reloadRuleRecords()
     }
 
     func reloadRuleRecords() {
-        guard let store = nativeRuleRecordStore, let active = try? store.active() else { return }
-        nativeRuleSource.setRecords(active)
+        guard let store = nativeRuleRecordStore else { return }
+        Self.reloadRules(nativeRuleSource, from: store)
+    }
+
+    nonisolated static func reloadRules(_ source: NativeRuleSource, from store: NativeRuleRecordStore) {
+        do {
+            source.setRecords(try store.active())
+        } catch {
+            Logger(subsystem: "Vera", category: "rules").error("rules_reload_failed \(error.localizedDescription, privacy: .public)")
+            source.restrictRecords()
+        }
+    }
+
+    func syncRuleProjects() {
+        nativeRuleSource.replaceProjects(conversations.map { ($0.id, $0.projectID) })
     }
 
     var ruleRecords: [NativeRuleRecord] {

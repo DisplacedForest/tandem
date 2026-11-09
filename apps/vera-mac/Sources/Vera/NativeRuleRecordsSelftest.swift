@@ -31,6 +31,11 @@ enum NativeRuleRecordsSelftest {
         try sourceRevisions(require)
         try restart(require)
         try targets(require)
+        try epochFallback(require)
+        try unboundedCounter(require)
+        try strictReload(require)
+        try projectMap(require)
+        try await storeScenario(require)
         print("NATIVE RULE RECORDS SELFTEST OK (\(counter.value) checks)")
     }
 
@@ -394,5 +399,120 @@ enum NativeRuleRecordsSelftest {
         let recipientRecord = record(.allow, target: recipient("alice"))
         try require(!recipientRecord.matches(NativeRuleQuery(action: .networkSends, targets: [NativeRuleTarget.make(.service, "alice")!]), at: start),
                     "A target only matches a candidate of the same kind")
+    }
+
+    private static func epochFallback(_ require: (Bool, String) throws -> Void) throws {
+        struct Broken: Error {}
+        let failed = NativeRuleSource.launchEpoch(now: start) { throw Broken() }
+        try require(failed.fellBack && failed.epoch == 1_800_000_000, "A failed epoch advance falls back to wall-clock seconds")
+        let normal = NativeRuleSource.launchEpoch(now: start) { 7 }
+        try require(!normal.fellBack && normal.epoch == 7, "A working epoch advance is used as is")
+        try require(Int.bitWidth == 64, "Revisions are 64-bit")
+        let farFuture = 4_102_444_800
+        let product = farFuture.multipliedReportingOverflow(by: NativeRuleSource.epochStride)
+        let total = product.partialValue.addingReportingOverflow(10_000_000)
+        try require(!product.overflow && !total.overflow, "A wall-clock epoch times the stride plus a large counter fits in Int64")
+        let previous = NativeRuleSource()
+        previous.setEpoch(1000)
+        for index in 0..<1000 { previous.setGlobal(NativeRules(choices: [.trash: index % 2 == 0 ? .act : .ask])) }
+        let fallback = NativeRuleSource()
+        fallback.setEpoch(failed.epoch)
+        try require(fallback.revision > previous.revision, "A fallback epoch sits above anything a counter epoch reaches")
+        try require(NativeRuleSource.launchEpoch(now: start.addingTimeInterval(1)) { throw Broken() }.epoch > failed.epoch,
+                    "A later fallback launch gets a larger epoch")
+    }
+
+    private static func unboundedCounter(_ require: (Bool, String) throws -> Void) throws {
+        let stride = NativeRuleSource.epochStride
+        try require(NativeRuleSource.revision(epoch: 3, counter: stride - 1) < NativeRuleSource.revision(epoch: 3, counter: stride)
+                    && NativeRuleSource.revision(epoch: 3, counter: stride) < NativeRuleSource.revision(epoch: 3, counter: stride + 1),
+                    "The revision keeps rising past the stride")
+        let source = NativeRuleSource()
+        source.setEpoch(3)
+        var last = source.revision
+        var rising = true
+        for _ in 0..<1_000_001 {
+            source.restrictRecords()
+            let next = source.revision
+            if next <= last { rising = false; break }
+            last = next
+        }
+        try require(rising && last == NativeRuleSource.revision(epoch: 3, counter: 1_000_001), "1,000,001 bumps each change the revision")
+    }
+
+    private static func strictReload(_ require: (Bool, String) throws -> Void) throws {
+        let mixed = NativeRuleEffect.allCases.map { record($0, .trash, target: NativeRuleTarget.make(.folder, "/a/\($0.rawValue)")) }
+        try require(NativeRuleRecord.strictFallback(mixed).map(\.effect) == [.ask, .handOff, .forbid], "The strict fallback drops every allow and keeps the rest")
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let allow = try records.add(record(.allow, .trash))
+        let forbid = try records.add(record(.forbid, .networkSends, target: recipient("alice")))
+        let source = NativeRuleSource()
+        ChatStore.reloadRules(source, from: records)
+        try require(Set(source.currentRecords.map(\.id)) == [allow.id, forbid.id] && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .act(.grant),
+                    "A working reload serves every active record")
+        let before = source.revision
+        try repository.database.write { db in try db.execute(sql: "DROP TABLE native_rule_records") }
+        ChatStore.reloadRules(source, from: records)
+        try require(source.currentRecords == [forbid] && source.revision > before
+                    && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask,
+                    "A failed reload stops serving saved allows, keeps the restrictions and bumps the revision")
+        let restricted = source.revision
+        source.restrictRecords()
+        try require(source.revision > restricted, "Restricting always bumps the revision even when nothing was removed")
+    }
+
+    private static func projectMap(_ require: (Bool, String) throws -> Void) throws {
+        let source = NativeRuleSource()
+        source.setRecords([record(.allow, .trash, scope: .project("p1"))])
+        source.replaceProjects([("c1", "p1"), ("c2", nil), ("c3", "p2")])
+        try require(source.resolver(for: "c1", requestText: "").decision(for: .trash) == .act(.grant),
+                    "A project-scoped allow applies through the source for a chat in that project")
+        try require(source.resolver(for: "c2", requestText: "").decision(for: .trash) == .ask
+                    && source.resolver(for: "c3", requestText: "").decision(for: .trash) == .ask,
+                    "It does not apply to a chat outside the project")
+        try require(source.resolver(for: "c3", requestText: "", projectID: "p1").decision(for: .trash) == .act(.grant),
+                    "A caller-supplied project still wins")
+        let before = source.revision
+        source.replaceProjects([("c1", "p1"), ("c2", nil), ("c3", "p2")])
+        try require(source.revision == before, "An unchanged project map does not bump the revision")
+        source.setProject(nil, for: "c1")
+        try require(source.revision > before && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask,
+                    "Moving the chat out of the project stops the allow and bumps the revision")
+        let moved = source.revision
+        source.setProject("p1", for: "c2")
+        try require(source.revision > moved && source.resolver(for: "c2", requestText: "").decision(for: .trash) == .act(.grant),
+                    "Moving a chat into the project applies the allow and bumps the revision")
+    }
+
+    private static func storeScenario(_ require: (Bool, String) throws -> Void) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-store-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let artifacts = directory.appendingPathComponent("artifacts")
+        let repository = try LocalChatRepository(inMemory: true, artifactDirectory: artifacts)
+        let config = NativeChatConfig(baseURL: URL(string: "https://model.example/v1")!, apiKey: nil, model: "local-model", chatTemplateKwargs: nil)
+        let first = ChatStore(nativeConfig: config, nativeTransport: SelfTestNativeTransport(), repository: repository,
+                              attachmentStore: NativeAttachmentStore(directory: artifacts))
+        let launched = first.nativeRuleSource.revision
+        try require(launched == NativeRuleSource.revision(epoch: 1, counter: 0), "Opening the store advances the epoch once")
+        try require(first.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask, "Trash asks by default")
+        guard let saved = first.addRuleRecord(record(.allow, .trash, statement: "Trash my old downloads")) else {
+            throw NativeTaskFixture.Failure.assertion("The store saves a rule record")
+        }
+        let added = first.nativeRuleSource.revision
+        try require(added > launched && first.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .trash) == .act(.grant)
+                    && first.ruleRecords.map(\.id) == [saved.id], "Adding a record raises the revision and changes the decision")
+        try require(first.revokeRuleRecord(id: saved.id) && first.nativeRuleSource.revision > added
+                    && first.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask,
+                    "Revoking it raises the revision and the decision returns to asking")
+        try require(!first.revokeRuleRecord(id: saved.id) && first.addRuleRecord(record(.allow, .trash, statement: " ")) == nil,
+                    "A second revoke or an invalid record changes nothing")
+        let kept = first.addRuleRecord(record(.ask, .fileEdits, statement: "Ask before editing"))
+        let reached = first.nativeRuleSource.revision
+        let second = ChatStore(nativeConfig: config, nativeTransport: SelfTestNativeTransport(), repository: repository,
+                               attachmentStore: NativeAttachmentStore(directory: artifacts))
+        try require(second.nativeRuleSource.revision > reached && second.nativeRuleSource.currentRecords.map(\.id) == [kept?.id].compactMap { $0 }
+                    && second.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .fileEdits) == .ask,
+                    "A relaunch on the same database starts above the last revision and loads the saved records")
     }
 }

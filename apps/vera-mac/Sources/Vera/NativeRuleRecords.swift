@@ -222,6 +222,10 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
         return clean
     }
 
+    static func strictFallback(_ records: [NativeRuleRecord]) -> [NativeRuleRecord] {
+        records.filter { $0.effect != .allow }
+    }
+
     var specificity: Int {
         switch (target != nil, toolID != nil) {
         case (true, true): return 3

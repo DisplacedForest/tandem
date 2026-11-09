@@ -605,12 +605,22 @@ final class NativeRuleSource: @unchecked Sendable {
     private var global: NativeRules = .defaults
     private var conversations: [String: NativeConversationRules] = [:]
     private var records: [NativeRuleRecord] = []
+    private var projects: [String: String] = [:]
     private var epoch = 0
     private var revisionValue = 0
 
+    static func revision(epoch: Int, counter: Int) -> Int {
+        epoch * epochStride + counter
+    }
+
+    static func launchEpoch(now: Date, advance: () throws -> Int) -> (epoch: Int, fellBack: Bool) {
+        if let value = try? advance() { return (value, false) }
+        return (Int(now.timeIntervalSince1970), true)
+    }
+
     var revision: Int {
         lock.lock(); defer { lock.unlock() }
-        return epoch * Self.epochStride + revisionValue
+        return Self.revision(epoch: epoch, counter: revisionValue)
     }
 
     var currentRecords: [NativeRuleRecord] {
@@ -619,7 +629,7 @@ final class NativeRuleSource: @unchecked Sendable {
     }
 
     private func bump() {
-        if revisionValue < Self.epochStride - 1 { revisionValue += 1 }
+        revisionValue += 1
     }
 
     func setEpoch(_ value: Int) {
@@ -631,6 +641,30 @@ final class NativeRuleSource: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard records != next else { return }
         records = next
+        bump()
+    }
+
+    func restrictRecords() {
+        lock.lock(); defer { lock.unlock() }
+        records = NativeRuleRecord.strictFallback(records)
+        bump()
+    }
+
+    func setProject(_ projectID: String?, for conversationID: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard projects[conversationID] != projectID else { return }
+        projects[conversationID] = projectID
+        bump()
+    }
+
+    func replaceProjects(_ pairs: [(String, String?)]) {
+        lock.lock(); defer { lock.unlock() }
+        var next: [String: String] = [:]
+        for (conversationID, projectID) in pairs {
+            if let projectID, next[conversationID] == nil { next[conversationID] = projectID }
+        }
+        guard projects != next else { return }
+        projects = next
         bump()
     }
 
@@ -661,8 +695,8 @@ final class NativeRuleSource: @unchecked Sendable {
                   scheduleID: String? = nil) -> NativeRuleResolver {
         lock.lock(); defer { lock.unlock() }
         return NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(),
-                                  requestText: requestText, revision: epoch * Self.epochStride + revisionValue, records: records,
-                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID, taskID: taskID,
+                                  requestText: requestText, revision: Self.revision(epoch: epoch, counter: revisionValue), records: records,
+                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID ?? projects[conversationID], taskID: taskID,
                                                              scheduleID: scheduleID))
     }
 }

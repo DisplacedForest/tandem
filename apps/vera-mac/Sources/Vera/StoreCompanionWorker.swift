@@ -41,9 +41,8 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             tasks: NativeTaskStore(database: database))
         environment.preferences = { NativePreferenceStore(database: database).activeStatements() }
         environment.recordsChanged = { [weak self] in
-            guard let rules = self?.lock.withLock({ self?.rules }),
-                  let active = try? NativeRuleRecordStore(database: database).active() else { return }
-            rules.setRecords(active)
+            guard let rules = self?.lock.withLock({ self?.rules }) else { return }
+            ChatStore.reloadRules(rules, from: NativeRuleRecordStore(database: database))
         }
         return environment
     }
