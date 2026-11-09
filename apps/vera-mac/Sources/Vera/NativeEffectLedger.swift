@@ -23,6 +23,7 @@ enum NativeEffectRefusal: String, Codable, Equatable, Sendable {
     case ruleAsks = "rule_asks"
     case ruleHandsOff = "rule_hands_off"
     case taskInactive = "task_inactive"
+    case grantSpent = "grant_spent"
 }
 
 enum NativeEffectObservation: Equatable, Sendable {
@@ -161,7 +162,7 @@ struct NativeEffectLedgerStore: Sendable {
 
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
                decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
-               live: (@Sendable () -> (rules: Int, grants: Int))? = nil) throws -> NativeEffectAdmission {
+               live: (@Sendable () -> (rules: Int, grants: Int))? = nil, consuming recordID: String? = nil) throws -> NativeEffectAdmission {
         let current = now()
         return try database.write { db in
             let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
@@ -195,12 +196,21 @@ struct NativeEffectLedgerStore: Sendable {
                 guard let decisionID, !decisionID.isEmpty, NativeEffectProposal.bindsReply(reply, to: digest) else { return .refused(.ruleAsks) }
             case .act: break
             }
-            try db.execute(sql: """
-                UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
-                WHERE digest = ? AND state = 'proposed'
-                """, arguments: [decisionID, reply.map(NativeEffectProposal.canonicalArguments), current.timeIntervalSince1970, digest])
-            guard db.changesCount == 1, let admitted = try Self.record(db, digest: digest) else { return .refused(.alreadySettled) }
-            return .admitted(admitted)
+            var outcome = NativeEffectAdmission.refused(.alreadySettled)
+            try db.inSavepoint {
+                if let recordID, try !NativeRuleRecordStore.consume(db, id: recordID, at: current) {
+                    outcome = .refused(.grantSpent)
+                    return .rollback
+                }
+                try db.execute(sql: """
+                    UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
+                    WHERE digest = ? AND state = 'proposed'
+                    """, arguments: [decisionID, reply.map(NativeEffectProposal.canonicalArguments), current.timeIntervalSince1970, digest])
+                guard db.changesCount == 1, let admitted = try Self.record(db, digest: digest) else { return .rollback }
+                outcome = .admitted(admitted)
+                return .commit
+            }
+            return outcome
         }
     }
 

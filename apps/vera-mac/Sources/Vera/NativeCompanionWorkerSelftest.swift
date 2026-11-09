@@ -248,6 +248,7 @@ extension SelfTest {
         try await companionReadLoopAndIsolation()
         try await companionProactiveRefusesWrites()
         try await companionActWrite()
+        try await companionOneUseGrant()
         try await companionAskApproveAndDecline()
         try await companionHandOff()
         try await companionStaleAuthority()
@@ -385,6 +386,38 @@ extension SelfTest {
         try require(harness.model.allOffered.allSatisfy { $0 == ["garden_status"] }, "A proactive run is offered read tools only")
         try require(NativeCompanionScriptedModel.toolResults(harness.model.allRequests.last ?? []).first?.contains("read-only") == true,
                     "The model is told why the write was refused")
+    }
+
+    private static func companionOneUseGrant() async throws {
+        let require = NativeTaskFixture.require
+        var harness = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+            let results = NativeCompanionScriptedModel.toolResults(messages)
+            if results.isEmpty { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}") }
+            if results.count == 1 { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-2") }
+            return NativeCompanionScriptedModel.text("Watered the north bed twice.")
+        }
+        let clock = harness.clock
+        let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
+        let grant = try records.add(NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .allow,
+                                                     statement: "Water a bed once without asking", origin: .confirmCard, remainingUses: 1))
+        let rules = harness.rules
+        rules.setRecords(try records.active())
+        harness.environment.recordsChanged = {
+            if let active = try? records.active() { rules.setRecords(active) }
+        }
+        let id = try harness.create()
+        let paused = try await harness.runUntilSettled()
+        let effects = try harness.effects(id)
+        try require(paused.state == .needsDecision && harness.service.count("water_bed") == 1 && effects.count == 2
+                    && effects[0].state == .completed && effects[1].state == .proposed,
+                    "A one-use grant runs the tool once without a card and the next identical call asks")
+        try require(try records.record(id: grant.id)?.remainingUses == 0 && effects[1].proposal.rulesRevision > effects[0].proposal.rulesRevision,
+                    "The spent use is saved and the rules revision moved past the first proposal")
+        let digest = try harness.decision(paused)["digest"] as? String
+        try harness.reply(paused, "approve", digest: digest)
+        let done = try await harness.runUntilSettled()
+        try require(done.state == .completed && harness.service.count("water_bed") == 2 && (try records.record(id: grant.id))?.remainingUses == 0,
+                    "Approving the second call runs it without touching the spent grant")
     }
 
     private static func companionActWrite() async throws {

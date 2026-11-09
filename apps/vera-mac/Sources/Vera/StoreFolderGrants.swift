@@ -167,7 +167,10 @@ extension ChatStore {
     }
 
     func ruleResolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
-        NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText)
+        let projectID = conversations.first(where: { $0.id == conversationID })?.projectID
+        return NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText,
+                                  records: nativeRuleSource.currentRecords,
+                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID))
     }
 
     func syncRuleSource() {

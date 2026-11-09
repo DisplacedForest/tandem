@@ -31,6 +31,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var budget: NativeCompanionWorkerBudget = .standard
     var defaultToolSeconds: Double = 20
     var preferences: @Sendable () -> [String] = { [] }
+    var recordsChanged: @Sendable () -> Void = {}
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -227,6 +228,11 @@ enum NativeCompanionWorker {
         return nil
     }
 
+    static func ruleTargets(_ arguments: [String: NativeJSONValue]) -> [NativeRuleTarget] {
+        guard let value = target(arguments) else { return [] }
+        return [NativeRuleTarget.candidate(.recipient, value), NativeRuleTarget.candidate(.service, value)].compactMap { $0 }
+    }
+
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
         let digest = SHA256.hash(data: Data("\(task)|\(attempt)|\(round)|\(call)".utf8))
         return digest.map { String(format: "%02x", $0) }.joined().prefix(32).description
@@ -366,7 +372,10 @@ private struct NativeCompanionRun {
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
-        environment.authority(context.threadID, dot.assignment)
+        let base = environment.authority(context.threadID, dot.assignment)
+        var resolver = base.resolver
+        resolver.context?.taskID = task.id
+        return NativeCompanionWorkerAuthority(resolver: resolver, grantsRevision: base.grantsRevision)
     }
 
     var liveRevisions: @Sendable () -> (rules: Int, grants: Int) {
@@ -386,6 +395,17 @@ private struct NativeCompanionRun {
             return (action, authority.resolver.decision(forCommand: command))
         }
         return (action, authority.resolver.decision(for: action))
+    }
+
+    func recordDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority,
+                        honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, consuming: String?) {
+        let (action, decision) = liveDecision(definition, arguments, authority)
+        guard definition.ruleDecision == nil else { return (action, decision, nil) }
+        let query = NativeRuleQuery(action: action, toolID: definition.id, targets: NativeCompanionWorker.ruleTargets(arguments))
+        let resolved = authority.resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
+        guard let winner = resolved.resolution?.decidedBy else { return (action, decision, nil) }
+        if case .act = resolved.decision, winner.remainingUses != nil { return (action, resolved.decision, winner.id) }
+        return (action, resolved.decision, nil)
     }
 
     func systemPrompt(finishing: Bool) -> String {
@@ -618,7 +638,7 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision) = liveDecision(definition, arguments, authority)
+        let (action, decision, consuming) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
         if decision == .handOff { return try handOff(&checkpoint, title: title) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
@@ -635,7 +655,8 @@ private struct NativeCompanionRun {
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
-                                                     live: liveRevisions)
+                                                     live: liveRevisions, consuming: consuming)
+        if consuming != nil, case .admitted = admission { environment.recordsChanged() }
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title, &checkpoint)
     }
 
@@ -698,7 +719,7 @@ private struct NativeCompanionRun {
         case .expired:
             checkpoint.note(title, "not done")
             checkpoint.answer(call, NativeCompanionWorker.message("Not run: the approval expired. Propose it again only if it is still needed."))
-        case .staleRules, .staleGrants:
+        case .staleRules, .staleGrants, .grantSpent:
             checkpoint.note(title, "not done")
             checkpoint.answer(call, NativeCompanionWorker.message("Not run: the person's rules or folder access changed. Propose it again only if it is still needed."))
         case .digestMismatch, .notFound, .alreadySettled, .ruleAsks:
@@ -831,7 +852,7 @@ private struct NativeCompanionRun {
                 return nil
             }
             let authority = authority()
-            let (_, live) = liveDecision(definition, arguments, authority)
+            let live = recordDecision(definition, arguments, authority, honoringLimitedUse: false).decision
             if live == .handOff { return try handOff(&checkpoint, title: title) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,

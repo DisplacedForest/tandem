@@ -585,6 +585,7 @@ enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
     case requestPreapproval = "request_preapproval"
     case userApproved = "user_approved"
     case conversationPrefix = "conversation_prefix"
+    case grant
 
     var title: String {
         switch self {
@@ -592,26 +593,52 @@ enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
         case .requestPreapproval: return "Ran because your request pre-approved it"
         case .userApproved: return "Ran after you approved it"
         case .conversationPrefix: return "Ran under an approval you gave earlier in this chat"
+        case .grant: return "Ran under a permission you saved"
         }
     }
 }
 
 final class NativeRuleSource: @unchecked Sendable {
+    static let epochStride = 1_000_000
+
     private let lock = NSLock()
     private var global: NativeRules = .defaults
     private var conversations: [String: NativeConversationRules] = [:]
+    private var records: [NativeRuleRecord] = []
+    private var epoch = 0
     private var revisionValue = 0
 
     var revision: Int {
         lock.lock(); defer { lock.unlock() }
-        return revisionValue
+        return epoch * Self.epochStride + revisionValue
+    }
+
+    var currentRecords: [NativeRuleRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return records
+    }
+
+    private func bump() {
+        if revisionValue < Self.epochStride - 1 { revisionValue += 1 }
+    }
+
+    func setEpoch(_ value: Int) {
+        lock.lock(); defer { lock.unlock() }
+        epoch = max(0, value)
+    }
+
+    func setRecords(_ next: [NativeRuleRecord]) {
+        lock.lock(); defer { lock.unlock() }
+        guard records != next else { return }
+        records = next
+        bump()
     }
 
     func setGlobal(_ rules: NativeRules) {
         lock.lock(); defer { lock.unlock() }
         guard global != rules else { return }
         global = rules
-        revisionValue += 1
+        bump()
     }
 
     func set(_ rules: NativeConversationRules, for conversationID: String) {
@@ -619,7 +646,7 @@ final class NativeRuleSource: @unchecked Sendable {
         let next: NativeConversationRules? = rules.isEmpty ? nil : rules
         guard conversations[conversationID] != next else { return }
         conversations[conversationID] = next
-        revisionValue += 1
+        bump()
     }
 
     func replaceAll(_ pairs: [(String, NativeConversationRules)]) {
@@ -627,13 +654,16 @@ final class NativeRuleSource: @unchecked Sendable {
         let next = Dictionary(pairs.filter { !$0.1.isEmpty }, uniquingKeysWith: { first, _ in first })
         guard conversations != next else { return }
         conversations = next
-        revisionValue += 1
+        bump()
     }
 
-    func resolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
+    func resolver(for conversationID: String, requestText: String, projectID: String? = nil, taskID: String? = nil,
+                  scheduleID: String? = nil) -> NativeRuleResolver {
         lock.lock(); defer { lock.unlock() }
         return NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(),
-                                  requestText: requestText, revision: revisionValue)
+                                  requestText: requestText, revision: epoch * Self.epochStride + revisionValue, records: records,
+                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID, taskID: taskID,
+                                                             scheduleID: scheduleID))
     }
 }
 
@@ -642,12 +672,19 @@ struct NativeRuleResolver: Sendable {
     var conversation: NativeConversationRules
     var requestText: String
     let revision: Int
+    var records: [NativeRuleRecord] = []
+    var context: NativeRuleContext?
+    var now: Date = Date()
 
-    init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0) {
+    init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0,
+         records: [NativeRuleRecord] = [], context: NativeRuleContext? = nil, now: Date = Date()) {
         self.global = global
         self.conversation = conversation
         self.requestText = requestText
         self.revision = revision
+        self.records = records
+        self.context = context
+        self.now = now
     }
 
     func choice(for action: NativeActionClass) -> NativeRuleChoice {
@@ -656,7 +693,7 @@ struct NativeRuleResolver: Sendable {
         return NativeRuleChoice.stricter(base, tightened)
     }
 
-    func decision(for action: NativeActionClass) -> NativeRuleDecision {
+    private func baseDecision(for action: NativeActionClass) -> NativeRuleDecision {
         switch choice(for: action) {
         case .act: return .act(.rule)
         case .actIfPreapproved: return NativeRequestPreapproval.grants(requestText) ? .act(.requestPreapproval) : .ask
@@ -665,8 +702,31 @@ struct NativeRuleResolver: Sendable {
         }
     }
 
+    static func decision(for effect: NativeRuleEffect) -> NativeRuleDecision {
+        switch effect {
+        case .allow: return .act(.grant)
+        case .ask: return .ask
+        case .handOff, .forbid: return .handOff
+        }
+    }
+
+    func resolve(_ query: NativeRuleQuery, honoringLimitedUse: Bool) -> (decision: NativeRuleDecision, resolution: NativeRuleResolution?) {
+        if query.action.isFixed { return (.handOff, nil) }
+        if let resolution = NativeRuleMatcher.resolve(records, query: query, context: context, at: now, honoringLimitedUse: honoringLimitedUse) {
+            return (Self.decision(for: resolution.decidedBy.effect), resolution)
+        }
+        return (baseDecision(for: query.action), nil)
+    }
+
+    func decision(for action: NativeActionClass) -> NativeRuleDecision {
+        resolve(NativeRuleQuery(action: action), honoringLimitedUse: false).decision
+    }
+
     func decision(forCommand command: String) -> NativeRuleDecision {
-        let base = decision(for: .commands)
+        let targets = NativeRuleTarget.candidate(.commandPrefix, command).map { [$0] } ?? []
+        let resolved = resolve(NativeRuleQuery(action: .commands, targets: targets), honoringLimitedUse: false)
+        if resolved.resolution != nil { return resolved.decision }
+        let base = resolved.decision
         guard base == .ask, conversation.isApproved(command: command) else { return base }
         return .act(.conversationPrefix)
     }

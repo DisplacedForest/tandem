@@ -277,6 +277,7 @@ final class ChatStore: ObservableObject {
         self.attachmentStore = attachmentStore
         chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
+        prepareRuleRecords()
         loadArtifacts()
         if artifactPersistenceEnabled, let artifactRepository,
            (repository as? LocalChatRepository)?.database.path == LocalChatRepository.defaultURL.path {

@@ -47,6 +47,7 @@ extension SelfTest {
         try runNativeEffectLedgerFence()
         try runNativeToolEffects()
         try runNativeRuleRevisions()
+        try runNativeRuleRecordAdmission()
         print("  effect ledger OK (canonical arguments, digest, admission refusals, ask binding, claim fence, observations, settle, recovery, expiry, barrier, tool effects, revisions)")
     }
 
@@ -401,5 +402,64 @@ extension SelfTest {
         try require(grants.revision == 2, "Revoking a folder bumps the grants revision")
         grants.replaceAll([Conversation(id: "conversation-3", title: "Seeds", messages: [], updatedAt: Date(), grants: [grant])])
         try require(grants.revision == 3, "replaceAll bumps the grants revision once")
+    }
+
+    private static func runNativeRuleRecordAdmission() throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        let records = NativeRuleRecordStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository)
+
+        let source = NativeRuleSource()
+        let minted = source.revision
+        let stale = try ledger.propose(effectProposal(clock, rules: minted, key: "record-stale"))
+        source.setRecords([try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my notes"))])
+        try require(try ledger.admit(digest: stale.digest, generation: 1, rulesRevision: minted, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil, live: { (rules: source.revision, grants: 0) }) == .refused(.staleRules),
+                    "A record added after a proposal was minted refuses its admission as stale")
+
+        let grant = try records.add(NativeRuleRecord(action: .fileEdits, toolID: NativeFolderTools.toolID, effect: .allow,
+                                                     statement: "Save the plan once", remainingUses: 1))
+        let first = try ledger.propose(effectProposal(clock, key: "record-first"))
+        guard case .admitted = try ledger.admit(digest: first.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
+                                                decisionID: nil, reply: nil, consuming: grant.id) else {
+            throw NativeTaskFixture.Failure.assertion("A one-use grant admits its first proposal")
+        }
+        try require(try records.record(id: grant.id)?.remainingUses == 0, "The admission spent the use")
+        let second = try ledger.propose(effectProposal(clock, key: "record-second"))
+        try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, consuming: grant.id) == .refused(.grantSpent)
+                    && (try ledger.record(digest: second.digest))?.state == .proposed,
+                    "A second proposal consuming the same grant is refused as spent and stays unadmitted")
+
+        let spare = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Save once more", remainingUses: 1))
+        let fenced = try ledger.propose(effectProposal(clock, key: "record-fenced"))
+        try require(try ledger.admit(digest: fenced.digest, generation: 2, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, consuming: spare.id) == .refused(.staleGeneration)
+                    && (try records.record(id: spare.id))?.remainingUses == 1,
+                    "An admission refused for another reason leaves the use in place")
+        try require(try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: 1, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, consuming: spare.id) == .refused(.staleRules)
+                    && (try records.record(id: spare.id))?.remainingUses == 1,
+                    "A stale rules refusal leaves the use in place")
+        guard case .admitted = try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
+                                                decisionID: nil, reply: nil, consuming: spare.id) else {
+            throw NativeTaskFixture.Failure.assertion("The preserved use still admits")
+        }
+        try require(try records.record(id: spare.id)?.remainingUses == 0, "Admission and the decrement land together")
+
+        let earlier = NativeRuleSource()
+        earlier.setEpoch(1)
+        earlier.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        let launched = try ledger.propose(effectProposal(clock, rules: earlier.revision, key: "record-epoch"))
+        let relaunched = NativeRuleSource()
+        relaunched.setEpoch(2)
+        relaunched.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        try require(try ledger.admit(digest: launched.digest, generation: 1, rulesRevision: launched.proposal.rulesRevision, grantsRevision: 0,
+                                     decision: .act(.rule), decisionID: nil, reply: nil,
+                                     live: { (rules: relaunched.revision, grants: 0) }) == .refused(.staleRules),
+                    "A proposal minted under one epoch is refused after a relaunch with the same in-memory counter")
     }
 }
