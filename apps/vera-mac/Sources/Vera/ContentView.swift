@@ -93,20 +93,6 @@ struct ContentView: View {
     }
 }
 
-struct Placeholder: View {
-    let title: String
-    let note: String
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "hammer.fill").font(.system(size: 28)).foregroundStyle(Theme.textSecondary)
-            Text(title).font(.system(size: 18, weight: .semibold))
-            Text("coming in \(note)").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
-    }
-}
-
 struct SidebarRow: View {
     @EnvironmentObject var store: ChatStore
     let convo: Conversation
