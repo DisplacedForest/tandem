@@ -6,6 +6,12 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
     private weak var store: ChatStore?
     private var rules: NativeRuleSource?
     private var grants: NativeFolderGrantSource?
+    private var extra: [NativeToolDefinition] = []
+
+    var extraTools: [NativeToolDefinition] {
+        get { lock.withLock { extra } }
+        set { lock.withLock { extra = newValue } }
+    }
 
     @MainActor
     func attach(_ store: ChatStore) {
@@ -56,6 +62,9 @@ extension ChatStore {
         }
         enabled = dotToolIDs(base: enabled)
         if let connectedToolIDs { enabled.formIntersection(connectedToolIDs) }
+        let extra = companionWorkerRelay.extraTools
+        definitions.append(contentsOf: extra)
+        enabled.formUnion(extra.map(\.id))
         let tools = NativeToolRegistry(definitions: definitions).active(enabledIDs: enabled)
         return NativeCompanionWorkerContext(assistantName: assistantName, threadID: threadID, tools: tools)
     }

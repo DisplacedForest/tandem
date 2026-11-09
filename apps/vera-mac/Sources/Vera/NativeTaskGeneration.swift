@@ -305,7 +305,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
                       && $0.name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-" } })
             else { return false }
         }
-        guard toolChoice == nil || (toolChoice == "auto" && tools != nil) else { return false }
+        guard toolChoice == nil || (["auto", "none"].contains(toolChoice ?? "") && tools != nil) else { return false }
         var issued: Set<String> = []
         for message in messages {
             switch message.role {

@@ -122,6 +122,8 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativeMemoryGate.selftest() }
         catch { print("memory-gate: FAIL \(error.localizedDescription)"); exit(1) }
     }
+} else if arguments.contains("--companion-live") {
+    NativeApplicationEntry.runAsync { exit(await NativeCompanionLive.run(arguments: arguments)) }
 } else if arguments.contains("--memory-gate-live") {
     NativeApplicationEntry.runAsync { exit(await NativeMemoryGate.live()) }
 } else if arguments.contains("--memory-evidence-selftest") {

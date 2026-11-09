@@ -181,7 +181,7 @@ struct NativeCompanionHarness {
     func step() async throws -> NativeTaskRecord {
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
-        let result = try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools in
+        let result = try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
             model.complete(phase, attempt, messages, tools)
         }
         return try store.commitStep(claimed.id, generation: claimed.generation, step: result)
@@ -190,7 +190,7 @@ struct NativeCompanionHarness {
     func stepWithoutCommit() async throws -> NativeTaskStepResult {
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
-        return try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools in
+        return try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
             model.complete(phase, attempt, messages, tools)
         }
     }
@@ -241,8 +241,9 @@ extension SelfTest {
         try await companionReadRetries()
         try await companionCapsAndFences()
         try companionCommandRules()
+        try await companionBlockedResumes()
         try await companionAssignmentEntry()
-        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, assignment entry, reset cancels work)")
+        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -448,7 +449,7 @@ extension SelfTest {
             let model = harness.model
             let environment = harness.environment
             let crashing = Task {
-                try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools in
+                try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
                     model.complete(phase, attempt, messages, tools)
                 }
             }
@@ -602,6 +603,24 @@ extension SelfTest {
                     "Starting over cancels companion work")
     }
 
+    private static func companionBlockedResumes() async throws {
+        let require = NativeTaskFixture.require
+        let harness = try NativeCompanionHarness(rules: [:]) { _ in .text("Done.") }
+        let dot = try NativeCompanionTaskPayload(assignment: "Check the garden", mode: "manual")
+        let binding = NativeTaskAdmissionBinding(id: "binding-7", admissionBase: URL(string: "https://provider.test/v1")!, enrollmentDigest: "digest")
+        let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot), nativeBinding: binding)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let id = try harness.store.create(workerType: "companion", payload: try NativeTaskStore.canonical(try encoder.encode(payload)),
+                                          idempotencyKey: "blocked").id
+        guard let claimed = try harness.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+        let blocked = try await NativeCompanionWorker.step(claimed, environment: harness.environment) { _, _, _, _, _, _ in throw NativeTaskExecutorUnavailable() }
+        let committed = try harness.store.commitStep(id, generation: claimed.generation, step: blocked)
+        try require(committed.state == .blocked, "No model executor blocks the step")
+        let resumed = try harness.store.resume(id, checkpointMatch: ["native_unavailable": "binding-7"])
+        try require(resumed.state == .queued, "The app can resume a blocked companion task once its model executor is present")
+    }
+
     private static func companionCommandRules() throws {
         let require = NativeTaskFixture.require
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
@@ -649,7 +668,7 @@ extension SelfTest {
         let model = canceling.model
         var threw = false
         do {
-            _ = try await NativeCompanionWorker.step(claimed, environment: canceling.environment) { phase, attempt, _, messages, tools in
+            _ = try await NativeCompanionWorker.step(claimed, environment: canceling.environment) { phase, attempt, _, messages, tools, _ in
                 model.complete(phase, attempt, messages, tools)
             }
         } catch is CancellationError { threw = true }

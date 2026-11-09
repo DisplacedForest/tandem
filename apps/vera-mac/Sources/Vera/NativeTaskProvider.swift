@@ -46,6 +46,11 @@ struct NativeTaskProvider {
         var request = try client.request(messages: job.messages.map {
                 NativeChatMessage(role: $0.role, content: $0.content, toolCallID: $0.toolCallID, toolCalls: $0.toolCalls ?? [])
             }, model: binding.executionModel, tools: job.tools ?? [])
+        if job.toolChoice == "none", job.tools != nil, let body = request.httpBody,
+           var object = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            object["tool_choice"] = "none"
+            request.httpBody = try JSONSerialization.data(withJSONObject: object)
+        }
         let remaining = try job.reducingDeadline(by: nativeTaskSeconds(started.duration(to: .now))).deadlineSeconds
         request.timeoutInterval = remaining
         let observer = NativeTaskTransportObserver(phase: phase, expectedBytes: request.httpBody?.count ?? 0, overallSeconds: remaining, sink: diagnostics)

@@ -55,9 +55,11 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var automaticRetryRound: Int?
     var pending: NativeCompanionPending?
     var effects: [NativeCompanionEffectNote] = []
+    var nativeUnavailable: String?
 
     private enum CodingKeys: String, CodingKey {
         case transcript, rounds, calls, attempt, pending, effects
+        case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
         case segmentCalls = "segment_calls"
@@ -99,19 +101,19 @@ enum NativeCompanionWorker {
 
     static func make(exchange: NativeTaskGenerationExchange, environment: NativeCompanionWorkerEnvironment) -> NativeTaskWorker {
         NativeTaskWorker(timeoutSeconds: stepTimeoutSeconds) { task in
-            try await step(task, environment: environment) { phase, attempt, ordinal, messages, tools in
+            try await step(task, environment: environment) { phase, attempt, ordinal, messages, tools, choice in
                 guard let binding = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload).nativeBinding else {
                     throw NativeTaskExecutorUnavailable()
                 }
                 return try await exchange.completeTurn(task: task, binding: binding, phase: phase, attempt: attempt,
                                                        ordinal: ordinal, messages: messages, tools: tools,
-                                                       toolChoice: tools == nil ? nil : "auto")
+                                                       toolChoice: tools == nil ? nil : choice)
             }
         }
     }
 
     typealias Model = @Sendable (_ phase: String, _ attempt: String, _ ordinal: Int,
-                                 _ messages: [NativeTaskGenerationMessage], _ tools: [NativeTaskGenerationTool]?) async throws -> NativeTaskGenerationCompletion
+                                 _ messages: [NativeTaskGenerationMessage], _ tools: [NativeTaskGenerationTool]?, _ toolChoice: String) async throws -> NativeTaskGenerationCompletion
 
     static func step(_ task: NativeTaskRecord, environment: NativeCompanionWorkerEnvironment, model: @escaping Model) async throws -> NativeTaskStepResult {
         let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
@@ -125,10 +127,12 @@ enum NativeCompanionWorker {
             return try fail(&checkpoint, code: "companion_reset", message: "The companion started over, so this work stopped. Nothing further was done.")
         }
         checkpoint.threadID = context.threadID
+        checkpoint.nativeUnavailable = nil
         let run = NativeCompanionRun(task: task, dot: dot, context: context, environment: environment, model: model)
         do {
             return try await run.advance(&checkpoint)
         } catch is NativeTaskExecutorUnavailable {
+            checkpoint.nativeUnavailable = payload.nativeBinding?.id
             return NativeTaskStepResult(state: .blocked, checkpoint: try checkpoint.encoded(), event: "progress",
                 data: try NativeTaskStore.canonical(["message": "Open Tandem with the saved model profile to continue this work."]))
         } catch let failure as NativeTaskGenerationFailure {
@@ -370,7 +374,7 @@ private struct NativeCompanionRun {
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: false)
         guard fits(prompt, tools: tools) else { return try await finish(&checkpoint) }
-        let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt, 0, prompt, tools)
+        let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt, 0, prompt, tools, "auto")
         checkpoint.rounds += 1
         checkpoint.segmentRounds += 1
         checkpoint.automaticRetryRound = nil
@@ -387,7 +391,7 @@ private struct NativeCompanionRun {
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: true)
         if checkpoint.rounds < 64, fits(prompt, tools: tools) {
-            let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-final", 0, prompt, tools)
+            let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-final", 0, prompt, tools, "none")
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
