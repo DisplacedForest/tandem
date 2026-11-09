@@ -176,6 +176,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var canRetry: Bool = false
     var workerType: String? = nil
     var choices: [String]? = nil
+    var details: String? = nil
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }

@@ -415,6 +415,7 @@ struct NativeTaskDecision: Codable, Equatable, Hashable, Sendable {
     let prompt: String
     let choices: [String]
     var digest: String? = nil
+    var details: String? = nil
 }
 
 struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {

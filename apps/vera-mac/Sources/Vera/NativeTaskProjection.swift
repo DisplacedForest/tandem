@@ -79,6 +79,7 @@ enum NativeTaskProjection {
             card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
                 : dot ? "Waiting for your decision. \(decision.prompt)" : decision.prompt
             card.canRetry = decision.choices.contains("retry") && !retryPending
+            if dot, !retryPending, let details = decision.details, details.unicodeScalars.count <= 20000 { card.details = details }
         case .failed:
             card.status = .failed
             let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"

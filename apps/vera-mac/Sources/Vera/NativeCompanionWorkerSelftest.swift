@@ -383,6 +383,21 @@ extension SelfTest {
                                              reply: .object(["digest": .string(digest)])) != .admitted(row!),
                     "Replaying the approval cannot admit the effect again")
 
+        let longBed = "north bed, then the herb spiral, then " + String(repeating: "the long row by the fence ", count: 8) + "and finally the seedlings"
+        let detailed = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+            NativeCompanionScriptedModel.toolResults(messages).isEmpty
+                ? NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"\(longBed)\"}") : .text("Finished.")
+        }
+        _ = try detailed.create()
+        let asking = try await detailed.runUntilSettled()
+        let shown = try detailed.decision(asking)
+        let label = NativeCompanionWorker.describe(NativeCompanionHarness.tools(NativeCompanionFakeService(), reconcile: false)[1], ["path": .string(longBed)])
+        try require((shown["details"] as? String)?.contains(longBed) == true && label.hasSuffix("...") && !label.contains(longBed),
+                    "The approval shows the complete action, and the short label says when it is shortened")
+        let decoded = try JSONDecoder().decode(NativeTaskDecision.self, from: try JSONSerialization.data(withJSONObject: [
+            "id": "d", "prompt": "Approve?", "choices": ["approve", "decline"], "digest": "abc", "details": "Water a bed\nbed: \(longBed)"]))
+        try require(decoded.details?.contains(longBed) == true, "Decision details survive decoding for the card")
+
         let declining = try NativeCompanionHarness(rules: [.networkSends: .ask], script: waterThenReport)
         let declineID = try declining.create()
         let waiting = try await declining.runUntilSettled()

@@ -169,10 +169,20 @@ enum NativeCompanionWorker {
         for key in ["path", "command", "title", "name", "text", "query", "url"] {
             if case .string(let value)? = arguments[key] {
                 let clean = value.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                if !clean.isEmpty { return "\(definition.title): \(String(clean.prefix(120)))" }
+                if !clean.isEmpty { return "\(definition.title): \(clean.count > 120 ? String(clean.prefix(117)) + "..." : clean)" }
             }
         }
         return definition.title
+    }
+
+    static func details(_ title: String, argumentsJSON: String) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any],
+              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return title + "\n" + argumentsJSON }
+        let lines = values.keys.sorted().map { key -> String in
+            if case .string(let text)? = values[key] { return "\(key): \(text)" }
+            return "\(key): " + NativeEffectProposal.canonicalArguments(values[key] ?? .null)
+        }
+        return ([title] + lines).joined(separator: "\n")
     }
 
     static func target(_ arguments: [String: NativeJSONValue]) -> String? {
@@ -522,7 +532,8 @@ private struct NativeCompanionRun {
         if decision == .ask {
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title)
             return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", ["approve", "decline"],
-                                              extra: ["digest": record.digest])
+                                              extra: ["digest": record.digest,
+                                                      "details": NativeCompanionWorker.details(definition.title, argumentsJSON: record.proposal.argumentsJSON)])
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
@@ -705,7 +716,9 @@ private struct NativeCompanionRun {
             guard action == "approve", bound else {
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", ["approve", "decline"],
-                                                  extra: ["digest": digest])
+                                                  extra: ["digest": digest,
+                                                          "details": NativeCompanionWorker.details(definition(named: call.name)?.title ?? record.proposal.function,
+                                                                                                   argumentsJSON: record.proposal.argumentsJSON)])
             }
             guard let definition = definition(named: call.name), let arguments = try? definition.validatedArguments(call.arguments),
                   NativeEffectProposal.canonicalArguments(.object(arguments)) == record.proposal.argumentsJSON, definition.id == record.proposal.toolID else {

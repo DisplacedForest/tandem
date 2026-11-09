@@ -117,6 +117,7 @@ struct NativeTaskCardShotSurface: View {
             result.status = .needsInput
             result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
             result.choices = ["approve", "decline"]
+            result.details = "Send a booking request\nmessage: Please book the workshop inspection for Tuesday morning and confirm by email.\nto: inspections@example.com"
         case "task-card-offline":
             break
         case "task-card-document":

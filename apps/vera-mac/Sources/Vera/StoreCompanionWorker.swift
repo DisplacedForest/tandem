@@ -46,7 +46,7 @@ extension ChatStore {
     func companionWorkerContext(connectedToolIDs: [String]?) -> NativeCompanionWorkerContext? {
         guard let threadID = veraThreadID else { return nil }
         var definitions = nativeSharedToolDefinitions
-        let mcp = nativeMCP?.authority.definitions(scope: "focused") ?? []
+        let mcp = nativeMCP?.authority.definitions(scope: "worker") ?? []
         definitions.append(contentsOf: mcp)
         let rules = nativeRuleSource
         let source = nativeGrantSource
@@ -58,7 +58,7 @@ extension ChatStore {
                                                                       reason: { _ in .rule }, record: { _ in }))
         var enabled = enabledNativeToolIDs
         for server in nativeMCP?.servers ?? [] {
-            for tool in server.tools where nativeMCP?.authority.access.allowed(tool, scope: "focused") == true { enabled.insert(tool.id) }
+            for tool in server.tools where nativeMCP?.authority.access.allowed(tool, scope: "worker") == true { enabled.insert(tool.id) }
         }
         enabled = dotToolIDs(base: enabled)
         if let connectedToolIDs { enabled.formIntersection(connectedToolIDs) }

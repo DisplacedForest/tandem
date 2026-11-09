@@ -26,6 +26,24 @@ struct NativeTaskCardView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let details = card.details, card.status == .needsInput {
+                let block = Text(details)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                Group {
+                    if details.count > 700 || details.split(separator: "\n").count > 10 {
+                        ScrollView { block }.frame(height: 220)
+                    } else {
+                        block
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
+                .accessibilityLabel("Action details")
+            }
             if let note = card.connectionNote {
                 Text(note)
                     .font(.system(size: 11))
