@@ -50,38 +50,38 @@ struct NativeTaskEngineIdentity: Codable, Equatable, Hashable, Sendable {
 }
 
 struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
-    static let workerTypes: Set<String> = ["research", "document", "dot"]
+    static let workerTypes: Set<String> = ["research", "document", "companion"]
     static let chatWorkerTypes: Set<String> = ["research", "document"]
 
     let objective: String
     let deliverables: [String]
     let workerType: String
     let title: String?
-    let dot: NativeDotTaskPayload?
+    let dot: NativeCompanionTaskPayload?
 
     init(objective: String, deliverables: [String], workerType: String = "research", title: String? = nil) throws {
-        let dot = workerType == "dot" ? try NativeDotTaskPayload(assignment: objective, mode: "manual", goal: "") : nil
+        let dot = workerType == "companion" ? try NativeCompanionTaskPayload(assignment: objective, mode: "manual", goal: "") : nil
         try self.init(validating: objective, deliverables: deliverables, workerType: workerType, title: title, dot: dot)
     }
 
-    init(dot: NativeDotTaskPayload, title: String? = nil) throws {
-        try self.init(validating: dot.assignment, deliverables: [], workerType: "dot", title: title, dot: dot)
+    init(dot: NativeCompanionTaskPayload, title: String? = nil) throws {
+        try self.init(validating: dot.assignment, deliverables: [], workerType: "companion", title: title, dot: dot)
     }
 
     private init(validating objective: String, deliverables: [String], workerType: String, title: String?,
-                 dot: NativeDotTaskPayload?) throws {
+                 dot: NativeCompanionTaskPayload?) throws {
         let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.workerTypes.contains(workerType) else {
             throw NativeTaskError.invalidRequest("Background work must be research or a document.")
         }
-        guard (workerType == "dot") == (dot != nil), dot.map({ $0.assignment == trimmed }) ?? true else {
+        guard (workerType == "companion") == (dot != nil), dot.map({ $0.assignment == trimmed }) ?? true else {
             throw NativeTaskError.invalidRequest("Background work for a goal needs its assignment.")
         }
-        let work = workerType == "document" ? "document brief" : workerType == "dot" ? "assignment" : "research objective"
+        let work = workerType == "document" ? "document brief" : workerType == "companion" ? "assignment" : "research objective"
         guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= 5000 else {
             throw NativeTaskError.invalidRequest("The \(work) must contain 1 to 5,000 characters.")
         }
-        guard (workerType == "dot" ? 0...5 : 1...5).contains(deliverables.count) else {
+        guard (workerType == "companion" ? 0...5 : 1...5).contains(deliverables.count) else {
             throw NativeTaskError.invalidRequest(workerType == "document" ? "Provide 1 to 5 document inputs." : "Provide 1 to 5 research deliverables.")
         }
         let items = deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -116,7 +116,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
                       deliverables: container.decode([String].self, forKey: .deliverables),
                       workerType: container.decodeIfPresent(String.self, forKey: .workerType) ?? "research",
                       title: container.decodeIfPresent(String.self, forKey: .title),
-                      dot: container.decodeIfPresent(NativeDotTaskPayload.self, forKey: .dot))
+                      dot: container.decodeIfPresent(NativeCompanionTaskPayload.self, forKey: .dot))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -129,7 +129,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct NativeDotTaskPayload: Codable, Equatable, Hashable, Sendable {
+struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
     static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding"]
 
@@ -185,7 +185,7 @@ struct NativeDotTaskPayload: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct NativeDotWorkerBudget: Equatable, Sendable {
+struct NativeCompanionWorkerBudget: Equatable, Sendable {
     let rounds: Int
     let calls: Int
     let transcriptMessages: Int
@@ -193,7 +193,7 @@ struct NativeDotWorkerBudget: Equatable, Sendable {
     let taskRounds: Int
     let taskCalls: Int
 
-    static let standard = NativeDotWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32,
+    static let standard = NativeCompanionWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32,
                                                 transcriptBytes: 131072, taskRounds: 32, taskCalls: 64)
 }
 
@@ -211,7 +211,7 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
     let subquestions: Int
     let pagesPerQuestion: Int
     let nativeBinding: NativeTaskAdmissionBinding?
-    let dot: NativeDotTaskPayload?
+    let dot: NativeCompanionTaskPayload?
 
     init(request: NativeResearchTaskRequest, nativeBinding: NativeTaskAdmissionBinding? = nil,
          options: NativeTaskResearchOptions = .standard) {
@@ -245,9 +245,9 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         nativeBinding = try container.decodeIfPresent(NativeTaskAdmissionBinding.self, forKey: .nativeBinding)
-        let probe = try decoder.container(keyedBy: NativeDotTaskPayload.CodingKeys.self)
+        let probe = try decoder.container(keyedBy: NativeCompanionTaskPayload.CodingKeys.self)
         if !container.contains(.query), probe.contains(.assignment) {
-            let dot = try NativeDotTaskPayload(from: decoder)
+            let dot = try NativeCompanionTaskPayload(from: decoder)
             query = dot.assignment
             deliverables = []
             title = nil

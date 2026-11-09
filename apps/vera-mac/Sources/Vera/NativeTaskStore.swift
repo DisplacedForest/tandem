@@ -323,6 +323,13 @@ final class NativeTaskStore: Sendable {
         }
     }
 
+    func latestDecisionID(_ id: String) throws -> String? {
+        try database.read { db in
+            try String.fetchOne(db, sql: "SELECT decision_id FROM native_engine_task_decisions WHERE task_id = ? ORDER BY rowid DESC LIMIT 1",
+                                arguments: [id])
+        }
+    }
+
     func resume(_ id: String, expectedGeneration: Int? = nil, checkpointMatch: [String: String] = [:]) throws -> NativeTaskRecord {
         try database.write { db in
             let record = try Self.fetch(db, id)

@@ -22,6 +22,13 @@ enum NativeEffectRefusal: String, Codable, Equatable, Sendable {
     case alreadySettled = "already_settled"
     case ruleAsks = "rule_asks"
     case ruleHandsOff = "rule_hands_off"
+    case taskInactive = "task_inactive"
+}
+
+enum NativeEffectObservation: Equatable, Sendable {
+    case applied(NativeJSONValue)
+    case absent
+    case unknown
 }
 
 enum NativeEffectLedgerError: Error, Equatable {
@@ -168,7 +175,16 @@ struct NativeEffectLedgerStore: Sendable {
                 try Self.transition(db, digest: digest, to: .expired, at: current)
                 return .refused(.expired)
             }
-            if record.proposal.generation != generation { return .refused(.staleGeneration) }
+            guard let task = try Row.fetchOne(db, sql: "SELECT state, generation, cancel_requested FROM native_engine_tasks WHERE id = ?",
+                                              arguments: [record.proposal.taskID]),
+                  (task["state"] as String) == NativeTaskState.running.rawValue, (task["cancel_requested"] as Int) == 0 else {
+                return .refused(.taskInactive)
+            }
+            if (task["generation"] as Int) != generation { return .refused(.staleGeneration) }
+            switch decision {
+            case .ask: if record.proposal.generation > generation { return .refused(.staleGeneration) }
+            default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
+            }
             if record.proposal.rulesRevision != rulesRevision { return .refused(.staleRules) }
             if record.proposal.grantsRevision != grantsRevision { return .refused(.staleGrants) }
             switch decision {
@@ -216,6 +232,41 @@ struct NativeEffectLedgerStore: Sendable {
                 UPDATE native_effect_ledger SET state = 'declined', decision_id = ?, decision_reply_json = ?, updated_at = ?
                 WHERE digest = ? AND state = 'proposed'
                 """, arguments: [decisionID, reply.map(NativeEffectProposal.canonicalArguments), stamp, digest])
+        }
+    }
+
+    func observe(digest: String, _ observation: NativeEffectObservation) throws {
+        let stamp = now().timeIntervalSince1970
+        try database.write { db in
+            try Self.require(db, digest: digest, in: .uncertain)
+            switch observation {
+            case .applied(let receipt):
+                let body = NativeEffectProposal.canonicalArguments(.object(["observed": .string("applied"), "receipt": receipt]))
+                try db.execute(sql: "UPDATE native_effect_ledger SET state = 'completed', receipt_json = ?, updated_at = ? WHERE digest = ? AND state = 'uncertain'",
+                               arguments: [body, stamp, digest])
+            case .absent:
+                let body = NativeEffectProposal.canonicalArguments(.object(["observed": .string("absent")]))
+                try db.execute(sql: "UPDATE native_effect_ledger SET receipt_json = ?, updated_at = ? WHERE digest = ? AND state = 'uncertain'",
+                               arguments: [body, stamp, digest])
+            case .unknown:
+                break
+            }
+        }
+    }
+
+    func abandonAdmitted(taskID: String) throws -> Int {
+        let stamp = now().timeIntervalSince1970
+        return try database.write { db in
+            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain', receipt_json = ?, updated_at = ? WHERE task_id = ? AND state = 'admitted'",
+                           arguments: [Self.reasonJSON("interrupted"), stamp, taskID])
+            return db.changesCount
+        }
+    }
+
+    func record(taskID: String, idempotencyKey: String) throws -> NativeEffectRecord? {
+        try database.read { db in
+            try Row.fetchOne(db, sql: "SELECT * FROM native_effect_ledger WHERE task_id = ? AND idempotency_key = ? ORDER BY created_at DESC, id LIMIT 1",
+                             arguments: [taskID, idempotencyKey]).map(Self.record(row:))
         }
     }
 

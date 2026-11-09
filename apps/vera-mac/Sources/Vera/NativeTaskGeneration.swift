@@ -107,13 +107,13 @@ struct NativeTaskGenerationBudget: Equatable, Sendable {
     static let standard = NativeTaskGenerationBudget(maximumOrdinal: 3, maximumMessages: 8, maximumBytes: 65536, allowsTools: false)
 
     static var dot: NativeTaskGenerationBudget {
-        let budget = NativeDotWorkerBudget.standard
+        let budget = NativeCompanionWorkerBudget.standard
         return NativeTaskGenerationBudget(maximumOrdinal: budget.calls, maximumMessages: budget.transcriptMessages,
                                           maximumBytes: budget.transcriptBytes, allowsTools: true)
     }
 
     static func forWorker(_ workerType: String) -> NativeTaskGenerationBudget {
-        workerType == "dot" ? dot : standard
+        workerType == "companion" ? dot : standard
     }
 }
 

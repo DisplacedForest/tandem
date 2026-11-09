@@ -44,9 +44,20 @@ extension SelfTest {
     static func runNativeEffectLedger() async throws {
         try await runNativeEffectLedgerStore()
         try await runNativeEffectLedgerBarrier()
+        try runNativeEffectLedgerFence()
         try runNativeToolEffects()
         try runNativeRuleRevisions()
-        print("  effect ledger OK (canonical arguments, digest, admission refusals, ask binding, settle, recovery, expiry, barrier, tool effects, revisions)")
+        print("  effect ledger OK (canonical arguments, digest, admission refusals, ask binding, claim fence, observations, settle, recovery, expiry, barrier, tool effects, revisions)")
+    }
+
+    static func seedRunningTask(_ repository: LocalChatRepository, id: String = "task-1", generation: Int = 1) throws {
+        try repository.database.write { db in
+            try db.execute(sql: """
+                INSERT INTO native_engine_tasks(id, worker_type, payload, creation_key, state, generation, created_at, updated_at)
+                VALUES(?, 'dot', '{}', ?, 'running', ?, 0, 0)
+                ON CONFLICT(id) DO UPDATE SET state = 'running', generation = excluded.generation, cancel_requested = 0
+                """, arguments: [id, "seed-" + id, generation])
+        }
     }
 
     private static func effectProposal(_ clock: NativeEffectTestClock, task: String = "task-1", generation: Int = 1,
@@ -64,6 +75,7 @@ extension SelfTest {
         let repository = try LocalChatRepository(inMemory: true)
         let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
         let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository)
 
         let nested: NativeJSONValue = .object(["b": .array([.number(1), .bool(true), .null]), "a": .string("x / y"), "c": .object(["z": .number(2.5), "y": .string("")])])
         let canonical = NativeEffectProposal.canonicalArguments(nested)
@@ -188,6 +200,7 @@ extension SelfTest {
         let repository = try LocalChatRepository(inMemory: true)
         let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
         let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository)
         let rules = NativeRuleSource()
         let grants = NativeFolderGrantSource()
         let relaxed = NativeRules(choices: [.fileEdits: .act, .commands: .act, .trash: .ask, .networkSends: .handOff])
@@ -229,6 +242,70 @@ extension SelfTest {
         try require(try ledger.admit(digest: late.digest, generation: 1, rulesRevision: rules.revision, grantsRevision: grants.revision,
                                      decision: .act(.rule), decisionID: nil, reply: nil) == .refused(.alreadySettled),
                     "Re-admitting under the new revision is refused as already settled")
+    }
+
+    private static func runNativeEffectLedgerFence() throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository, generation: 3)
+
+        let acting = try ledger.propose(effectProposal(clock, generation: 3, key: "fence-act"))
+        try seedRunningTask(repository, generation: 4)
+        try require(try ledger.admit(digest: acting.digest, generation: 4, rulesRevision: 0, grantsRevision: 0,
+                                     decision: .act(.rule), decisionID: nil, reply: nil) == .refused(.staleGeneration),
+                    "An act write proposed in an earlier claim is refused in a later one")
+        try require(try ledger.admit(digest: acting.digest, generation: 3, rulesRevision: 0, grantsRevision: 0,
+                                     decision: .act(.rule), decisionID: nil, reply: nil) == .refused(.staleGeneration),
+                    "A caller holding an old claim is refused even when the proposal matches it")
+
+        let asking = try ledger.propose(effectProposal(clock, generation: 3, key: "fence-ask"))
+        let reply: NativeJSONValue = .object(["action": .string("approve"), "digest": .string(asking.digest)])
+        guard case .admitted = try ledger.admit(digest: asking.digest, generation: 4, rulesRevision: 0, grantsRevision: 0,
+                                                decision: .ask, decisionID: "decision-1", reply: reply) else {
+            throw NativeTaskFixture.Failure.assertion("An approved ask write resumes in the claim that follows the decision")
+        }
+        let future = try ledger.propose(effectProposal(clock, generation: 9, key: "fence-future"))
+        try require(try ledger.admit(digest: future.digest, generation: 4, rulesRevision: 0, grantsRevision: 0, decision: .ask, decisionID: "decision-2",
+                                     reply: .object(["digest": .string(future.digest)])) == .refused(.staleGeneration),
+                    "A proposal from a later claim than the caller's is refused")
+
+        let canceling = try ledger.propose(effectProposal(clock, generation: 4, key: "fence-cancel"))
+        try repository.database.write { db in try db.execute(sql: "UPDATE native_engine_tasks SET cancel_requested = 1 WHERE id = 'task-1'") }
+        try require(try ledger.admit(digest: canceling.digest, generation: 4, rulesRevision: 0, grantsRevision: 0,
+                                     decision: .act(.rule), decisionID: nil, reply: nil) == .refused(.taskInactive),
+                    "A cancel request recorded before admission wins")
+        try repository.database.write { db in try db.execute(sql: "UPDATE native_engine_tasks SET cancel_requested = 0, state = 'needs_decision' WHERE id = 'task-1'") }
+        try require(try ledger.admit(digest: canceling.digest, generation: 4, rulesRevision: 0, grantsRevision: 0,
+                                     decision: .act(.rule), decisionID: nil, reply: nil) == .refused(.taskInactive),
+                    "A task that is not running cannot admit")
+        try require(try ledger.admit(digest: canceling.digest, generation: 4, rulesRevision: 0, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil) == .refused(.taskInactive) && (try ledger.record(digest: canceling.digest))?.state == .proposed,
+                    "A refused admission leaves the proposal untouched")
+        try seedRunningTask(repository, generation: 5)
+
+        try require(try ledger.abandonAdmitted(taskID: "task-1") == 1 && (try ledger.record(digest: asking.digest))?.state == .uncertain,
+                    "An admission left by an earlier step becomes uncertain at the next step")
+        try ledger.observe(digest: asking.digest, .unknown)
+        try require(try ledger.record(digest: asking.digest)?.state == .uncertain, "An unknown observation changes nothing")
+        try ledger.observe(digest: asking.digest, .absent)
+        let absent = try ledger.record(digest: asking.digest)
+        try require(absent?.state == .uncertain && absent?.receipt == .object(["observed": .string("absent")]),
+                    "An absent observation is recorded and the row stays uncertain")
+        try ledger.observe(digest: asking.digest, .applied(.object(["id": .string("note-7")])))
+        let applied = try ledger.record(digest: asking.digest)
+        try require(applied?.state == .completed
+                    && applied?.receipt == .object(["observed": .string("applied"), "receipt": .object(["id": .string("note-7")])]),
+                    "An applied observation completes the row with the destination receipt")
+        var observeRefused = false
+        do { try ledger.observe(digest: canceling.digest, .absent) } catch { observeRefused = true }
+        try require(observeRefused, "Only an uncertain row accepts an observation")
+
+        try require(try ledger.record(taskID: "task-1", idempotencyKey: "fence-ask")?.digest == asking.digest
+                    && (try ledger.record(taskID: "task-1", idempotencyKey: "missing")) == nil
+                    && (try ledger.record(taskID: "task-2", idempotencyKey: "fence-ask")) == nil,
+                    "A row is found by task and idempotency key, scoped to its task")
     }
 
     private static func runNativeToolEffects() throws {

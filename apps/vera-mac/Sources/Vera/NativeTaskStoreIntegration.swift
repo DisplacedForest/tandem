@@ -18,6 +18,7 @@ extension ChatStore {
                 })
         }
         if let engine = nativeTaskLocalEngine {
+            companionWorkerRelay.attach(self)
             Task { try? await engine.start() }
         }
         if nativeTaskTrackingLoop == nil, let tracker = nativeTaskTracker {

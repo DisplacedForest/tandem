@@ -52,7 +52,7 @@ struct NativeTaskEngineHarness {
                 let identity: @Sendable () -> NativeWorkerIdentity = { NativeWorkerIdentity(assistantName: "Nova", ownerName: "Jordan") }
                 return ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
                         "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
-                        "dot": NativeTaskLocalEngine.dotPlaceholder()].merging(extra(exchange)) { _, injected in injected }
+                        "companion": NativeTaskLocalEngine.companionPlaceholder()].merging(extra(exchange)) { _, injected in injected }
             })
         let base: @Sendable () -> URL? = { NativeTaskLocalEngine.identity.base }
         let service = NativeTaskHandoffService(repository: repository, client: engine.client, configuredBase: base)
@@ -109,7 +109,7 @@ struct NativeTaskEngineHarness {
 
     func submitDot(_ assignment: String, goal: String = "") async throws -> NativeTaskReference {
         let origin = try NativeTaskFixture.origin(repository)
-        let request = try NativeResearchTaskRequest(dot: NativeDotTaskPayload(assignment: assignment, mode: "manual", goal: goal))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: goal))
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
@@ -1094,7 +1094,7 @@ extension SelfTest {
     }
 
     private static func dotPayload(_ assignment: String = "Find out what color the fictional moon Luma is.") throws -> Data {
-        let request = try NativeResearchTaskRequest(dot: NativeDotTaskPayload(assignment: assignment, mode: "manual", goal: "Know the moon"))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: "Know the moon"))
         let binding = NativeTaskAdmissionBinding(id: "binding-1", admissionBase: URL(string: "https://provider.test/v1")!,
                                                  enrollmentDigest: String(repeating: "a", count: 64))
         return try nativeTaskEncoded(NativeResearchTaskPayload(request: request, nativeBinding: binding))
@@ -1125,7 +1125,7 @@ extension SelfTest {
                     try await Task.sleep(for: .seconds(30))
                 }
                 return NativeTaskStepResult(state: .completed, checkpoint: NativeTaskStore.emptyObject,
-                    result: try NativeTaskStore.canonical(["kind": "dot_report", "query": payload.query, "title": "Luma",
+                    result: try NativeTaskStore.canonical(["kind": "companion_report", "query": payload.query, "title": "Luma",
                                                            "report": second.content, "summary": "Luma is blue.", "sources": [Any]()]),
                     event: "completed")
             } catch is NativeTaskExecutorUnavailable {
@@ -1136,10 +1136,10 @@ extension SelfTest {
 
     private static func taskDotGeneration() async throws {
         let require = NativeTaskFixture.require
-        let budget = NativeDotWorkerBudget.standard
-        try require(budget == NativeDotWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32, transcriptBytes: 131072,
+        let budget = NativeCompanionWorkerBudget.standard
+        try require(budget == NativeCompanionWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32, transcriptBytes: 131072,
                                                     taskRounds: 32, taskCalls: 64), "The dot budget holds its standard values")
-        let enforced = NativeTaskGenerationBudget.forWorker("dot")
+        let enforced = NativeTaskGenerationBudget.forWorker("companion")
         try require(enforced.maximumOrdinal == budget.calls && enforced.maximumMessages == budget.transcriptMessages
                      && enforced.maximumBytes == budget.transcriptBytes && enforced.allowsTools, "The exchange reads the dot budget")
         try require(NativeTaskGenerationBudget.forWorker("research") == .standard && NativeTaskGenerationBudget.forWorker("document") == .standard,
@@ -1171,7 +1171,7 @@ extension SelfTest {
         let store = NativeTaskStore(database: repository.database)
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let exchange = NativeTaskGenerationExchange(store: store, admission: { .local(arbiter) })
-        let dotTask = try store.create(workerType: "dot", payload: try dotPayload(), idempotencyKey: "dot")
+        let dotTask = try store.create(workerType: "companion", payload: try dotPayload(), idempotencyKey: "companion")
         let researchTask = try store.create(workerType: "research", payload: try researchPayload(), idempotencyKey: "research")
         let binding = NativeTaskGenerationExchange.binding(of: dotTask)!
         try require(NativeTaskGenerationExchange.binding(of: researchTask) == binding, "Dot tasks carry the same native binding")
@@ -1232,10 +1232,10 @@ extension SelfTest {
             return .text("The fictional moon Luma is blue.")
         }
         let firstRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
-            workers: { ["dot": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
+            workers: { ["companion": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
         try await firstRun.start()
         let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.", goal: "Know the moon")
-        try require(reference.deliveryState == .accepted && reference.createRequest.workerType == "dot", "The dot handoff is accepted")
+        try require(reference.deliveryState == .accepted && reference.createRequest.workerType == "companion", "The dot handoff is accepted")
         try require(try await firstRun.waitAsync(seconds: 15) { await gate.count("blocked") >= 1 }, "The dot worker finishes both work phases")
         let jobs = await recorder.all()
         let firstJob = jobs.first { $0.phase == "work-1" }
@@ -1259,7 +1259,7 @@ extension SelfTest {
         await firstRun.crash()
         await gate.bump("release")
         let secondRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
-            workers: { ["dot": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
+            workers: { ["companion": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
         try await secondRun.start()
         try require(try await secondRun.wait(seconds: 15) { try secondRun.state(reference) == .completed }, "The relaunched dot task completes")
         let firstCalls = await counter.count("generate:work-1")

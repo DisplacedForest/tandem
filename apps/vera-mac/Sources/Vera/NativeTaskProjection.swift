@@ -5,7 +5,7 @@ enum NativeTaskProjection {
                         connectionNote: String? = nil, retryPending: Bool = false)
         throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
         let id = reference.id.uuidString
-        let dot = reference.createRequest.workerType == "dot"
+        let dot = reference.createRequest.workerType == "companion"
         let document = reference.createRequest.workerType == "document" || dot
         let work = dot ? "Work" : document ? "Writing" : "Research"
         var card = NativeTaskCardPresentation(
@@ -107,7 +107,7 @@ enum NativeTaskProjection {
             }
         case .completed where dot:
             guard let result = snapshot.result, result.query == reference.request.objective,
-                  result.kind == "dot_report", result.sources.isEmpty,
+                  result.kind == "companion_report", result.sources.isEmpty,
                   result.report.unicodeScalars.count <= 40000,
                   (result.summary ?? "").unicodeScalars.count <= 2000,
                   (result.title ?? "").unicodeScalars.count <= 200 else {

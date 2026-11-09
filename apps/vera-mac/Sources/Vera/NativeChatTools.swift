@@ -179,6 +179,9 @@ struct NativeToolDefinition: Sendable {
 
     var argumentValidator: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var classify: (@Sendable ([String: NativeJSONValue]) -> NativeActionClass)? = nil
+    var executeWithKey: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeJSONValue)? = nil
+    var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
+    var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)

@@ -152,6 +152,19 @@ enum NativeCommandTools {
             guard case .string(let command)? = arguments["command"] else { return .commands }
             return NativeCommandClassifier.classify(command, grants: grants(), directory: arguments.folderString("directory"))
         }
+        definition.ruleDecision = { arguments, resolver in
+            guard case .string(let command)? = arguments["command"] else { return .handOff }
+            let directory = arguments.folderString("directory")
+            let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
+            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
+            let current: NativeRuleDecision
+            switch action {
+            case .sensitive: return .handOff
+            case .commands: current = resolver.decision(forCommand: command)
+            default: current = resolver.decision(for: action)
+            }
+            return plain ? current : current.atLeastAsk
+        }
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
             let (action, current) = planned(command, arguments.folderString("directory"))

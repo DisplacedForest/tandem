@@ -250,21 +250,23 @@ final class NativeTaskLocalEngine: Sendable {
     }
 
     static func workers(database: DatabaseQueue, search: NativeResearchSearch,
-                        identity: @escaping @Sendable () -> NativeWorkerIdentity) -> NativeTaskLocalEngine {
+                        identity: @escaping @Sendable () -> NativeWorkerIdentity,
+                        companion: NativeCompanionWorkerRelay? = nil) -> NativeTaskLocalEngine {
         NativeTaskLocalEngine(database: database, workers: { exchange in
             ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
              "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
-             "dot": dotPlaceholder()]
+             "companion": companion.map { NativeCompanionWorker.make(exchange: exchange, environment: $0.environment(database: database)) }
+                ?? companionPlaceholder()]
         })
     }
 
-    static func dotPlaceholder() -> NativeTaskWorker {
+    static func companionPlaceholder() -> NativeTaskWorker {
         NativeTaskWorker(timeoutSeconds: 30) { task in
             let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
             guard payload.dot != nil else { return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "worker_error") }
             let title = payload.query.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""
             return NativeTaskStepResult(state: .completed, checkpoint: NativeTaskStore.emptyObject,
-                result: try NativeTaskStore.canonical(["kind": "dot_report", "query": payload.query, "title": title,
+                result: try NativeTaskStore.canonical(["kind": "companion_report", "query": payload.query, "title": title,
                                                        "report": "", "summary": "", "sources": [Any]()]),
                 event: "completed")
         }
@@ -368,9 +370,9 @@ final class NativeTaskLocalEngine: Sendable {
             throw NativeTaskLocalStatus(code: 503, detail: "This task worker is not configured")
         }
         let payloadData = try NativeTaskStore.canonical(payload)
-        if workerType == "dot" {
-            guard Set(payload.keys).isSubset(of: NativeDotTaskPayload.payloadKeys),
-                  (try? JSONDecoder().decode(NativeDotTaskPayload.self, from: payloadData)) != nil,
+        if workerType == "companion" {
+            guard Set(payload.keys).isSubset(of: NativeCompanionTaskPayload.payloadKeys),
+                  (try? JSONDecoder().decode(NativeCompanionTaskPayload.self, from: payloadData)) != nil,
                   (try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData))?.dot != nil else {
                 throw NativeTaskLocalStatus(code: 422, detail: "The task request is not valid")
             }
