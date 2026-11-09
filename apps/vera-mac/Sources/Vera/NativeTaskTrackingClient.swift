@@ -4,18 +4,45 @@ struct NativeTaskDecisionIntent: Codable, Equatable, Sendable {
     let referenceID: UUID
     let decisionID: String
     let key: UUID
+    let choice: String
+
+    init(referenceID: UUID, decisionID: String, key: UUID, choice: String = "retry") {
+        self.referenceID = referenceID
+        self.decisionID = decisionID
+        self.key = key
+        self.choice = choice
+    }
+
+    private enum CodingKeys: String, CodingKey { case referenceID, decisionID, key, choice }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        referenceID = try container.decode(UUID.self, forKey: .referenceID)
+        decisionID = try container.decode(String.self, forKey: .decisionID)
+        key = try container.decode(UUID.self, forKey: .key)
+        choice = try container.decodeIfPresent(String.self, forKey: .choice) ?? "retry"
+    }
 }
 
 extension NativeTaskClient {
+    static func decisionBody(_ intent: NativeTaskDecisionIntent, digest: String?) throws -> Data {
+        var reply: [String: Any] = ["action": intent.choice]
+        if let digest { reply["digest"] = digest }
+        return try canonical([
+            "decision_id": intent.decisionID, "idempotency_key": intent.key.uuidString, "reply": reply,
+        ])
+    }
+
     func retry(_ reference: NativeTaskReference, intent: NativeTaskDecisionIntent) async throws -> NativeTaskSnapshot {
+        try await decide(reference, intent: intent, digest: nil)
+    }
+
+    func decide(_ reference: NativeTaskReference, intent: NativeTaskDecisionIntent, digest: String?) async throws -> NativeTaskSnapshot {
         guard intent.referenceID == reference.id, let id = reference.remoteTaskID,
-              UUID(uuidString: id) != nil, !intent.decisionID.isEmpty else {
+              UUID(uuidString: id) != nil, !intent.decisionID.isEmpty, !intent.choice.isEmpty else {
             throw NativeTaskHTTPError.invalidResponse
         }
-        let body = try Self.canonical([
-            "decision_id": intent.decisionID, "idempotency_key": intent.key.uuidString,
-            "reply": ["action": "retry"],
-        ])
+        let body = try Self.decisionBody(intent, digest: digest)
         let (data, status) = try await request(
             "POST", reference.engine.base.appendingPathComponent("tasks/\(id)/decision"), body, 5)
         guard status == 200 else { throw NativeTaskHTTPError.status(status) }

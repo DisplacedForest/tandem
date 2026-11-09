@@ -5,6 +5,11 @@ struct NativeToolTransientFailure: Error, Equatable, Sendable {
     let detail: String
 }
 
+struct NativeToolRefusal: Error, LocalizedError, Equatable, Sendable {
+    let detail: String
+    var errorDescription: String? { detail }
+}
+
 struct NativeCompanionWorkerContext: Sendable {
     let assistantName: String
     let threadID: String
@@ -212,7 +217,38 @@ enum NativeCompanionWorker {
     }
 
     static func definite(_ error: Error) -> Bool {
-        error is NativeToolError
+        if error is NativeToolRefusal { return true }
+        switch error as? NativeToolError {
+        case .invalidArguments?, .unavailable?: return true
+        default: return false
+        }
+    }
+
+    static func interrupted(_ value: NativeJSONValue) -> Bool {
+        guard case .object(let fields) = value else { return false }
+        if fields["timed_out"] == .bool(true) || fields["signal"] != nil { return true }
+        if case .string(let error)? = fields["error"], fields["command"] != nil, !error.isEmpty { return true }
+        return false
+    }
+
+    static func ranWithFailure(_ value: NativeJSONValue) -> Bool {
+        guard case .object(let fields) = value, case .number(let code)? = fields["exit_code"] else { return false }
+        return code != 0
+    }
+
+    static func transcriptBytes(_ checkpoint: NativeCompanionCheckpoint) -> Int {
+        checkpoint.transcript.reduce(0) { $0 + $1.content.utf8.count + ($1.toolCalls ?? []).reduce(0) { $0 + $1.arguments.utf8.count + 96 } + 64 }
+    }
+
+    static func resultLimit(_ checkpoint: NativeCompanionCheckpoint, definition: NativeToolDefinition, budget: NativeCompanionWorkerBudget) -> Int {
+        let remaining = budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)
+        return max(1024, min(definition.resultByteBudget, remaining))
+    }
+
+    static func effectsLine(_ checkpoint: NativeCompanionCheckpoint) -> String {
+        let established = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }
+        guard !established.isEmpty else { return " Nothing was changed." }
+        return " Earlier in this work: " + established.map { $0.title }.joined(separator: "; ") + "."
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String) throws -> NativeTaskStepResult {
@@ -252,6 +288,16 @@ private struct NativeCompanionRun {
 
     func authority() -> NativeCompanionWorkerAuthority {
         environment.authority(context.threadID, dot.assignment)
+    }
+
+    var liveRevisions: @Sendable () -> (rules: Int, grants: Int) {
+        let environment = self.environment
+        let thread = context.threadID
+        let assignment = dot.assignment
+        return {
+            let current = environment.authority(thread, assignment)
+            return (current.resolver.revision, current.grantsRevision)
+        }
     }
 
     func liveDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority) -> (NativeActionClass, NativeRuleDecision) {
@@ -360,7 +406,7 @@ private struct NativeCompanionRun {
 
     func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String) throws -> NativeTaskStepResult {
         checkpoint.note(title, "handed to you")
-        let text = "\(context.assistantName) stopped before this step because your rules hand it to you: \(title). Nothing was changed."
+        let text = "\(context.assistantName) stopped before this step because your rules hand it to you: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
     }
 
@@ -414,7 +460,7 @@ private struct NativeCompanionRun {
             checkpoint.calls += 1
             do {
                 let value = try await NativeCompanionWorker.withDeadline(seconds) { try await definition.execute(arguments) }
-                checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: definition.resultByteBudget))
+                checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
                 try Task.checkCancellation()
@@ -465,7 +511,8 @@ private struct NativeCompanionRun {
                                               extra: ["digest": record.digest])
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
-                                                     grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil)
+                                                     grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
+                                                     live: liveRevisions)
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title, &checkpoint)
     }
 
@@ -484,15 +531,22 @@ private struct NativeCompanionRun {
                 if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
                 return try await definition.execute(arguments)
             }
+            let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
+            if NativeCompanionWorker.interrupted(value) {
+                try environment.ledger.markUncertain(digest: record.digest, reason: "interrupted_run")
+                guard let uncertain = try environment.ledger.record(digest: record.digest) else { return nil }
+                return try await reconcile(uncertain, call: call, definition: definition, &checkpoint)
+            }
             try environment.ledger.settle(digest: record.digest, receipt: value, modelClaim: nil)
-            checkpoint.note(title, "done")
-            checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: definition.resultByteBudget))
+            checkpoint.note(title, NativeCompanionWorker.ranWithFailure(value) ? "failed" : "done")
+            checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: limit))
             return nil
         } catch {
             if NativeCompanionWorker.definite(error) {
-                try environment.ledger.settle(digest: record.digest, receipt: .object(["error": .string(error.localizedDescription)]), modelClaim: nil)
-                checkpoint.note(title, "failed")
-                checkpoint.answer(call, NativeCompanionWorker.message("This failed: \(error.localizedDescription)"))
+                try environment.ledger.markUncertain(digest: record.digest, reason: "refused")
+                try environment.ledger.observe(digest: record.digest, .absent)
+                checkpoint.note(title, "not done")
+                checkpoint.answer(call, NativeCompanionWorker.message("Not done: \(error.localizedDescription)"))
                 return nil
             }
             try environment.ledger.markUncertain(digest: record.digest, reason: error is NativeCompanionDeadline ? "timeout" : "no_receipt")
@@ -612,6 +666,20 @@ private struct NativeCompanionRun {
                 return try NativeCompanionWorker.fail(&checkpoint, code: "request_conflict", message: "The saved approval no longer matches this work.")
             }
             let title = pending.title ?? record.proposal.function
+            switch record.state {
+            case .completed:
+                checkpoint.note(title, "done")
+                checkpoint.answer(call, NativeCompanionWorker.bounded(record.receipt ?? .null, bytes: 16384))
+                return nil
+            case .uncertain, .admitted:
+                return try await reconcile(record, call: call, definition: definition(named: call.name), &checkpoint)
+            case .declined:
+                checkpoint.note(title, "declined")
+                checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
+                return nil
+            case .proposed, .expired:
+                break
+            }
             let bound = NativeEffectProposal.bindsReply(reply, to: digest)
             if action == "decline" {
                 if record.state == .proposed { try environment.ledger.decline(digest: digest, decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply) }
@@ -620,7 +688,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
-                let text = "\(context.assistantName) stopped because you declined: \(title). Nothing was changed."
+                let text = "\(context.assistantName) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
                 return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
             }
             guard action == "approve", bound else {
@@ -639,7 +707,8 @@ private struct NativeCompanionRun {
             if live == .handOff { return try handOff(&checkpoint, title: title) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
-                                                         decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply)
+                                                         decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
+                                                         live: liveRevisions)
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
                                       key: record.proposal.idempotencyKey, title: title, &checkpoint)
         case "reconcile":

@@ -175,9 +175,41 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var canCancel: Bool = false
     var canRetry: Bool = false
     var workerType: String? = nil
+    var choices: [String]? = nil
 
     var isDocument: Bool { workerType == "document" }
-    var statusTitle: String { status.title(document: isDocument) }
+    var isCompanion: Bool { workerType == "companion" }
+    var statusTitle: String { isCompanion ? companionTitle : status.title(document: isDocument) }
+    var offeredChoices: [String] {
+        guard let choices else { return canRetry ? ["retry"] : [] }
+        return choices.filter { Self.choiceTitle($0) != nil }
+    }
+
+    static func choiceTitle(_ choice: String) -> String? {
+        switch choice {
+        case "retry": return "Retry"
+        case "approve": return "Approve"
+        case "decline": return "Decline"
+        case "continue": return "Keep going"
+        case "finish": return "Finish"
+        case "it_happened": return "It happened"
+        case "it_did_not": return "It didn't happen"
+        case "stop": return "Stop here"
+        default: return nil
+        }
+    }
+
+    private var companionTitle: String {
+        switch status {
+        case .preparing: return "Starting the work"
+        case .working: return "Working on it"
+        case .stopping: return "Stopping the work"
+        case .stopped: return "Work stopped"
+        case .completed: return "Work done"
+        case .needsInput: return "Needs your answer"
+        case .queued, .failed: return status.title(document: false)
+        }
+    }
     var statusSymbol: String { status.symbol(document: isDocument) }
-    var stopTitle: String { isDocument ? "Stop writing" : "Stop research" }
+    var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }

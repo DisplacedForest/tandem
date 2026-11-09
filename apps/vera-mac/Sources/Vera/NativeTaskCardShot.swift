@@ -111,6 +111,12 @@ struct NativeTaskCardShotSurface: View {
             result.status = .needsInput
             result.milestone = "The report didn't cite its sources correctly. Retry this step?"
             result.canRetry = true
+        case "task-card-decision":
+            result.title = "Book the workshop inspection"
+            result.workerType = "companion"
+            result.status = .needsInput
+            result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
+            result.choices = ["approve", "decline"]
         case "task-card-offline":
             break
         case "task-card-document":
@@ -125,7 +131,7 @@ struct NativeTaskCardShotSurface: View {
             result.canCancel = false
         default: break
         }
-        if [.stopped, .needsInput].contains(result.status) {
+        if [.stopped, .needsInput].contains(result.status) && !result.isCompanion {
             result.sources = [
                 PulseSource(n: 1, title: "Installation reference", url: "local"),
                 PulseSource(n: 2, title: "Material comparison", url: "local"),
@@ -164,7 +170,7 @@ struct NativeTaskCardShotSurface: View {
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",
-                    onCancel: { _ in }, onRetry: { _ in })
+                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in })
             }
             HStack {
                 Spacer()

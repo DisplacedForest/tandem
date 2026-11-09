@@ -302,6 +302,12 @@ extension SelfTest {
         do { try ledger.observe(digest: canceling.digest, .absent) } catch { observeRefused = true }
         try require(observeRefused, "Only an uncertain row accepts an observation")
 
+        let racing = try ledger.propose(effectProposal(clock, generation: 5, key: "fence-live"))
+        try require(try ledger.admit(digest: racing.digest, generation: 5, rulesRevision: 0, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil, live: { (rules: 1, grants: 0) }) == .refused(.staleRules)
+                    && (try ledger.admit(digest: racing.digest, generation: 5, rulesRevision: 0, grantsRevision: 0, decision: .act(.rule),
+                                         decisionID: nil, reply: nil, live: { (rules: 0, grants: 2) })) == .refused(.staleGrants),
+                    "Admission compares against the live revisions read inside its transaction, not the caller's snapshot")
         try require(try ledger.record(taskID: "task-1", idempotencyKey: "fence-ask")?.digest == asking.digest
                     && (try ledger.record(taskID: "task-1", idempotencyKey: "missing")) == nil
                     && (try ledger.record(taskID: "task-2", idempotencyKey: "fence-ask")) == nil,

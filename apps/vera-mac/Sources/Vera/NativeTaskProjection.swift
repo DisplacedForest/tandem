@@ -114,7 +114,8 @@ enum NativeTaskProjection {
                 throw NativeTaskHTTPError.invalidResponse
             }
             card.status = .completed
-            card.milestone = "Finished."
+            let summary = (result.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            card.milestone = summary.isEmpty ? "Finished." : String(summary.prefix(280))
             guard !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (card, nil) }
             return (card, NativeResearchArtifact(
                 id: snapshot.id, title: reference.request.displayTitle,

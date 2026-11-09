@@ -1267,8 +1267,8 @@ extension SelfTest {
         try require(firstCalls == 1 && secondCalls == 1, "A relaunch replays settled work phases without another provider call: \(firstCalls) \(secondCalls)")
         let saved = try secondRun.repository.taskReference(id: reference.id)!
         let display = try NativeTaskProjection.display(reference: saved, snapshot: saved.snapshot)
-        try require(display.card.status == .completed && display.card.milestone == "Finished." && display.artifact?.report == "The fictional moon Luma is blue.",
-                    "A finished dot task shows its report")
+        try require(display.card.status == .completed && display.card.milestone == "Luma is blue." && display.artifact?.report == "The fictional moon Luma is blue.",
+                    "A finished companion task shows its summary and report")
         await secondRun.stop()
 
         let placeholderCounter = NativeTaskEngineCounter()

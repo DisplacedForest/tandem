@@ -99,6 +99,11 @@ extension ChatStore {
         Task { await nativeTaskTracker.retry(id) }
     }
 
+    func answerNativeTask(_ value: String, choice: String) {
+        guard let id = UUID(uuidString: value), let nativeTaskTracker else { return }
+        Task { await nativeTaskTracker.decide(id, choice: choice) }
+    }
+
     func stopNativeTaskRecovery() {
         nativeSchedulerLoop?.cancel()
         nativeSchedulerLoop = nil

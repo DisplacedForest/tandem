@@ -160,9 +160,11 @@ struct NativeEffectLedgerStore: Sendable {
     }
 
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
-               decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?) throws -> NativeEffectAdmission {
+               decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
+               live: (@Sendable () -> (rules: Int, grants: Int))? = nil) throws -> NativeEffectAdmission {
         let current = now()
         return try database.write { db in
+            let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
             guard let record = try Self.record(db, digest: digest) else { return .refused(.notFound) }
             guard record.proposal.digest == digest else { return .refused(.digestMismatch) }
             switch record.state {
@@ -185,8 +187,8 @@ struct NativeEffectLedgerStore: Sendable {
             case .ask: if record.proposal.generation > generation { return .refused(.staleGeneration) }
             default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
             }
-            if record.proposal.rulesRevision != rulesRevision { return .refused(.staleRules) }
-            if record.proposal.grantsRevision != grantsRevision { return .refused(.staleGrants) }
+            if record.proposal.rulesRevision != rulesRevision || record.proposal.rulesRevision != revisions.rules { return .refused(.staleRules) }
+            if record.proposal.grantsRevision != grantsRevision || record.proposal.grantsRevision != revisions.grants { return .refused(.staleGrants) }
             switch decision {
             case .handOff: return .refused(.ruleHandsOff)
             case .ask:
