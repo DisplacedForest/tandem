@@ -147,7 +147,9 @@ struct NativeDisplayBlocksView: View {
         .sheet(item: $openReport) { NativeResearchReportView(artifact: $0) }
     }
 
-    private func saved(_ card: NativeTaskCardPresentation) -> Bool {
+    private func saved(_ card: NativeTaskCardPresentation) -> Bool { Self.answerSaved(card, in: blocks) }
+
+    static func answerSaved(_ card: NativeTaskCardPresentation, in blocks: [NativeDisplayBlock]) -> Bool {
         blocks.contains { $0.id == "artifact:" + card.id }
     }
 

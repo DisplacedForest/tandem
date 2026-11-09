@@ -76,12 +76,24 @@ extension ChatStore {
             if update.blocks.contains(where: { if case .artifact = $0 { true } else { false } }) {
                 recordTaskArtifacts(update.blocks, conversationID: update.conversationID, messageID: update.messageID.uuidString)
             }
-            let merged = update.blocks + kept
+            let merged = Self.keepingSavedAnswers(update.blocks + kept, current: conversations[conversation].messages[message].displayBlocks)
             guard conversations[conversation].messages[message].displayBlocks != merged else { continue }
             conversations[conversation].messages[message].displayBlocks = merged
             changed = true
         }
         if changed { reloadNativeTaskReferences() }
+    }
+
+    static func keepingSavedAnswers(_ incoming: [NativeDisplayBlock], current: [NativeDisplayBlock]) -> [NativeDisplayBlock] {
+        var merged = incoming
+        for block in current {
+            guard case .artifact(let artifact) = block, !merged.contains(where: { $0.id == block.id }),
+                  let card = merged.firstIndex(where: { $0.id == "task:" + artifact.id }),
+                  case .taskCard(let presentation) = merged[card],
+                  NativeTaskProjection.answerDocument(presentation) != nil else { continue }
+            merged.insert(block, at: card + 1)
+        }
+        return merged
     }
 
     var connectedNativeTaskIDs: Set<String> {

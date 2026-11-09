@@ -316,6 +316,16 @@ extension NativeTaskDisplayFixture {
                     "The saved answer lands in the Library once")
         let memory = store.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
         try require(memory.filter { if case .artifact = $0 { true } else { false } }.count == 1, "The open chat shows the document once")
+        store.applyNativeTaskUpdates([NativeTaskMessageUpdate(conversationID: origin.conversationID,
+                                                              messageID: origin.assistantMessageID, blocks: before)])
+        let afterStale = store.conversations.first { $0.id == origin.conversationID }?.messages
+            .first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
+        let staleDocuments = afterStale.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
+        let staleCard = card(afterStale)
+        try require(staleDocuments.count == 1 && staleDocuments.first?.id == staleCard?.id
+                    && afterStale.firstIndex { $0.id == "artifact:" + reference.id.uuidString } == afterStale.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 }
+                    && staleCard.map { NativeDisplayBlocksView.answerSaved($0, in: afterStale) } == true,
+                    "A stale update applied after a save keeps the document under its card and the save action hidden")
         _ = try repository.projectTask(id: reference.id, snapshot: finished)
         try require(try blocks().filter { if case .artifact = $0 { true } else { false } }.count == 1,
                     "A later refresh keeps the saved document")
