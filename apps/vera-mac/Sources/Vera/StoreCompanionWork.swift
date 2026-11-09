@@ -69,7 +69,9 @@ extension ChatStore {
     }
 
     func cancelCompanionWork() {
-        for reference in companionWorkReferences() where !reference.cancelRequested {
+        let stored = (try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? nil
+        let references = (stored ?? nativeTaskReferences).filter { $0.createRequest.workerType == "companion" }
+        for reference in references where !reference.cancelRequested {
             if let engine = nativeTaskLocalEngine, let remote = reference.remoteTaskID { _ = try? engine.store.cancel(remote) }
             cancelNativeTask(reference.id.uuidString)
         }

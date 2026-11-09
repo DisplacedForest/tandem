@@ -93,8 +93,10 @@ enum NativeCompanionLive {
                 store.answerNativeTask(reference.id.uuidString, choice: pick)
             }
             if snapshot.state.isTerminal {
+                store.openVeraThread()
                 for _ in 0..<10 where ((try? repository.artifactIDs(conversationID: reference.origin.conversationID)) ?? []).isEmpty {
                     store.reloadNativeTaskReferences()
+                    store.reconcileTaskArtifacts(conversationID: reference.origin.conversationID)
                     try? await Task.sleep(for: .seconds(1))
                 }
                 let result = (try? NativeTaskStore(database: repository.database).get(snapshot.id))?.result

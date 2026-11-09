@@ -237,13 +237,14 @@ extension SelfTest {
         try await companionStaleAuthority()
         try await companionRecovery()
         try await companionApprovedCrash()
+        try await companionRecoveredDecline()
         try await companionRemoteSuccessThenTimeout()
         try await companionReadRetries()
         try await companionCapsAndFences()
         try companionCommandRules()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
-        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -513,6 +514,33 @@ extension SelfTest {
         try require(last.state == .completed && NativeCompanionWorker.transcriptBytes(saved) <= NativeCompanionWorkerBudget.standard.transcriptBytes
                     && last.checkpoint.count < NativeTaskStore.maximumJSONBytes,
                     "Large tool results are bounded so the transcript and checkpoint stay inside their limits")
+    }
+
+    private static func companionRecoveredDecline() async throws {
+        let require = NativeTaskFixture.require
+        let harness = try NativeCompanionHarness(rules: [.networkSends: .ask, .trash: .act]) { messages in
+            if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                return NativeTaskGenerationCompletion(content: "", toolCalls: [
+                    NativeTaskGenerationToolCall(id: "call-water", name: "water_bed", arguments: "{\"bed\":\"north\"}"),
+                    NativeTaskGenerationToolCall(id: "call-weeds", name: "pull_weeds", arguments: "{\"bed\":\"north\"}"),
+                ], finishReason: "tool_calls")
+            }
+            return .text("Finished.")
+        }
+        let id = try harness.create()
+        let waiting = try await harness.runUntilSettled()
+        try harness.reply(waiting, "decline")
+        _ = try await harness.stepWithoutCommit()
+        try require((try harness.effects(id)).first?.state == .declined, "The decline was recorded before the crash")
+        _ = try harness.store.recover()
+        let after = try await harness.runUntilSettled()
+        try require(after.state == .completed && harness.service.count("water_bed") == 0 && harness.service.count("pull_weeds") == 0,
+                    "A decline recovered after a crash still stops the run before any later action")
+
+        var checkpoint = NativeCompanionCheckpoint()
+        checkpoint.note("Run a command: make build", "failed")
+        try require(NativeCompanionWorker.effectsLine(checkpoint).contains("may have changed") && !NativeCompanionWorker.effectsLine(checkpoint).contains("Nothing was changed"),
+                    "A failed command is reported as something that may have changed, never as nothing")
     }
 
     private static func companionRemoteSuccessThenTimeout() async throws {

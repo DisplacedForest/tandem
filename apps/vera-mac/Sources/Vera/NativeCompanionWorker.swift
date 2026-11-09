@@ -250,9 +250,17 @@ enum NativeCompanionWorker {
     }
 
     static func effectsLine(_ checkpoint: NativeCompanionCheckpoint) -> String {
-        let established = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }
-        guard !established.isEmpty else { return " Nothing was changed." }
-        return " Earlier in this work: " + established.map { $0.title }.joined(separator: "; ") + "."
+        let done = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title)
+        let unsure = checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
+        guard !done.isEmpty || !unsure.isEmpty else { return " Nothing was changed." }
+        var line = ""
+        if !done.isEmpty { line += " Earlier in this work: " + done.joined(separator: "; ") + "." }
+        if !unsure.isEmpty { line += " These may have changed something: " + unsure.joined(separator: "; ") + "." }
+        return line
+    }
+
+    static func remainingLimit(_ checkpoint: NativeCompanionCheckpoint, cap: Int, budget: NativeCompanionWorkerBudget) -> Int {
+        max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String) throws -> NativeTaskStepResult {
@@ -391,7 +399,7 @@ private struct NativeCompanionRun {
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: true)
         if checkpoint.rounds < 64, fits(prompt, tools: tools) {
-            let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-final", 0, prompt, tools, "none")
+            let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
@@ -488,7 +496,9 @@ private struct NativeCompanionRun {
         if let existing = try environment.ledger.record(taskID: task.id, idempotencyKey: key) {
             switch existing.state {
             case .completed:
-                checkpoint.answer(call, NativeCompanionWorker.bounded(existing.receipt ?? .null, bytes: definition.resultByteBudget))
+                checkpoint.note(title, NativeCompanionWorker.ranWithFailure(existing.receipt ?? .null) ? "failed" : "done")
+                checkpoint.answer(call, NativeCompanionWorker.bounded(existing.receipt ?? .null,
+                                                                      bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return nil
             case .uncertain:
                 return try await reconcile(existing, call: call, definition: definition, &checkpoint)
@@ -602,7 +612,7 @@ private struct NativeCompanionRun {
             switch observation {
             case .applied(let receipt):
                 checkpoint.note(title, "done")
-                checkpoint.answer(call, NativeCompanionWorker.bounded(receipt, bytes: definition.resultByteBudget))
+                checkpoint.answer(call, NativeCompanionWorker.bounded(receipt, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return nil
             case .absent:
                 checkpoint.note(title, "not done")
@@ -673,19 +683,16 @@ private struct NativeCompanionRun {
             switch record.state {
             case .completed:
                 checkpoint.note(title, "done")
-                checkpoint.answer(call, NativeCompanionWorker.bounded(record.receipt ?? .null, bytes: 16384))
+                checkpoint.answer(call, NativeCompanionWorker.bounded(record.receipt ?? .null,
+                                                                      bytes: NativeCompanionWorker.remainingLimit(checkpoint, cap: 16384, budget: environment.budget)))
                 return nil
             case .uncertain, .admitted:
                 return try await reconcile(record, call: call, definition: definition(named: call.name), &checkpoint)
-            case .declined:
-                checkpoint.note(title, "declined")
-                checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
-                return nil
-            case .proposed, .expired:
+            case .declined, .proposed, .expired:
                 break
             }
             let bound = NativeEffectProposal.bindsReply(reply, to: digest)
-            if action == "decline" {
+            if action == "decline" || record.state == .declined {
                 if record.state == .proposed { try environment.ledger.decline(digest: digest, decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply) }
                 checkpoint.note(title, "declined")
                 checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
