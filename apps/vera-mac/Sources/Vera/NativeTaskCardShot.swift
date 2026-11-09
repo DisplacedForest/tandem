@@ -118,6 +118,13 @@ struct NativeTaskCardShotSurface: View {
             result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
             result.choices = ["approve", "decline"]
             result.details = "Send a booking request\nmessage: Please book the workshop inspection for Tuesday morning and confirm by email.\nto: inspections@example.com"
+        case "task-card-answer":
+            result.title = "What's the weather in Chicago tomorrow?"
+            result.workerType = "companion"
+            result.status = .completed
+            result.milestone = ""
+            result.answer = "Tomorrow in Chicago looks **sunny**, with a high of 61 and a low of 45.\n\n- Light wind from the west\n- No rain expected"
+            result.canCancel = false
         case "task-card-offline":
             break
         case "task-card-document":
@@ -144,7 +151,7 @@ struct NativeTaskCardShotSurface: View {
 
     private var blocks: [NativeDisplayBlock] {
         var result: [NativeDisplayBlock] = [.taskCard(card)]
-        if card.status == .completed {
+        if card.status == .completed && card.answer == nil {
             result.append(.artifact(card.isDocument ? NativeTaskCardShot.document : NativeTaskCardShot.report))
         }
         return result

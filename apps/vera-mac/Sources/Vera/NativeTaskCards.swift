@@ -26,6 +26,16 @@ struct NativeTaskCardView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let answer = card.answer, card.status == .completed {
+                NativeArtifactMarkdown(text: answer).equatable()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .markdownImageProvider(NativeResearchImageProvider())
+                    .markdownInlineImageProvider(NativeResearchInlineImageProvider())
+                    .environment(\.openURL, OpenURLAction { url in
+                        NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
+                    })
+            }
             if let details = card.details, card.status == .needsInput {
                 let block = Text(details)
                     .font(.system(size: 11, design: .monospaced))

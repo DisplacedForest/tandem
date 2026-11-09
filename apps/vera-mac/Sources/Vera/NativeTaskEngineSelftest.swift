@@ -1269,6 +1269,40 @@ extension SelfTest {
         let display = try NativeTaskProjection.display(reference: saved, snapshot: saved.snapshot)
         try require(display.card.status == .completed && display.card.milestone == "Luma is blue." && display.artifact?.report == "The fictional moon Luma is blue.",
                     "A finished companion task shows its summary and report")
+        try require(display.card.answer == nil && display.artifact?.isDocument == true,
+                    "A stored result without a shape keeps the document")
+        func reshaped(_ shape: Any?, report: String? = nil) throws -> NativeTaskSnapshot {
+            var object = try JSONSerialization.jsonObject(with: nativeTaskEncoded(saved.snapshot!)) as! [String: Any]
+            var result = object["result"] as! [String: Any]
+            result["shape"] = shape
+            if let report { result["report"] = report }
+            object["result"] = result
+            return try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+        }
+        let answer = "The fictional moon Luma is blue.\n\nIt looks **brighter** in winter."
+        let inline = try NativeTaskProjection.display(reference: saved, snapshot: try reshaped("answer", report: answer))
+        try require(inline.artifact == nil && inline.card.answer == answer && inline.card.milestone.isEmpty
+                    && inline.card.status == .completed && inline.card.statusTitle == "Work done",
+                    "An answer shows in full on the card with no document")
+        let roundTrip = try JSONDecoder().decode([NativeDisplayBlock].self, from: nativeTaskEncoded([NativeDisplayBlock.taskCard(inline.card)]))
+        try require(roundTrip == [.taskCard(inline.card)], "The answer survives the saved display blocks")
+        var envelope = NativeMessageEnvelope(spokenText: "", displayBlocks: [])
+        envelope.reconcile(card: inline.card, artifact: inline.artifact)
+        try require(!envelope.displayBlocks.contains { if case .artifact = $0 { true } else { false } },
+                    "An answer adds nothing for the Library to pick up")
+        let emptyAnswer = try NativeTaskProjection.display(reference: saved, snapshot: try reshaped("answer", report: ""))
+        try require(emptyAnswer.artifact == nil && emptyAnswer.card.answer == nil && emptyAnswer.card.milestone == "Finished.",
+                    "An empty answer just says it finished")
+        let kept = try NativeTaskProjection.display(reference: saved, snapshot: try reshaped("document"))
+        try require(kept.artifact?.isDocument == true && kept.card.answer == nil && kept.card.milestone == "Luma is blue.",
+                    "A document shape keeps the document")
+        for invalid: Any in ["Answer", "memo", "", 1] {
+            do {
+                _ = try NativeTaskProjection.display(reference: saved, snapshot: try reshaped(invalid))
+                throw NativeTaskFixture.Failure.assertion("An unknown result shape must be refused")
+            } catch is NativeTaskHTTPError {
+            } catch is DecodingError {}
+        }
         await secondRun.stop()
 
         let placeholderCounter = NativeTaskEngineCounter()

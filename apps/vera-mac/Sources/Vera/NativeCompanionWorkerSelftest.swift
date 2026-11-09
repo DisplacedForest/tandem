@@ -250,7 +250,8 @@ extension SelfTest {
         try companionCommandRules()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
-        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        try companionShape()
+        print("  companion worker OK (answer or document shape, fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -280,6 +281,7 @@ extension SelfTest {
         let done = try await harness.runUntilSettled()
         let result = try harness.result(done)
         try require(done.state == .completed && result["kind"] as? String == "companion_report", "The run ends with a companion report")
+        try require(result["shape"] as? String == "answer", "A short reply to a plain assignment is stored as an answer")
         for request in harness.model.allRequests {
             try require(request.count >= 2 && request[0].role == "system" && request[1].role == "user"
                         && request[1].content.hasPrefix("Assignment:\n"), "Every request opens with the worker framing and the assignment")
@@ -290,6 +292,38 @@ extension SelfTest {
         try require(checkpoint.transcript.contains { $0.role == "tool" } && checkpoint.threadID == harness.thread.current,
                     "The transcript lives in the checkpoint, bound to the companion thread")
         try require(try harness.effects(id).map(\.state) == [.declined], "The ledger records the declined proposal and nothing else")
+    }
+
+    private static func companionShape() throws {
+        let require = NativeTaskFixture.require
+        let decide = NativeCompanionShape.decide
+        try require(decide("What's the weather in Chicago tomorrow?", "Tomorrow in Chicago: sunny, high of 61, low of 45.") == "answer",
+                    "A short reply is an answer")
+        try require(decide("Write me a doc about composting", "Composting turns scraps into soil.") == "document",
+                    "Asking for a doc makes a document even when the text is short")
+        for assignment in ["Draft a reply to the landlord", "Make a packing checklist", "Put together an itinerary for Rome",
+                           "Give me a WRITE-UP of the meeting", "A quick write up of the trip", "Send me the writeups",
+                           "Outline the talk", "Plans for Saturday", "Turn this into a report", "Two documents, please",
+                           "Update the docs", "Plan dinner"] {
+            try require(NativeCompanionShape.asksToKeep(assignment), "\(assignment) asks for something to keep")
+        }
+        for assignment in ["What's the nearest planet to the sun?", "Find a doctor near me", "Is the docket full?",
+                           "Did the reporter call back?", "Check the planetarium hours", "How drafty is the attic?"] {
+            try require(!NativeCompanionShape.asksToKeep(assignment) && decide(assignment, "Short reply.") == "answer",
+                        "\(assignment) is not a request for a document")
+        }
+        try require(decide("What happened today?", String(repeating: "a", count: 1501)) == "document"
+                    && decide("What happened today?", String(repeating: "a", count: 1500)) == "answer",
+                    "A reply over 1,500 characters becomes a document")
+        try require(decide("Summarize the week", "Here is the week.\n\n## Monday\n\nQuiet.") == "document"
+                    && decide("Summarize the week", "# Week") == "document", "A Markdown heading makes a document")
+        try require(decide("Summarize the week", "#hashtag and ####### seven are not headings") == "answer",
+                    "A hash without a following space or past six is not a heading")
+        try require(decide("Compare the two", "| Name | Price |\n|---|---|\n| A | 3 |") == "document"
+                    && decide("Compare the two", "Name | Price\n:--- | ---:\nA | 3") == "document",
+                    "A Markdown table makes a document")
+        try require(decide("Compare the two", "A is cheaper.\n\n---\n\nB lasts longer. Pick A | B.") == "answer",
+                    "A rule line or a stray pipe is not a table")
     }
 
     private static func companionProactiveRefusesWrites() async throws {
