@@ -24,12 +24,9 @@ import os
 import uuid
 
 import aiohttp
-from fastapi import APIRouter
 
 from . import vein_engine
 from . import pulse_store as store
-
-router = APIRouter()
 
 def _ha() -> tuple[str, str]:
     """(url, token) from the integration registry at call time; empty when disabled."""

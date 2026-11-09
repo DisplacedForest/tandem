@@ -426,6 +426,7 @@ def register(name: str, runner, monitor: bool = False, describe: str = "", node:
 
 
 def load_block_modules() -> list[str]:
+    from . import updates, weather
     try:
         names = sorted(os.listdir(BLOCKS_DIR))
     except OSError:
