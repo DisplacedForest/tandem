@@ -91,6 +91,7 @@ final class ChatStore: ObservableObject {
     var titleGenerationTimeout: Duration = .seconds(20)
     var generatesConversationTitles = false
     var capturesPreferences = false
+    @Published var preferencesRevision = 0
     var preferenceClassifier: (@Sendable (String) async -> String?)?
     var preferenceClassifierTimeout: Duration = .seconds(30)
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
@@ -2138,7 +2139,7 @@ final class ChatStore: ObservableObject {
         if !o.isEmpty { parts.append(o) }
         let answer = parts.joined(separator: ", ")
         guard !answer.isEmpty else { return }
-        if sendText(answer) {
+        if sendText(answer, answersAsk: true) {
             conversations[ci].messages[mi].answered = true
             conversations[ci].messages[mi].answerText = answer
         }
@@ -2147,7 +2148,7 @@ final class ChatStore: ObservableObject {
     @discardableResult
     func sendText(
         _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil,
-        conversationID: String? = nil
+        conversationID: String? = nil, answersAsk: Bool = false
     ) -> Bool {
         guard let turnRepository, let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
@@ -2176,6 +2177,7 @@ final class ChatStore: ObservableObject {
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
         turn.dotContext = dotContext(for: id, requestText: text)
+        if answersAsk { turn.answersAsk = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])

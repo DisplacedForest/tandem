@@ -418,6 +418,38 @@ enum NativePreferenceRecognizer {
         value.range(of: pattern, options: .regularExpression) != nil
     }
 
+    static func statement(for check: NativePreferenceCheck) -> String? {
+        var uses: [String] = []
+        for character in check.forbidChars ?? [] {
+            switch character {
+            case emDash: uses.append("em dashes")
+            case enDash: uses.append("en dashes as dashes")
+            case "!": uses.append("exclamation marks")
+            default: uses.append("\"" + character + "\"")
+            }
+        }
+        if check.forbidEmoji == true { uses.append("emoji") }
+        var parts: [String] = []
+        if !uses.isEmpty { parts.append("Don't use " + list(uses) + ".") }
+        let phrases = (check.forbidPhrases ?? []).map { "\"" + $0 + "\"" }
+        if !phrases.isEmpty { parts.append("Don't say " + list(phrases) + ".") }
+        if let limit = check.maxCharacters { parts.append("Keep every reply under \(limit) characters.") }
+        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "))
+    }
+
+    static func proposal(for text: String, check: NativePreferenceCheck) -> NativePreferenceProposal? {
+        guard let statement = statement(for: check) else { return nil }
+        let value = NativePreferenceDetector.folded(text)
+        let hard = matches(value, "(?<![a-z'])(never|always|no more|don't|dont|do not|stop)(?![a-z'])")
+        return NativePreferenceProposal(statement: statement, kind: .style, strength: hard ? .hard : .standing, check: check)
+    }
+
+    private static func list(_ items: [String]) -> String {
+        guard items.count > 1 else { return items.first ?? "" }
+        if items.count == 2 { return items[0] + " or " + items[1] }
+        return items.dropLast().joined(separator: ", ") + ", or " + (items.last ?? "")
+    }
+
     private static func mentions(_ value: String, _ character: String) -> Bool {
         let escaped = NSRegularExpression.escapedPattern(for: character)
         let quoted = "[\"'\u{201C}\u{2018}(]" + escaped + "[\"'\u{201D}\u{2019})]"
@@ -566,12 +598,17 @@ enum NativePreferenceCapture {
         }
         guard NativePreferenceDetector.hits(request.text) else { return .none }
         let raw = await classify(request.text)
-        guard var proposal = NativePreferenceClassifier.parse(raw) else {
+        let recognized = NativePreferenceRecognizer.check(for: request.text)
+        var proposal: NativePreferenceProposal
+        if let classified = NativePreferenceClassifier.parse(raw) {
+            proposal = classified
+            proposal.check = NativePreferenceCheck.merge(deterministic: recognized, classifier: classified.check)
+        } else if let recognized, let fallback = NativePreferenceRecognizer.proposal(for: request.text, check: recognized) {
+            proposal = fallback
+        } else {
             try? store.recordNoCapture(key)
             return .none
         }
-        proposal.check = NativePreferenceCheck.merge(deterministic: NativePreferenceRecognizer.check(for: request.text),
-                                                     classifier: proposal.check)
         let id: String
         do {
             id = try store.saveCaptured(proposal, quote: request.text, key: key)

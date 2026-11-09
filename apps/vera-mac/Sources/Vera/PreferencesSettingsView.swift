@@ -47,6 +47,7 @@ struct PreferencesSettingsView: View {
                 }
             }
             .onAppear { reload(preferences) }
+            .onChange(of: store.preferencesRevision) { reload(preferences) }
         } else {
             Label("Local storage is unavailable, so preferences cannot be edited.", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12)).foregroundStyle(.orange)

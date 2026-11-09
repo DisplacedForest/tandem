@@ -19,7 +19,7 @@ extension ChatStore {
     }
 
     static func preferenceCaptureRequest(for turn: NativeConversationTurn, text: String) -> NativePreferenceCaptureRequest? {
-        guard turn.mode == .chat, turn.companionEvent == nil,
+        guard turn.mode == .chat, turn.companionEvent == nil, turn.answersAsk != true,
               let current = turn.history.lastIndex(where: { $0.id == turn.userMessageID }),
               turn.history[current].role == Message.Role.user.rawValue else { return nil }
         let written = turn.history[current].text
@@ -44,6 +44,11 @@ extension ChatStore {
         } else {
             classify = { _ in nil }
         }
-        return await NativePreferenceCapture.run(request, store: store, classify: classify)
+        let outcome = await NativePreferenceCapture.run(request, store: store, classify: classify)
+        switch outcome {
+        case .saved, .removed: preferencesRevision += 1
+        case .none, .failed, .removalFailed: break
+        }
+        return outcome
     }
 }
