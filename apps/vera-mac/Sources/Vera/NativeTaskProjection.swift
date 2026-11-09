@@ -160,6 +160,12 @@ enum NativeTaskProjection {
         return (card, nil)
     }
 
+    static func answerDocument(_ card: NativeTaskCardPresentation) -> NativeResearchArtifact? {
+        guard card.isCompanion, card.status == .completed,
+              let answer = card.answer?.trimmingCharacters(in: .whitespacesAndNewlines), !answer.isEmpty else { return nil }
+        return NativeResearchArtifact(id: card.id, title: card.title, report: answer, sources: [], kind: "document")
+    }
+
     static func documentProgress(_ checkpoint: NativeTaskCheckpoint) -> String? {
         let planned = checkpoint.outline.count
         guard planned > 0 else { return nil }

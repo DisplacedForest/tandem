@@ -99,6 +99,24 @@ extension ChatStore {
         Task { await nativeTaskTracker.retry(id) }
     }
 
+    func saveNativeTaskAnswer(_ value: String) {
+        guard let id = UUID(uuidString: value), let projection = repository as? any NativeTaskProjectionRepository,
+              let updates = try? projection.saveTaskAnswer(id: id) else { return }
+        for update in updates {
+            guard let artifact = update.blocks.first(where: { $0.id == "artifact:" + value }) else { continue }
+            if let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }),
+               let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) {
+                var blocks = conversations[conversation].messages[message].displayBlocks
+                if !blocks.contains(where: { $0.id == artifact.id }) {
+                    let card = blocks.firstIndex(where: { $0.id == "task:" + value }).map { $0 + 1 } ?? blocks.endIndex
+                    blocks.insert(artifact, at: card)
+                    conversations[conversation].messages[message].displayBlocks = blocks
+                }
+            }
+            recordTaskArtifacts([artifact], conversationID: update.conversationID, messageID: update.messageID.uuidString)
+        }
+    }
+
     func answerNativeTask(_ value: String, choice: String) {
         guard let id = UUID(uuidString: value), let nativeTaskTracker else { return }
         Task { await nativeTaskTracker.decide(id, choice: choice) }

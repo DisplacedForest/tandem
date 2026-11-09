@@ -56,9 +56,10 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var pending: NativeCompanionPending?
     var effects: [NativeCompanionEffectNote] = []
     var nativeUnavailable: String?
+    var keep: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects
+        case transcript, rounds, calls, attempt, pending, effects, keep
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
@@ -315,7 +316,7 @@ enum NativeCompanionWorker {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
-    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String) throws -> NativeTaskStepResult {
+    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil) throws -> NativeTaskStepResult {
         let body = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters))
         let firstParagraph = body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
         let summary = String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters))
@@ -323,156 +324,11 @@ enum NativeCompanionWorker {
         var done = checkpoint
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": $0.title, "outcome": $0.outcome] }
+        var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
+                                     "summary": summary, "sources": [Any](), "effects": effects]
+        if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
-            result: try NativeTaskStore.canonical(["kind": "companion_report", "query": assignment, "title": title, "report": body,
-                                                   "summary": summary, "sources": [Any](), "effects": effects,
-                                                   "shape": NativeCompanionShape.decide(assignment: assignment, text: body)]),
-            event: "completed")
-    }
-}
-
-enum NativeCompanionShape {
-    static let answer = "answer"
-    static let document = "document"
-    static let inlineLimit = 1500
-
-    private static let creationVerbs: Set<String> = ["write", "create", "make", "prepare", "compose", "produce", "build"]
-    private static let pairedVerbs: [(String, String)] = [("put", "together"), ("draw", "up"), ("write", "up")]
-    private static let imperativeVerbs: Set<String> = ["draft", "outline", "plan"]
-    private static let outputNouns: Set<String> = [
-        "document", "documents", "doc", "docs", "write-up", "write-ups", "writeup", "writeups", "report", "reports",
-        "plan", "plans", "draft", "drafts", "outline", "outlines", "itinerary", "itineraries", "checklist", "checklists",
-        "list", "lists", "email", "emails", "letter", "letters", "memo", "memos",
-    ]
-    private static let phraseBreaks: Set<String> = [
-        "about", "of", "for", "to", "from", "in", "on", "with", "and", "or", "but", "that", "which", "if", "when",
-        "sure", "it", "this", "these", "those", "them", "up", "together", "into",
-    ]
-    private static let negations: Set<String> = ["don't", "dont", "not", "never", "no", "without", "stop", "skip"]
-    private static let politeOpeners: [[String]] = [["please"], ["can", "you"], ["could", "you"], ["would", "you"], ["will", "you"]]
-    private static let savedObjects: Set<String> = ["this", "it", "that", "them", "these", "as"]
-    private static let nounReach = 5
-
-    private static let token = try! NSRegularExpression(pattern: "[\\p{L}\\p{N}]+(?:['\\-][\\p{L}\\p{N}]+)*")
-    private static let heading = try! NSRegularExpression(pattern: "^ {0,3}#{1,6}[ \\t]")
-    private static let setextUnderline = try! NSRegularExpression(pattern: "^ {0,3}(?:={3,}|-{3,})[ \\t]*$")
-    private static let tableSeparator = try! NSRegularExpression(
-        pattern: "^[ \\t]*\\|?[ \\t]*:?-+:?[ \\t]*(?:\\|[ \\t]*:?-+:?[ \\t]*)*\\|?[ \\t]*$")
-    private static let fence = try! NSRegularExpression(pattern: "^ {0,3}(`{3,}|~{3,})")
-
-    static func decide(assignment: String, text: String) -> String {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if asksToKeep(assignment) || body.count > inlineLimit || looksLikeDocument(body) { return document }
-        return answer
-    }
-
-    static func asksToKeep(_ assignment: String) -> Bool {
-        let normalized = assignment.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
-        return normalized.components(separatedBy: CharacterSet(charactersIn: ".!?;\n")).contains { clause in
-            let words = tokens(clause)
-            return startsWithImperative(words) || words.indices.contains { index in
-                !negated(words, before: index) && (createsOutput(words, at: index) || keepsResult(words, at: index))
-            }
-        }
-    }
-
-    static func hasHeading(_ text: String) -> Bool { scan(text).heading }
-
-    static func hasTable(_ text: String) -> Bool { scan(text).table }
-
-    static func looksLikeDocument(_ text: String) -> Bool {
-        let found = scan(text)
-        return found.heading || found.table
-    }
-
-    private static func tokens(_ text: String) -> [String] {
-        token.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
-            Range(match.range, in: text).map { String(text[$0]) }
-        }
-    }
-
-    private static func startsWithImperative(_ words: [String]) -> Bool {
-        var rest = ArraySlice(words)
-        for _ in 0..<2 {
-            guard let opener = politeOpeners.first(where: { rest.starts(with: $0) }) else { break }
-            rest = rest.dropFirst(opener.count)
-        }
-        return rest.first.map(imperativeVerbs.contains) ?? false
-    }
-
-    private static func negated(_ words: [String], before index: Int) -> Bool {
-        words[max(0, index - 2)..<index].contains { negations.contains($0) }
-            || (index >= 2 && words[index - 2] == "do" && words[index - 1] == "not")
-    }
-
-    private static func createsOutput(_ words: [String], at index: Int) -> Bool {
-        let start: Int
-        if pairedVerbs.contains(where: { index + 1 < words.count && words[index] == $0.0 && words[index + 1] == $0.1 }) {
-            start = index + 2
-        } else if creationVerbs.contains(words[index]) {
-            start = index + 1
-        } else {
-            return false
-        }
-        for position in start..<min(words.count, start + nounReach) {
-            if outputNouns.contains(words[position]) { return true }
-            if phraseBreaks.contains(words[position]) { return false }
-        }
-        return false
-    }
-
-    private static func keepsResult(_ words: [String], at index: Int) -> Bool {
-        let next = index + 1 < words.count ? words[index + 1] : ""
-        switch words[index] {
-        case "turn":
-            return words[(index + 1)..<min(words.count, index + 5)].contains("into")
-        case "save":
-            return savedObjects.contains(next)
-                || (next == "the" && index + 2 < words.count && ["answer", "result", "results", "reply"].contains(words[index + 2]))
-                || (next == "a" && index + 2 < words.count && words[index + 2] == "copy")
-        case "keep":
-            return next == "a" && index + 2 < words.count && words[index + 2] == "copy"
-        default:
-            return false
-        }
-    }
-
-    private static func scan(_ text: String) -> (heading: Bool, table: Bool) {
-        var foundHeading = false
-        var foundTable = false
-        var openFence: Character?
-        var previous = ""
-        for raw in text.components(separatedBy: "\n") {
-            let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
-            if let marker = firstGroup(fence, line) {
-                if let current = openFence {
-                    if marker.first == current { openFence = nil }
-                } else {
-                    openFence = marker.first
-                }
-                previous = ""
-                continue
-            }
-            if openFence != nil { continue }
-            if matches(heading, line) { foundHeading = true }
-            if matches(setextUnderline, line), !previous.trimmingCharacters(in: .whitespaces).isEmpty,
-               !matches(setextUnderline, previous) {
-                foundHeading = true
-            }
-            if line.contains("|"), matches(tableSeparator, line) { foundTable = true }
-            previous = line
-        }
-        return (foundHeading, foundTable)
-    }
-
-    private static func firstGroup(_ expression: NSRegularExpression, _ text: String) -> String? {
-        guard let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[range])
-    }
-
-    private static func matches(_ expression: NSRegularExpression, _ text: String) -> Bool {
-        expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+            result: try NativeTaskStore.canonical(result), event: "completed")
     }
 }
 
@@ -597,7 +453,7 @@ private struct NativeCompanionRun {
         checkpoint.segmentRounds += 1
         checkpoint.automaticRetryRound = nil
         if completion.toolCalls.isEmpty {
-            return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
+            return try await conclude(&checkpoint, text: completion.content)
         }
         let ceiling = NativeTaskStore.maximumJSONBytes - 65536
         func recordable(_ message: NativeTaskGenerationMessage) throws -> Bool {
@@ -623,10 +479,38 @@ private struct NativeCompanionRun {
             let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
+                return try await conclude(&checkpoint, text: completion.content)
             }
         }
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: fallbackReport(checkpoint))
+        let fallback = fallbackReport(checkpoint)
+        return try await conclude(&checkpoint, text: fallback)
+    }
+
+    func conclude(_ checkpoint: inout NativeCompanionCheckpoint, text: String) async throws -> NativeTaskStepResult {
+        if checkpoint.keep == nil {
+            checkpoint.keep = try await classify(checkpoint)
+        }
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text, keep: checkpoint.keep)
+    }
+
+    func classify(_ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
+        let phase = "work-\(min(checkpoint.rounds, 63))"
+        let attempt = checkpoint.attempt + NativeCompanionShape.classifierAttempt
+        let messages = NativeCompanionShape.classifierMessages(assignment: dot.assignment)
+        let model = model
+        do {
+            let completion = try await NativeCompanionWorker.withDeadline(NativeCompanionShape.classifierSeconds, stopped: stopProbe) {
+                try await model(phase, attempt, 0, messages, nil, "none")
+            }
+            guard completion.toolCalls.isEmpty else { return false }
+            return NativeCompanionShape.parseKeep(completion.content)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch is NativeCompanionStopped {
+            throw CancellationError()
+        } catch {
+            return false
+        }
     }
 
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
@@ -929,7 +813,7 @@ private struct NativeCompanionRun {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
                 let text = "\(context.assistantName) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
-                return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
+                return try await conclude(&checkpoint, text: text)
             }
             guard action == "approve", bound else {
                 checkpoint.pending = pending
@@ -973,7 +857,7 @@ private struct NativeCompanionRun {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
                 let text = "\(context.assistantName) stopped at your request. It could not confirm whether this happened: \(title)."
-                return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
+                return try await conclude(&checkpoint, text: text)
             default:
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) can't tell whether this happened: \(title). Please check, then say what you found.",

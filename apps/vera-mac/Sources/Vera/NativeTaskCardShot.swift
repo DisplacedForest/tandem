@@ -178,7 +178,7 @@ struct NativeTaskCardShotSurface: View {
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",
-                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in })
+                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in }, onSaveAnswer: { _ in })
             }
             HStack {
                 Spacer()

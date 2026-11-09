@@ -17,6 +17,7 @@ enum NativeTaskDisplayFixture {
         try NativeTaskDisplaySelfTest.run()
         try NativeTaskEventsSelfTest.run()
         try await decisionChoices()
+        try await savedAnswer()
         let require = NativeTaskFixture.require
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -269,6 +270,58 @@ enum NativeTaskDisplayFixture {
 }
 
 extension NativeTaskDisplayFixture {
+    static func savedAnswer() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: "What's the weather in Chicago tomorrow?", mode: "manual"))
+        let origin = try NativeTaskFixture.origin(repository)
+        let reference = try repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil)
+        let body = try JSONSerialization.jsonObject(with: reference.body) as! [String: Any]
+        let answer = "Sunny and mild, with a high of 61."
+        let finished = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical([
+            "id": UUID().uuidString, "worker_type": "companion", "payload": body["payload"]!, "state": "completed",
+            "checkpoint": [:], "cancel_requested": false, "generation": 1, "updated_at": 1.0,
+            "result": ["kind": "companion_report", "query": reference.request.objective, "report": answer, "sources": [],
+                       "summary": answer, "title": reference.request.objective, "shape": "answer"],
+        ]))
+        _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: finished)
+        _ = try repository.projectTask(id: reference.id, snapshot: finished)
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
+                              attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        await store.connect()
+        store.select(origin.conversationID)
+        func blocks() throws -> [NativeDisplayBlock] {
+            try repository.messages(conversationID: origin.conversationID).first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
+        }
+        func card(_ blocks: [NativeDisplayBlock]) -> NativeTaskCardPresentation? {
+            blocks.compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
+        }
+        let before = try blocks()
+        try require(card(before)?.answer == answer && !before.contains { if case .artifact = $0 { true } else { false } }
+                    && !store.artifactRecords.contains { $0.conversationID == origin.conversationID },
+                    "An answer starts on the card with nothing in the Library")
+        store.saveNativeTaskAnswer(reference.id.uuidString)
+        store.saveNativeTaskAnswer(reference.id.uuidString)
+        let after = try blocks()
+        let documents = after.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
+        try require(documents.count == 1 && documents.first?.isDocument == true && documents.first?.report == answer
+                    && documents.first?.title == card(after)?.title && card(after)?.answer == answer,
+                    "Saving keeps the answer on the card and adds one document titled like the card")
+        let records = store.artifactRecords.filter { $0.conversationID == origin.conversationID }
+        try require(records.count == 1 && records.first?.kind == .document && records.first?.title == card(after)?.title,
+                    "The saved answer lands in the Library once")
+        let memory = store.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
+        try require(memory.filter { if case .artifact = $0 { true } else { false } }.count == 1, "The open chat shows the document once")
+        _ = try repository.projectTask(id: reference.id, snapshot: finished)
+        try require(try blocks().filter { if case .artifact = $0 { true } else { false } }.count == 1,
+                    "A later refresh keeps the saved document")
+        try require(try repository.saveTaskAnswer(id: UUID()).isEmpty, "Saving an unknown task does nothing")
+    }
+
     static func decisionChoices() async throws {
         let require = NativeTaskFixture.require
         let legacy = try JSONDecoder().decode(NativeTaskDecision.self,
