@@ -72,9 +72,6 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
     let view = arguments.firstIndex(of: "--view").map { arguments[$0 + 1] } ?? "chat"
     let appearance = arguments.firstIndex(of: "--appearance").map { arguments[$0 + 1] } ?? "dark"
     Shot.render(view: view, to: path, appearance: appearance)
-} else if let idx = arguments.firstIndex(of: "--voice-e2e"), idx + 1 < arguments.count {
-    // DEBUG-ONLY: stream a sample wav through the real Wyoming servers, print transcript.
-    NativeApplicationEntry.runAsync { await SelfTest.voiceE2E(wavPath: arguments[idx + 1]) }
 } else if arguments.contains("--reminders-serve") {
     // DEBUG-ONLY: start the in-app EventKit bridge and block, to validate the native
     // Reminders path (macOS prompt + HTTP contract) independent of the UI.

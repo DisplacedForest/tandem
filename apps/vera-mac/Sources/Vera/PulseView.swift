@@ -240,23 +240,12 @@ struct PulseCardTile: View {
 
 // MARK: - Ambient veins (pinned chips + vein overlay)
 
-/// Map an ambient-card severity to a rank/color. `notice`/nil read as neutral (accent), `alert`
-/// amber, `critical` red — the chip dot and status-tile marker use these.
-func pulseSeverityRank(_ s: String?) -> Int {
-    switch s { case "critical": return 3; case "alert": return 2; case "notice": return 1; default: return 0 }
-}
-
 func pulseSeverityColor(_ s: String?) -> Color {
     switch s {
     case "critical": return .red
     case "alert": return Theme.accentGlow
     default: return Theme.accent
     }
-}
-
-/// The highest severity among a vein's cards (drives the chip dot color), or nil if none.
-func pulseMaxSeverity(_ cards: [PulseCard]) -> String? {
-    cards.max(by: { pulseSeverityRank($0.severity) < pulseSeverityRank($1.severity) })?.severity
 }
 
 /// The pinned ambient-vein chips above the research feed. A vein is quiet ("nominal") until it has

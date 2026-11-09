@@ -34,7 +34,6 @@ enum ConversationShot {
             Message(role: .assistant, text: view.contains("streaming") ? "Gather the materials you already have, then" : "Gather the materials you already have and write down the main question you want to answer.", state: view.contains("streaming") ? .streaming : .complete)
         ]
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
-        let voice = VoiceSession.preview(state: .idle, level: 0, store: store)
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let hosting = NSHostingView(rootView: VStack(spacing: 0) {
             ScrollView {
@@ -49,7 +48,7 @@ enum ConversationShot {
             }
             ComposerField().padding(24).frame(maxWidth: ConversationMetrics.columnWidth)
         }
-            .environmentObject(store).environmentObject(config).environmentObject(voice)
+            .environmentObject(store).environmentObject(config)
             .frame(width: size.width, height: size.height)
             .background(Theme.conversationBackground).environment(\.colorScheme, scheme))
         hosting.frame = NSRect(origin: .zero, size: size)

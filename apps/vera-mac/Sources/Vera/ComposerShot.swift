@@ -20,13 +20,12 @@ enum ComposerShot {
             store.draft = "Compare the two plans.\nInclude the materials, timing and tradeoffs.\nKeep the final recommendation brief."
         }
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
-        let voice = VoiceSession.preview(state: .idle, level: 0, store: store)
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let hosting = NSHostingView(rootView: Group {
             if view.contains("project-empty") { EmptyChatView() }
             else { ComposerField() }
         }
-            .environmentObject(store).environmentObject(config).environmentObject(voice)
+            .environmentObject(store).environmentObject(config)
             .padding(24).frame(width: size.width, height: size.height)
             .background(Theme.conversationBackground).environment(\.colorScheme, scheme))
         hosting.frame = NSRect(origin: .zero, size: size)

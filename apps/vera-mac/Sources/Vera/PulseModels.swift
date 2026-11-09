@@ -23,8 +23,6 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .agentic: "point.3.connected.trianglepath.dotted"
         }
     }
-    var rail: AppSection { self == .agentic ? .pulse : self }
-    static let railOrder: [AppSection] = [.vera, .chat, .projects, .artifacts, .scheduled, .integrations, .pulse, .memory]
     var placeholder: (title: String, note: String)? {
         switch self {
         case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")
