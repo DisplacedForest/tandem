@@ -249,3 +249,117 @@ def test_approve_records_only_on_success(monkeypatch: pytest.MonkeyPatch) -> Non
     res = asyncio.run(actions._apply_item(item, "approve"))
     assert res == {"ok": False, "state": "pending", "error": "nope"}
     assert len(calls) == 1
+
+
+def _fresh(script: str) -> None:
+    import pathlib
+    import subprocess
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+ORDERED_VERBS = ("authoring.skill_upsert", "ha.service", "knowledge.set", "knowledge.delete", "knowledge.reverify",
+         "knowledge.promote", "kitchen.grocy_adjust", "kitchen.mealie_import", "health.check",
+         "overseerr_request", "docker.update")
+ORDERED_JOBS = ("pulse", "home_model", "home_reconcile", "home_digest", "conversation_extract", "weight_fit",
+        "knowledge_groom")
+
+
+def test_actions_alone_serves_the_full_catalog_in_order() -> None:
+    _fresh(
+        "import asyncio, sys\n"
+        "from routers import actions\n"
+        "assert 'main' not in sys.modules\n"
+        "out = asyncio.run(actions.registry())\n"
+        "assert list(out) == ['verbs', 'ha_allowlist'], list(out)\n"
+        f"assert [v['verb'] for v in out['verbs']] == list({ORDERED_VERBS!r}), out['verbs']\n"
+        f"assert list(actions.EXECUTORS) == list({ORDERED_VERBS!r})\n"
+        "assert 'main' not in sys.modules\n"
+    )
+
+
+def test_actions_alone_stages_a_verb_owned_elsewhere() -> None:
+    _fresh(
+        "from routers import actions\n"
+        "ok, err = actions._stage('nope.verb', {}, 'test', 'test', None, None)\n"
+        "assert ok is None and err['error'] == 'unknown verb nope.verb', err\n"
+        "ok, err = actions._stage('knowledge.reverify', {}, 'test', 'test', None, None)\n"
+        "assert err is not None and err['error'] != 'unknown verb knowledge.reverify', err\n"
+        "ok, err = actions._stage('docker.update', {}, 'test', 'test', None, None)\n"
+        "assert err is not None and err['error'] != 'unknown verb docker.update', err\n"
+    )
+
+
+def test_autonomy_lookup_alone_sees_every_verb() -> None:
+    _fresh(
+        "from routers import action_spec\n"
+        "assert action_spec.is_autonomous('kitchen.mealie_import') is True\n"
+        "assert action_spec.is_autonomous('docker.update') is False\n"
+        f"assert list(action_spec.SPEC) == list({ORDERED_VERBS!r})\n"
+    )
+
+
+def test_decision_hooks_run_when_only_actions_is_imported() -> None:
+    _fresh(
+        "import asyncio\n"
+        "from routers import actions\n"
+        "seen = []\n"
+        "item = {'media_type': 'movie', 'tmdb_id': 7, 'title': 'T',\n"
+        "        'action': {'verb': 'knowledge.promote', 'args': {'type': 'appliance'}}}\n"
+        "import routers.media_store as ms, routers.groom_common as gc\n"
+        "ms.record = lambda *a: seen.append(('media',) + a)\n"
+        "gc.suppress = lambda *a, **k: seen.append(('suppress',) + a)\n"
+        "out = asyncio.run(actions._apply_item(item, 'skip'))\n"
+        "assert out == {'ok': True, 'state': 'skipped'}, out\n"
+        "assert seen == [('media', 'movie', 7, 'T', 'skipped'),\n"
+        "                ('suppress', 'knowledge', 'promote', 'appliance')], seen\n"
+    )
+
+
+def test_scheduler_alone_knows_every_built_in_job() -> None:
+    _fresh(
+        "import sys\n"
+        "from routers import scheduler\n"
+        "assert 'main' not in sys.modules\n"
+        f"assert [j for j in scheduler._registry() if not j.startswith('vein_')] == list({ORDERED_JOBS!r})\n"
+        "reason = scheduler._gate_reason('home_model')\n"
+        "assert reason and 'home_modeling' in reason, reason\n"
+        "assert scheduler._gate_reason('pulse') is None\n"
+        f"assert list(scheduler.builtin_jobs()) == list({ORDERED_JOBS!r})\n"
+    )
+
+
+def test_gate_lookup_first_still_finds_the_gate() -> None:
+    _fresh(
+        "from routers import scheduler\n"
+        "reason = scheduler._gate_reason('home_digest')\n"
+        "assert reason and 'home_modeling' in reason, reason\n"
+    )
+
+
+def test_workflow_trigger_alone_recognizes_built_in_jobs() -> None:
+    _fresh(
+        "from routers import workflow_triggers\n"
+        "assert workflow_triggers.job_for('pulse') == 'pulse'\n"
+        "assert workflow_triggers.job_for('knowledge_groom') == 'knowledge_groom'\n"
+        "assert workflow_triggers.job_for('not_a_job') is None\n"
+    )
+
+
+def test_importing_main_registers_everything_without_the_lifespan() -> None:
+    _fresh(
+        "import main\n"
+        "from routers import actions, scheduler\n"
+        f"assert list(actions.EXECUTORS) == list({ORDERED_VERBS!r})\n"
+        f"assert list(scheduler.REGISTRY) == list({ORDERED_JOBS!r})\n"
+    )
+
+
+def test_each_owner_imports_alone() -> None:
+    for name in ("authoring", "conversation_extract", "home", "home_model", "home_reconcile", "kitchen",
+                 "knowledge_actions", "knowledge_groom", "learn", "media_curation", "overseerr", "pulse",
+                 "updates", "actions", "scheduler", "action_spec", "builtin_capabilities"):
+        _fresh(f"import routers.{name}\n")

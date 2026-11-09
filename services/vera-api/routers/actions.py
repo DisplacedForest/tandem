@@ -26,6 +26,7 @@ EXECUTORS = action_registry.EXECUTORS
 
 def _stage(verb, args, source, actor, chat_id, message_id):
     """Validate + preview + stage. Returns (ok_dict, error_dict)."""
+    action_registry.load_builtin()
     s = spec.SPEC.get(verb)
     if not s or verb not in EXECUTORS:
         return None, {"ok": False, "error": f"unknown verb {verb}"}
@@ -61,6 +62,7 @@ class Commit(BaseModel):
 
 async def _run_token(token: str) -> dict:
     """Execute a staged action once (idempotent). Returns {applied, result?, error?}."""
+    action_registry.load_builtin()
     p = store.get(token)
     if not p:
         return {"applied": False, "error": "unknown or expired token"}
@@ -153,6 +155,7 @@ async def auto(a: Auto):
 async def registry():
     """The verb catalog — the discovery surface clients and tools read instead of
     hardcoding verbs, arg shapes, or the HA allowlist (which is deployment config)."""
+    action_registry.load_builtin()
     return {"verbs": [{"verb": k, "risk": v["risk"], "reversible": v["reversible"],
                        "autonomous": bool(v.get("autonomous")),
                        "summary": v.get("summary", ""), "args": v.get("args", "{}")}
@@ -249,6 +252,7 @@ async def propose_digest(p: ProposeDigest):
 async def _apply_item(item: dict, decision: str) -> dict:
     """Apply one decision to a digest item (mutates item['state'] in place). Both decisions persist
     to the media store so a skipped title never resurfaces and an approved one isn't re-proposed."""
+    action_registry.load_builtin()
     if decision == "skip":
         item["state"] = "skipped"
         for hook in action_registry.ITEM_DECISION_HOOKS:

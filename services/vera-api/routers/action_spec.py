@@ -1,8 +1,9 @@
-from .action_registry import SPEC
+from .action_registry import SPEC, load_builtin
 
 
 def is_autonomous(verb: str) -> bool:
     """True only for verbs explicitly enrolled in the free (no-confirm) lane."""
+    load_builtin()
     return bool((SPEC.get(verb) or {}).get("autonomous"))
 
 

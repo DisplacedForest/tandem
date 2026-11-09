@@ -75,9 +75,15 @@ def _vein_gate(kind: str):
     return gate
 
 
+def builtin_jobs() -> dict[str, tuple[str, str, object]]:
+    from . import builtin_capabilities
+    builtin_capabilities.load()
+    return REGISTRY
+
+
 def _registry() -> dict[str, tuple[str, str, object]]:
     from . import vein_engine
-    return {**REGISTRY, **vein_engine.dynamic_jobs()}
+    return {**builtin_jobs(), **vein_engine.dynamic_jobs()}
 
 
 # ---- effective config (env > db > registry) ------------------------------------------
@@ -97,6 +103,7 @@ def _env_enabled(job_id: str) -> bool | None:
 
 
 def _gate_reason(job_id: str) -> str | None:
+    builtin_jobs()
     gate = GATES.get(job_id)
     if gate is None and job_id.startswith("vein_"):
         gate = _vein_gate(job_id.removeprefix("vein_"))
@@ -380,7 +387,7 @@ async def start():
     global _task
     if ENABLED and _task is None:
         _task = asyncio.create_task(_loop())
-        log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(REGISTRY), _POLL_SECONDS, TZ)
+        log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(builtin_jobs()), _POLL_SECONDS, TZ)
     elif not ENABLED:
         log.info("scheduler disabled (SCHEDULER_ENABLED=false)")
 

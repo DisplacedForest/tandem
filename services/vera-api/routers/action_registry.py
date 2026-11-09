@@ -64,3 +64,8 @@ def register_catalog_extra(key: str, fn: Callable[[], Any]) -> None:
     if key == "verbs" or key in CATALOG_EXTRAS:
         raise ValueError(f"catalog key already registered: {key}")
     CATALOG_EXTRAS[key] = fn
+
+
+def load_builtin() -> None:
+    from . import builtin_capabilities
+    builtin_capabilities.load()
