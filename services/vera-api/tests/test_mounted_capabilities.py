@@ -2,7 +2,7 @@ import main
 
 
 def route_paths() -> set[str]:
-    return {getattr(route, 'path', '') for route in main.app.routes}
+    return set(main.app.openapi()['paths'])
 
 
 def test_callerless_capabilities_are_not_registered() -> None:
