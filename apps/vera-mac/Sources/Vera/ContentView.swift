@@ -488,7 +488,7 @@ struct EmptyChatView: View {
     }
 
     private let starters = [
-        "What's on today?", "Check the kitchen", "What's the weather?", "Research a topic for me",
+        "What's on today?", "What's the weather?", "Research a topic for me",
     ]
 
     var body: some View {
