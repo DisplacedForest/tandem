@@ -195,7 +195,11 @@ enum NativeDocumentWorker {
     }
 
     static func promptSize(_ messages: [NativeTaskGenerationMessage]) -> Int {
-        messages.reduce(0) { $0 + $1.role.utf8.count + $1.content.utf8.count + 32 }
+        messages.reduce(0) { total, message in
+            var content = Substring(message.content)
+            if let block = message.content.range(of: "\n\n" + NativePreferencePrompt.header) { content = message.content[..<block.lowerBound] }
+            return total + message.role.utf8.count + content.utf8.count + 32
+        }
     }
 
     private static func jsonObject(in response: String) -> [String: Any]? {

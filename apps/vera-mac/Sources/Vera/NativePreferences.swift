@@ -137,13 +137,25 @@ struct NativePreferenceCaptureRecord: Equatable, Sendable {
     let preferenceID: String?
 }
 
-struct NativePreferenceStoreError: Error, LocalizedError {
-    let detail: String
-    var errorDescription: String? { detail }
+struct NativePreferenceStoreError: Error, LocalizedError, Equatable {
+    enum Reason: Equatable, Sendable { case empty, tooLong, full, missing, stopped, failed }
+    let reason: Reason
+
+    var errorDescription: String? {
+        switch reason {
+        case .empty: return "Write the preference first."
+        case .tooLong: return "Keep a preference under \(NativePreferenceStore.maximumStatementCharacters) characters."
+        case .full: return "You have \(NativePreferenceStore.maximumActive) preferences. Remove one to add another."
+        case .missing: return "That preference is no longer saved."
+        case .stopped: return "The answer stopped before the preference saved."
+        case .failed: return "The preference did not save."
+        }
+    }
 }
 
 struct NativePreferenceStore: Sendable {
-    static let maximumStatementCharacters = 240
+    static let maximumStatementCharacters = 300
+    static let maximumActive = 40
     static let maximumQuoteCharacters = 2_000
 
     let database: DatabaseQueue
@@ -182,11 +194,28 @@ struct NativePreferenceStore: Sendable {
         return String(scalars).split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    static func cleanStatement(_ statement: String) -> String? {
-        let single = statement.split(whereSeparator: \.isNewline).joined(separator: " ")
-        let collapsed = single.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard !collapsed.isEmpty, collapsed.count <= maximumStatementCharacters, !normalized(collapsed).isEmpty else { return nil }
-        return collapsed
+    static func collapsed(_ statement: String) -> String {
+        statement.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+    }
+
+    static func cleanStatement(_ statement: String, truncating: Bool = false) -> String? {
+        var value = collapsed(statement)
+        if value.count > maximumStatementCharacters {
+            guard truncating else { return nil }
+            let prefix = String(value.prefix(maximumStatementCharacters + 1))
+            guard let space = prefix.lastIndex(of: " ") else { return nil }
+            value = String(prefix[..<space])
+            while let last = value.last, ",;:".contains(last) || last == " " { value.removeLast() }
+        }
+        guard !value.isEmpty, !normalized(value).isEmpty else { return nil }
+        return value
+    }
+
+    static func settingsStatement(_ statement: String) throws -> String {
+        let value = collapsed(statement)
+        guard !value.isEmpty, !normalized(value).isEmpty else { throw NativePreferenceStoreError(reason: .empty) }
+        guard value.count <= maximumStatementCharacters else { throw NativePreferenceStoreError(reason: .tooLong) }
+        return value
     }
 
     private static func decode(_ row: Row) -> NativePreference? {
@@ -238,11 +267,11 @@ struct NativePreferenceStore: Sendable {
     @discardableResult
     func add(statement: String, kind: NativePreferenceKind = .other, strength: NativePreferenceStrength = .standing,
              check: NativePreferenceCheck? = nil, quote: String? = nil, sourceTurnID: String? = nil, now: Date = Date()) throws -> NativePreference {
-        guard let clean = Self.cleanStatement(statement) else { throw NativePreferenceStoreError(detail: "A preference needs a short statement.") }
+        let clean = try Self.settingsStatement(statement)
         let id = try database.write { db in
             try Self.upsert(db, statement: clean, kind: kind, strength: strength, check: check, quote: quote, sourceTurnID: sourceTurnID, now: now)
         }
-        guard let stored = try preference(id: id) else { throw NativePreferenceStoreError(detail: "The preference did not save.") }
+        guard let stored = try preference(id: id) else { throw NativePreferenceStoreError(reason: .failed) }
         return stored
     }
 
@@ -260,6 +289,7 @@ struct NativePreferenceStore: Sendable {
                 """, arguments: [statement, kind.rawValue, strength.rawValue, spec, boundedQuote, now.timeIntervalSince1970, id])
             return id
         }
+        guard rows.count < maximumActive else { throw NativePreferenceStoreError(reason: .full) }
         let id = UUID().uuidString
         try db.execute(sql: """
             INSERT INTO native_preferences(id, quote, source_turn_id, statement, kind, strength, check_spec, status, created_at, updated_at)
@@ -271,20 +301,28 @@ struct NativePreferenceStore: Sendable {
 
     @discardableResult
     func updateStatement(id: String, statement: String, now: Date = Date()) throws -> NativePreference {
-        guard let clean = Self.cleanStatement(statement) else { throw NativePreferenceStoreError(detail: "A preference needs a short statement.") }
-        let spec = NativePreferenceRecognizer.check(for: clean)?.encodedJSON()
+        let clean = try Self.settingsStatement(statement)
+        let recomputed = NativePreferenceRecognizer.check(for: clean, settings: true)?.encodedJSON()
         try database.write { db in
             let key = Self.normalized(clean)
+            guard let current = try String.fetchOne(db, sql: "SELECT statement FROM native_preferences WHERE id = ? AND status = 'active'",
+                                                    arguments: [id]) else { throw NativePreferenceStoreError(reason: .missing) }
+            let unchanged = Self.normalized(current) == key
             let rows = try Row.fetchAll(db, sql: "SELECT id, statement FROM native_preferences WHERE status = 'active' AND id != ?", arguments: [id])
             if let duplicate = rows.first(where: { Self.normalized($0["statement"] ?? "") == key }), let other: String = duplicate["id"] {
                 try db.execute(sql: "UPDATE native_preferences SET status = 'removed', updated_at = ? WHERE id = ?",
                                arguments: [now.timeIntervalSince1970, other])
             }
-            try db.execute(sql: "UPDATE native_preferences SET statement = ?, check_spec = ?, updated_at = ? WHERE id = ? AND status = 'active'",
-                           arguments: [clean, spec, now.timeIntervalSince1970, id])
-            guard db.changesCount == 1 else { throw NativePreferenceStoreError(detail: "That preference is no longer saved.") }
+            if unchanged {
+                try db.execute(sql: "UPDATE native_preferences SET statement = ?, updated_at = ? WHERE id = ? AND status = 'active'",
+                               arguments: [clean, now.timeIntervalSince1970, id])
+            } else {
+                try db.execute(sql: "UPDATE native_preferences SET statement = ?, check_spec = ?, updated_at = ? WHERE id = ? AND status = 'active'",
+                               arguments: [clean, recomputed, now.timeIntervalSince1970, id])
+            }
+            guard db.changesCount == 1 else { throw NativePreferenceStoreError(reason: .missing) }
         }
-        guard let stored = try preference(id: id) else { throw NativePreferenceStoreError(detail: "That preference is no longer saved.") }
+        guard let stored = try preference(id: id) else { throw NativePreferenceStoreError(reason: .missing) }
         return stored
     }
 
@@ -335,9 +373,11 @@ struct NativePreferenceStore: Sendable {
         }
     }
 
-    func saveCaptured(_ proposal: NativePreferenceProposal, quote: String, key: NativePreferenceCaptureKey, now: Date = Date()) throws -> String {
-        guard let clean = Self.cleanStatement(proposal.statement) else { throw NativePreferenceStoreError(detail: "The preference statement is empty.") }
+    func saveCaptured(_ proposal: NativePreferenceProposal, quote: String, key: NativePreferenceCaptureKey, now: Date = Date(),
+                      stillCurrent: (Database) throws -> Bool = { _ in true }) throws -> String {
+        guard let clean = Self.cleanStatement(proposal.statement, truncating: true) else { throw NativePreferenceStoreError(reason: .empty) }
         return try database.write { db in
+            guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
             let id = try Self.upsert(db, statement: clean, kind: proposal.kind, strength: proposal.strength, check: proposal.check,
                                      quote: quote, sourceTurnID: key.turnID, now: now)
             try Self.insertCapture(db, key, outcome: .saved, preferenceID: id, now: now)
@@ -345,11 +385,13 @@ struct NativePreferenceStore: Sendable {
         }
     }
 
-    func removeCaptured(preferenceID: String, key: NativePreferenceCaptureKey, now: Date = Date()) throws {
+    func removeCaptured(preferenceID: String, key: NativePreferenceCaptureKey, now: Date = Date(),
+                        stillCurrent: (Database) throws -> Bool = { _ in true }) throws {
         try database.write { db in
+            guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
             try db.execute(sql: "UPDATE native_preferences SET status = 'removed', updated_at = ? WHERE id = ? AND status = 'active'",
                            arguments: [now.timeIntervalSince1970, preferenceID])
-            guard db.changesCount == 1 else { throw NativePreferenceStoreError(detail: "The preference was not active.") }
+            guard db.changesCount == 1 else { throw NativePreferenceStoreError(reason: .missing) }
             try Self.insertCapture(db, key, outcome: .removed, preferenceID: preferenceID, now: now)
         }
     }
@@ -398,24 +440,131 @@ enum NativePreferenceDetector {
 enum NativePreferenceRecognizer {
     static let emDash = "\u{2014}"
     static let enDash = "\u{2013}"
+    private static let chatNegators = ["never", "don't", "dont", "do not", "stop", "no more", "quit"]
+    private static let settingsNegators = chatNegators + ["no", "avoid", "without"]
+    private static let verbs = ["respond with", "responding with", "reply with", "replying with", "answer with", "use", "using", "say",
+                                "saying", "add", "adding", "put", "putting", "write", "writing", "include", "including", "type", "typing", "with"]
+    private static let phraseVerbs: Set<String> = ["say", "saying", "use", "using", "write", "writing", "type", "typing"]
 
-    static func check(for text: String) -> NativePreferenceCheck? {
-        let value = NativePreferenceDetector.folded(text)
-        var chars: [String] = []
-        let genericDashes = matches(value, "\\b(long |any )?dashes\\b") && !matches(value, "\\b(en|em)[- ]?dashes\\b")
-        if genericDashes || matches(value, "\\b(em[- ]?|long )dash(es)?\\b") || mentions(value, emDash) { chars.append(emDash) }
-        if genericDashes || matches(value, "\\ben[- ]?dash(es)?\\b") || mentions(value, enDash) { chars.append(enDash) }
-        if matches(value, "\\bexclamation") || mentions(value, "!") { chars.append("!") }
-        var check = NativePreferenceCheck()
-        if !chars.isEmpty { check.forbidChars = chars }
-        if matches(value, "\\bemojis?\\b|\\bemoticons?\\b") { check.forbidEmoji = true }
-        let phrases = quotedPhrases(text)
-        if !phrases.isEmpty { check.forbidPhrases = phrases }
-        return check.isEmpty || !check.isValid ? nil : check
+    struct Prohibition: Equatable, Sendable {
+        let negator: String
+        let verb: String?
+        let object: String
+    }
+
+    static func clauses(_ text: String) -> [String] {
+        let normalized = text.replacingOccurrences(of: "(?<=[A-Za-z])\u{2019}(?=[A-Za-z])", with: "'", options: .regularExpression)
+        var result: [String] = []
+        func keep(_ clause: String) {
+            let trimmed = clause.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { result.append(trimmed) }
+        }
+        for line in normalized.split(omittingEmptySubsequences: true, whereSeparator: \.isNewline) {
+            let characters = Array(line.trimmingCharacters(in: .whitespaces))
+            if characters.first == ">" { continue }
+            var current = ""
+            var closing: Character?
+            for (index, character) in characters.enumerated() {
+                let previous: Character = index > 0 ? characters[index - 1] : " "
+                let next: Character = index + 1 < characters.count ? characters[index + 1] : " "
+                if let close = closing {
+                    current.append(character)
+                    if character == close && (close != "'" || !next.isLetter) { closing = nil }
+                    continue
+                }
+                switch character {
+                case "\"": closing = "\""
+                case "\u{201C}": closing = "\u{201D}"
+                case "\u{2018}": closing = "\u{2019}"
+                case "'" where !previous.isLetter: closing = "'"
+                case ".", ";", "?", "!" where next.isWhitespace || index + 1 == characters.count:
+                    if character != "?" { keep(current) }
+                    current = ""
+                    continue
+                default: break
+                }
+                current.append(character)
+            }
+            keep(current)
+        }
+        return result
+    }
+
+    static func prohibitions(in text: String, settings: Bool = false) -> [Prohibition] {
+        let negators = (settings ? settingsNegators : chatNegators).sorted { $0.count > $1.count }
+            .map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+        let lead = "^(?:(?:please|and|also|ok|okay|so|now|from now on)[\\s,]+)*(" + negators + ")(?:\\s+(?:ever|again|please))*\\s+(.+)$"
+        guard let expression = try? NSRegularExpression(pattern: lead, options: [.caseInsensitive]) else { return [] }
+        var found: [Prohibition] = []
+        for clause in clauses(text) {
+            guard let match = expression.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)),
+                  let negatorRange = Range(match.range(at: 1), in: clause), let restRange = Range(match.range(at: 2), in: clause) else { continue }
+            let negator = clause[negatorRange].lowercased()
+            let rest = String(clause[restRange])
+            if let (verb, object) = splitVerb(rest) {
+                found.append(Prohibition(negator: negator, verb: verb, object: object))
+            } else {
+                found.append(Prohibition(negator: negator, verb: nil, object: rest))
+            }
+        }
+        return found
+    }
+
+    private static func splitVerb(_ rest: String) -> (String, String)? {
+        for verb in verbs.sorted(by: { $0.count > $1.count }) {
+            let pattern = "^" + NSRegularExpression.escapedPattern(for: verb) + "(?![A-Za-z'])\\s*(.*)$"
+            guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                  let match = expression.firstMatch(in: rest, range: NSRange(rest.startIndex..., in: rest)),
+                  let range = Range(match.range(at: 1), in: rest) else { continue }
+            return (verb, String(rest[range]))
+        }
+        return nil
     }
 
     private static func matches(_ value: String, _ pattern: String) -> Bool {
-        value.range(of: pattern, options: .regularExpression) != nil
+        value.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static let quotedSpan = "(?:^|(?<=[\\s(]))[\"\u{201C}\u{2018}']([^\"\u{201C}\u{201D}\\n]{1,120}?)[\"\u{201D}\u{2019}'](?=$|[\\s.,;:!?)])"
+
+    private static func quotedSpans(_ object: String) -> [(Range<String.Index>, String)] {
+        guard let expression = try? NSRegularExpression(pattern: quotedSpan) else { return [] }
+        return expression.matches(in: object, range: NSRange(object.startIndex..., in: object)).compactMap { match in
+            guard let whole = Range(match.range, in: object), let inner = Range(match.range(at: 1), in: object) else { return nil }
+            return (whole, object[inner].trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    private static let itemStart = "^(?:the |any |those |these |all |more |your )?(?:em[- ]?dash|en[- ]?dash|long dash|dashes|exclamation|emoji|emoticon|[\"\u{201C}\u{2018}']|\u{2014}|\u{2013}|!)"
+    private static let singles: Set<String> = [emDash, enDash, "!"]
+
+    static func check(for text: String, settings: Bool = false) -> NativePreferenceCheck? {
+        var chars: [String] = []
+        var emoji = false
+        var phrases: [String] = []
+        func addChar(_ value: String) { if !chars.contains(value) { chars.append(value) } }
+        for prohibition in prohibitions(in: text, settings: settings) {
+            if prohibition.verb == nil, !matches(prohibition.object, itemStart) { continue }
+            let spans = quotedSpans(prohibition.object)
+            var bare = prohibition.object
+            for (range, inner) in spans.reversed() where !singles.contains(inner) { bare.replaceSubrange(range, with: " ") }
+            let genericDashes = matches(bare, "(?<!em )(?<!en )(?<!em-)(?<!en-)(?<!long )\\bdashes\\b")
+            if genericDashes || matches(bare, "\\b(?:em[- ]?|long )dash(?:es)?\\b") || bare.contains(emDash) { addChar(emDash) }
+            if genericDashes || matches(bare, "\\ben[- ]?dash(?:es)?\\b") || bare.contains(enDash) { addChar(enDash) }
+            if matches(bare, "\\bexclamation") || bare.contains("!") { addChar("!") }
+            if matches(bare, "\\bemojis?\\b|\\bemoticons?\\b") { emoji = true }
+            if let verb = prohibition.verb, phraseVerbs.contains(verb.lowercased()) {
+                for (_, inner) in spans where !inner.isEmpty && !singles.contains(inner) && !phrases.contains(inner)
+                    && phrases.count < NativePreferenceCheck.maximumItems && inner.count <= NativePreferenceCheck.maximumPhraseCharacters {
+                    phrases.append(inner)
+                }
+            }
+        }
+        var check = NativePreferenceCheck()
+        if !chars.isEmpty { check.forbidChars = chars }
+        if emoji { check.forbidEmoji = true }
+        if !phrases.isEmpty { check.forbidPhrases = phrases }
+        return check.isEmpty || !check.isValid ? nil : check
     }
 
     static func statement(for check: NativePreferenceCheck) -> String? {
@@ -434,13 +583,13 @@ enum NativePreferenceRecognizer {
         let phrases = (check.forbidPhrases ?? []).map { "\"" + $0 + "\"" }
         if !phrases.isEmpty { parts.append("Don't say " + list(phrases) + ".") }
         if let limit = check.maxCharacters { parts.append("Keep every reply under \(limit) characters.") }
-        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "))
+        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "), truncating: true)
     }
 
     static func proposal(for text: String, check: NativePreferenceCheck) -> NativePreferenceProposal? {
         guard let statement = statement(for: check) else { return nil }
-        let value = NativePreferenceDetector.folded(text)
-        let hard = matches(value, "(?<![a-z'])(never|always|no more|don't|dont|do not|stop)(?![a-z'])")
+        let negators = Set(prohibitions(in: text).map(\.negator))
+        let hard = !negators.isDisjoint(with: ["never", "don't", "dont", "do not", "stop", "no more"])
         return NativePreferenceProposal(statement: statement, kind: .style, strength: hard ? .hard : .standing, check: check)
     }
 
@@ -448,26 +597,6 @@ enum NativePreferenceRecognizer {
         guard items.count > 1 else { return items.first ?? "" }
         if items.count == 2 { return items[0] + " or " + items[1] }
         return items.dropLast().joined(separator: ", ") + ", or " + (items.last ?? "")
-    }
-
-    private static func mentions(_ value: String, _ character: String) -> Bool {
-        let escaped = NSRegularExpression.escapedPattern(for: character)
-        let quoted = "[\"'\u{201C}\u{2018}(]" + escaped + "[\"'\u{201D}\u{2019})]"
-        let named = "\\b(use|using|with|write|writing|no|any|the)\\s+" + escaped + "(?=$|\\s|[.,;:])"
-        return matches(value, quoted) || matches(value, named)
-    }
-
-    static func quotedPhrases(_ text: String) -> [String] {
-        let pattern = "(?i)(?:never|don't|dont|do not|stop|quit|no more)\\s+(?:say|saying|use|using|write|writing)\\s+(?:the (?:word|phrase)s?\\s+)?[\"'\u{201C}\u{2018}]([^\"\u{201C}\u{201D}\n]{1,120}?)[\"'\u{201D}\u{2019}](?=$|[\\s.,;:!?)])"
-        let folded = text.replacingOccurrences(of: "\u{2019}(?=[a-z])", with: "'", options: .regularExpression)
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
-        var phrases: [String] = []
-        for match in expression.matches(in: folded, range: NSRange(folded.startIndex..., in: folded)) {
-            guard let range = Range(match.range(at: 1), in: folded) else { continue }
-            let phrase = folded[range].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !phrase.isEmpty, !phrases.contains(phrase), phrases.count < NativePreferenceCheck.maximumItems { phrases.append(phrase) }
-        }
-        return phrases
     }
 }
 
@@ -491,6 +620,19 @@ enum NativePreferenceClassifier {
         return [NativeChatMessage(role: "system", content: system), NativeChatMessage(role: "user", content: body)]
     }
 
+    enum Classification: Equatable, Sendable {
+        case preference(NativePreferenceProposal)
+        case rejected
+        case invalid
+    }
+
+    static func classify(_ raw: String?) -> Classification {
+        guard let raw, let object = jsonObject(raw), object.count == 1, object.keys.first == "preference",
+              let value = object["preference"] else { return .invalid }
+        if value is NSNull { return .rejected }
+        return parse(raw).map(Classification.preference) ?? .invalid
+    }
+
     static func parse(_ raw: String?) -> NativePreferenceProposal? {
         guard let raw, let object = jsonObject(raw), object.count == 1, object.keys.first == "preference" else { return nil }
         guard let value = object["preference"], !(value is NSNull) else { return nil }
@@ -502,7 +644,7 @@ enum NativePreferenceClassifier {
               let check = NativePreferenceCheck.validated(preference["check"]) else { return nil }
         let dashless = statement
             .replacingOccurrences(of: "\\s*" + NativePreferenceRecognizer.emDash + "\\s*", with: ", ", options: .regularExpression)
-        guard let clean = NativePreferenceStore.cleanStatement(dashless) else { return nil }
+        guard let clean = NativePreferenceStore.cleanStatement(dashless, truncating: true) else { return nil }
         return NativePreferenceProposal(statement: clean, kind: kind, strength: strength, check: check)
     }
 
@@ -552,6 +694,7 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
     case none
     case saved(String)
     case failed
+    case full
     case removed(String)
     case removalFailed
 
@@ -562,6 +705,8 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
             return "The person just set a preference and it is saved: \(NativePreferencePrompt.sentence(statement)) Follow it from now on. Acknowledge it in a few words."
         case .failed:
             return "The person asked for a preference but it could not be saved. Tell them plainly it was not saved."
+        case .full:
+            return "The person asked for a preference but it was not saved because their preference list is full. Tell them the list is full and they can remove one in Settings."
         case .removed(let statement):
             return "The preference \(NativePreferencePrompt.quoted(statement)) was removed at the person's request. Confirm briefly."
         case .removalFailed:
@@ -578,7 +723,9 @@ struct NativePreferenceCaptureRequest: Sendable {
 
 enum NativePreferenceCapture {
     static func run(_ request: NativePreferenceCaptureRequest, store: NativePreferenceStore,
-                    classify: @Sendable (String) async -> String?) async -> NativePreferenceCaptureOutcome {
+                    classify: @Sendable (String) async -> String?,
+                    isCurrent: @Sendable () async -> Bool = { true },
+                    stillCurrent: @escaping @Sendable (Database) throws -> Bool = { _ in true }) async -> NativePreferenceCaptureOutcome {
         let key = request.key
         if let existing = try? store.capture(turnID: key.turnID, userMessageID: key.userMessageID) {
             return replayed(existing, store: store)
@@ -588,8 +735,11 @@ enum NativePreferenceCapture {
                   let earlier = try? store.capture(conversationID: key.conversationID, userMessageID: previous),
                   earlier.outcome == .saved, let preferenceID = earlier.preferenceID,
                   let target = try? store.preference(id: preferenceID), target.status == .active else { return .none }
+            guard !Task.isCancelled, await isCurrent() else { return .none }
             do {
-                try store.removeCaptured(preferenceID: preferenceID, key: key)
+                try store.removeCaptured(preferenceID: preferenceID, key: key, stillCurrent: stillCurrent)
+            } catch let error as NativePreferenceStoreError where error.reason == .stopped {
+                return .none
             } catch {
                 return .removalFailed
             }
@@ -598,20 +748,30 @@ enum NativePreferenceCapture {
         }
         guard NativePreferenceDetector.hits(request.text) else { return .none }
         let raw = await classify(request.text)
+        guard !Task.isCancelled, await isCurrent() else { return .none }
         let recognized = NativePreferenceRecognizer.check(for: request.text)
         var proposal: NativePreferenceProposal
-        if let classified = NativePreferenceClassifier.parse(raw) {
+        switch NativePreferenceClassifier.classify(raw) {
+        case .preference(let classified):
             proposal = classified
             proposal.check = NativePreferenceCheck.merge(deterministic: recognized, classifier: classified.check)
-        } else if let recognized, let fallback = NativePreferenceRecognizer.proposal(for: request.text, check: recognized) {
-            proposal = fallback
-        } else {
+        case .rejected:
             try? store.recordNoCapture(key)
             return .none
+        case .invalid:
+            guard let recognized, let fallback = NativePreferenceRecognizer.proposal(for: request.text, check: recognized) else {
+                try? store.recordNoCapture(key)
+                return .none
+            }
+            proposal = fallback
         }
         let id: String
         do {
-            id = try store.saveCaptured(proposal, quote: request.text, key: key)
+            id = try store.saveCaptured(proposal, quote: request.text, key: key, stillCurrent: stillCurrent)
+        } catch let error as NativePreferenceStoreError where error.reason == .stopped {
+            return .none
+        } catch let error as NativePreferenceStoreError where error.reason == .full {
+            return .full
         } catch {
             if let existing = try? store.capture(turnID: key.turnID, userMessageID: key.userMessageID) {
                 return replayed(existing, store: store)
@@ -634,10 +794,12 @@ enum NativePreferenceCapture {
 
 enum NativePreferencePrompt {
     static let header = "The person's standing preferences. Follow every one in everything you write:"
-    static let maximumCharacters = 2_000
+    static let maximumCharacters = header.count
+        + NativePreferenceStore.maximumActive * (NativePreferenceStore.maximumStatementCharacters + 3)
 
     static func section(_ statements: [String]) -> String? {
-        let lines = statements.compactMap { NativePreferenceStore.cleanStatement($0) }
+        let lines = statements.compactMap { NativePreferenceStore.cleanStatement($0, truncating: true) }
+            .prefix(NativePreferenceStore.maximumActive)
         guard !lines.isEmpty else { return nil }
         return ([header] + lines.map { "- " + $0 }).joined(separator: "\n")
     }

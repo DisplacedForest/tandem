@@ -35,12 +35,17 @@ struct PreferencesSettingsView: View {
                         }
                     }
                 }
-                HStack(spacing: 8) {
-                    TextField("Never use em dashes", text: $draft)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { add(preferences) }
-                    Button("Add") { add(preferences) }
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if rows.count >= NativePreferenceStore.maximumActive {
+                    Text(NativePreferenceStoreError(reason: .full).localizedDescription)
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                } else {
+                    HStack(spacing: 8) {
+                        TextField("Never use em dashes", text: $draft)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { add(preferences) }
+                        Button("Add") { add(preferences) }
+                            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
                 if let problem {
                     Text(problem).font(.system(size: 11)).foregroundStyle(.orange)
@@ -67,9 +72,11 @@ struct PreferencesSettingsView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {
-            try preferences.add(statement: text, check: NativePreferenceRecognizer.check(for: text))
+            try preferences.add(statement: text, check: NativePreferenceRecognizer.check(for: text, settings: true))
             draft = ""
             reload(preferences)
+        } catch let error as NativePreferenceStoreError {
+            problem = error.localizedDescription
         } catch {
             problem = "That preference couldn't save."
         }
@@ -80,6 +87,8 @@ struct PreferencesSettingsView: View {
             try preferences.updateStatement(id: row.id, statement: editingText)
             editingID = nil
             reload(preferences)
+        } catch let error as NativePreferenceStoreError {
+            problem = error.localizedDescription
         } catch {
             problem = "That change couldn't save."
         }
