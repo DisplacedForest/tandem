@@ -72,12 +72,6 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
     let view = arguments.firstIndex(of: "--view").map { arguments[$0 + 1] } ?? "chat"
     let appearance = arguments.firstIndex(of: "--appearance").map { arguments[$0 + 1] } ?? "dark"
     Shot.render(view: view, to: path, appearance: appearance)
-} else if arguments.contains("--reminders-serve") {
-    // DEBUG-ONLY: start the in-app EventKit bridge and block, to validate the native
-    // Reminders path (macOS prompt + HTTP contract) independent of the UI.
-    try? RemindersBridge.shared.start()
-    print("vera-reminders bridge serving on :\(RemindersBridge.shared.port), ctrl-c to stop")
-    NativeApplicationEntry.runAsync { while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) } }
 } else if arguments.contains("--openrouter-smoke") {
     NativeApplicationEntry.runAsync { await NativeProviderSmoke.run(arguments: arguments) }
 } else if arguments.contains("--provider-smoke-selftest") {
