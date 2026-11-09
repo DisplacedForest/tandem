@@ -299,18 +299,25 @@ extension SelfTest {
         let decide = NativeCompanionShape.decide
         try require(decide("What's the weather in Chicago tomorrow?", "Tomorrow in Chicago: sunny, high of 61, low of 45.") == "answer",
                     "A short reply is an answer")
-        try require(decide("Write me a doc about composting", "Composting turns scraps into soil.") == "document",
-                    "Asking for a doc makes a document even when the text is short")
-        for assignment in ["Draft a reply to the landlord", "Make a packing checklist", "Put together an itinerary for Rome",
-                           "Give me a WRITE-UP of the meeting", "A quick write up of the trip", "Send me the writeups",
-                           "Outline the talk", "Plans for Saturday", "Turn this into a report", "Two documents, please",
-                           "Update the docs", "Plan dinner"] {
-            try require(NativeCompanionShape.asksToKeep(assignment), "\(assignment) asks for something to keep")
+        for assignment in ["Write me a doc about composting", "Make me a shopping list", "Put together a packing list",
+                           "Write an email draft", "Draft a reply to Sam", "Write a summary document of this report",
+                           "Make a packing checklist", "Put together an itinerary for Rome", "Outline the talk",
+                           "Plan dinner for Friday", "Please draft a note to the landlord", "Can you outline the plot?",
+                           "Look up the hours. Plan the visit", "Draw up a checklist for the move",
+                           "Write up a report on the trip", "Turn this into a report", "Save this as a note",
+                           "Check the forecast and save it", "Save the answer", "Keep a copy of what you find",
+                           "Could you prepare a short memo for the team?", "Compose a letter to the school"] {
+            try require(NativeCompanionShape.asksToKeep(assignment) && decide(assignment, "Short reply.") == "document",
+                        "\(assignment) asks for something to keep")
         }
-        for assignment in ["What's the nearest planet to the sun?", "Find a doctor near me", "Is the docket full?",
-                           "Did the reporter call back?", "Check the planetarium hours", "How drafty is the attic?"] {
+        for assignment in ["Check the docs and tell me which port to use", "What's the plan for Saturday?", "Report back when done",
+                           "Summarize this report", "Don't write a doc, just tell me", "Do not make a list, just answer",
+                           "Read the itinerary and tell me when we land", "Find the draft and tell me who edited it last",
+                           "What's the nearest planet to the sun?", "Find a doctor near me", "Is the docket full?",
+                           "Did the reporter call back?", "Check the planetarium hours", "How drafty is the attic?",
+                           "Make sure the report went out", "Write to Sam about the plan", "Does the plan include lunch?"] {
             try require(!NativeCompanionShape.asksToKeep(assignment) && decide(assignment, "Short reply.") == "answer",
-                        "\(assignment) is not a request for a document")
+                        "\(assignment) is not a request for something to keep")
         }
         try require(decide("What happened today?", String(repeating: "a", count: 1501)) == "document"
                     && decide("What happened today?", String(repeating: "a", count: 1500)) == "answer",
@@ -319,11 +326,21 @@ extension SelfTest {
                     && decide("Summarize the week", "# Week") == "document", "A Markdown heading makes a document")
         try require(decide("Summarize the week", "#hashtag and ####### seven are not headings") == "answer",
                     "A hash without a following space or past six is not a heading")
+        try require(decide("Summarize the week", "The week\n===\n\nQuiet.") == "document"
+                    && decide("Summarize the week", "Intro.\n\nMonday\n---\nQuiet.") == "document",
+                    "Setext headings make a document")
+        try require(decide("Compare the two", "A is cheaper.\n\n---\n\nB lasts longer. Pick A | B.") == "answer"
+                    && decide("Compare the two", "---\nB lasts longer.") == "answer",
+                    "A rule line or a stray pipe is not a heading or a table")
         try require(decide("Compare the two", "| Name | Price |\n|---|---|\n| A | 3 |") == "document"
                     && decide("Compare the two", "Name | Price\n:--- | ---:\nA | 3") == "document",
                     "A Markdown table makes a document")
-        try require(decide("Compare the two", "A is cheaper.\n\n---\n\nB lasts longer. Pick A | B.") == "answer",
-                    "A rule line or a stray pipe is not a table")
+        try require(decide("How do I list files?", "Run this:\n\n```sh\n# list everything\nls -la\n```\n\nThat shows hidden files too.") == "answer"
+                    && decide("How do I list files?", "Try:\n~~~\n## not a heading\n~~~") == "answer",
+                    "A comment inside a fenced code block is not a heading")
+        try require(decide("Show the format", "Like this:\n```\n| a | b |\n|---|---|\n```") == "answer"
+                    && decide("Show the format", "```\ncode\n```\n# Real heading") == "document",
+                    "A table inside a fence is not a table, and the fence closes")
     }
 
     private static func companionProactiveRefusesWrites() async throws {

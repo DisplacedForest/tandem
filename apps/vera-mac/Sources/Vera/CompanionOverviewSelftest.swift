@@ -134,6 +134,15 @@ extension SelfTest {
         let reference = navigation.nativeTaskReferences.last!
         let item = CompanionOverviewModel.taskItem(card: try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card,
                                                   reference: reference, decision: nil, hasArtifact: true, date: Date())
+        let answered = NativeTaskCardPresentation(id: reference.id.uuidString, title: "Weather tomorrow", status: .completed,
+                                                  milestone: "", workerType: "companion", answer: "Sunny and mild.")
+        let answeredItem = CompanionOverviewModel.taskItem(card: answered, reference: reference, decision: nil, hasArtifact: false, date: Date())
+        var researched = answered
+        researched.workerType = "research"
+        let researchedItem = CompanionOverviewModel.taskItem(card: researched, reference: reference, decision: nil, hasArtifact: false, date: Date())
+        let documentItem = CompanionOverviewModel.taskItem(card: answered, reference: reference, decision: nil, hasArtifact: true, date: Date())
+        try require(answeredItem.state == "Work done" && researchedItem.state == "Research complete" && documentItem.state == "Ready to open",
+                    "Finished companion work without a document reads as work done")
         navigation.newConversation()
         let unrelatedID = navigation.selectedID
         let detail = navigation.companionActivityDetail(item)

@@ -30,11 +30,7 @@ struct NativeTaskCardView: View {
                 NativeArtifactMarkdown(text: answer).equatable()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .markdownImageProvider(NativeResearchImageProvider())
-                    .markdownInlineImageProvider(NativeResearchInlineImageProvider())
-                    .environment(\.openURL, OpenURLAction { url in
-                        NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
-                    })
+                    .safeReportContent()
             }
             if let details = card.details, card.status == .needsInput {
                 let block = Text(details)
@@ -189,11 +185,17 @@ struct NativeResearchReportView: View {
         }
         .frame(minWidth: 560, idealWidth: 700, minHeight: 420, idealHeight: 640)
         .background(Theme.bg)
-        .markdownImageProvider(NativeResearchImageProvider())
-        .markdownInlineImageProvider(NativeResearchInlineImageProvider())
-        .environment(\.openURL, OpenURLAction { url in
-            NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
-        })
+        .safeReportContent()
+    }
+}
+
+extension View {
+    func safeReportContent() -> some View {
+        markdownImageProvider(NativeResearchImageProvider())
+            .markdownInlineImageProvider(NativeResearchInlineImageProvider())
+            .environment(\.openURL, OpenURLAction { url in
+                NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
+            })
     }
 }
 

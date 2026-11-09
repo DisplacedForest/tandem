@@ -191,6 +191,7 @@ struct CompanionThreadPanel: View {
                     .markdownTextStyle { ForegroundColor(Theme.warmTextPrimary); FontSize(13) }
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                    .safeReportContent()
             }
             if item.canRetry || item.canStop {
                 HStack {
