@@ -6,21 +6,19 @@ import Combine
 final class TandemLogoPresence: ObservableObject {
     let controller: TandemMotionController
     private weak var store: ChatStore?
-    private weak var voice: VoiceSession?
     private var subscriptions: Set<AnyCancellable> = []
     private var snapshot: TandemLogoSnapshot?
     private var appActive = true
     private var launchPending = false
     private var activeTurn: TandemLogoTurnFocus?
 
-    init(store: ChatStore, voice: VoiceSession, controller: TandemMotionController = TandemMotionController()) {
+    init(store: ChatStore, controller: TandemMotionController = TandemMotionController()) {
         self.store = store
-        self.voice = voice
         self.controller = controller
     }
 
     func start() {
-        guard subscriptions.isEmpty, let store, let voice else { return }
+        guard subscriptions.isEmpty, let store else { return }
         appActive = NSApplication.shared.isActive
         launchPending = true
         snapshot = nil
@@ -37,9 +35,7 @@ final class TandemLogoPresence: ObservableObject {
         let storeChanges = store.$generating.map { _ in () }
             .merge(with: store.$selectedID.map { _ in () }, store.$pendingToolConfirmation.map { _ in () },
                         store.$turnConfirmations.map { _ in () })
-        let voiceChanges = voice.$state.removeDuplicates().map { _ in () }
-            .merge(with: voice.$isPlayingAudio.removeDuplicates().map { _ in () })
-        storeChanges.merge(with: voiceChanges)
+        storeChanges
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
             .store(in: &subscriptions)
@@ -129,10 +125,6 @@ final class TandemLogoPresence: ObservableObject {
                 case .none: break
                 }
             }
-        }
-        if let voice {
-            next.voiceCapturing = voice.state == .listening
-            next.voicePlaying = voice.isPlayingAudio
         }
         let previous = snapshot
         snapshot = next

@@ -79,7 +79,7 @@ def init():
 
 
 def make_fact(text, source, observed_at=None):
-    """A durable fact with provenance: its text, where it came from (e.g. 'owui-memory',
+    """A durable fact with provenance: its text, where it came from (e.g.
     'chat:<id>', 'extraction:<conv>', 'migration:<store>'), and when it was observed."""
     return {"text": text, "source": source,
             "observed_at": int(time.time()) if observed_at is None else observed_at}

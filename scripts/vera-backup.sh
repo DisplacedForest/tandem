@@ -72,22 +72,6 @@ else
   log "FAIL $CONTAINER is not running; its native stores were not backed up"; fail=1
 fi
 
-if sqlite3 "$APP/open-webui/webui.db" ".backup '$DEST/webui.db'" 2>/dev/null; then
-  sync
-  if [ "$(sqlite3 "$DEST/webui.db" 'PRAGMA integrity_check' 2>/dev/null)" = "ok" ]; then
-    log "OK   webui.db ($(du -h "$DEST/webui.db" | cut -f1), integrity ok)"
-  else
-    log "WARN webui.db integrity check not ok"; fail=1
-  fi
-else
-  log "FAIL webui.db backup"; fail=1
-fi
-
-# 2. OWUI rest of data dir (uploads, vector store) — best-effort, large.
-tar czf "$DEST/owui-data.tgz" -C "$APP/open-webui" \
-  --exclude='webui.db' --exclude='webui.db-wal' --exclude='webui.db-shm' . 2>/dev/null \
-  && log "OK   owui-data.tgz ($(du -h "$DEST/owui-data.tgz" | cut -f1))" || { log "FAIL owui-data.tgz"; fail=1; }
-
 # 3. vera-api config (.env, routers), llama-swap config, n8n.
 tar czf "$DEST/vera-api.tgz"  -C "$APP" vera-api  2>/dev/null && log "OK   vera-api.tgz"  || { log "FAIL vera-api.tgz"; fail=1; }
 cp "$APP/llama-swap/config.yaml" "$DEST/llama-swap-config.yaml" 2>/dev/null && log "OK   llama-swap config" || log "WARN llama-swap config"

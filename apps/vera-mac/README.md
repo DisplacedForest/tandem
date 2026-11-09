@@ -14,13 +14,11 @@ swift build                     # compile check
 .build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
-`model_api_key`, `model`, `voice_base`, `vera_api_base`, and `owner_name`. The model base must
+`model_api_key`, `model`, `vera_api_base`, and `owner_name`. The model base must
 end in `/v1`; its key is optional. `VERA_MODEL_BASE`, `VERA_MODEL_API_KEY`, and `VERA_MODEL`
 override file values. First launch with no native model config opens onboarding. The app is
 standalone: chat, history, memory, and tools need only the model endpoint, and every other
-surface degrades cleanly when its optional service is unset. The one legacy exception is the
-voice session, which still streams through an Open WebUI socket until voice moves onto the
-native engine; its connection settings live entirely inside that quarantined module.
+surface degrades cleanly when its optional service is unset.
 
 Chat history starts fresh on a native install by design; prior Open WebUI conversations are
 not imported. Knowledge collections are the one dataset carried over, migrated server-side

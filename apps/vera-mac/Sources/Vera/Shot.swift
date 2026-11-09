@@ -70,11 +70,9 @@ enum Shot {
             content = AnyView(ProjectEditor(project: project)
                 .environmentObject(store).environment(\.renderSafe, true))
         } else if view == "voice" {
-            let voice = VoiceSession.preview(state: .listening, level: 0.6, store: store)
             content = AnyView(
-                VoiceView()
+                VoiceView(phase: .listening)
                     .environment(\.renderSafe, true)
-                    .environmentObject(voice)
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
                     .background(Color.black)
@@ -515,7 +513,7 @@ enum Shot {
                          integrationsSeed: integrationsSeed,
                          workColumn: view == "conversation-work",
                          workCollapsed: view == "conversation-narrow",
-                         voiceAvailability: ComposerVoiceAvailability(dictation: true, voiceChat: true),
+                         voiceAvailability: ComposerVoiceAvailability(dictation: view == "chats-dictating", voiceChat: view == "chats-dictating"),
                          dictating: view == "chats-dictating",
                          width: size.width)
                     .environment(\.renderSafe, true)

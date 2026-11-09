@@ -1813,42 +1813,6 @@ final class ChatStore: ObservableObject {
         focusTick &+= 1
     }
 
-    // MARK: - Voice mode
-
-    /// Start a voice turn: ensure a conversation exists, append the user's transcript + an empty
-    /// assistant placeholder, and return the chat id plus API message history (excluding the
-    /// placeholder). `VoiceSession` streams the reply itself (to feed TTS) and calls
-    /// `updateVoiceReply` as tokens arrive.
-    func beginVoiceTurn(userText: String) -> (chatID: String, messages: [[String: Any]])? {
-        section = .chat
-        if selectedID == nil || conversations.firstIndex(where: { $0.id == selectedID }) == nil {
-            let convo = Conversation(id: UUID().uuidString, title: "New chat", messages: [], updatedAt: Date())
-            conversations.insert(convo, at: 0)
-            selectedID = convo.id
-        }
-        guard let id = selectedID, let idx = conversations.firstIndex(where: { $0.id == id }) else { return nil }
-        conversations[idx].messages.append(.init(role: .user, text: userText))
-        if conversations[idx].title == "New chat" && conversations[idx].titleSource == .fallback {
-            conversations[idx].title = String(userText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-            if conversations[idx].isPersisted { syncArtifactOrigin(conversationID: id, title: conversations[idx].title) }
-        }
-        conversations[idx].updatedAt = Date()
-        var history: [[String: Any]] = conversations[idx].messages.map { ["role": $0.role.rawValue, "content": $0.text] }
-        if let preferences = NativePreferencePrompt.section(activePreferenceStatements()) {
-            history.insert(["role": "system", "content": preferences], at: 0)
-        }
-        conversations[idx].messages.append(.init(role: .assistant, text: ""))
-        return (id, history)
-    }
-
-    /// Live-update the streaming assistant reply for a voice turn (the trailing assistant message).
-    func updateVoiceReply(chatID: String, text: String) {
-        guard let idx = conversations.firstIndex(where: { $0.id == chatID }),
-              let last = conversations[idx].messages.indices.last,
-              conversations[idx].messages[last].role == .assistant else { return }
-        conversations[idx].messages[last].text = text
-    }
-
     // MARK: - Attachments (composer)
 
     func addFiles(_ urls: [URL]) {

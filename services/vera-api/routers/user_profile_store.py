@@ -1,6 +1,6 @@
 """Per-user profile store — the "personal vibe" half of shared-mind / personal-vibe.
 
-Keyed by OWUI user id, it holds what is personal to each person — her relationship with
+Keyed by user id, it holds what is personal to each person: her relationship with
 them. It starts empty and accrues from patterns (the "goals start non-existent" stance).
 
   - persona:   free-text notes on how Vera relates to this person (tone, what they're like).
