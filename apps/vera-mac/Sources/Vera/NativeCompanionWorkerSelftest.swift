@@ -11,6 +11,7 @@ final class NativeCompanionFakeService: @unchecked Sendable {
     var transportFailWrites = false
     var returnTimedOut = false
     var bigRead = false
+    var exitNonzero = false
 
     func count(_ name: String) -> Int { lock.withLock { counts[name, default: 0] } }
     func bump(_ name: String) { lock.withLock { counts[name, default: 0] += 1 } }
@@ -139,6 +140,10 @@ struct NativeCompanionHarness {
             if service.transportFailWrites {
                 service.apply(key, bed: "remote")
                 throw NativeToolError.failed("The connection closed before a reply")
+            }
+            if service.exitNonzero {
+                service.apply(key, bed: "partial")
+                return .object(["command": .string("water"), "timed_out": .bool(false), "exit_code": .number(1)])
             }
             if service.returnTimedOut {
                 service.apply(key, bed: "partial")
@@ -498,6 +503,18 @@ extension SelfTest {
         try require(after.state == .completed && harness.service.count("water_bed") == 1
                     && (try harness.result(after)["effects"] as? [[String: Any]])?.first?["outcome"] as? String == "done",
                     "Resuming an approved write after a crash reports its receipt and never runs it again")
+
+        let failing = try NativeCompanionHarness(rules: [.networkSends: .ask], script: waterThenReport)
+        failing.service.exitNonzero = true
+        _ = try failing.create()
+        let pending = try await failing.runUntilSettled()
+        try failing.reply(pending, "approve", digest: try failing.decision(pending)["digest"] as? String)
+        _ = try await failing.stepWithoutCommit()
+        _ = try failing.store.recover()
+        let recovered = try await failing.runUntilSettled()
+        try require(recovered.state == .completed && failing.service.count("water_bed") == 1
+                    && (try failing.result(recovered)["effects"] as? [[String: Any]])?.first?["outcome"] as? String == "failed",
+                    "An approved command that exited with an error stays failed after crash recovery")
 
         let big = try NativeCompanionHarness(rules: [:]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).count < 6

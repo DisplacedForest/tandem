@@ -682,7 +682,7 @@ private struct NativeCompanionRun {
             let title = pending.title ?? record.proposal.function
             switch record.state {
             case .completed:
-                checkpoint.note(title, "done")
+                checkpoint.note(title, NativeCompanionWorker.ranWithFailure(record.receipt ?? .null) ? "failed" : "done")
                 checkpoint.answer(call, NativeCompanionWorker.bounded(record.receipt ?? .null,
                                                                       bytes: NativeCompanionWorker.remainingLimit(checkpoint, cap: 16384, budget: environment.budget)))
                 return nil
