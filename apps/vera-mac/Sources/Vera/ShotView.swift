@@ -352,7 +352,15 @@ struct ShotView: View {
             from: "Cover crops measurably improve vineyard soil health [1]. Clover mixes also fix nitrogen between rows [2].\n\n**Sources**\n1. Vineyard soil study\n2. Cover crop guide",
             sources: [PulseSource(n: 1, title: "Vineyard soil study", url: "https://viticulture.example/soil-health"),
                       PulseSource(n: 2, title: "Cover crop guide", url: "https://extension.example/cover-crops")]))
+        m.append(Message(id: Self.shotPreferenceMessageID, role: .user, text: "Keep answers short with me."))
+        m.append(Message(role: .assistant, text: "Will do."))
         return m
+    }
+
+    private static let shotPreferenceMessageID = UUID()
+
+    private func shotMarker(for message: Message) -> TranscriptMarker? {
+        message.id == Self.shotPreferenceMessageID ? .preferenceSaved : nil
     }
 
     private var commandMessages: [Message] {
@@ -537,6 +545,9 @@ struct ShotView: View {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
                         : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil, companionThread: store.isVeraThread(store.selectedID))
+                    if let marker = shotMarker(for: message) {
+                        TranscriptMarkerRow(marker: marker)
+                    }
                 }
             }
             .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)

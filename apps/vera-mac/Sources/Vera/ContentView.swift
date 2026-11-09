@@ -299,6 +299,10 @@ private struct ChatPane: View {
                                             .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
                                             .padding(-8))
                                     .id(msg.id)
+                                if msg.role == .user, let marker = store.preferenceMarker(for: msg) {
+                                    TranscriptMarkerRow(marker: marker)
+                                        .id("\(msg.id.uuidString)-marker")
+                                }
                             }
                             Color.clear.frame(height: 1).id("bottom")
                         }

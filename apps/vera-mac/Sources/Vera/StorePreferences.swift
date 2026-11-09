@@ -68,7 +68,9 @@ extension ChatStore {
         let outcome = await NativePreferenceCapture.run(request, store: store, classify: classify,
                                                         isCurrent: isCurrent, stillCurrent: stillCurrent)
         switch outcome {
-        case .saved, .removed: preferencesRevision += 1
+        case .saved, .removed:
+            preferencesRevision += 1
+            refreshPreferenceMarkers(conversationID: turn.conversationID)
         case .none, .failed, .full, .tooLong, .unavailable, .removalFailed: break
         }
         return outcome
@@ -86,5 +88,20 @@ extension ChatStore {
     func revertPreferenceCapture(_ turn: NativeConversationTurn) {
         guard let store = nativePreferenceStore, (try? store.revertCapture(turnID: turn.id.uuidString)) == true else { return }
         preferencesRevision += 1
+        refreshPreferenceMarkers(conversationID: turn.conversationID)
+    }
+
+    func refreshPreferenceMarkers(conversationID: String) {
+        guard let store = nativePreferenceStore, let current = try? store.captureMarkers(conversationID: conversationID) else { return }
+        var markers = preferenceMarkers
+        for message in conversations.first(where: { $0.id == conversationID })?.messages ?? [] {
+            markers.removeValue(forKey: message.id)
+        }
+        markers.merge(current) { _, new in new }
+        if markers != preferenceMarkers { preferenceMarkers = markers }
+    }
+
+    func preferenceMarker(for message: Message) -> TranscriptMarker? {
+        preferenceMarkers[message.id]
     }
 }

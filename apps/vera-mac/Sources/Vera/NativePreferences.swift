@@ -359,6 +359,26 @@ struct NativePreferenceStore: Sendable {
         }
     }
 
+    func captureMarkers(conversationID: String) throws -> [UUID: TranscriptMarker] {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT user_message_id, outcome FROM native_preference_captures
+                WHERE conversation_id = ? AND outcome IN ('saved', 'removed')
+                """, arguments: [conversationID])
+            var markers: [UUID: TranscriptMarker] = [:]
+            for row in rows {
+                guard let raw: String = row["user_message_id"], let id = UUID(uuidString: raw),
+                      let outcome = NativePreferenceCaptureOutcomeKind(rawValue: row["outcome"] ?? "") else { continue }
+                switch outcome {
+                case .saved: markers[id] = .preferenceSaved
+                case .removed: markers[id] = .preferenceRemoved
+                case .none: break
+                }
+            }
+            return markers
+        }
+    }
+
     private static func decodeCapture(_ row: Row) -> NativePreferenceCaptureRecord? {
         guard let turn: String = row["turn_id"], let conversation: String = row["conversation_id"],
               let message: String = row["user_message_id"],
