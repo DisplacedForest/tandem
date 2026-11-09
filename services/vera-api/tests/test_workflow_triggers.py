@@ -13,6 +13,7 @@ from routers import workflow_executor
 from routers import workflow_registry
 from routers import workflow_store
 from routers import workflow_triggers
+from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
 
 @pytest.fixture(autouse=True)

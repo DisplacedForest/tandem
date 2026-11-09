@@ -23,8 +23,10 @@ from fastapi import APIRouter
 
 from . import home_reconcile_store as store
 from . import knowledge_store as ks
+from . import scheduler
 from .actions import ProposeCard, propose_card
 from .ha_names import display_name, fetch_names
+from .home import _gate_home_modeling
 from .home_reconcile_match import classify_index, find_successor, match_entities
 from .pulse import HOUSEHOLD, _inject
 
@@ -311,3 +313,11 @@ async def run(dry_run: bool = False):
 @router.get("/home/reconcile", tags=["home"])
 async def get_state():
     return {"last_run": store.last_run(), "open_drift": store.list_open()}
+
+
+async def _job_home_reconcile():
+    return await run()
+
+
+scheduler.register_job("home_reconcile", "Home map reconcile", "0 3 * * *", _job_home_reconcile,
+                       order=30, gate=_gate_home_modeling)

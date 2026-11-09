@@ -13,6 +13,7 @@ import time
 
 from . import learn_store as ls
 from . import profile_graph_store as pg
+from . import scheduler
 
 
 def _envf(name, default):
@@ -137,3 +138,11 @@ def fit_weights(min_samples=None, now=None):
     coeffs = {k: nonneg[i] / total for i, k in enumerate(keys)}
     ls.set_weights(coeffs, n_samples=len(examples), now=now)
     return coeffs
+
+
+async def _job_weight_fit():
+    coeffs = fit_weights()
+    return {"installed": coeffs is not None, "coeffs": coeffs}
+
+
+scheduler.register_job("weight_fit", "Ranking weight fit from feedback", "30 4 * * 0", _job_weight_fit, order=60)

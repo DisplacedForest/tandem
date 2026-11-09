@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from routers.scheduler import summarize_outcome  # noqa: E402
+from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
 
 def _no_record_markers(s: str):

@@ -15,6 +15,7 @@ from fastapi import APIRouter
 
 from . import action_registry
 from . import rhythm_store as rs
+from . import scheduler
 from .ha_names import display_name, fetch_names
 from .pulse import HOUSEHOLD, _inject, _vera
 from .persona import owner, voiced
@@ -295,3 +296,18 @@ action_registry.register_action(
     summary="run a service health check now",
     args="{}")
 action_registry.register_catalog_extra("ha_allowlist", _ha_allowlist)
+
+
+def _gate_home_modeling() -> str | None:
+    from . import integrations
+    if integrations.feature_enabled("home_assistant", "home_modeling"):
+        return None
+    return "requires the home_assistant integration with its home_modeling feature enabled"
+
+
+async def _job_home_digest():
+    return await run_digest()
+
+
+scheduler.register_job("home_digest", "Home rhythm digest", "0 2 * * *", _job_home_digest,
+                       order=40, gate=_gate_home_modeling)

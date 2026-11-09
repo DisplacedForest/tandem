@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from . import extract_store as es
 from . import profile_graph_store as pg
+from . import scheduler
 from .pulse import _vera
 
 log = logging.getLogger(__name__)
@@ -245,3 +246,11 @@ async def run():
         out["threads"] += m["threads"]
         _advance_cursor(src, conv.get("ts"))
     return out
+
+
+async def _job_conversation_extract():
+    return await run()
+
+
+scheduler.register_job("conversation_extract", "Conversation extraction into the Profile Graph", "45 4 * * *",
+                       _job_conversation_extract, order=50)

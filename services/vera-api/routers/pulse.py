@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from . import identity
 from . import pulse_veins
+from . import scheduler
 from . import pulse_store as store
 from . import user_profile_store as up
 from . import vera_interests_store as vi
@@ -542,3 +543,10 @@ async def bookmark(card_id: str, body: BookmarkBody):
 async def remove(card_id: str):
     store.delete_card(card_id)
     return {"ok": True}
+
+
+async def _job_pulse():
+    return await run_outcome(await run(PulseRequest()))
+
+
+scheduler.register_job("pulse", "Pulse briefing run", "0 5 * * *", _job_pulse, order=10)
