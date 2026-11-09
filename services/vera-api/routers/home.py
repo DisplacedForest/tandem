@@ -14,6 +14,7 @@ import aiohttp
 from fastapi import APIRouter
 
 from . import rhythm_store as rs
+from .ha_names import display_name, fetch_names
 from .pulse import HOUSEHOLD, _inject, _vera
 from .persona import owner, voiced
 
@@ -57,6 +58,7 @@ async def classify() -> dict:
         async with s.get(f"{url}/api/states", headers={"Authorization": f"Bearer {token}"},
                          timeout=aiohttp.ClientTimeout(total=20)) as r:
             states = await r.json()
+        names = await fetch_names(s, url, token)
     out = {}
     for e in states:
         eid = e.get("entity_id", "")
@@ -66,7 +68,7 @@ async def classify() -> dict:
         a = e.get("attributes") or {}
         if dom == "binary_sensor" and a.get("device_class") not in BINARY_CLASSES:
             continue
-        out[eid] = {"domain": dom, "friendly_name": a.get("friendly_name", eid), "active_def": ACTIVE_DEF[dom]}
+        out[eid] = {"domain": dom, "friendly_name": display_name(e, names), "active_def": ACTIVE_DEF[dom]}
     return out
 
 

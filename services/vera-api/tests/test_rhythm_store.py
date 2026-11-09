@@ -49,9 +49,20 @@ def test_detect_pure():
     assert rs.detect("x", p=0.0, observed=5, active_now=True) is None
 
 
+def test_rename_keeps_baseline():
+    renamed = {"light.kitchen": {"domain": "light", "friendly_name": "Kitchen Hub Kitchen Light",
+                                 "active_def": "on"}}
+    assert rs.record_day("2026-08-24", {"light.kitchen": {7}}, renamed) is True
+    assert rs.prob("light.kitchen", 0, 7) == (1.0, 13.0)
+    with rs._conn() as c:
+        rows = c.execute("SELECT entity_id, friendly_name FROM entity_meta").fetchall()
+    assert [tuple(r) for r in rows] == [("light.kitchen", "Kitchen Hub Kitchen Light")], rows
+
+
 if __name__ == "__main__":
     test_record_day_buckets()
     test_accumulate_and_prob()
     test_baseline()
     test_detect_pure()
+    test_rename_keeps_baseline()
     print("OK")
