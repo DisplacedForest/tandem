@@ -606,6 +606,8 @@ vera-api runs all recurring work itself, with no external cron. Defaults:
 | Pulse briefing | daily 5:00 | Nothing (core, needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Knowledge grooming | daily 4:00 | `KNOWLEDGE_GROOM_ENABLED` |
+| Ranking weight fit from feedback | Sundays 4:30 | Nothing |
+| Conversation extraction into the Profile Graph | daily 4:45 | Nothing |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
 Pipeline veins register their jobs dynamically (one per definition, appearing and disappearing with the definition file), and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).

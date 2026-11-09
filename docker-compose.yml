@@ -4,8 +4,9 @@
 #   docker compose up -d
 #   curl localhost:8089/health && docker compose logs vera-api | head -40   # the config report
 #
-# The built-in scheduler runs Pulse, weather, signals, grooming, home model/reconcile,
-# healthcheck, updates, and media curation — no external cron or n8n needed.
+# The built-in scheduler runs the Pulse briefing, the home model, reconcile and digest
+# jobs, conversation extraction, the ranking weight fit and knowledge grooming. Each vein
+# you define adds its own job. No external cron needed.
 services:
   vera-api:
     image: ghcr.io/displacedforest/vera-api:latest
