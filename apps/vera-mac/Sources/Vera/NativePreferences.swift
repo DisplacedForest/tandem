@@ -509,14 +509,18 @@ enum NativePreferenceRecognizer {
             value = value.replacingOccurrences(of: context + open + "?" + escaped + "+" + close + "?", with: "$1" + name, options: .regularExpression)
             value = value.replacingOccurrences(of: open + escaped + "+" + close, with: name, options: .regularExpression)
             if character != "!" {
-                value = value.replacingOccurrences(of: "(^|\\s)" + escaped + "+(?=\\s|$|[.,;:!?)])", with: "$1" + name, options: .regularExpression)
+                value = value.replacingOccurrences(of: "(?i)(\\b(?:never|stop|don't|dont|not|quit|ban|more)\\s+)" + escaped + "+(\\s*[.!?]?\\s*)$",
+                                                   with: "$1" + name + "$2", options: .regularExpression)
             }
         }
         value = value.replacingOccurrences(of: "(?<=[0-9])" + enDash + "(?=[0-9])", with: "-", options: .regularExpression)
         for character in [emDash, enDash] {
             value = value.replacingOccurrences(of: "\\s*" + character + "+\\s*", with: ", ", options: .regularExpression)
         }
-        return value
+        value = value.replacingOccurrences(of: "(,\\s*){2,}", with: ", ", options: .regularExpression)
+        value = value.replacingOccurrences(of: ",\\s*([.!?;:)])", with: "$1", options: .regularExpression)
+        value = value.replacingOccurrences(of: "^\\s*,\\s*|\\s*,\\s*$", with: "", options: .regularExpression)
+        return value.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
     }
 
     struct Prohibition: Equatable, Sendable {

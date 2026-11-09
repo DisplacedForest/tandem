@@ -751,6 +751,16 @@ enum NativePreferencesSelftest {
         try require(punctuated.statement == "Keep it short, one paragraph" && punctuated.check == nil, "An em dash used as punctuation becomes a comma")
         let edited = try store.updateStatement(id: punctuated.id, statement: "No \(enDash) at all")
         try require(edited.statement == "No en dashes at all" && edited.check == NativePreferenceCheck(forbidChars: [enDash]), "Edits are normalized too")
+        let spaced = try store.add(statement: "Keep it short \(emDash) no filler", recognize: true)
+        let spacedEn = try store.add(statement: "Be direct \(enDash) skip the intro", recognize: true)
+        try require(spaced.statement == "Keep it short, no filler" && spaced.check == nil && spacedEn.statement == "Be direct, skip the intro"
+                    && spacedEn.check == nil, "A spaced dash between words is punctuation")
+        let ending = try store.add(statement: "No \(emDash).", recognize: true)
+        let trailing = try store.add(statement: "Stop it \(emDash) \(emDash) now \(emDash)!")
+        try require(ending.statement == "No em dashes." && ending.check == NativePreferenceCheck(forbidChars: [emDash])
+                    && trailing.statement == "Stop it, now!", "A dash ending the statement is the item and doubled commas collapse")
+        let never = try store.add(statement: "Please never \(emDash)", recognize: true)
+        try require(never.statement == "Please never em dashes", "A dash that is the whole object at the end is named")
         let range = try store.add(statement: "Answer in 2\(enDash)3 sentences")
         try require(range.statement == "Answer in 2-3 sentences", "An en dash in a number range becomes a hyphen")
     }
