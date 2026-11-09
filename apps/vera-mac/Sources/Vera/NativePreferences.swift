@@ -82,11 +82,15 @@ struct NativePreferenceCheck: Codable, Equatable, Sendable {
         guard let deterministic else { return classifier }
         guard let classifier else { return deterministic }
         var merged = classifier
-        if deterministic.forbidChars != nil { merged.forbidChars = deterministic.forbidChars }
-        if deterministic.forbidPhrases != nil { merged.forbidPhrases = deterministic.forbidPhrases }
-        if deterministic.forbidEmoji != nil { merged.forbidEmoji = deterministic.forbidEmoji }
-        if deterministic.maxCharacters != nil { merged.maxCharacters = deterministic.maxCharacters }
-        return merged.isValid ? merged : deterministic
+        func union(_ base: [String]?, _ extra: [String]?) -> [String]? {
+            let combined = (base ?? []) + (extra ?? []).filter { !(base ?? []).contains($0) }
+            return combined.isEmpty ? nil : Array(combined.prefix(maximumItems))
+        }
+        merged.forbidChars = union(classifier.forbidChars, deterministic.forbidChars)
+        merged.forbidPhrases = union(classifier.forbidPhrases, deterministic.forbidPhrases)
+        if deterministic.forbidEmoji == true { merged.forbidEmoji = true }
+        if merged.maxCharacters == nil { merged.maxCharacters = deterministic.maxCharacters }
+        return merged.isValid ? merged : classifier
     }
 
     func encodedJSON() -> String? {
@@ -399,7 +403,10 @@ struct NativePreferenceCaptureKey: Equatable, Sendable {
 enum NativePreferenceDetector {
     private static let markers = [
         "never", "don't", "dont", "do not", "stop", "always", "from now on", "i told you", "again", "quit",
-        "please don't", "no more",
+        "please don't", "no more", "prefer", "i'd prefer", "i would prefer", "i'd rather", "i would rather", "avoid", "keep",
+        "i want you to", "i'd like you to", "i would like you to", "i like it when", "i hate it when", "i don't like it when",
+        "please always", "please never", "call me", "refer to me as", "address me as", "going forward", "in the future",
+        "from here on", "every time", "whenever you", "instead of", "rather than", "be more", "be less", "stop being",
     ]
 
     private static let undoPhrases: Set<String> = [
@@ -420,7 +427,7 @@ enum NativePreferenceDetector {
         return markers.contains { marker in
             let escaped = NSRegularExpression.escapedPattern(for: marker)
             return value.range(of: "(?<![a-z'])" + escaped + "(?![a-z'])", options: .regularExpression) != nil
-        }
+        } || value.range(of: "(?<![a-z'])use(?![a-z']).*(?<![a-z'])instead(?![a-z'])", options: .regularExpression) != nil
     }
 
     static func isUndo(_ text: String) -> Bool {
@@ -442,8 +449,20 @@ enum NativePreferenceRecognizer {
     private static let instructionStarts = [
         "always", "never", "don't", "dont", "do not", "use", "using", "please", "stop", "no more", "quit", "also", "avoid", "keep",
         "write", "say", "add", "make", "be", "try", "give", "answer", "reply", "respond", "call", "put", "include", "start", "end",
-        "from now on", "only", "skip", "leave", "stick",
+        "from now on", "only", "skip", "leave", "stick", "instead", "rather", "otherwise",
     ]
+
+    static func named(_ statement: String) -> String {
+        var value = statement
+        let context = "(?i)(\\b(?:use|using|with|write|writing|no|any|add|adding|type|typing|put|putting|include|including|the)\\s+)"
+        for (character, name) in [(emDash, "em dashes"), (enDash, "en dashes"), ("!", "exclamation marks")] {
+            let escaped = NSRegularExpression.escapedPattern(for: character)
+            value = value.replacingOccurrences(of: context + "[\"'\u{201C}\u{2018}]?" + escaped + "+[\"'\u{201D}\u{2019}]?", with: "$1" + name,
+                                               options: .regularExpression)
+            value = value.replacingOccurrences(of: "[\"'\u{201C}\u{2018}]" + escaped + "+[\"'\u{201D}\u{2019}]", with: name, options: .regularExpression)
+        }
+        return value.replacingOccurrences(of: "\\s*" + emDash + "\\s*", with: ", ", options: .regularExpression)
+    }
 
     struct Prohibition: Equatable, Sendable {
         let negator: String
@@ -458,7 +477,8 @@ enum NativePreferenceRecognizer {
             let trimmed = clause.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { result.append(trimmed) }
         }
-        let joiners: [(match: String, drop: Int)] = [(" but ", 5), (" and always ", 5), (" and use ", 5)]
+        let joiners: [(match: String, drop: Int)] = [(" but ", 5), (" and always ", 5), (" and use ", 5), (" and instead ", 5),
+                                                     (" and rather ", 5), (" and otherwise ", 5)]
         func startsInstruction(_ characters: [Character], from index: Int) -> Bool {
             guard index < characters.count else { return false }
             let rest = String(characters[index...]).trimmingCharacters(in: .whitespaces).lowercased()
@@ -499,7 +519,7 @@ enum NativePreferenceRecognizer {
                     current = ""
                     continue
                 case " ":
-                    let ahead = String(characters[index...].prefix(12)).lowercased()
+                    let ahead = String(characters[index...].prefix(16)).lowercased()
                     if let joiner = joiners.first(where: { ahead.hasPrefix($0.match) }),
                        joiner.match == " but " || startsInstruction(characters, from: index + joiner.drop) {
                         keep(current)
@@ -695,9 +715,7 @@ enum NativePreferenceClassifier {
               let kindRaw = preference["kind"] as? String, let kind = NativePreferenceKind(rawValue: kindRaw),
               let strengthRaw = preference["strength"] as? String, let strength = NativePreferenceStrength(rawValue: strengthRaw),
               let check = NativePreferenceCheck.validated(preference["check"]) else { return nil }
-        let dashless = statement
-            .replacingOccurrences(of: "\\s*" + NativePreferenceRecognizer.emDash + "\\s*", with: ", ", options: .regularExpression)
-        return NativePreferenceProposal(statement: dashless, kind: kind, strength: strength, check: check)
+        return NativePreferenceProposal(statement: NativePreferenceRecognizer.named(statement), kind: kind, strength: strength, check: check)
     }
 
     private static func jsonObject(_ raw: String) -> [String: Any]? {

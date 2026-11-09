@@ -117,6 +117,7 @@ enum NativePreferencesSelftest {
         try await writeAndReadBack(require)
         try await failedWrite(require)
         try await recognizerFallback(require)
+        try await widerDetection(require)
         try await currency(require)
         try await limits(require)
         try settingsEdits(require)
@@ -138,6 +139,10 @@ enum NativePreferencesSelftest {
                     "please don't say that", "No more exclamation marks", "You did it again"]
         for text in hits { try require(NativePreferenceDetector.hits(text), "The detector hits: \(text)") }
         let misses = ["What is the weather tomorrow?", "Plan a trip to Rome", "Tell me about stopwatches", "Write a haiku about autumn", ""]
+        let wider = ["I prefer concise replies", "Avoid em dashes in all future replies", "I'd rather you skip the intro", "Keep replies short",
+                     "I want you to be blunt", "Call me Sam", "Refer to me as Dr. Lee", "Going forward, cite sources", "Use metric instead",
+                     "Be more direct", "Stop being so formal", "Whenever you answer, start with the result", "I hate it when you hedge"]
+        for text in wider { try require(NativePreferenceDetector.hits(text), "The wider detector hits: \(text)") }
         for text in misses { try require(!NativePreferenceDetector.hits(text), "The detector misses: \(text)") }
         for text in ["forget that", "Never mind.", "undo that!", "Scratch that", "nevermind"] {
             try require(NativePreferenceDetector.isUndo(text), "Undo is recognized: \(text)")
@@ -180,7 +185,14 @@ enum NativePreferencesSelftest {
         try require(R.check(for: "Can you help?\n> never use emoji\nThanks") == nil, "Quoted lines are ignored")
         let merged = NativePreferenceCheck.merge(deterministic: NativePreferenceCheck(forbidChars: [emDash]),
                                                  classifier: NativePreferenceCheck(forbidChars: ["a"], maxCharacters: 400))
-        try require(merged == NativePreferenceCheck(forbidChars: [emDash], maxCharacters: 400), "The deterministic check wins the merge")
+        try require(merged == NativePreferenceCheck(forbidChars: ["a", emDash], maxCharacters: 400), "The merge keeps the classifier check and adds recognized bans")
+        try require(R.check(for: "Never use emoji; instead use em dashes") == NativePreferenceCheck(forbidEmoji: true), "Instead after a semicolon starts a new clause")
+        try require(R.check(for: "Don't use emoji, rather use words") == NativePreferenceCheck(forbidEmoji: true), "Rather after a comma starts a new clause")
+        try require(R.check(for: "Never use emoji, use em dashes instead") == NativePreferenceCheck(forbidEmoji: true), "A trailing instead clause is positive")
+        try require(R.check(for: "Never use emoji and instead use exclamation marks") == NativePreferenceCheck(forbidEmoji: true), "And instead starts a new clause")
+        try require(R.named("Never use \"\(emDash)\".") == "Never use em dashes." && R.named("No \(enDash) please") == "No en dashes please"
+                    && R.named("Don't use '!'") == "Don't use exclamation marks" && R.named("Stop shouting!") == "Stop shouting!",
+                    "Literal banned characters become their names")
     }
 
     private static func classifierValidation(_ require: (Bool, String) throws -> Void) throws {
@@ -343,6 +355,29 @@ enum NativePreferencesSelftest {
                     == "Don't use em dashes, en dashes as dashes, or exclamation marks. Don't say \"circle back\".", "Combined statement")
         try require(R.proposal(for: "Quit using emoji", check: NativePreferenceCheck(forbidEmoji: true))?.strength == .standing,
                     "Quit saves a standing preference")
+    }
+
+    private static func widerDetection(_ require: (Bool, String) throws -> Void) async throws {
+        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let concise = #"{"preference": {"statement": "Keep replies concise.", "kind": "style", "strength": "standing", "check": null}}"#
+        let saved = await NativePreferenceCapture.run(request("I prefer concise replies"), store: store, classify: NativePreferenceClassifierCounter(concise).classify)
+        let avoid = #"{"preference": {"statement": "Avoid em dashes in all replies.", "kind": "style", "strength": "hard", "check": null}}"#
+        let avoided = await NativePreferenceCapture.run(request("Avoid em dashes in all future replies"), store: store, classify: NativePreferenceClassifierCounter(avoid).classify)
+        try require(saved == .saved("Keep replies concise.") && avoided == .saved("Avoid em dashes in all replies."), "Plain preference wording reaches the classifier and saves")
+        try require(store.activeChecks() == [nil, NativePreferenceCheck(forbidChars: [emDash])], "An avoid statement carries its check")
+        let null = NativePreferenceClassifierCounter(#"{"preference": null}"#)
+        let route = await NativePreferenceCapture.run(request("can you avoid the traffic route"), store: store, classify: null.classify)
+        let going = await NativePreferenceCapture.run(request("keep going"), store: store, classify: null.classify)
+        try require(route == .none && going == .none && null.calls == 2 && store.active().count == 2, "Ordinary messages reach the classifier and are rejected")
+        let literal = #"{"preference": {"statement": "Never use \"\#(emDash)\".", "kind": "style", "strength": "hard", "check": null}}"#
+        let literalStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let named = await NativePreferenceCapture.run(request("never use that dash"), store: literalStore, classify: NativePreferenceClassifierCounter(literal).classify)
+        try require(named == .saved("Never use em dashes.") && literalStore.activeChecks() == [NativePreferenceCheck(forbidChars: [emDash])]
+                    && literalStore.active().allSatisfy { !$0.statement.contains(emDash) }, "A literal em dash in the statement becomes a readable ban")
+        let positive = #"{"preference": {"statement": "Never use emoji; instead use em dashes.", "kind": "style", "strength": "hard", "check": {"forbidEmoji": true}}}"#
+        let positiveStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        _ = await NativePreferenceCapture.run(request("never use emoji, use em dashes instead"), store: positiveStore, classify: NativePreferenceClassifierCounter(positive).classify)
+        try require(positiveStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)], "A positive instead clause never adds a ban to the classifier check")
     }
 
     private static func currency(_ require: (Bool, String) throws -> Void) async throws {
