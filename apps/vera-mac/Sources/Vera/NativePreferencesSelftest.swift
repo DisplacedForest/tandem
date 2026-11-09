@@ -7,6 +7,7 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
     private var classifierCount = 0
     private var replySystems: [String] = []
     private var failing = false
+    private var hold: NativeSessionGate?
 
     init(classifierReply: String) {
         self.classifierReply = classifierReply
@@ -16,6 +17,11 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
     var systemPrompts: [String] { lock.withLock { replySystems } }
     func dropFirst(_ count: Int) {
         lock.withLock { replySystems.removeFirst(min(count, replySystems.count)) }
+    }
+
+    var holdReplies: NativeSessionGate? {
+        get { lock.withLock { hold } }
+        set { lock.withLock { hold = newValue } }
     }
 
     var failReplies: Bool {
@@ -39,12 +45,22 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
                 return classifierReply
             }
         } else {
-            let fail = lock.withLock {
+            let (fail, gate) = lock.withLock {
                 replySystems.append(system)
-                return failing
+                return (failing, hold)
             }
             if fail {
                 return AsyncThrowingStream { $0.finish(throwing: NativePreferenceStubFailure()) }
+            }
+            if let gate {
+                return AsyncThrowingStream { continuation in
+                    let task = Task {
+                        continuation.yield(NativeChatStreamSnapshot(content: "Got it.", toolCalls: [], finishReason: nil))
+                        await gate.wait()
+                        continuation.finish()
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
             }
             content = "Got it."
         }
@@ -149,6 +165,7 @@ enum NativePreferencesSelftest {
         try await storeAdjacencyAndStops(require)
         try await storeRevalidation(require)
         try await storeStops(require)
+        try await revertGuards(require)
         try await literalBoundary(require)
         var statements: [String] = []
         for repository in repositories {
@@ -346,6 +363,11 @@ enum NativePreferencesSelftest {
         let mixed = await NativePreferenceCapture.run(request("Never use emoji, always use em dashes"), store: mixedStore, classify: malformed.classify)
         try require(mixed == .saved("Don't use emoji.") && mixedStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)],
                     "The fallback bans only the object of the negative clause")
+        let scoped = await NativePreferenceCapture.run(request("Don't use emoji this time"), store: nullStore, classify: malformed.classify)
+        let scopedHere = await NativePreferenceCapture.run(request("Never use em dashes here"), store: nullStore, classify: malformed.classify)
+        try require(scoped == .unavailable && scopedHere == .unavailable && NativePreferenceRecognizer.fallback(for: "Never use emoji") != nil
+                    && NativePreferenceRecognizer.fallback(for: "Never use emoji from here on") != nil, "A one-time request never falls back")
+        try require(NativePreferenceClassifier.messages(for: "x")[0].content.contains("\"just this once\""), "The classifier prompt rejects one-time scope")
         let failing = NativePreferenceClassifierCounter(nil)
         let afterFailure = await NativePreferenceCapture.run(request("I'd like fewer exclamation marks"), store: nullStore, classify: failing.classify)
         try require(afterFailure == .none, "No detector hit means nothing even with a recognizer match")
@@ -812,6 +834,45 @@ enum NativePreferencesSelftest {
         try await settle(store, "forget that")
         try require(store.preferencesRevision == beforeUndo + 2 && preferences.active().map(\.statement) == ["Never use em dashes."],
                     "Stopping an undo restores the removed preference")
+
+        let shownRepository = try tracked()
+        let shownTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
+        let shown = turnStore(shownTransport, shownRepository)
+        defer { shown.conversationTurnLoop?.cancel() }
+        let gate = NativeSessionGate()
+        shownTransport.holdReplies = gate
+        try require(shown.sendText("Never use em dashes", fromComposer: true), "The held message sends")
+        try await NativeSessionFixture.eventually("The acknowledgment streams") { shown.selected?.messages.last?.text == "Got it." }
+        guard let reply = shown.selected?.messages.last?.id else { throw NativeTaskFixture.Failure.assertion("A reply exists") }
+        shown.stopAnswer(reply)
+        shown.stopAnswer(reply)
+        await gate.release()
+        try require(try NativePreferenceStore(database: shownRepository.database).active().map(\.statement) == ["Never use em dashes."],
+                    "Stopping after the acknowledgment is visible keeps the preference, and a second stop is harmless")
+    }
+
+    private static func revertGuards(_ require: (Bool, String) throws -> Void) async throws {
+        let store = NativePreferenceStore(database: try tracked().database)
+        _ = await NativePreferenceCapture.run(request("never use em dashes", turn: "new"), store: store,
+                                              classify: NativePreferenceClassifierCounter(savedEmDash).classify)
+        let created = try store.active()[0]
+        try store.updateStatement(id: created.id, statement: "Never use em dashes in titles")
+        try require(try !store.revertCapture(turnID: "new") && store.active().map(\.statement) == ["Never use em dashes in titles"],
+                    "A Settings edit after a new capture survives a stop")
+        let louder = #"{"preference": {"statement": "never use EM dashes in titles!", "kind": "style", "strength": "hard", "check": null}}"#
+        _ = await NativePreferenceCapture.run(request("I told you, never use em dashes in titles", turn: "dup"), store: store,
+                                              classify: NativePreferenceClassifierCounter(louder).classify)
+        try store.updateStatement(id: created.id, statement: "Never use em dashes in headings")
+        try require(try !store.revertCapture(turnID: "dup") && store.active().map(\.statement) == ["Never use em dashes in headings"],
+                    "A Settings edit after a duplicate update survives a stop")
+        _ = await NativePreferenceCapture.run(request("never use emoji", turn: "e1", message: "e1m"), store: store,
+                                              classify: NativePreferenceClassifierCounter(#"{"preference": {"statement": "Never use emoji.", "kind": "style", "strength": "hard", "check": null}}"#).classify)
+        _ = await NativePreferenceCapture.run(request("forget that", turn: "e2", previous: "e1m"), store: store,
+                                              classify: NativePreferenceClassifierCounter(nil).classify)
+        try store.add(statement: "Never use emoji")
+        try require(try !store.revertCapture(turnID: "e2") && store.active().filter { $0.statement.lowercased().contains("emoji") }.count == 1,
+                    "An undone preference is not restored when the same rule is active again")
+        try require(try !store.revertCapture(turnID: "e2") && !store.revertCapture(turnID: "missing"), "Reverting twice or without a capture does nothing")
     }
 
     private static func storeRevalidation(_ require: (Bool, String) throws -> Void) async throws {

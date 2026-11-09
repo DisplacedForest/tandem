@@ -189,6 +189,7 @@ struct NativePreferenceStore: Sendable {
                 preference_id TEXT,
                 created_new INTEGER NOT NULL DEFAULT 0,
                 prior_json TEXT,
+                written_at DOUBLE,
                 created_at DOUBLE NOT NULL
             );
             CREATE INDEX native_preference_captures_conversation ON native_preference_captures(conversation_id, created_at);
@@ -369,20 +370,24 @@ struct NativePreferenceStore: Sendable {
     private static func insertCapture(_ db: Database, _ key: NativePreferenceCaptureKey, outcome: NativePreferenceCaptureOutcomeKind,
                                       preferenceID: String?, createdNew: Bool = false, prior: String? = nil, now: Date) throws {
         try db.execute(sql: """
-            INSERT INTO native_preference_captures(turn_id, conversation_id, user_message_id, outcome, preference_id, created_new, prior_json, created_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO native_preference_captures(turn_id, conversation_id, user_message_id, outcome, preference_id, created_new, prior_json,
+                                                   written_at, created_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [key.turnID, key.conversationID, key.userMessageID, outcome.rawValue, preferenceID, createdNew, prior,
-                             now.timeIntervalSince1970])
+                             preferenceID == nil ? nil : now.timeIntervalSince1970, now.timeIntervalSince1970])
     }
 
     @discardableResult
     func revertCapture(turnID: String, now: Date = Date()) throws -> Bool {
         try database.write { db in
             guard let row = try Row.fetchOne(db, sql: """
-                SELECT outcome, preference_id, created_new, prior_json FROM native_preference_captures WHERE turn_id = ?
+                SELECT outcome, preference_id, created_new, prior_json, written_at FROM native_preference_captures WHERE turn_id = ?
                 """, arguments: [turnID]),
                   let outcome = NativePreferenceCaptureOutcomeKind(rawValue: row["outcome"] ?? ""), outcome != .none,
-                  let id: String = row["preference_id"] else { return false }
+                  let id: String = row["preference_id"], let written: Double = row["written_at"],
+                  let current = try Row.fetchOne(db, sql: "SELECT status, updated_at FROM native_preferences WHERE id = ?", arguments: [id]),
+                  (current["updated_at"] as Double?) == written,
+                  (current["status"] as String?) == (outcome == .saved ? "active" : "removed") else { return false }
             let stamp = now.timeIntervalSince1970
             switch outcome {
             case .saved:
@@ -399,10 +404,11 @@ struct NativePreferenceStore: Sendable {
             case .removed:
                 let statement = try String.fetchOne(db, sql: "SELECT statement FROM native_preferences WHERE id = ?", arguments: [id]) ?? ""
                 let active = try String.fetchAll(db, sql: "SELECT statement FROM native_preferences WHERE status = 'active'")
-                if active.count < Self.maximumActive, !active.contains(where: { Self.normalized($0) == Self.normalized(statement) }) {
-                    try db.execute(sql: "UPDATE native_preferences SET status = 'active', updated_at = ? WHERE id = ? AND status = 'removed'",
-                                   arguments: [stamp, id])
+                guard active.count < Self.maximumActive, !active.contains(where: { Self.normalized($0) == Self.normalized(statement) }) else {
+                    return false
                 }
+                try db.execute(sql: "UPDATE native_preferences SET status = 'active', updated_at = ? WHERE id = ? AND status = 'removed'",
+                               arguments: [stamp, id])
             case .none:
                 return false
             }
@@ -694,12 +700,24 @@ enum NativePreferenceRecognizer {
     static let fallbackCharacters = 160
     private static let quoteCharacters: Set<Character> = ["\"", "'", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}", "`"]
 
+    static let temporaryScopes = [
+        "this time", "for now", "today", "tonight", "this once", "just once", "just this once", "right now", "in this reply",
+        "in this message", "here", "for this one", "this answer", "for this conversation",
+    ]
+
+    static func hasTemporaryScope(_ text: String) -> Bool {
+        let value = NativePreferenceDetector.folded(text).replacingOccurrences(of: "from here on", with: " ")
+        return temporaryScopes.contains { scope in
+            value.range(of: "(?<![a-z'])" + NSRegularExpression.escapedPattern(for: scope) + "(?![a-z'])", options: .regularExpression) != nil
+        }
+    }
+
     static func fallback(for text: String) -> NativePreferenceProposal? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= fallbackCharacters, !trimmed.contains(where: \.isNewline),
               !trimmed.contains("```"), let first = clauses(trimmed).first,
               let lead = prohibitions(in: first).first, lead.object == prohibitions(in: trimmed).first?.object,
-              let check = check(for: trimmed) else { return nil }
+              !hasTemporaryScope(trimmed), let check = check(for: trimmed) else { return nil }
         var unquoted = trimmed.replacingOccurrences(of: "(?<=[A-Za-z])[\u{2019}'](?=[A-Za-z])", with: "", options: .regularExpression)
         for phrase in (check.forbidPhrases ?? []) + (check.forbidChars ?? []) {
             for (open, close) in [("\"", "\""), ("'", "'"), ("\u{201C}", "\u{201D}"), ("\u{2018}", "\u{2019}")] {
@@ -738,7 +756,7 @@ enum NativePreferenceClassifier {
             kind: "style" for tone, formatting, wording or characters. "action" for things to do or not do. "other" for anything else.
             strength: "hard" when the person says never or always or is repeating a correction. "standing" otherwise.
             check: null, or an object with any of "forbidChars" (a list of single characters never to write), "forbidPhrases" (a list of exact phrases never to write), "forbidEmoji" (true to never write emoji), "maxCharacters" (a whole number length limit for every reply).
-            Reject anything that is not a lasting preference about the assistant. These are not preferences: "I never thought about it", "don't worry about it", "stop, I need to think", and a one-off instruction about this message only, such as "don't include an intro this time". Statements about the person's own life are not preferences either.
+            Reject anything that is not a lasting preference about the assistant. These are not preferences: "I never thought about it", "don't worry about it", "stop, I need to think", and a one-off instruction about this message only, such as "don't include an intro this time". Anything limited to a moment is one-off, for example "this time", "for now", "today", "tonight", "this once", "just this once", "right now", "in this reply", "in this message", "here", "for this one", "this answer" or "for this conversation". Statements about the person's own life are not preferences either.
             """
         let body = "Message:\n" + String(text.prefix(excerptLimit))
         return [NativeChatMessage(role: "system", content: system), NativeChatMessage(role: "user", content: body)]
