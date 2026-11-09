@@ -240,10 +240,10 @@ One caveat while this is the whole of it: the header is trusted. The roster sepa
 
 ### Reference corpus sync and backups
 
-Two host scripts cover the standing ops work, and each documents its own environment in its header:
+Two host scripts cover the standing ops work:
 
 - `scripts/rag-sync.py` reconciles a folder tree of reference documents into vera-api document collections: it walks `REFERENCE_ROOT/<domain>/`, uploads new and changed files, removes deleted ones, and is safe to re-run. It needs the vera-api base URL, passed as `--vera-api-base` or read from `VERA_API_BASE`, and has no default. `scripts/vera-rag-sync.sh` is the cron wrapper: it exports `REFERENCE_ROOT`, and when `VERA_API_BASE` is not already in the environment it reads it from the deployed vera-api env file (`VERA_API_ENV_FILE`).
-- `scripts/vera-backup.sh` is a reference nightly backup. It captures vera-api's `/data` stores out of the running container as two artifacts: `vera-data.tgz` with the volume's non-database tree, and `vera-data-dbs.tgz` with consistent SQLite snapshots taken through the backup API and integrity-checked before archiving. Restore by extracting the first into `/data`, then the second over it. The script archives the container's config alongside them and writes checksums and a manifest.
+- `scripts/vera-backup.sh` is a reference nightly backup. It captures vera-api's `/data` stores out of the running container as two artifacts: `vera-data.tgz` with the volume's non-database tree, and `vera-data-dbs.tgz` with consistent SQLite snapshots taken through the backup API and integrity-checked before archiving. Restore by extracting the first into `/data`, then the second over it. The script archives the container's config alongside them and writes checksums and a manifest. It's written for an Unraid host, run as root from cron, and keeps the newest 14 snapshots. Set `VERA_BACKUP_DEST` for the snapshot folder (default `/mnt/user/backups/vera`), `VERA_APPDATA_ROOT` if container appdata lives somewhere other than `/mnt/user/appdata`, and `VERA_CONTAINER` if the container isn't named `vera-api`.
 
 ## 3. The Mac app
 
