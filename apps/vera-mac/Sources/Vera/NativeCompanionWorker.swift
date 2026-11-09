@@ -32,7 +32,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var defaultToolSeconds: Double = 20
 }
 
-struct NativeCompanionEffectNote: Codable, Equatable, Sendable {
+struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
     var title: String
     var outcome: String
 }
@@ -83,7 +83,28 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     }
 
     mutating func answer(_ call: NativeTaskGenerationToolCall, _ content: String) {
-        transcript.append(NativeTaskGenerationMessage(role: "tool", content: content, toolCallID: call.id))
+        let room = NativeTaskStore.maximumJSONBytes - 16384 - ((try? encoded().count) ?? NativeTaskStore.maximumJSONBytes) - 512
+        transcript.append(NativeTaskGenerationMessage(role: "tool", content: Self.fitted(content, encodedBytes: room), toolCallID: call.id))
+    }
+
+    static func encodedLength(_ text: String) -> Int {
+        ((try? JSONEncoder().encode(text))?.count) ?? text.utf8.count * 6
+    }
+
+    static func fitted(_ content: String, encodedBytes room: Int) -> String {
+        let marker = " [result truncated]"
+        let none = "{\"error\":\"Result not kept: this work ran out of room.\"}"
+        guard encodedLength(content) > room else { return content }
+        guard room > encodedLength(none) + 64 else { return none }
+        var bytes = Array(content.utf8)
+        var cut = String(decoding: bytes, as: UTF8.self)
+        while !bytes.isEmpty && encodedLength(cut + marker) > room {
+            let ratio = Double(room) / Double(max(1, encodedLength(cut + marker)))
+            bytes = Array(bytes.prefix(max(0, Int(Double(bytes.count) * ratio) - 16)))
+            cut = String(decoding: bytes, as: UTF8.self)
+            while cut.last == "\u{FFFD}" { cut.removeLast() }
+        }
+        return bytes.isEmpty ? none : cut + marker
     }
 
     mutating func note(_ title: String, _ outcome: String) {
@@ -602,7 +623,8 @@ private struct NativeCompanionRun {
             if error is NativeCompanionStopped || error is CancellationError {
                 try? environment.ledger.markUncertain(digest: record.digest, reason: "stopped")
                 checkpoint.note(title, "unconfirmed")
-                throw CancellationError()
+                checkpoint.answer(call, NativeCompanionWorker.message("Stopped by the person before a result came back."))
+                return try progress(checkpoint)
             }
             if NativeCompanionWorker.definite(error) {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "refused")

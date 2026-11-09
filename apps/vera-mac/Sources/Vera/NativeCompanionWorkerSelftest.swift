@@ -592,11 +592,24 @@ extension SelfTest {
         }
         for _ in 0..<200 where stopping.service.count("water_bed") == 0 { try await Task.sleep(for: .milliseconds(5)) }
         _ = try stopping.store.cancel(id)
-        var stopped = false
-        do { _ = try await running.value } catch is CancellationError { stopped = true }
-        try require(stopped && started.duration(to: .now) < .seconds(5) && stopping.service.appliedCount == 0
-                    && (try stopping.effects(id)).first?.state == .uncertain,
+        let result = try await running.value
+        let committed = try stopping.store.commitStep(id, generation: claimed.generation, step: result)
+        try require(started.duration(to: .now) < .seconds(5) && stopping.service.appliedCount == 0
+                    && (try stopping.effects(id)).first?.state == .uncertain && committed.state == .canceled,
                     "Stop work interrupts a running action at once and leaves its outcome uncertain")
+        let saved = try JSONDecoder().decode(NativeTaskCheckpoint.self, from: committed.checkpoint)
+        try require(saved.unconfirmedEffects == ["Water a bed"],
+                    "The stopped task keeps the action the person should check")
+
+        var crowded = NativeCompanionCheckpoint()
+        crowded.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 32000),
+                                                          toolCalls: [NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"),
+                                                                      NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}")])]
+        let quotes = String(repeating: "\"", count: 90000)
+        crowded.answer(NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"), quotes)
+        crowded.answer(NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}"), quotes)
+        try require(try crowded.encoded().count < NativeTaskStore.maximumJSONBytes,
+                    "Escaping-heavy results are cut to fit the saved checkpoint")
 
         let huge = String(repeating: "word ", count: 50000)
         let wordy = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in

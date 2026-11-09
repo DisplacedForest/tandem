@@ -100,7 +100,8 @@ enum NativeTaskProjection {
         case .canceled:
             card.status = .stopped
             if dot {
-                card.milestone = "Stopped."
+                let unsure = snapshot.checkpoint.unconfirmedEffects
+                card.milestone = unsure.isEmpty ? "Stopped." : "Stopped. Check whether this finished: " + unsure.joined(separator: "; ") + "."
             } else if document {
                 card.milestone = saved.map { "Stopped. \($0)" } ?? "Stopped before any sections were written."
             } else {
