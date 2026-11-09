@@ -18,6 +18,7 @@ extension ChatStore {
                 })
         }
         if let engine = nativeTaskLocalEngine {
+            companionWorkerRelay.attach(self)
             Task { try? await engine.start() }
         }
         if nativeTaskTrackingLoop == nil, let tracker = nativeTaskTracker {
@@ -96,6 +97,11 @@ extension ChatStore {
     func retryNativeTask(_ value: String) {
         guard let id = UUID(uuidString: value), let nativeTaskTracker else { return }
         Task { await nativeTaskTracker.retry(id) }
+    }
+
+    func answerNativeTask(_ value: String, choice: String) {
+        guard let id = UUID(uuidString: value), let nativeTaskTracker else { return }
+        Task { await nativeTaskTracker.decide(id, choice: choice) }
     }
 
     func stopNativeTaskRecovery() {

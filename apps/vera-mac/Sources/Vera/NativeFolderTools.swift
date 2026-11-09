@@ -54,7 +54,7 @@ enum NativeFolderTools {
                     "path": property("string", "Full path of the folder, or a path relative to the single granted folder"),
                     "include_hidden": property("boolean", "Include entries whose names start with a dot (default false)"),
                 ], required: ["path"]),
-                confirmation: .none, timeout: timeout, isAvailable: available,
+                confirmation: .none, timeout: timeout, effect: .read, isAvailable: available,
                 execute: { arguments in
                     let location = try access().locate(try requiredString(arguments, "path"))
                     return try list(location, hidden: arguments.folderBool("include_hidden") ?? false)
@@ -67,7 +67,7 @@ enum NativeFolderTools {
                     "start_line": property("integer", "1-based line to start from (default 1)"),
                     "max_bytes": property("integer", "Bytes to return, up to \(maximumReadBytes)"),
                 ], required: ["path"]),
-                confirmation: .none, timeout: timeout, resultByteBudget: readResultBudget, isAvailable: available,
+                confirmation: .none, timeout: timeout, resultByteBudget: readResultBudget, effect: .read, isAvailable: available,
                 execute: { arguments in
                     let location = try access().locate(try requiredString(arguments, "path"))
                     let start = max(arguments.folderInt("start_line") ?? 1, 1)
@@ -82,7 +82,7 @@ enum NativeFolderTools {
                     "path": property("string", "Folder to search; defaults to the granted folder when there is one"),
                     "max_results": property("integer", "At most this many matches, up to \(maximumSearchResults)"),
                 ], required: ["query"]),
-                confirmation: .none, timeout: timeout, isAvailable: available,
+                confirmation: .none, timeout: timeout, effect: .read, isAvailable: available,
                 execute: { arguments in
                     let query = try requiredString(arguments, "query")
                     guard query.count <= 500 else { throw NativeToolError.invalidArguments("The query is too long") }
@@ -104,7 +104,7 @@ enum NativeFolderTools {
                     "path": property("string", "Full path of the file to create or replace"),
                     "content": property("string", "The complete new content"),
                 ], required: ["path", "content"]),
-                confirmation: editConfirmation, timeout: timeout, isAvailable: available,
+                confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
                     try editGate()
                     let location = try access().locate(try requiredString(arguments, "path"))
@@ -121,7 +121,7 @@ enum NativeFolderTools {
                     "new_text": property("string", "The replacement text (may be empty)"),
                     "replace_all": property("boolean", "Replace every occurrence (default false)"),
                 ], required: ["path", "old_text", "new_text"]),
-                confirmation: editConfirmation, timeout: timeout, isAvailable: available,
+                confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
                     try editGate()
                     let location = try access().locate(try requiredString(arguments, "path"))
@@ -136,7 +136,7 @@ enum NativeFolderTools {
                     "from": property("string", "Full path of the existing file or folder"),
                     "to": property("string", "Full destination path"),
                 ], required: ["from", "to"]),
-                confirmation: editConfirmation, timeout: timeout, isAvailable: available,
+                confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
                     try editGate()
                     let current = access()
@@ -151,7 +151,7 @@ enum NativeFolderTools {
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the folder to create"),
                 ], required: ["path"]),
-                confirmation: editConfirmation, timeout: timeout, isAvailable: available,
+                confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
                     try editGate()
                     let location = try access().locate(try requiredString(arguments, "path"))
@@ -163,7 +163,7 @@ enum NativeFolderTools {
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the file or folder to move to the Trash"),
                 ], required: ["path"]),
-                confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, isAvailable: available,
+                confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, action: .trash, isAvailable: available,
                 execute: { arguments in
                     try NativeRuleResolver.gate(live: live(.trash) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
                     let current = access()

@@ -32,11 +32,16 @@ protocol NativeTaskProjectionRepository: NativeTaskRepository {
     func projectTask(id: UUID, snapshot: NativeTaskSnapshot?, cursor: Int64,
                      connectionNote: String?, lease: NativeTaskStreamLease?, generation: Int64?) throws -> NativeTaskMessageUpdate?
     func prepareTaskRetry(id: UUID, decisionID: String) throws -> NativeTaskDecisionIntent
+    func prepareTaskDecision(id: UUID, decisionID: String, choice: String) throws -> NativeTaskDecisionIntent
     func pendingTaskRetries() throws -> [NativeTaskDecisionIntent]
     func resolveTaskRetry(_ intent: NativeTaskDecisionIntent) throws
 }
 
 extension LocalChatRepository: NativeTaskProjectionRepository {
+    static func migrateTaskDecisionChoices(_ db: Database) throws {
+        try db.execute(sql: "ALTER TABLE native_task_retries ADD COLUMN choice TEXT NOT NULL DEFAULT 'retry'")
+    }
+
     static func migrateNativeTaskDisplay(_ db: Database) throws {
         try db.execute(sql: """
             ALTER TABLE messages ADD COLUMN spoken_text TEXT;
@@ -185,11 +190,18 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
                 guard reference.remoteTaskID == canonical.id,
                       reference.createRequest.payload == canonical.payload else { throw NativeTaskError.invalidResponse }
             }
-            let retryPending = try Bool.fetchOne(db, sql: """
-                SELECT EXISTS(SELECT 1 FROM native_task_retries WHERE reference_id = ? AND pending = 1 AND decision_id = ?)
-                """, arguments: [id.uuidString, canonical?.decision?.id ?? ""]) ?? false
-            let display = try NativeTaskProjection.display(reference: reference, snapshot: canonical,
-                                                            connectionNote: connectionNote, retryPending: retryPending)
+            let pendingChoice = try String.fetchOne(db, sql: """
+                SELECT choice FROM native_task_retries WHERE reference_id = ? AND pending = 1 AND decision_id = ? LIMIT 1
+                """, arguments: [id.uuidString, canonical?.decision?.id ?? ""])
+            var display = try NativeTaskProjection.display(reference: reference, snapshot: canonical,
+                                                            connectionNote: connectionNote, retryPending: pendingChoice != nil)
+            if let canonical, canonical.state == .needsDecision, let decision = canonical.decision {
+                display.card.choices = pendingChoice == nil
+                    ? decision.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil } : []
+                if let pendingChoice, pendingChoice != "retry" {
+                    display.card.milestone = "Your answer is saved. Waiting to continue."
+                }
+            }
             let bytes: Data? = row["display_blocks_json"]
             var envelope = NativeMessageEnvelope(spokenText: row["spoken_text"] ?? "",
                 displayBlocks: try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? [])
@@ -259,33 +271,40 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
     }
 
     func prepareTaskRetry(id: UUID, decisionID: String) throws -> NativeTaskDecisionIntent {
+        try prepareTaskDecision(id: id, decisionID: decisionID, choice: "retry")
+    }
+
+    func prepareTaskDecision(id: UUID, decisionID: String, choice: String) throws -> NativeTaskDecisionIntent {
         try database.write { db in
             guard let reference = try Self.readTaskReference(db, id: id), !reference.cancelRequested,
                   let snapshot = try Self.readTaskProjection(db, id: id)?.snapshot,
                   snapshot.state == .needsDecision, snapshot.decision?.id == decisionID,
-                  snapshot.decision?.choices.contains("retry") == true else { throw NativeTaskError.invalidResponse }
+                  snapshot.decision?.choices.contains(choice) == true else { throw NativeTaskError.invalidResponse }
             try db.execute(sql: "UPDATE native_task_projections SET request_generation = request_generation + 1 WHERE reference_id = ?",
                            arguments: [id.uuidString])
-            if let key = try String.fetchOne(db, sql: """
-                SELECT reply_key FROM native_task_retries WHERE reference_id = ? AND decision_id = ?
-                """, arguments: [id.uuidString, decisionID]), let value = UUID(uuidString: key) {
-                return NativeTaskDecisionIntent(referenceID: id, decisionID: decisionID, key: value)
+            if let row = try Row.fetchOne(db, sql: """
+                SELECT reply_key, choice FROM native_task_retries WHERE reference_id = ? AND decision_id = ?
+                """, arguments: [id.uuidString, decisionID]) {
+                let saved: String = row["choice"]
+                guard saved == choice, let value = UUID(uuidString: row["reply_key"]) else { throw NativeTaskError.invalidResponse }
+                return NativeTaskDecisionIntent(referenceID: id, decisionID: decisionID, key: value, choice: saved)
             }
-            let intent = NativeTaskDecisionIntent(referenceID: id, decisionID: decisionID, key: UUID())
+            let intent = NativeTaskDecisionIntent(referenceID: id, decisionID: decisionID, key: UUID(), choice: choice)
             try db.execute(sql: """
-                INSERT INTO native_task_retries(reference_id, message_id, decision_id, reply_key) VALUES (?, ?, ?, ?)
-                """, arguments: [id.uuidString, reference.origin.assistantMessageID.uuidString, decisionID, intent.key.uuidString])
+                INSERT INTO native_task_retries(reference_id, message_id, decision_id, reply_key, choice) VALUES (?, ?, ?, ?, ?)
+                """, arguments: [id.uuidString, reference.origin.assistantMessageID.uuidString, decisionID,
+                                   intent.key.uuidString, choice])
             return intent
         }
     }
 
     func pendingTaskRetries() throws -> [NativeTaskDecisionIntent] {
         try database.read { db in
-            try Row.fetchAll(db, sql: "SELECT reference_id, decision_id, reply_key FROM native_task_retries WHERE pending = 1")
+            try Row.fetchAll(db, sql: "SELECT reference_id, decision_id, reply_key, choice FROM native_task_retries WHERE pending = 1")
                 .map { row in
                     guard let id = UUID(uuidString: row["reference_id"]),
                           let key = UUID(uuidString: row["reply_key"]) else { throw NativeTaskError.persistenceUnavailable }
-                    return NativeTaskDecisionIntent(referenceID: id, decisionID: row["decision_id"], key: key)
+                    return NativeTaskDecisionIntent(referenceID: id, decisionID: row["decision_id"], key: key, choice: row["choice"])
                 }
         }
     }

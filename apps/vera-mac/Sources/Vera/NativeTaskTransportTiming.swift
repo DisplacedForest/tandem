@@ -8,7 +8,7 @@ struct NativeTaskTransportLimits: Sendable {
 
 struct NativeTaskTransportTiming: Codable, Sendable {
     enum Phase: String, Codable, Sendable {
-        case plan, synthesize, outline, draft, revise
+        case plan, synthesize, outline, draft, revise, work
 
         init?(jobPhase: String) {
             let name = jobPhase.split(separator: "-", maxSplits: 1).first.map(String.init) ?? jobPhase

@@ -105,10 +105,12 @@ final class ChatStore: ObservableObject {
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
     let nativeRuleSource = NativeRuleSource()
+    let companionWorkerRelay: NativeCompanionWorkerRelay
     let turnDeclineSource = NativeDeclineSource()
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
+    var nativeSharedToolDefinitions: [NativeToolDefinition] { nativeToolRegistry.definitions }
     private let usesInjectedToolRegistry: Bool
     private(set) var capabilityDeclarations: [NativeToolDeclaration]
     private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
@@ -135,6 +137,8 @@ final class ChatStore: ObservableObject {
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
+    var rulesRevision: Int { nativeRuleSource.revision }
+    var grantsRevision: Int { nativeGrantSource.revision }
     @Published var schedules: [NativeSchedule] = []
     @Published var scheduleRuns: [String: [NativeScheduleRun]] = [:]
     @Published var scheduleError: String?
@@ -204,12 +208,15 @@ final class ChatStore: ObservableObject {
         self.nativeSearchAvailable = nativeSearchAvailable
         self.artifactPersistenceEnabled = artifactPersistenceEnabled
         let localEngine: NativeTaskLocalEngine?
+        let companionRelay = NativeCompanionWorkerRelay()
+        companionWorkerRelay = companionRelay
         let identity = NativeWorkerIdentitySource()
         identity.update(assistantName: nativeAssistantName, ownerName: nativeOwnerName)
         nativeWorkerIdentity = identity
         if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
             localEngine = NativeTaskLocalEngine.workers(database: local.database,
-                search: .live(base: { NativeWebSearch.resolvedBase() }), identity: { identity.current })
+                search: .live(base: { NativeWebSearch.resolvedBase() }), identity: { identity.current },
+                companion: companionRelay)
         } else {
             localEngine = nil
         }
@@ -231,9 +238,9 @@ final class ChatStore: ObservableObject {
             nativeTaskBroker = NativeTaskGenerationBroker(repository: taskRepository, client: nativeTaskClient,
                 configuredBase: { taskEngine.base },
                 isProfileAvailable: { await nativeTaskConfiguration.isAvailable($0) },
-                generate: { profile, job in
+                complete: { profile, job in
                     let config = try await nativeTaskConfiguration.load(profile)
-                    return try await NativeTaskProvider.complete(config: config, binding: profile, job: job)
+                    return try await NativeTaskProvider.completion(config: config, binding: profile, job: job)
                 })
         } else {
             nativeTaskBroker = nil

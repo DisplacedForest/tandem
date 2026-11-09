@@ -50,23 +50,38 @@ struct NativeTaskEngineIdentity: Codable, Equatable, Hashable, Sendable {
 }
 
 struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
-    static let workerTypes: Set<String> = ["research", "document"]
+    static let workerTypes: Set<String> = ["research", "document", "companion"]
+    static let chatWorkerTypes: Set<String> = ["research", "document"]
 
     let objective: String
     let deliverables: [String]
     let workerType: String
     let title: String?
+    let dot: NativeCompanionTaskPayload?
 
     init(objective: String, deliverables: [String], workerType: String = "research", title: String? = nil) throws {
+        let dot = workerType == "companion" ? try NativeCompanionTaskPayload(assignment: objective, mode: "manual", goal: "") : nil
+        try self.init(validating: objective, deliverables: deliverables, workerType: workerType, title: title, dot: dot)
+    }
+
+    init(dot: NativeCompanionTaskPayload, title: String? = nil) throws {
+        try self.init(validating: dot.assignment, deliverables: [], workerType: "companion", title: title, dot: dot)
+    }
+
+    private init(validating objective: String, deliverables: [String], workerType: String, title: String?,
+                 dot: NativeCompanionTaskPayload?) throws {
         let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.workerTypes.contains(workerType) else {
             throw NativeTaskError.invalidRequest("Background work must be research or a document.")
         }
-        let work = workerType == "document" ? "document brief" : "research objective"
+        guard (workerType == "companion") == (dot != nil), dot.map({ $0.assignment == trimmed }) ?? true else {
+            throw NativeTaskError.invalidRequest("Background work for a goal needs its assignment.")
+        }
+        let work = workerType == "document" ? "document brief" : workerType == "companion" ? "assignment" : "research objective"
         guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= 5000 else {
             throw NativeTaskError.invalidRequest("The \(work) must contain 1 to 5,000 characters.")
         }
-        guard (1...5).contains(deliverables.count) else {
+        guard (workerType == "companion" ? 0...5 : 1...5).contains(deliverables.count) else {
             throw NativeTaskError.invalidRequest(workerType == "document" ? "Provide 1 to 5 document inputs." : "Provide 1 to 5 research deliverables.")
         }
         let items = deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -85,21 +100,23 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         self.objective = trimmed
         self.deliverables = items
         self.workerType = workerType
+        self.dot = dot
     }
 
     var displayTitle: String { title ?? objective }
 
     private enum CodingKeys: String, CodingKey {
-        case objective, deliverables, title
+        case objective, deliverables, title, dot
         case workerType = "worker_type"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(objective: container.decode(String.self, forKey: .objective),
+        try self.init(validating: container.decode(String.self, forKey: .objective),
                       deliverables: container.decode([String].self, forKey: .deliverables),
                       workerType: container.decodeIfPresent(String.self, forKey: .workerType) ?? "research",
-                      title: container.decodeIfPresent(String.self, forKey: .title))
+                      title: container.decodeIfPresent(String.self, forKey: .title),
+                      dot: container.decodeIfPresent(NativeCompanionTaskPayload.self, forKey: .dot))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -108,7 +125,76 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         try container.encode(deliverables, forKey: .deliverables)
         if workerType != "research" { try container.encode(workerType, forKey: .workerType) }
         try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(dot, forKey: .dot)
     }
+}
+
+struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
+    static let modes: Set<String> = ["manual", "scheduled", "proactive"]
+    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding"]
+
+    let assignment: String
+    let mode: String
+    let goal: String
+    let connectedToolIDs: [String]?
+
+    init(assignment: String, mode: String, goal: String = "", connectedToolIDs: [String]? = nil) throws {
+        let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
+            throw NativeTaskError.invalidRequest("The assignment must contain 1 to 5,000 characters.")
+        }
+        guard Self.modes.contains(mode) else {
+            throw NativeTaskError.invalidRequest("Background work for a goal must start manually, on a schedule or on its own.")
+        }
+        guard cleanGoal.unicodeScalars.count <= 2000 else {
+            throw NativeTaskError.invalidRequest("The goal must be at most 2,000 characters.")
+        }
+        if let connectedToolIDs {
+            guard connectedToolIDs.count <= 64, Set(connectedToolIDs).count == connectedToolIDs.count,
+                  connectedToolIDs.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128
+                      && $0.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) } }) else {
+                throw NativeTaskError.invalidRequest("Connected services must be a short list of distinct names.")
+            }
+        }
+        self.assignment = cleanAssignment
+        self.mode = mode
+        self.goal = cleanGoal
+        self.connectedToolIDs = connectedToolIDs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case assignment, mode, goal
+        case connectedToolIDs = "connected_tool_ids"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(assignment: container.decode(String.self, forKey: .assignment),
+                      mode: container.decode(String.self, forKey: .mode),
+                      goal: container.decodeIfPresent(String.self, forKey: .goal) ?? "",
+                      connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(assignment, forKey: .assignment)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(goal, forKey: .goal)
+        try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
+    }
+}
+
+struct NativeCompanionWorkerBudget: Equatable, Sendable {
+    let rounds: Int
+    let calls: Int
+    let transcriptMessages: Int
+    let transcriptBytes: Int
+    let taskRounds: Int
+    let taskCalls: Int
+
+    static let standard = NativeCompanionWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32,
+                                                transcriptBytes: 131072, taskRounds: 32, taskCalls: 64)
 }
 
 struct NativeTaskResearchOptions: Sendable {
@@ -125,16 +211,28 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
     let subquestions: Int
     let pagesPerQuestion: Int
     let nativeBinding: NativeTaskAdmissionBinding?
+    let dot: NativeCompanionTaskPayload?
 
     init(request: NativeResearchTaskRequest, nativeBinding: NativeTaskAdmissionBinding? = nil,
          options: NativeTaskResearchOptions = .standard) {
+        self.nativeBinding = nativeBinding
+        if let dot = request.dot {
+            query = dot.assignment
+            deliverables = []
+            title = nil
+            useRAG = false
+            subquestions = 0
+            pagesPerQuestion = 0
+            self.dot = dot
+            return
+        }
         query = request.objective
         deliverables = request.deliverables
         title = request.title
         useRAG = false
         subquestions = options.subquestions
         pagesPerQuestion = options.pagesPerQuestion
-        self.nativeBinding = nativeBinding
+        dot = nil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -146,13 +244,43 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        nativeBinding = try container.decodeIfPresent(NativeTaskAdmissionBinding.self, forKey: .nativeBinding)
+        let probe = try decoder.container(keyedBy: NativeCompanionTaskPayload.CodingKeys.self)
+        if !container.contains(.query), probe.contains(.assignment) {
+            let dot = try NativeCompanionTaskPayload(from: decoder)
+            query = dot.assignment
+            deliverables = []
+            title = nil
+            useRAG = false
+            subquestions = 0
+            pagesPerQuestion = 0
+            self.dot = dot
+            return
+        }
         query = try container.decode(String.self, forKey: .query)
         deliverables = try container.decodeIfPresent([String].self, forKey: .deliverables) ?? []
         title = try container.decodeIfPresent(String.self, forKey: .title)
         useRAG = try container.decodeIfPresent(Bool.self, forKey: .useRAG) ?? true
         subquestions = try container.decodeIfPresent(Int.self, forKey: .subquestions) ?? 4
         pagesPerQuestion = try container.decodeIfPresent(Int.self, forKey: .pagesPerQuestion) ?? 2
-        nativeBinding = try container.decodeIfPresent(NativeTaskAdmissionBinding.self, forKey: .nativeBinding)
+        dot = nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        if let dot {
+            try dot.encode(to: encoder)
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(nativeBinding, forKey: .nativeBinding)
+            return
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(query, forKey: .query)
+        try container.encode(deliverables, forKey: .deliverables)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encode(useRAG, forKey: .useRAG)
+        try container.encode(subquestions, forKey: .subquestions)
+        try container.encode(pagesPerQuestion, forKey: .pagesPerQuestion)
+        try container.encodeIfPresent(nativeBinding, forKey: .nativeBinding)
     }
 }
 
@@ -286,6 +414,8 @@ struct NativeTaskDecision: Codable, Equatable, Hashable, Sendable {
     let id: String
     let prompt: String
     let choices: [String]
+    var digest: String? = nil
+    var details: String? = nil
 }
 
 struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
@@ -297,9 +427,11 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     let revisions: [String]
     let nativeUnavailable: String?
     let failureReason: String?
+    var effects: [NativeCompanionEffectNote] = []
+    var pending: NativeCompanionPending? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case phase, sources, outline, drafts, revisions
+        case phase, sources, outline, drafts, revisions, effects, pending
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
         case nextQuery = "next_query"
@@ -315,6 +447,14 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         revisions = try container.decodeIfPresent([String].self, forKey: .revisions) ?? []
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+        effects = (try? container.decodeIfPresent([NativeCompanionEffectNote].self, forKey: .effects)) ?? []
+        pending = try? container.decodeIfPresent(NativeCompanionPending.self, forKey: .pending)
+    }
+
+    var unconfirmedEffects: [String] {
+        var titles = effects.filter { $0.outcome == "unconfirmed" }.map(\.title)
+        if let pending, pending.kind == "reconcile", let title = pending.title, !titles.contains(title) { titles.append(title) }
+        return titles
     }
 }
 
@@ -323,6 +463,8 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     let query: String
     let report: String
     let sources: [NativeTaskSource]
+    var title: String? = nil
+    var summary: String? = nil
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

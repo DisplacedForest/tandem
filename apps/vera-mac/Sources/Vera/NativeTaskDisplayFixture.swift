@@ -16,6 +16,7 @@ enum NativeTaskDisplayFixture {
     static func run() async throws {
         try NativeTaskDisplaySelfTest.run()
         try NativeTaskEventsSelfTest.run()
+        try await decisionChoices()
         let require = NativeTaskFixture.require
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -265,6 +266,110 @@ enum NativeTaskDisplayFixture {
                                       "Restored Retry must update the original card without waiting for tracking")
         await retryTracker.stop()
     }
+}
+
+extension NativeTaskDisplayFixture {
+    static func decisionChoices() async throws {
+        let require = NativeTaskFixture.require
+        let legacy = try JSONDecoder().decode(NativeTaskDecision.self,
+            from: Data(#"{"id":"d1","prompt":"Retry?","choices":["retry"]}"#.utf8))
+        try require(legacy.digest == nil && legacy.choices == ["retry"], "A decision without a digest still decodes")
+        let legacyEncoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any]
+        try require(legacyEncoded?["digest"] == nil, "A decision without a digest encodes without one")
+        let approval = NativeTaskDecision(id: "d2", prompt: "Send it?", choices: ["approve", "decline"], digest: "ab12")
+        try require(try JSONDecoder().decode(NativeTaskDecision.self, from: JSONEncoder().encode(approval)) == approval,
+                    "A decision digest round-trips")
+        let oldIntent = try JSONDecoder().decode(NativeTaskDecisionIntent.self, from: Data("""
+            {"referenceID":"\(UUID().uuidString)","decisionID":"d1","key":"\(UUID().uuidString)"}
+            """.utf8))
+        try require(oldIntent.choice == "retry", "An encoded intent without a choice reads as retry")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = try LocalChatRepository(url: directory.appendingPathComponent("chat.sqlite"))
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let request = try NativeResearchTaskRequest(objective: "Book the inspection", deliverables: ["Booking"])
+        func paused(_ decision: [String: Any]) throws -> (NativeTaskReference, NativeTaskSnapshot) {
+            let reference = try repository.prepareTaskReference(origin: NativeTaskFixture.origin(repository),
+                engine: engine, request: request, profile: nil)
+            let value = try snapshot(reference, id: UUID().uuidString, state: "needs_decision", decision: decision)
+            _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: value)
+            _ = try repository.projectTask(id: reference.id, snapshot: value)
+            return (try repository.taskReference(id: reference.id)!, value)
+        }
+        let digest = String(repeating: "c4", count: 32)
+        let (approve, approveSnapshot) = try paused(["id": "approve-1", "prompt": "Send the booking request?",
+                                                    "choices": ["approve", "decline"], "digest": digest])
+        try require(approveSnapshot.decision?.digest == digest, "A snapshot decision keeps its digest")
+        let card = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
+            .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
+        try require(card?.offeredChoices == ["approve", "decline"] && card?.canRetry == false,
+                    "A paused card offers each known choice in order")
+        do {
+            _ = try repository.prepareTaskDecision(id: approve.id, decisionID: "approve-1", choice: "retry")
+            throw NativeTaskFixture.Failure.assertion("A choice the decision does not offer must be refused")
+        } catch is NativeTaskError {}
+        let first = try repository.prepareTaskDecision(id: approve.id, decisionID: "approve-1", choice: "approve")
+        try require(first.choice == "approve", "The saved intent keeps its choice")
+        let again = try repository.prepareTaskDecision(id: approve.id, decisionID: "approve-1", choice: "approve")
+        try require(again == first, "Answering with the same choice reuses the saved intent")
+        do {
+            _ = try repository.prepareTaskDecision(id: approve.id, decisionID: "approve-1", choice: "decline")
+            throw NativeTaskFixture.Failure.assertion("A decision must be answered only once")
+        } catch is NativeTaskError {}
+        try require(try repository.pendingTaskRetries() == [first], "The pending intent returns its stored choice")
+        _ = try repository.projectTask(id: approve.id, snapshot: nil)
+        let pendingCard = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
+            .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
+        try require(pendingCard?.offeredChoices.isEmpty == true && pendingCard?.statusTitle == "Needs your input",
+                    "A saved answer hides the choices")
+
+        let approveBody = try JSONSerialization.jsonObject(with: NativeTaskClient.decisionBody(first, digest: digest)) as? [String: Any]
+        let approveReply = approveBody?["reply"] as? [String: Any]
+        try require(approveReply?["action"] as? String == "approve" && approveReply?["digest"] as? String == digest
+                    && approveReply?.count == 2 && approveBody?["decision_id"] as? String == "approve-1",
+                    "An approval reply carries the choice and the saved digest")
+        let retryIntent = NativeTaskDecisionIntent(referenceID: approve.id, decisionID: "r1", key: UUID())
+        let retryReply = (try JSONSerialization.jsonObject(with: NativeTaskClient.decisionBody(retryIntent, digest: nil))
+            as? [String: Any])?["reply"] as? [String: Any]
+        try require(retryReply?.count == 1 && retryReply?["action"] as? String == "retry", "A retry reply carries only the action")
+
+        let bodies = NativeTaskDisplayFixtureBodies()
+        let (choose, chooseSnapshot) = try paused(["id": "approve-2", "prompt": "Send it?",
+                                                   "choices": ["approve", "decline"], "digest": digest])
+        let resumed = try snapshot(choose, id: chooseSnapshot.id, state: "queued")
+        let client = NativeTaskClient { method, url, body, _ in
+            if method == "POST", let body { await bodies.record(body) }
+            return (try nativeTaskEncoded(url.lastPathComponent == "decision" ? resumed : chooseSnapshot), 200)
+        }
+        let service = NativeTaskHandoffService(repository: repository, client: client, configuredBase: { engine.base })
+        let tracker = NativeTaskTracker(repository: repository, client: client, service: service, configuredBase: { engine.base })
+        await tracker.decide(choose.id, choice: "stop")
+        await tracker.decide(choose.id, choice: "decline")
+        let sent = await bodies.values
+        let sentReply = sent.first.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["reply"] as? [String: Any]
+        try require(sent.count == 1 && sentReply?["action"] as? String == "decline" && sentReply?["digest"] as? String == digest,
+                    "The tracker delivers only an offered choice with the digest from the saved decision")
+        try require(try repository.taskProjection(id: choose.id)?.snapshot?.state == .queued
+                    && repository.pendingTaskRetries() == [first],
+                    "A delivered answer resolves its intent and updates the card")
+        await tracker.stop()
+
+        let (legacyTask, _) = try paused(["id": "legacy-1", "prompt": "Retry?", "choices": ["retry"]])
+        try await repository.database.write { db in
+            try db.execute(sql: """
+                INSERT INTO native_task_retries(reference_id, message_id, decision_id, reply_key) VALUES (?, ?, ?, ?)
+                """, arguments: [legacyTask.id.uuidString, legacyTask.origin.assistantMessageID.uuidString,
+                                 "legacy-1", UUID().uuidString])
+        }
+        try require(try repository.pendingTaskRetries().first { $0.referenceID == legacyTask.id }?.choice == "retry",
+                    "An intent row saved before choices existed reads back as retry")
+    }
+}
+
+actor NativeTaskDisplayFixtureBodies {
+    private(set) var values: [Data] = []
+    func record(_ body: Data) { values.append(body) }
 }
 
 actor NativeTaskDisplayFixtureCalls {

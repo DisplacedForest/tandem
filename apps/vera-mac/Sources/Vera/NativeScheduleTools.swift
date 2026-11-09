@@ -46,7 +46,7 @@ enum NativeScheduleTools {
                                       "description": .string("For every_hours")]),
                     "at": .object(["type": .string("string"), "description": .string("YYYY-MM-DDTHH:MM local time, for once")]),
                 ]),
-            ]), confirmation: .required, timeout: .seconds(10), isAvailable: { true }, execute: { arguments in
+            ]), confirmation: .required, timeout: .seconds(10), action: .networkSends, isAvailable: { true }, execute: { arguments in
                 let draft = try draft(from: arguments, now: now(), timeZone: timeZone())
                 if draft.workerType == "research", !searchAvailable() {
                     throw NativeToolError.failed(NativeTaskTools.searchUnavailable)
@@ -71,7 +71,7 @@ enum NativeScheduleTools {
               case .string(let repeatKind)? = arguments["repeat"] else {
             throw NativeToolError.invalidArguments("Provide a title, a worker type, an instruction and a repeat.")
         }
-        guard NativeSchedule.workerTypes.contains(workerType) else {
+        guard NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) else {
             throw NativeToolError.invalidArguments("Scheduled work must be research or a document.")
         }
         var draft = NativeScheduleDraft()

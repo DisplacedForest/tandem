@@ -5,6 +5,15 @@ struct NativeTaskProvider {
                          job: NativeTaskGenerationJob,
                          limits: NativeTaskTransportLimits = .init(),
                          diagnostics: @escaping @Sendable (NativeTaskTransportTiming) -> Void = NativeTaskTransportTiming.log) async throws -> String {
+        let result = try await completion(config: config, binding: binding, job: job, limits: limits, diagnostics: diagnostics)
+        guard result.toolCalls.isEmpty else { throw NativeTaskGenerationFailure(code: "provider_response") }
+        return result.content
+    }
+
+    static func completion(config: NativeChatConfig, binding: NativeTaskProfileBinding,
+                           job: NativeTaskGenerationJob,
+                           limits: NativeTaskTransportLimits = .init(),
+                           diagnostics: @escaping @Sendable (NativeTaskTransportTiming) -> Void = NativeTaskTransportTiming.log) async throws -> NativeTaskGenerationCompletion {
         let started = ContinuousClock.now
         guard try NativeTaskEngineIdentity(config.baseURL) == binding.provider,
               config.model == binding.executionModel else {
@@ -34,8 +43,14 @@ struct NativeTaskProvider {
               let phase = NativeTaskTransportTiming.Phase(jobPhase: job.phase) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }
-        var request = try client.request(messages: job.messages.map { NativeChatMessage(role: $0.role, content: $0.content) },
-                                         model: binding.executionModel, tools: [])
+        var request = try client.request(messages: job.messages.map {
+                NativeChatMessage(role: $0.role, content: $0.content, toolCallID: $0.toolCallID, toolCalls: $0.toolCalls ?? [])
+            }, model: binding.executionModel, tools: job.tools ?? [])
+        if job.toolChoice == "none", job.tools != nil, let body = request.httpBody,
+           var object = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            object["tool_choice"] = "none"
+            request.httpBody = try JSONSerialization.data(withJSONObject: object)
+        }
         let remaining = try job.reducingDeadline(by: nativeTaskSeconds(started.duration(to: .now))).deadlineSeconds
         request.timeoutInterval = remaining
         let observer = NativeTaskTransportObserver(phase: phase, expectedBytes: request.httpBody?.count ?? 0, overallSeconds: remaining, sink: diagnostics)
@@ -64,7 +79,7 @@ struct NativeTaskProvider {
             session.invalidateAndCancel()
         }
         do {
-            let text = try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler {
                 try Task.checkCancellation()
                 let (bytes, response) = try await session.bytes(for: request, delegate: observer)
                 guard let response = response as? HTTPURLResponse else { throw NativeTaskGenerationFailure(code: "provider_response") }
@@ -79,7 +94,7 @@ struct NativeTaskProvider {
                     observer.receivedByte()
                     data.append(byte)
                 }
-                return try completedText(NativeChatClient.completeSnapshot(from: data))
+                return try completed(NativeChatClient.completeSnapshot(from: data), job: job)
             } onCancel: {
                 observer.finish(.canceled)
                 session.invalidateAndCancel()
@@ -92,7 +107,7 @@ struct NativeTaskProvider {
             guard observer.finish(.completed), observer.outcome == .completed else {
                 throw NativeTaskGenerationFailure(code: "request_timeout")
             }
-            return text
+            return result
         } catch {
             if Task.isCancelled || error is CancellationError {
                 observer.finish(.canceled)
@@ -119,6 +134,13 @@ struct NativeTaskProvider {
         if status == 401 || status == 403 { return "provider_auth" }
         if status == 402 || status == 429 { return "provider_quota" }
         return "provider_unavailable"
+    }
+
+    static func completed(_ snapshot: NativeChatStreamSnapshot, job: NativeTaskGenerationJob) throws -> NativeTaskGenerationCompletion {
+        guard job.tools != nil else { return .text(try completedText(snapshot)) }
+        let finish = snapshot.finishReason ?? ""
+        return try NativeTaskGenerationCompletion(content: snapshot.content, toolCalls: snapshot.toolCalls,
+                                                  finishReason: finish).validated(for: job)
     }
 
     static func completedText(_ snapshot: NativeChatStreamSnapshot) throws -> String {

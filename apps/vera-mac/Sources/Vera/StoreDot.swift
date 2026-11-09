@@ -162,6 +162,7 @@ extension ChatStore {
         let wasShowing = threadID != nil && selectedID == threadID
         dotResetGeneration += 1
         suspendsTurnScheduling = true
+        cancelCompanionWork()
         if let threadID {
             for turn in conversationTurns where turn.conversationID == threadID {
                 stopAnswer(turn.assistantMessageID)

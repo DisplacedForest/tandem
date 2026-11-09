@@ -7,6 +7,7 @@ struct NativeTaskCardView: View {
     var stopTitle: String? = nil
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
+    var onDecide: ((String) -> Void)? = nil
     var highlighted = false
 
     var body: some View {
@@ -25,6 +26,24 @@ struct NativeTaskCardView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let details = card.details, card.status == .needsInput {
+                let block = Text(details)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                Group {
+                    if details.count > 700 || details.split(separator: "\n").count > 10 {
+                        ScrollView { block }.frame(height: 220)
+                    } else {
+                        block
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
+                .accessibilityLabel("Action details")
+            }
             if let note = card.connectionNote {
                 Text(note)
                     .font(.system(size: 11))
@@ -33,9 +52,16 @@ struct NativeTaskCardView: View {
             if !card.sources.isEmpty && [.stopped, .needsInput, .failed].contains(card.status) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources))
             }
-            if card.canCancel || card.canRetry {
+            if card.canCancel || !card.offeredChoices.isEmpty {
                 HStack(spacing: 12) {
-                    if card.canRetry { Button("Retry") { onRetry?() }.disabled(onRetry == nil) }
+                    ForEach(card.offeredChoices, id: \.self) { choice in
+                        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
+                            Button(title) { answer(choice) }
+                                .buttonStyle(.bordered)
+                                .disabled(!canAnswer(choice))
+                                .accessibilityLabel("\(title), answer for \(card.title)")
+                        }
+                    }
                     if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
                 }
                 .font(.system(size: 12))
@@ -49,6 +75,14 @@ struct NativeTaskCardView: View {
             .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
         .animation(.easeOut(duration: 0.3), value: highlighted)
     }
+
+    private func canAnswer(_ choice: String) -> Bool {
+        onDecide != nil || (choice == "retry" && onRetry != nil)
+    }
+
+    private func answer(_ choice: String) {
+        if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
+    }
 }
 
 struct NativeDisplayBlocksView: View {
@@ -57,6 +91,7 @@ struct NativeDisplayBlocksView: View {
     var connectedTaskIDs: Set<String>? = nil
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
+    var onDecide: ((String, String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     @State private var openReport: NativeResearchArtifact?
 
@@ -69,6 +104,7 @@ struct NativeDisplayBlocksView: View {
                         card: displayCard(card),
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
+                        onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
                         highlighted: highlightedTaskID == card.id)
                 case .link(let link):
                     if let destination = link.destination {
@@ -105,6 +141,7 @@ struct NativeDisplayBlocksView: View {
         var saved = card
         saved.canCancel = false
         saved.canRetry = false
+        saved.choices = []
         saved.connectionNote = "Saved here. Background work is disconnected."
         return saved
     }

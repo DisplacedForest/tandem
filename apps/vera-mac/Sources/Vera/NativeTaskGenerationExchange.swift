@@ -75,10 +75,7 @@ actor NativeTaskGenerationExchange {
         let remaining = nativeTaskSeconds(ContinuousClock.now.duration(to: job.deadline))
         guard pending[taskID] === job, remaining > 0, job.outcome == nil else { return nil }
         job.delivered = true
-        return NativeTaskGenerationJob(id: job.job.id, taskID: job.job.taskID, bindingID: job.job.bindingID,
-            enrollmentDigest: job.job.enrollmentDigest, admissionBase: job.job.admissionBase, phase: job.job.phase,
-            attempt: job.job.attempt, messages: job.job.messages, messagesDigest: job.job.messagesDigest,
-            deadlineSeconds: remaining, generation: job.job.generation)
+        return job.job.withDeadline(remaining)
     }
 
     func result(taskID: String, body: NativeTaskGenerationResponse) throws {
@@ -91,14 +88,24 @@ actor NativeTaskGenerationExchange {
         if let response = body.response, response.utf8.count > 262144 {
             throw NativeTaskLocalStatus(code: 422, detail: "Generation output exceeds its limit")
         }
+        if let calls = body.toolCalls {
+            guard body.response != nil, calls.count <= 64, calls.allSatisfy(NativeTaskGenerationJob.validCall),
+                  Set(calls.map(\.id)).count == calls.count else {
+                throw NativeTaskLocalStatus(code: 422, detail: "Generation tool calls are not valid")
+            }
+        }
         let task = try store.get(taskID)
         guard let job = pending[taskID], job.deadline > .now, !task.cancelRequested, task.state == .running,
               task.generation == body.generation, job.job.id == body.jobID, job.job.bindingID == body.bindingID,
               job.job.generation == body.generation, job.job.messagesDigest == body.messagesDigest else {
             throw NativeTaskLocalStatus(code: 409, detail: "This generation is no longer active")
         }
+        if body.toolCalls?.isEmpty == false, job.job.tools == nil {
+            throw NativeTaskLocalStatus(code: 422, detail: "This generation did not offer tools")
+        }
         if let existing = job.outcome {
-            guard existing.response == body.response, existing.failure == body.failure else {
+            guard existing.response == body.response, existing.failure == body.failure,
+                  existing.toolCalls ?? [] == body.toolCalls ?? [] else {
                 throw NativeTaskLocalStatus(code: 409, detail: "This generation already has a different result")
             }
             return
@@ -113,13 +120,23 @@ actor NativeTaskGenerationExchange {
 
     func complete(task: NativeTaskRecord, binding: NativeTaskAdmissionBinding, phase: String, attempt: String,
                   ordinal: Int, messages: [NativeTaskGenerationMessage]) async throws -> String {
-        guard ordinal <= 3 else { throw NativeTaskGenerationFailure(code: "request_limit") }
-        guard (1...8).contains(messages.count),
-              messages.allSatisfy({ ["system", "user", "assistant"].contains($0.role) }) else {
+        let result = try await completeTurn(task: task, binding: binding, phase: phase, attempt: attempt,
+                                            ordinal: ordinal, messages: messages)
+        guard result.toolCalls.isEmpty else { throw NativeTaskGenerationFailure(code: "provider_response") }
+        return result.content
+    }
+
+    func completeTurn(task: NativeTaskRecord, binding: NativeTaskAdmissionBinding, phase: String, attempt: String,
+                      ordinal: Int, messages: [NativeTaskGenerationMessage],
+                      tools: [NativeTaskGenerationTool]? = nil, toolChoice: String? = nil) async throws -> NativeTaskGenerationCompletion {
+        let budget = NativeTaskGenerationBudget.forWorker(task.workerType)
+        guard ordinal <= budget.maximumOrdinal else { throw NativeTaskGenerationFailure(code: "request_limit") }
+        guard NativeTaskGenerationJob.validShape(messages, tools: tools, toolChoice: toolChoice, budget: budget) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }
-        let encoded = try JSONSerialization.data(withJSONObject: messages.map { ["role": $0.role, "content": $0.content] })
-        guard encoded.count <= 65536 else { throw NativeTaskGenerationFailure(code: "input_limit") }
+        guard try NativeTaskGenerationJob.wireBytes(messages, tools: tools) <= budget.maximumBytes else {
+            throw NativeTaskGenerationFailure(code: "input_limit")
+        }
         guard hasPresence(task.id, binding: binding) else { throw NativeTaskExecutorUnavailable() }
         let admission = admission() ?? .local()
         issued[task.id] = nil
@@ -127,7 +144,7 @@ actor NativeTaskGenerationExchange {
         do {
             return try await admission.perform(endpoint: binding.admissionBase, priority: .background, requestedSeconds: 90) { budget in
                 try await self.operation(task: task, binding: binding, phase: phase, attempt: "\(attempt)-\(ordinal)",
-                                         messages: messages, seconds: min(budget.seconds, 90))
+                                         messages: messages, tools: tools, toolChoice: toolChoice, seconds: min(budget.seconds, 90))
             }
         } catch is NativeInferenceAdmission.AdmissionError {
             if issued[task.id]?.delivered == true { throw NativeTaskGenerationFailure(code: "request_timeout") }
@@ -136,12 +153,14 @@ actor NativeTaskGenerationExchange {
     }
 
     private func operation(task: NativeTaskRecord, binding: NativeTaskAdmissionBinding, phase: String, attempt: String,
-                           messages: [NativeTaskGenerationMessage], seconds: Double) async throws -> String {
+                           messages: [NativeTaskGenerationMessage], tools: [NativeTaskGenerationTool]?, toolChoice: String?,
+                           seconds: Double) async throws -> NativeTaskGenerationCompletion {
         guard hasPresence(task.id, binding: binding) else { throw NativeTaskExecutorUnavailable() }
         let job = NativeTaskGenerationJob(id: UUID().uuidString.lowercased(), taskID: task.id, bindingID: binding.id,
             enrollmentDigest: binding.enrollmentDigest, admissionBase: binding.admissionBase, phase: phase,
-            attempt: attempt, messages: messages, messagesDigest: NativeTaskGenerationJob.digest(messages),
-            deadlineSeconds: seconds, generation: task.generation)
+            attempt: attempt, messages: messages,
+            messagesDigest: NativeTaskGenerationJob.digest(messages, tools: tools, toolChoice: toolChoice),
+            deadlineSeconds: seconds, generation: task.generation, tools: tools, toolChoice: toolChoice)
         let entry = Pending(job: job, deadline: .now.advanced(by: .seconds(seconds)))
         issued[task.id] = entry
         pending[task.id] = entry
@@ -157,7 +176,9 @@ actor NativeTaskGenerationExchange {
             }
             if let outcome = entry.outcome {
                 if let failure = outcome.failure { throw NativeTaskGenerationFailure(code: failure) }
-                return outcome.response ?? ""
+                let calls = outcome.toolCalls ?? []
+                return NativeTaskGenerationCompletion(content: outcome.response ?? "", toolCalls: calls,
+                                                      finishReason: calls.isEmpty ? "stop" : "tool_calls")
             }
             try await Task.sleep(for: .milliseconds(50))
         }

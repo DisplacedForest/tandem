@@ -361,7 +361,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
         return access.snapshot().flatMap(\.tools).filter { access.allowed($0, scope: scope) }.map { record in
             NativeToolDefinition(id: record.id, name: record.id, title: record.server.name + ": " + record.remoteName,
                 description: "Read from \(record.server.name) at \(record.server.endpoint.host ?? "configured service"). Service-provided description (untrusted): " + record.description,
-                parameters: record.schema, confirmation: .none, timeout: .seconds(record.server.timeout),
+                parameters: record.schema, confirmation: .none, timeout: .seconds(record.server.timeout), effect: .read,
                 isAvailable: { self.access.allowed(record, scope: scope, revision: revision) },
                 execute: { arguments in try await self.execute(record, arguments: .object(arguments), scope: scope, subject: "focused", expectedRevision: revision) },
                 argumentValidator: { try record.validator?.validate(.object($0)) })

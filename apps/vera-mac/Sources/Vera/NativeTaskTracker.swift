@@ -235,15 +235,19 @@ actor NativeTaskTracker {
     }
 
     func retry(_ id: UUID) async {
+        await decide(id, choice: "retry")
+    }
+
+    func decide(_ id: UUID, choice: String) async {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
-              decision.choices.contains("retry"), !reference.cancelRequested else { return }
+              decision.choices.contains(choice), !reference.cancelRequested else { return }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
-            let intent = try repository.prepareTaskRetry(id: id, decisionID: decision.id)
+            let intent = try repository.prepareTaskDecision(id: id, decisionID: decision.id, choice: choice)
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
                 connectionNote: nil, lease: lease, generation: nil) { await onUpdate([update]) }
             await deliverRetry(intent, lease: lease)
@@ -256,8 +260,8 @@ actor NativeTaskTracker {
               let reference = try? repository.taskReference(id: id), reference.engine == lease.engine else { return }
         guard !reference.cancelRequested else { try? repository.resolveTaskRetry(intent); return }
         guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return }
-        guard saved.state == .needsDecision, saved.decision?.id == intent.decisionID,
-              saved.decision?.choices.contains("retry") == true else {
+        guard saved.state == .needsDecision, let decision = saved.decision, decision.id == intent.decisionID,
+              decision.choices.contains(intent.choice) else {
             try? repository.resolveTaskRetry(intent)
             return
         }
@@ -267,7 +271,7 @@ actor NativeTaskTracker {
         do {
             let generation = try repository.beginTaskRefresh(id: id, lease: lease)
             guard current(lease) else { return }
-            let snapshot = try await client.retry(reference, intent: intent)
+            let snapshot = try await client.decide(reference, intent: intent, digest: decision.digest)
             guard current(lease) else { return }
             if let update = try repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
                 connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }

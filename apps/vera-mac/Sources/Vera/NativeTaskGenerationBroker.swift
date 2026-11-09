@@ -15,9 +15,10 @@ extension NativeTaskClient {
     }
 
     func returnGeneration(_ reference: NativeTaskReference, job: NativeTaskGenerationJob,
-                          response: String?, failure: String?) async throws {
+                          response: String?, failure: String?, toolCalls: [NativeTaskGenerationToolCall]? = nil) async throws {
         let body = NativeTaskGenerationResponse(jobID: job.id, bindingID: job.bindingID,
-            generation: job.generation, messagesDigest: job.messagesDigest, response: response, failure: failure)
+            generation: job.generation, messagesDigest: job.messagesDigest, response: response, failure: failure,
+            toolCalls: toolCalls)
         let (_, status) = try await request(
             "POST", reference.engine.base.appendingPathComponent("tasks/\(job.taskID)/native/result"),
             try nativeTaskEncoded(body), 5)
@@ -34,19 +35,29 @@ actor NativeTaskGenerationBroker {
     let client: NativeTaskClient
     let configuredBase: @Sendable () -> URL?
     let isProfileAvailable: @Sendable (NativeTaskProfileBinding) async -> Bool
-    let generate: @Sendable (NativeTaskProfileBinding, NativeTaskGenerationJob) async throws -> String
+    let generate: @Sendable (NativeTaskProfileBinding, NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion
     private var active: Set<UUID> = []
     private var decisionRefresh: [UUID: ContinuousClock.Instant] = [:]
 
     init(repository: any NativeTaskGenerationRepository, client: NativeTaskClient = .live,
          configuredBase: @escaping @Sendable () -> URL?,
          isProfileAvailable: @escaping @Sendable (NativeTaskProfileBinding) async -> Bool,
-         generate: @escaping @Sendable (NativeTaskProfileBinding, NativeTaskGenerationJob) async throws -> String) {
+         complete: @escaping @Sendable (NativeTaskProfileBinding, NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) {
         self.repository = repository
         self.client = client
         self.configuredBase = configuredBase
         self.isProfileAvailable = isProfileAvailable
-        self.generate = generate
+        self.generate = complete
+    }
+
+    init(repository: any NativeTaskGenerationRepository, client: NativeTaskClient = .live,
+         configuredBase: @escaping @Sendable () -> URL?,
+         isProfileAvailable: @escaping @Sendable (NativeTaskProfileBinding) async -> Bool,
+         generate: @escaping @Sendable (NativeTaskProfileBinding, NativeTaskGenerationJob) async throws -> String) {
+        self.init(repository: repository, client: client, configuredBase: configuredBase,
+                  isProfileAvailable: isProfileAvailable, complete: { profile, job in
+                      .text(try await generate(profile, job))
+                  })
     }
 
     func poll() async {
@@ -74,7 +85,7 @@ actor NativeTaskGenerationBroker {
     }
 
     private func execute(reference: NativeTaskReference, profile: NativeTaskProfileBinding,
-                         job: NativeTaskGenerationJob) async throws -> String {
+                         job: NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion {
         let generate = self.generate
         let repository = self.repository
         let configuredBase = self.configuredBase
@@ -120,28 +131,34 @@ actor NativeTaskGenerationBroker {
                 return
             }
             let reservation = try repository.reserveTaskGeneration(referenceID: reference.id, job: job)
-            let response: String?
+            let completion: NativeTaskGenerationCompletion?
             let failure: String?
             switch reservation {
             case .pending:
                 return
             case .completed(let text):
-                response = text
-                failure = nil
+                if let restored = try? NativeTaskGenerationCompletion.restored(text, job: job) {
+                    completion = restored
+                    failure = nil
+                } else {
+                    completion = nil
+                    failure = "previous_request_uncertain"
+                }
             case .unavailable(let reason):
-                response = nil
+                completion = nil
                 failure = reason
             case .execute:
                 do {
                     let execution = try job.reducingDeadline(by: nativeTaskSeconds(started.duration(to: .now)))
-                    let text = try await execute(reference: reference, profile: profile, job: execution)
+                    let result = try await execute(reference: reference, profile: profile, job: execution).validated(for: job)
                     guard !Task.isCancelled else { throw CancellationError() }
+                    let stored = try result.stored(for: job)
                     guard started.duration(to: .now) < .seconds(job.deadlineSeconds),
-                          text.utf8.count <= 262144 else {
+                          stored.utf8.count <= 262144 else {
                         throw NativeTaskGenerationFailure(code: "request_timeout")
                     }
-                    try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: text, failure: nil)
-                    response = text
+                    try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: stored, failure: nil)
+                    completion = result
                     failure = nil
                 } catch {
                     let code: String
@@ -150,13 +167,14 @@ actor NativeTaskGenerationBroker {
                     else if error is NativeInferenceAdmission.AdmissionError { code = "request_timeout" }
                     else { code = "provider_unavailable" }
                     try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: nil, failure: code)
-                    response = nil
+                    completion = nil
                     failure = code
                 }
             }
             guard let current = try repository.taskReference(id: reference.id), !current.cancelRequested,
                   let base = configuredBase(), (try? NativeTaskEngineIdentity(base)) == current.engine else { return }
-            try await client.returnGeneration(current, job: job, response: response, failure: failure)
+            try await client.returnGeneration(current, job: job, response: completion?.content, failure: failure,
+                                              toolCalls: job.tools == nil ? nil : completion?.toolCalls)
         } catch NativeTaskHTTPError.status(409) {
             if let snapshot = try? await client.fetch(reference) {
                 _ = try? repository.acknowledgeTaskReference(id: reference.id, snapshot: snapshot)

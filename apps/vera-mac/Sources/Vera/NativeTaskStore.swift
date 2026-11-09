@@ -266,7 +266,7 @@ final class NativeTaskStore: Sendable {
             guard (row["state"] as String) == NativeTaskState.running.rawValue, (row["generation"] as Int) == generation else {
                 throw NativeTaskStoreError.conflict("Worker claim is no longer current")
             }
-            if (row["cancel_requested"] as Int) != 0 { return try Self.finishCancel(db, id) }
+            if (row["cancel_requested"] as Int) != 0 { return try Self.finishCancel(db, id, checkpoint: checkpoint) }
             try db.execute(sql: """
                 UPDATE native_engine_tasks SET state = ?, checkpoint = ?, result = ?, decision = ?, decision_reply = NULL, updated_at = ? WHERE id = ?
                 """, arguments: [step.state.rawValue, String(decoding: checkpoint, as: UTF8.self),
@@ -278,7 +278,10 @@ final class NativeTaskStore: Sendable {
         }
     }
 
-    private static func finishCancel(_ db: Database, _ id: String) throws -> NativeTaskRecord {
+    private static func finishCancel(_ db: Database, _ id: String, checkpoint: Data? = nil) throws -> NativeTaskRecord {
+        if let checkpoint {
+            try db.execute(sql: "UPDATE native_engine_tasks SET checkpoint = ? WHERE id = ?", arguments: [String(decoding: checkpoint, as: UTF8.self), id])
+        }
         try db.execute(sql: """
             UPDATE native_engine_tasks SET state = 'canceled', cancel_requested = 1, generation = generation + 1, decision = NULL, updated_at = ? WHERE id = ?
             """, arguments: [now(), id])
@@ -320,6 +323,13 @@ final class NativeTaskStore: Sendable {
                                        data: try Self.canonical(["decision_id": decisionID, "reply": try Self.object(reply)]))
             try Self.setQueueOrder(db, id, order)
             return try Self.fetch(db, id)
+        }
+    }
+
+    func latestDecisionID(_ id: String) throws -> String? {
+        try database.read { db in
+            try String.fetchOne(db, sql: "SELECT decision_id FROM native_engine_task_decisions WHERE task_id = ? ORDER BY rowid DESC LIMIT 1",
+                                arguments: [id])
         }
     }
 

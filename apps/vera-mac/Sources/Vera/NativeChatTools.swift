@@ -172,10 +172,16 @@ struct NativeToolDefinition: Sendable {
     var timeout: Duration? = nil
     var resultByteBudget = NativeToolResultBudget.defaultBytes
     var confirmationFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
+    var effect: NativeToolEffect = .write
+    var action: NativeActionClass? = nil
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
     var argumentValidator: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
+    var classify: (@Sendable ([String: NativeJSONValue]) -> NativeActionClass)? = nil
+    var executeWithKey: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeJSONValue)? = nil
+    var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
+    var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
@@ -279,6 +285,7 @@ enum NativeRemindersTools {
                 description: "List available Apple Reminders lists by exact name. Use this first when the user names a list informally, including shopping or grocery list requests, then use the returned exact name. Never invent a list name.",
                 parameters: objectSchema(properties: [:], required: []),
                 confirmation: .none,
+                effect: .read,
                 isAvailable: available,
                 execute: { _ in
                     let lists = try await service.nativeLists()
@@ -295,6 +302,7 @@ enum NativeRemindersTools {
                         "completed": .object(["type": .string("boolean"), "description": .string("Whether to list completed reminders")]),
                     ], required: []),
                 confirmation: .none,
+                effect: .read,
                 isAvailable: available,
                 execute: { arguments in
                     let list = try await resolveListName(arguments.string("list"), service: service)
@@ -315,6 +323,7 @@ enum NativeRemindersTools {
                         "due": .object(["type": .string("string"), "description": .string("Optional ISO 8601 date or date-time")]),
                     ], required: ["list", "title"]),
                 confirmation: .none,
+                effect: .write, action: .networkSends,
                 isAvailable: available,
                 execute: { arguments in
                     guard let list = arguments.string("list"), let title = arguments.string("title") else {
@@ -337,6 +346,7 @@ enum NativeRemindersTools {
                         "id": .object(["type": .string("string"), "description": .string("Exact reminder identifier returned by the list tool")]),
                     ], required: ["id"]),
                 confirmation: .none,
+                effect: .write, action: .networkSends,
                 isAvailable: available,
                 execute: { arguments in
                     guard let id = arguments.string("id") else {

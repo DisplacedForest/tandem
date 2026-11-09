@@ -100,7 +100,7 @@ enum NativeCommandTools {
                 "timeout_seconds": NativeFolderTools.property("integer", "Time limit in seconds, up to \(Int(NativeCommandLimits.maximumTimeout.components.seconds))"),
             ], required: ["command"]),
             confirmation: decision.requiresConfirmation ? .required : .none,
-            timeout: timeout, resultByteBudget: resultBudget, isAvailable: available,
+            timeout: timeout, resultByteBudget: resultBudget, action: .commands, isAvailable: available,
             execute: { arguments in
                 let command = try NativeFolderTools.requiredString(arguments, "command")
                 guard command.utf8.count <= NativeCommandLimits.maximumCommandLength else {
@@ -148,6 +148,23 @@ enum NativeCommandTools {
                 record(run)
                 return result(run)
             })
+        definition.classify = { arguments in
+            guard case .string(let command)? = arguments["command"] else { return .commands }
+            return NativeCommandClassifier.classify(command, grants: grants(), directory: arguments.folderString("directory"))
+        }
+        definition.ruleDecision = { arguments, resolver in
+            guard case .string(let command)? = arguments["command"] else { return .handOff }
+            let directory = arguments.folderString("directory")
+            let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
+            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
+            let current: NativeRuleDecision
+            switch action {
+            case .sensitive: return .handOff
+            case .commands: current = resolver.decision(forCommand: command)
+            default: current = resolver.decision(for: action)
+            }
+            return plain ? current : current.atLeastAsk
+        }
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
             let (action, current) = planned(command, arguments.folderString("directory"))
