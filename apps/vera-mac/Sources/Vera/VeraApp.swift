@@ -127,7 +127,6 @@ struct VeraApp: App {
                 .task { if NativePiNativeContext.candidate == nil { updates.start() } }
                 .task { if NativePiNativeContext.candidate == nil { presence.start(); companionPresence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
-                .task { if NativePiNativeContext.candidate == nil { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) } }
                 .task { if NativePiNativeContext.candidate == nil { companion.start() } }
         }
         .defaultSize(width: 1180, height: 760)

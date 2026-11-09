@@ -583,9 +583,9 @@ to everyone.
 **If you run the Vera Mac app, native chat does not need this service.** Open Settings,
 Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
 OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
-Reminders switch in Settings, Plugins controls the optional vera-api bridge wiring and
-does not expose the native chat schema. This path does not need vera-api and runs only for
-an explicit chat ask.
+Reminders entry in Settings, Plugins points vera-api at the standalone bridge below and
+takes its URL. It does not expose the native chat schema. This path does not need vera-api
+and runs only for an explicit chat ask.
 
 `services/vera-reminders` remains the headless reference for deployments with no Mac
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time

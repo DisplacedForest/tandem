@@ -231,7 +231,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
 | Overseerr | Media requests, weekly curation digest (consent-gated) | Media curation unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from update digests |
-| Apple Reminders | Reminders lists read/write from chat, shared lists included (hosted by the Mac app, or the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |
+| Apple Reminders | Reminders lists read/write from chat, shared lists included (through the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |
 
 <details>
 <summary><b>Example deployment</b></summary>
