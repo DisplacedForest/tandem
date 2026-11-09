@@ -8,13 +8,17 @@ unambiguous successor — can be tested without any network or web-framework con
 import re
 from fnmatch import fnmatch
 
+try:
+    from .ha_names import name_candidates
+except ImportError:
+    from ha_names import name_candidates
 
-def match_entities(states: list, match: dict) -> list:
+
+def match_entities(states: list, match: dict, names: dict | None = None) -> list:
     """Resolve a live_source `match` against live HA states. by ∈ {entity, glob, name_contains}.
 
     * entity        — exact entity_id.
     * glob          — fnmatch against entity_id (e.g. "sensor.unraid_*").
-    * name_contains — substring of entity_id OR friendly_name (case-insensitive).
     """
     by, val = match.get("by"), (match.get("value") or "")
     out = []
@@ -22,7 +26,6 @@ def match_entities(states: list, match: dict) -> list:
         eid = e.get("entity_id")
         if not eid:
             continue
-        fn = (e.get("attributes") or {}).get("friendly_name") or ""
         if by == "entity":
             if eid == val:
                 out.append(eid)
@@ -31,7 +34,7 @@ def match_entities(states: list, match: dict) -> list:
                 out.append(eid)
         elif by == "name_contains":
             v = val.lower()
-            if v and (v in eid.lower() or v in fn.lower()):
+            if v and (v in eid.lower() or any(v in c.lower() for c in name_candidates(e, names))):
                 out.append(eid)
     return out
 

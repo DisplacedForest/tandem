@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, inference_admission, integrations, kitchen, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, scheduler, tasks, vein_builder, vein_engine
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, inference_admission, integrations, kitchen, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, research, scheduler, tasks, vein_builder, vein_engine
 from routers import native_generation, task_document, task_research
 
 # vera-api: ONE container, many capabilities.
@@ -91,6 +91,7 @@ CAPABILITIES = {
     "agentic": agentic.router,
     "overseerr": overseerr.router,
     "media_curation": media_curation.router,
+    "research": research.router,
     "health": health.router,
     "scheduler": scheduler.router,
     "tasks": tasks.router,

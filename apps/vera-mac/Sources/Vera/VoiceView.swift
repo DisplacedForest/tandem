@@ -1,7 +1,13 @@
 import SwiftUI
 
 struct VoiceView: View {
-    @EnvironmentObject var voice: VoiceSession
+    enum Phase: Equatable { case idle, listening, transcribing, thinking, speaking }
+
+    let phase: Phase
+    var playing: Bool = false
+    var statusLine: String? = nil
+    var error: String? = nil
+    var onEnd: () -> Void = {}
     @EnvironmentObject var store: ChatStore
     @Environment(\.companionAppearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -19,7 +25,7 @@ struct VoiceView: View {
                 .padding(.horizontal, 28).padding(.top, 36)
 
                 Spacer()
-                CompanionAvatarView(appearance: appearance, state: Self.companionState(for: voice.state, playing: voice.isPlayingAudio), size: 220,
+                CompanionAvatarView(appearance: appearance, state: Self.companionState(for: phase, playing: playing), size: 220,
                                     name: store.assistantName, reduceMotion: reduceMotion)
                 Text(caption)
                     .font(.system(size: 14))
@@ -27,13 +33,13 @@ struct VoiceView: View {
                     .padding(.top, 30)
                 Spacer()
 
-                if let err = voice.lastError {
+                if let err = error {
                     Text(err)
                         .font(.system(size: 12))
                         .foregroundStyle(.red.opacity(0.9))
                         .padding(.bottom, 10)
                 }
-                Button(action: { voice.stop() }) {
+                Button(action: onEnd) {
                     Image(systemName: "xmark")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white)
@@ -49,7 +55,7 @@ struct VoiceView: View {
         }
     }
 
-    static func companionState(for state: VoiceSession.State, playing: Bool) -> CompanionState {
+    static func companionState(for state: Phase, playing: Bool) -> CompanionState {
         switch state {
         case .listening: return .listening
         case .speaking: return playing ? .speaking : .thinking
@@ -59,11 +65,11 @@ struct VoiceView: View {
     }
 
     private var caption: String {
-        switch voice.state {
+        switch phase {
         case .idle:         return ""
         case .listening:    return "Listening…"
         case .transcribing: return "Transcribing…"
-        case .thinking:     return voice.statusLine ?? "Thinking…"
+        case .thinking:     return statusLine ?? "Thinking…"
         case .speaking:     return "Speaking…"
         }
     }

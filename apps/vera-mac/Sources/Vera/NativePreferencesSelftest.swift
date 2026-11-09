@@ -502,10 +502,6 @@ enum NativePreferencesSelftest {
         try require(NativeDocumentWorker.promptSize(document) == NativeDocumentWorker.promptSize(bare), "Preferences never count against the document budget")
         let relay = NativeCompanionWorkerRelay().environment(database: repository.database)
         try require(NativePreferencePrompt.section(relay.preferences()) == block, "The companion uses the same block")
-        let chat = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativePreferenceStubTransport(classifierReply: ""),
-                             repository: repository, artifactPersistenceEnabled: false)
-        let voice = chat.beginVoiceTurn(userText: "hello")
-        try require((voice?.messages.first?["content"] as? String) == block, "Voice uses the same block")
     }
 
     private static func settingsEdits(_ require: (Bool, String) throws -> Void) throws {
@@ -725,12 +721,6 @@ enum NativePreferencesSelftest {
                     "Undo removes the preference and the turn confirms it")
         try require(try NativePreferenceStore(database: repository.database).active().isEmpty && transport.classifierRequests == 2,
                     "Undo leaves nothing active and never classifies")
-
-        let voiceStore = NativePreferenceStore(database: repository.database)
-        try voiceStore.add(statement: "Call me Sam")
-        let voice = store.beginVoiceTurn(userText: "hello")
-        try require((voice?.messages.first?["role"] as? String) == "system"
-                    && (voice?.messages.first?["content"] as? String)?.contains("- Call me Sam") == true, "Voice replies carry preferences")
 
         let off = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: try tracked(),
                             artifactPersistenceEnabled: false)
