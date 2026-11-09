@@ -198,16 +198,9 @@ struct NativePreferenceStore: Sendable {
         statement.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
     }
 
-    static func cleanStatement(_ statement: String, truncating: Bool = false) -> String? {
-        var value = collapsed(statement)
-        if value.count > maximumStatementCharacters {
-            guard truncating else { return nil }
-            let prefix = String(value.prefix(maximumStatementCharacters + 1))
-            guard let space = prefix.lastIndex(of: " ") else { return nil }
-            value = String(prefix[..<space])
-            while let last = value.last, ",;:".contains(last) || last == " " { value.removeLast() }
-        }
-        guard !value.isEmpty, !normalized(value).isEmpty else { return nil }
+    static func cleanStatement(_ statement: String) -> String? {
+        let value = collapsed(statement)
+        guard !value.isEmpty, value.count <= maximumStatementCharacters, !normalized(value).isEmpty else { return nil }
         return value
     }
 
@@ -375,7 +368,7 @@ struct NativePreferenceStore: Sendable {
 
     func saveCaptured(_ proposal: NativePreferenceProposal, quote: String, key: NativePreferenceCaptureKey, now: Date = Date(),
                       stillCurrent: (Database) throws -> Bool = { _ in true }) throws -> String {
-        guard let clean = Self.cleanStatement(proposal.statement, truncating: true) else { throw NativePreferenceStoreError(reason: .empty) }
+        guard let clean = Self.cleanStatement(proposal.statement) else { throw NativePreferenceStoreError(reason: .empty) }
         return try database.write { db in
             guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
             let id = try Self.upsert(db, statement: clean, kind: proposal.kind, strength: proposal.strength, check: proposal.check,
@@ -459,12 +452,18 @@ enum NativePreferenceRecognizer {
             let trimmed = clause.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { result.append(trimmed) }
         }
+        let joiners: [(match: String, drop: Int)] = [(" but ", 5), (" and always ", 5), (" and use ", 5)]
         for line in normalized.split(omittingEmptySubsequences: true, whereSeparator: \.isNewline) {
             let characters = Array(line.trimmingCharacters(in: .whitespaces))
             if characters.first == ">" { continue }
             var current = ""
             var closing: Character?
+            var skip = 0
             for (index, character) in characters.enumerated() {
+                if skip > 0 {
+                    skip -= 1
+                    continue
+                }
                 let previous: Character = index > 0 ? characters[index - 1] : " "
                 let next: Character = index + 1 < characters.count ? characters[index + 1] : " "
                 if let close = closing {
@@ -477,10 +476,22 @@ enum NativePreferenceRecognizer {
                 case "\u{201C}": closing = "\u{201D}"
                 case "\u{2018}": closing = "\u{2019}"
                 case "'" where !previous.isLetter: closing = "'"
-                case ".", ";", "?", "!" where next.isWhitespace || index + 1 == characters.count:
+                case ".", "?", "!" where next.isWhitespace || index + 1 == characters.count:
                     if character != "?" { keep(current) }
                     current = ""
                     continue
+                case ",", ";":
+                    keep(current)
+                    current = ""
+                    continue
+                case " ":
+                    let ahead = String(characters[index...].prefix(12)).lowercased()
+                    if let joiner = joiners.first(where: { ahead.hasPrefix($0.match) }) {
+                        keep(current)
+                        current = ""
+                        skip = joiner.drop - 1
+                        continue
+                    }
                 default: break
                 }
                 current.append(character)
@@ -583,7 +594,26 @@ enum NativePreferenceRecognizer {
         let phrases = (check.forbidPhrases ?? []).map { "\"" + $0 + "\"" }
         if !phrases.isEmpty { parts.append("Don't say " + list(phrases) + ".") }
         if let limit = check.maxCharacters { parts.append("Keep every reply under \(limit) characters.") }
-        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "), truncating: true)
+        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "))
+    }
+
+    static let fallbackCharacters = 160
+    private static let quoteCharacters: Set<Character> = ["\"", "'", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}", "`"]
+
+    static func fallback(for text: String) -> NativePreferenceProposal? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= fallbackCharacters, !trimmed.contains(where: \.isNewline),
+              !trimmed.contains("```"), let first = clauses(trimmed).first,
+              let lead = prohibitions(in: first).first, lead.object == prohibitions(in: trimmed).first?.object,
+              let check = check(for: trimmed) else { return nil }
+        var unquoted = trimmed.replacingOccurrences(of: "(?<=[A-Za-z])[\u{2019}'](?=[A-Za-z])", with: "", options: .regularExpression)
+        for phrase in (check.forbidPhrases ?? []) + (check.forbidChars ?? []) {
+            for (open, close) in [("\"", "\""), ("'", "'"), ("\u{201C}", "\u{201D}"), ("\u{2018}", "\u{2019}")] {
+                unquoted = unquoted.replacingOccurrences(of: open + phrase + close, with: " ")
+            }
+        }
+        guard !unquoted.contains(where: { quoteCharacters.contains($0) }) else { return nil }
+        return proposal(for: trimmed, check: check)
     }
 
     static func proposal(for text: String, check: NativePreferenceCheck) -> NativePreferenceProposal? {
@@ -623,6 +653,7 @@ enum NativePreferenceClassifier {
     enum Classification: Equatable, Sendable {
         case preference(NativePreferenceProposal)
         case rejected
+        case tooLong
         case invalid
     }
 
@@ -630,12 +661,19 @@ enum NativePreferenceClassifier {
         guard let raw, let object = jsonObject(raw), object.count == 1, object.keys.first == "preference",
               let value = object["preference"] else { return .invalid }
         if value is NSNull { return .rejected }
-        return parse(raw).map(Classification.preference) ?? .invalid
+        guard let fields = fields(value) else { return .invalid }
+        guard let clean = NativePreferenceStore.cleanStatement(fields.statement) else {
+            return NativePreferenceStore.collapsed(fields.statement).count > NativePreferenceStore.maximumStatementCharacters ? .tooLong : .invalid
+        }
+        return .preference(NativePreferenceProposal(statement: clean, kind: fields.kind, strength: fields.strength, check: fields.check))
     }
 
     static func parse(_ raw: String?) -> NativePreferenceProposal? {
-        guard let raw, let object = jsonObject(raw), object.count == 1, object.keys.first == "preference" else { return nil }
-        guard let value = object["preference"], !(value is NSNull) else { return nil }
+        guard case .preference(let proposal) = classify(raw) else { return nil }
+        return proposal
+    }
+
+    private static func fields(_ value: Any) -> NativePreferenceProposal? {
         guard let preference = value as? [String: Any],
               Set(preference.keys).isSubset(of: ["statement", "kind", "strength", "check"]),
               let statement = preference["statement"] as? String,
@@ -644,8 +682,7 @@ enum NativePreferenceClassifier {
               let check = NativePreferenceCheck.validated(preference["check"]) else { return nil }
         let dashless = statement
             .replacingOccurrences(of: "\\s*" + NativePreferenceRecognizer.emDash + "\\s*", with: ", ", options: .regularExpression)
-        guard let clean = NativePreferenceStore.cleanStatement(dashless, truncating: true) else { return nil }
-        return NativePreferenceProposal(statement: clean, kind: kind, strength: strength, check: check)
+        return NativePreferenceProposal(statement: dashless, kind: kind, strength: strength, check: check)
     }
 
     private static func jsonObject(_ raw: String) -> [String: Any]? {
@@ -695,6 +732,8 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
     case saved(String)
     case failed
     case full
+    case tooLong
+    case unavailable
     case removed(String)
     case removalFailed
 
@@ -707,6 +746,10 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
             return "The person asked for a preference but it could not be saved. Tell them plainly it was not saved."
         case .full:
             return "The person asked for a preference but it was not saved because their preference list is full. Tell them the list is full and they can remove one in Settings."
+        case .tooLong:
+            return "The person asked for a preference but it was too long to save as one. Tell them it was not saved and suggest saying it more briefly or adding it in Settings."
+        case .unavailable:
+            return "The person asked for a preference but it couldn't be saved right now. Tell them plainly it was not saved and they can try again or add it in Settings."
         case .removed(let statement):
             return "The preference \(NativePreferencePrompt.quoted(statement)) was removed at the person's request. Confirm briefly."
         case .removalFailed:
@@ -749,20 +792,19 @@ enum NativePreferenceCapture {
         guard NativePreferenceDetector.hits(request.text) else { return .none }
         let raw = await classify(request.text)
         guard !Task.isCancelled, await isCurrent() else { return .none }
-        let recognized = NativePreferenceRecognizer.check(for: request.text)
         var proposal: NativePreferenceProposal
         switch NativePreferenceClassifier.classify(raw) {
         case .preference(let classified):
             proposal = classified
-            proposal.check = NativePreferenceCheck.merge(deterministic: recognized, classifier: classified.check)
+            proposal.check = NativePreferenceCheck.merge(
+                deterministic: NativePreferenceRecognizer.check(for: classified.statement, settings: true), classifier: classified.check)
         case .rejected:
             try? store.recordNoCapture(key)
             return .none
+        case .tooLong:
+            return .tooLong
         case .invalid:
-            guard let recognized, let fallback = NativePreferenceRecognizer.proposal(for: request.text, check: recognized) else {
-                try? store.recordNoCapture(key)
-                return .none
-            }
+            guard let fallback = NativePreferenceRecognizer.fallback(for: request.text) else { return .unavailable }
             proposal = fallback
         }
         let id: String
@@ -798,7 +840,7 @@ enum NativePreferencePrompt {
         + NativePreferenceStore.maximumActive * (NativePreferenceStore.maximumStatementCharacters + 3)
 
     static func section(_ statements: [String]) -> String? {
-        let lines = statements.compactMap { NativePreferenceStore.cleanStatement($0, truncating: true) }
+        let lines = statements.compactMap { NativePreferenceStore.cleanStatement($0) }
             .prefix(NativePreferenceStore.maximumActive)
         guard !lines.isEmpty else { return nil }
         return ([header] + lines.map { "- " + $0 }).joined(separator: "\n")

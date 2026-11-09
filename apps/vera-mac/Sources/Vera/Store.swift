@@ -2498,7 +2498,6 @@ final class ChatStore: ObservableObject {
                 }
                 let preferenceOutcome = await capturePreference(for: turn, text: text, transport: nativeTransport, model: nativeConfig.model)
                 try await ensureTurnCurrent(turn)
-                let preferences = activePreferenceStatements()
                 var selectedMemories: [NativeMemoryRanked] = []
                 let retrieval = await retrieveApprovedMemory(text, history: turn.history.filter { $0.id != turn.userMessageID },
                                                              settings: memorySettings, service: memoryService,
@@ -2560,6 +2559,8 @@ final class ChatStore: ObservableObject {
                     conversations[location.conversation].messages[location.reply].sources =
                         (groundingAssembly?.sources ?? []) + NativeMemoryCitation.sources(selectedMemories)
                 }
+                let preferences = activePreferenceStatements()
+                let preferenceNote = currentPreferenceNote(preferenceOutcome, turn: turn)
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, userScope: scopes.userScope, preferences: preferences,
                     conversationInstructions: scopes.instructions, projectName: turn.projectName,
@@ -2572,7 +2573,7 @@ final class ChatStore: ObservableObject {
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
                     assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceOutcome.note.map { "\n\n" + $0 } ?? "") + "\n\n" +
+                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)

@@ -47,7 +47,8 @@ extension ChatStore {
 
     func capturePreference(for turn: NativeConversationTurn, text: String, transport: any NativeChatTransport,
                            model: String) async -> NativePreferenceCaptureOutcome {
-        guard capturesPreferences, let store = nativePreferenceStore,
+        guard capturesPreferences, let local = repository as? LocalChatRepository, (turnRepository as? LocalChatRepository) === local,
+              let store = nativePreferenceStore,
               let request = Self.preferenceCaptureRequest(for: turn, text: text,
                                                           stored: try? repository?.messages(conversationID: turn.conversationID)) else { return .none }
         let classify: @Sendable (String) async -> String?
@@ -59,9 +60,7 @@ extension ChatStore {
         } else {
             classify = { _ in nil }
         }
-        let sameDatabase = (turnRepository as? LocalChatRepository).map { $0.database === store.database } ?? false
-        let turnGuard = NativePreferenceStore.turnGuard(id: turn.id, attempt: turn.attempt)
-        let stillCurrent: @Sendable (Database) throws -> Bool = { db in sameDatabase ? try turnGuard(db) : true }
+        let stillCurrent = NativePreferenceStore.turnGuard(id: turn.id, attempt: turn.attempt)
         let isCurrent: @Sendable () async -> Bool = { @MainActor [weak self] in
             guard let self else { return false }
             return await self.turnCurrency(turn) == .current
@@ -70,8 +69,17 @@ extension ChatStore {
                                                         isCurrent: isCurrent, stillCurrent: stillCurrent)
         switch outcome {
         case .saved, .removed: preferencesRevision += 1
-        case .none, .failed, .full, .removalFailed: break
+        case .none, .failed, .full, .tooLong, .unavailable, .removalFailed: break
         }
         return outcome
+    }
+
+    func currentPreferenceNote(_ outcome: NativePreferenceCaptureOutcome, turn: NativeConversationTurn) -> String? {
+        guard case .saved = outcome else { return outcome.note }
+        guard let store = nativePreferenceStore,
+              let record = try? store.capture(turnID: turn.id.uuidString, userMessageID: turn.userMessageID.uuidString),
+              record.outcome == .saved, let id = record.preferenceID,
+              let stored = try? store.preference(id: id), stored.status == .active else { return nil }
+        return NativePreferenceCaptureOutcome.saved(stored.statement).note
     }
 }

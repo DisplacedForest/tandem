@@ -98,6 +98,10 @@ final class SlowPreferenceTransport: NativeChatTransport, @unchecked Sendable {
     }
 }
 
+extension NativePreferenceStore {
+    func activeChecks() -> [NativePreferenceCheck?] { ((try? active()) ?? []).map(\.check) }
+}
+
 @MainActor
 enum NativePreferencesSelftest {
     static let emDash = "\u{2014}"
@@ -124,6 +128,7 @@ enum NativePreferencesSelftest {
         try await companionPrompt(require)
         try await storeTurns(require)
         try await storeAdjacencyAndStops(require)
+        try await storeRevalidation(require)
         print("NATIVE PREFERENCES SELFTEST OK")
     }
 
@@ -227,7 +232,9 @@ enum NativePreferencesSelftest {
         let junk = NativePreferenceClassifierCounter("sure! here you go")
         let broken = await NativePreferenceCapture.run(request("Stop saying bullet points"), store: store, classify: junk.classify)
         let afterJunk = try store.active().count
-        try require(broken == .none && afterJunk == 1, "Malformed classifier output saves nothing")
+        try require(broken == .unavailable && afterJunk == 1, "Malformed classifier output without a plain prohibition saves nothing")
+        try require(broken.note == "The person asked for a preference but it couldn't be saved right now. Tell them plainly it was not saved and they can try again or add it in Settings.",
+                    "A classifier failure tells the model to say it was not saved")
         let silent = NativePreferenceClassifierCounter(savedEmDash)
         let ordinary = await NativePreferenceCapture.run(request("What should I cook tonight?"), store: store, classify: silent.classify)
         try require(ordinary == .none && silent.calls == 0, "No marker means no classifier call")
@@ -273,17 +280,50 @@ enum NativePreferencesSelftest {
         let quotedOnly = await NativePreferenceCapture.run(request("Alice wrote: never use exclamation marks"), store: nullStore, classify: malformed.classify)
         let asked = await NativePreferenceCapture.run(request("Do I never use exclamation marks?"), store: nullStore, classify: malformed.classify)
         let mine = await NativePreferenceCapture.run(request("I never use exclamation marks myself"), store: nullStore, classify: malformed.classify)
-        try require(quotedOnly == .none && asked == .none && mine == .none, "Attributed, asked and self described text never falls back")
+        try require(quotedOnly == .unavailable && asked == .unavailable && mine == .unavailable && nullStore.active().count == 1,
+                    "Attributed, asked and self described text never falls back")
+        let multiline = await NativePreferenceCapture.run(request("Alice wrote:\nNever use emoji"), store: nullStore, classify: malformed.classify)
+        let fenced = await NativePreferenceCapture.run(request("```\nNever use emoji\n```"), store: nullStore, classify: malformed.classify)
+        let long = await NativePreferenceCapture.run(request("Never use emoji " + String(repeating: "in any reply at all ", count: 9)), store: nullStore,
+                                                     classify: malformed.classify)
+        let quotedAround = await NativePreferenceCapture.run(request("\"Never use emoji\""), store: nullStore, classify: malformed.classify)
+        let trailing = await NativePreferenceCapture.run(request("I think so. Never use emoji"), store: nullStore, classify: malformed.classify)
+        try require([multiline, fenced, long, quotedAround, trailing].allSatisfy { $0 == .unavailable } && nullStore.active().count == 1,
+                    "Only a single short line that is itself a prohibition falls back")
+        let phrase = await NativePreferenceCapture.run(request("Never say 'great question'"), store: nullStore, classify: malformed.classify)
+        try require(phrase == .saved("Don't say \"great question\"."), "Quotes around the banned phrase are allowed in the fallback")
+        let mixedStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let mixed = await NativePreferenceCapture.run(request("Never use emoji, always use em dashes"), store: mixedStore, classify: malformed.classify)
+        try require(mixed == .saved("Don't use emoji.") && mixedStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)],
+                    "The fallback bans only the object of the negative clause")
         let failing = NativePreferenceClassifierCounter(nil)
         let afterFailure = await NativePreferenceCapture.run(request("I'd like fewer exclamation marks"), store: nullStore, classify: failing.classify)
         try require(afterFailure == .none, "No detector hit means nothing even with a recognizer match")
         let plain = await NativePreferenceCapture.run(request("Never use bullet points"), store: nullStore, classify: failing.classify)
         let remaining = try nullStore.active().count
-        try require(plain == .none && remaining == 1 && failing.calls == 1, "A failed classifier with no recognizer match saves nothing")
+        try require(plain == .unavailable && remaining == 2 && failing.calls == 1, "A failed classifier with no recognizer match saves nothing")
         let polar = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
         let likes = #"{"preference": {"statement": "Always use emoji.", "kind": "style", "strength": "hard", "check": null}}"#
         _ = await NativePreferenceCapture.run(request("Always use emoji"), store: polar, classify: NativePreferenceClassifierCounter(likes).classify)
         try require(try polar.active().first?.check == nil, "A positive preference never gets a forbid check")
+        let cases: [(String, NativePreferenceCheck?)] = [
+            ("Never use emoji, always use em dashes.", NativePreferenceCheck(forbidEmoji: true)),
+            ("Don't use exclamation marks but use em dashes.", NativePreferenceCheck(forbidChars: ["!"])),
+            ("Never say 'great question' and always use emoji.", NativePreferenceCheck(forbidPhrases: ["great question"])),
+            ("Use emoji and use exclamation marks.", nil),
+            ("Always use em dashes; never use en dashes.", NativePreferenceCheck(forbidChars: [enDash])),
+        ]
+        for (statement, expected) in cases {
+            let mixedStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+            let reply = "{\"preference\": {\"statement\": \"\(statement.replacingOccurrences(of: "\"", with: "\\\""))\", \"kind\": \"style\", \"strength\": \"hard\", \"check\": null}}"
+            _ = await NativePreferenceCapture.run(request("Always do this from now on"), store: mixedStore, classify: NativePreferenceClassifierCounter(reply).classify)
+            try require(mixedStore.activeChecks() == [expected], "The merged check follows the statement's negative clauses: \(statement)")
+        }
+        let ignored = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let calm = #"{"preference": {"statement": "Keep a calm tone.", "kind": "style", "strength": "standing", "check": null}}"#
+        _ = await NativePreferenceCapture.run(request("Never use emoji. Also keep a calm tone from now on"), store: ignored,
+                                              classify: NativePreferenceClassifierCounter(calm).classify)
+        try require(ignored.activeChecks() == [nil], "The person's raw words never add a check the classifier statement lacks")
 
         let R = NativePreferenceRecognizer.self
         try require(R.statement(for: NativePreferenceCheck(forbidChars: [enDash])) == "Don't use en dashes as dashes.", "En dash statement")
@@ -327,8 +367,12 @@ enum NativePreferencesSelftest {
             try require(error.reason == .tooLong && error.localizedDescription == "Keep a preference under 300 characters.", "A long Settings entry gets a plain message")
         }
         let wordy = "{\"preference\": {\"statement\": \"" + String(repeating: "Keep it calm and simple ", count: 20) + "\", \"kind\": \"style\", \"strength\": \"standing\"}}"
-        let trimmed = NativePreferenceClassifier.parse(wordy)?.statement ?? ""
-        try require(trimmed.count <= 300 && trimmed.count > 280 && String(repeating: "Keep it calm and simple ", count: 20).hasPrefix(trimmed + " "), "A long model statement is trimmed at a word boundary")
+        try require(NativePreferenceClassifier.classify(wordy) == .tooLong, "A model statement over the limit is too long, never trimmed")
+        let tooLong = await NativePreferenceCapture.run(request("never use em dashes"), store: store,
+                                                        classify: NativePreferenceClassifierCounter(wordy).classify)
+        try require(tooLong == .tooLong && store.active().isEmpty, "A too long statement saves nothing")
+        try require(tooLong.note == "The person asked for a preference but it was too long to save as one. Tell them it was not saved and suggest saying it more briefly or adding it in Settings.",
+                    "The too long note asks for a shorter version or Settings")
         let statements = (1...40).map(longStatement)
         for statement in statements { try store.add(statement: statement) }
         try require(statements.allSatisfy { $0.count <= 300 && $0.count > 280 } && store.active().count == 40, "Forty near limit preferences save")
@@ -617,6 +661,24 @@ enum NativePreferencesSelftest {
         try await NativeSessionFixture.eventually("The turn settles: \(text)") {
             transport.systemPrompts.count == count && store.selected?.messages.last?.state != .streaming
         }
+    }
+
+    private static func storeRevalidation(_ require: (Bool, String) throws -> Void) async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
+        let store = turnStore(transport, repository)
+        defer { store.conversationTurnLoop?.cancel() }
+        let preferences = NativePreferenceStore(database: repository.database)
+        try preferences.add(statement: "Call me Sam")
+        store.nativeMemorySelectionTransform = { selected in
+            for row in (try? preferences.active()) ?? [] where row.statement == "Never use em dashes." { try? preferences.remove(id: row.id) }
+            return selected
+        }
+        try await send(store, "Never use em dashes", settled: 1, transport)
+        let prompt = transport.systemPrompts[0]
+        try require(transport.classifierRequests == 1 && !prompt.contains("it is saved") && !prompt.contains("- Never use em dashes."),
+                    "A preference removed before the prompt is built is neither announced nor sent")
+        try require(prompt.contains(NativePreferencePrompt.header + "\n- Call me Sam"), "The preference section is refreshed at prompt time")
     }
 
     private static func storeAdjacencyAndStops(_ require: (Bool, String) throws -> Void) async throws {
