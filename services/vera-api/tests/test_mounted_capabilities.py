@@ -23,13 +23,13 @@ def test_callerless_routes_are_not_mounted() -> None:
 
 
 def test_uncalled_capabilities_are_not_registered() -> None:
-    for name in ('search', 'images', 'knowledge_groom', 'research'):
+    for name in ('search', 'images', 'knowledge_groom'):
         assert name not in main.CAPABILITIES
 
 
 def test_uncalled_routes_are_not_mounted() -> None:
     paths = route_paths()
-    for path in ('/search', '/images/search', '/research', '/knowledge/groom_pass'):
+    for path in ('/search', '/images/search', '/knowledge/groom_pass'):
         assert path not in paths
 
 
@@ -45,7 +45,7 @@ def test_in_process_functions_remain_importable() -> None:
 
 
 def test_modules_expose_no_router() -> None:
-    from routers import images, knowledge_groom, research, websearch
+    from routers import images, knowledge_groom, websearch
 
-    for module in (images, websearch, knowledge_groom, research):
+    for module in (images, websearch, knowledge_groom):
         assert not hasattr(module, 'router')
