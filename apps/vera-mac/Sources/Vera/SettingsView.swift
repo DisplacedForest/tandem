@@ -69,6 +69,7 @@ private struct ModelTab: View {
 private struct PersonaTab: View {
     var body: some View {
         Form {
+            Section("Preferences") { PreferencesSettingsView() }
             Section("Prompt library") { PromptLibraryView() }
             SaveSection()
         }

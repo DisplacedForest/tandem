@@ -188,13 +188,18 @@ enum NativeDocumentWorker {
                 if index < checkpoint.drafts.count { context["draft"] = checkpoint.drafts[index] }
             }
         }
+        if let preferences = NativePreferencePrompt.section(identity.preferences) { instruction += "\n\n" + preferences }
         let user = (try? NativeTaskStore.canonical(context)).map { String(decoding: $0, as: UTF8.self) } ?? payload.query
         return [NativeTaskGenerationMessage(role: "system", content: instruction),
                 NativeTaskGenerationMessage(role: "user", content: user)]
     }
 
     static func promptSize(_ messages: [NativeTaskGenerationMessage]) -> Int {
-        messages.reduce(0) { $0 + $1.role.utf8.count + $1.content.utf8.count + 32 }
+        messages.reduce(0) { total, message in
+            var content = Substring(message.content)
+            if let block = message.content.range(of: "\n\n" + NativePreferencePrompt.header) { content = message.content[..<block.lowerBound] }
+            return total + message.role.utf8.count + content.utf8.count + 32
+        }
     }
 
     private static func jsonObject(in response: String) -> [String: Any]? {

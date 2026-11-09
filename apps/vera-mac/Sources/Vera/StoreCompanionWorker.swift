@@ -23,7 +23,7 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
     }
 
     func environment(database: DatabaseQueue) -> NativeCompanionWorkerEnvironment {
-        NativeCompanionWorkerEnvironment(
+        var environment = NativeCompanionWorkerEnvironment(
             context: { [weak self] _, connected in
                 guard let store = self?.lock.withLock({ self?.store }) else { return nil }
                 return await MainActor.run { store.companionWorkerContext(connectedToolIDs: connected) }
@@ -39,6 +39,8 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             },
             ledger: NativeEffectLedgerStore(database: database),
             tasks: NativeTaskStore(database: database))
+        environment.preferences = { NativePreferenceStore(database: database).activeStatements() }
+        return environment
     }
 }
 

@@ -78,6 +78,7 @@ struct NativeConversationTurn: Codable, Sendable, Identifiable {
     var mayHaveEffect = false
     var dotContext: String?
     var companionEvent: NativeCompanionEvent?
+    var preferenceEligible: Bool?
 
     static func processBirth(_ pid: Int32) -> String? {
         var info = kinfo_proc()
