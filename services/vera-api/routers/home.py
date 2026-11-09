@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 from fastapi import APIRouter
 
+from . import action_registry
 from . import rhythm_store as rs
 from .ha_names import display_name, fetch_names
 from .pulse import HOUSEHOLD, _inject, _vera
@@ -202,3 +203,95 @@ async def rhythm(entity: str):
             for (d, h), (p, o) in sorted(b.items())
         ],
     }
+
+
+def _integration(iid: str) -> dict | None:
+    from . import integrations
+    return integrations.integration(iid)
+
+
+def _env_set(name: str, default: str) -> set[str]:
+    raw = os.environ.get(name, "").strip() or default
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+HA_ALLOWED_SERVICES = _env_set(
+    "HA_ALLOWED_SERVICES", "climate.set_temperature,scene.turn_on,script.turn_on,update.install")
+HA_ALLOWED_DOMAINS = _env_set("HA_ALLOWED_DOMAINS", "light,switch,media_player")
+
+
+def ha_allowed(domain, service):
+    return f"{domain}.{service}" in HA_ALLOWED_SERVICES or domain in HA_ALLOWED_DOMAINS
+
+
+def _v_ha(args):
+    d, s = args.get("domain"), args.get("service")
+    if not d or not s:
+        return "ha.service needs domain and service"
+    if not ha_allowed(d, s):
+        return f"{d}.{s} is not allowlisted"
+    return None
+
+
+def _p_ha(args):
+    data = args.get("data") or {}
+    tgt = data.get("entity_id") or "?"
+    return f"Call {args.get('domain')}.{args.get('service')} on {tgt} with {data}"
+
+
+def _v_health(args):
+    return None
+
+
+def _p_health(args):
+    return "Run a read-only server/home health check"
+
+
+async def _x_ha(args):
+    d, s = args.get("domain"), args.get("service")
+    if not ha_allowed(d, s):
+        return {"ok": False, "error": f"{d}.{s} not allowlisted"}
+    ha = _integration("home_assistant")
+    if not ha:
+        return {"ok": False, "error": "home_assistant integration not enabled"}
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(
+            f"{ha['url']}/api/services/{d}/{s}",
+            headers={"Authorization": f"Bearer {ha['token']}"},
+            json=args.get("data") or {},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            return {"ok": r.status < 300, "status": r.status, "service": f"{d}.{s}"}
+
+
+async def _x_health(args):
+    out = {"ok": True, "vera_api": "ok"}
+    ha = _integration("home_assistant")
+    if not ha:
+        out["home_assistant"] = "integration not enabled"
+        return out
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(f"{ha['url']}/api/", headers={"Authorization": f"Bearer {ha['token']}"},
+                                timeout=aiohttp.ClientTimeout(total=10)) as r:
+                out["home_assistant"] = "reachable" if r.status < 300 else f"http {r.status}"
+    except Exception as e:
+        out["home_assistant"] = f"unreachable: {e}"
+    return out
+
+
+def _ha_allowlist() -> dict:
+    return {"services": sorted(HA_ALLOWED_SERVICES), "domains": sorted(HA_ALLOWED_DOMAINS)}
+
+
+action_registry.register_action(
+    "ha.service", validate=_v_ha, preview=_p_ha, risk="medium", reversible=True,
+    autonomous=False, order=20, executor=_x_ha,
+    summary="call a Home Assistant service (the server enforces a configurable allowlist)",
+    args='{"domain": "...", "service": "...", "data": {"entity_id": "...", ...}}')
+action_registry.register_action(
+    "health.check", validate=_v_health, preview=_p_health, risk="none", reversible=True,
+    autonomous=False, order=90, executor=_x_health,
+    summary="run a service health check now",
+    args="{}")
+action_registry.register_catalog_extra("ha_allowlist", _ha_allowlist)
