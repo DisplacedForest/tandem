@@ -97,6 +97,7 @@ struct VeraApp: App {
             }
         }
         storeInstance.generatesConversationTitles = fixture == nil
+        storeInstance.capturesPreferences = fixture == nil
         storeInstance.menuBarPreference = configInstance.menuBarKeepRunning
         if fixture == nil {
             AppDelegate.keepsRunningAfterLastWindowClosed = { [weak storeInstance] in storeInstance?.keepsRunningInMenuBar ?? false }

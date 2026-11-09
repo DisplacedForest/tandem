@@ -427,6 +427,12 @@ When the commands rule asks, the card shows the exact command and the folder. **
 
 Not included: sandboxes or containers, network isolation, a terminal view, and commands that keep running after the answer finishes.
 
+### Preferences
+
+Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, voice reply, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
+
+You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets Vera acknowledge it. If the save fails, Vera tells you it wasn't saved. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy.
+
 ### Migrating Open WebUI knowledge collections
 
 If you are moving off an existing Open WebUI instance, its knowledge collections can be

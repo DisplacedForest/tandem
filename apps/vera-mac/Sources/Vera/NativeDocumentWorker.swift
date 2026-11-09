@@ -188,6 +188,7 @@ enum NativeDocumentWorker {
                 if index < checkpoint.drafts.count { context["draft"] = checkpoint.drafts[index] }
             }
         }
+        if let preferences = NativePreferencePrompt.section(identity.preferences) { instruction += "\n\n" + preferences }
         let user = (try? NativeTaskStore.canonical(context)).map { String(decoding: $0, as: UTF8.self) } ?? payload.query
         return [NativeTaskGenerationMessage(role: "system", content: instruction),
                 NativeTaskGenerationMessage(role: "user", content: user)]

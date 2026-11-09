@@ -136,6 +136,11 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await SelfTest.runCompanionIntroduction(); print("companion-introduction: PASS"); exit(0) }
         catch { print("companion-introduction: FAIL \(error)"); exit(1) }
     }
+} else if arguments.contains("--preferences-selftest") {
+    NativeApplicationEntry.runAsync {
+        do { try await NativePreferencesSelftest.run() }
+        catch { print("native-preferences: FAIL \(error)"); exit(1) }
+    }
 } else if arguments.contains("--selftest") {
     NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {
