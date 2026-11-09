@@ -1,10 +1,9 @@
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from pydantic import BaseModel
 import aiohttp
 
-router = APIRouter()
 
 PLAYWRIGHT_WS = os.environ.get("PLAYWRIGHT_WS", "")  # optional: without it, results are snippets only
 
@@ -44,7 +43,6 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
 
 
-@router.post("/search", response_model=SearchResponse, tags=["search"])
 async def search(req: SearchRequest) -> SearchResponse:
     searxng = _searxng_url()
     if not searxng:
