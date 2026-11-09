@@ -10,12 +10,9 @@ import os
 import time
 
 import aiohttp
-from fastapi import APIRouter
 
 from . import units, vein_engine
 from .persona import home_region_is_us, location
-
-router = APIRouter()
 
 
 def _coord(name: str) -> float | None:

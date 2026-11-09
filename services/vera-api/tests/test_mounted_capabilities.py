@@ -49,3 +49,12 @@ def test_modules_expose_no_router() -> None:
 
     for module in (images, websearch, knowledge_groom, research):
         assert not hasattr(module, 'router')
+
+
+def test_block_only_modules_are_not_mounted() -> None:
+    from routers import updates, weather
+
+    for name in ('weather', 'updates'):
+        assert name not in main.CAPABILITIES
+    for module in (weather, updates):
+        assert not hasattr(module, 'router')

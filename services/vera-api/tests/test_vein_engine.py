@@ -607,6 +607,52 @@ def test_block_modules_load_from_dir(monkeypatch, tmp_path):
         vein_engine.BLOCKS.pop("my_source", None)
 
 
+def test_load_block_modules_registers_built_in_blocks_without_main(tmp_path):
+    import os
+    import pathlib
+    import subprocess
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    empty = tmp_path / "blocks.d"
+    empty.mkdir()
+    script = (
+        "import sys\n"
+        "from routers import vein_engine\n"
+        "assert 'routers.updates' not in sys.modules\n"
+        "assert 'stack_updates' not in vein_engine.BLOCKS\n"
+        "assert vein_engine.load_block_modules() == []\n"
+        "assert 'main' not in sys.modules\n"
+        "for name in ('weather_conditions', 'stack_updates'):\n"
+        "    assert name in vein_engine.BLOCKS, name\n"
+        "    assert name in vein_engine.MONITOR_BLOCKS, name\n"
+    )
+    env = {**os.environ, "VEIN_BLOCKS_DIR": str(empty)}
+    result = subprocess.run([sys.executable, "-c", script], cwd=root, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_user_block_file_overrides_a_built_in_block(monkeypatch, tmp_path):
+    from routers import updates
+
+    built_in = vein_engine.BLOCKS["stack_updates"]
+    assert built_in is updates._block_stack_updates
+    d = tmp_path / "blocks.d"
+    d.mkdir()
+    (d / "override.py").write_text(
+        "from routers import vein_engine\n"
+        "async def _mine(items, params, ctx):\n"
+        "    return items\n"
+        "vein_engine.register('stack_updates', _mine)\n", encoding="utf-8")
+    monkeypatch.setattr(vein_engine, "BLOCKS_DIR", str(d))
+    try:
+        assert vein_engine.load_block_modules() == ["override.py"]
+        assert vein_engine.BLOCKS["stack_updates"] is not built_in
+    finally:
+        vein_engine.BLOCKS["stack_updates"] = built_in
+
+
 def test_standing_definition_keeps_one_card_updated(monkeypatch):
     defn = vein_defs.save_custom({
         "kind": "ticker", "label": "Ticker", "icon": "chart.xyaxis.line", "standing": True,
