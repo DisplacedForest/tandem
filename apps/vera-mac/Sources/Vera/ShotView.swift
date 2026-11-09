@@ -449,7 +449,7 @@ struct ShotView: View {
                 }
                 .modifier(ShotComposerPill())
                 HStack(spacing: 8) {
-                    ForEach(["What's on today?", "Check the kitchen", "What's the weather?", "Research a topic for me"], id: \.self) { s in
+                    ForEach(["What's on today?", "What's the weather?", "Research a topic for me"], id: \.self) { s in
                         StarterChipLabel(title: s)
                     }
                 }
