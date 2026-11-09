@@ -1,15 +1,9 @@
 """Deep Research — agentic multi-source cited reports.
 
-POST /research {query} runs a bounded loop:
-  plan sub-questions (Vera) -> gather (web_search + Playwright pages + local RAG)
-  -> synthesize a cited report (Vera, grounded only in gathered sources).
-
 Parity with ChatGPT Deep Research / Claude Research, fully local.
 """
-import time
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from .pulse import _vera
@@ -17,8 +11,6 @@ from .persona import owner, voiced
 from .tool_protocol import LOOP_RULES, loop_budget
 from .structured import parsed, repairable
 from .websearch import SearchRequest, search as web_search
-
-router = APIRouter()
 
 MAX_SOURCES = 14
 PER_SOURCE_CHARS = 1500
@@ -100,19 +92,6 @@ async def _search_one(sq: str, pages: int, seen: set, sources: list[dict], error
             sources.append({"title": r.title, "url": r.url, "content": r.content})
 
 
-async def _gather(req: ResearchRequest, subqs: list[str], errors: list[str]) -> list[dict]:
-    sources: list[dict] = []
-    seen: set = set()
-    for sq in subqs:
-        await _search_one(sq, req.pages_per_q, seen, sources, errors)
-    if req.use_rag:
-        sources.extend(await _rag_sources(req.query, errors))
-    sources = sources[:MAX_SOURCES]
-    for i, s in enumerate(sources, 1):
-        s["n"] = i
-    return sources
-
-
 async def _synthesize(req: ResearchRequest, subqs: list[str], sources: list[dict], errors: list[str], call: Callable[..., Awaitable[str]] | None = None) -> str:
     src_block = "\n\n".join(f"[{s['n']}] {s['title']} ({s['url']})\n{s['content'][:PER_SOURCE_CHARS]}" for s in sources)
     syn_usr = f"Question: {req.query}\n\nSub-questions researched:\n- " + "\n- ".join(subqs) + f"\n\nSources:\n{src_block}"
@@ -126,20 +105,3 @@ async def _synthesize(req: ResearchRequest, subqs: list[str], sources: list[dict
             raise
         errors.append(f"synthesis: {e}")
         return ""
-
-
-@router.post("/research", tags=["research"])
-async def research(req: ResearchRequest):
-    t0 = time.time()
-    out = {"ok": True, "query": req.query, "subquestions": [], "report": "", "sources": [], "errors": []}
-    subqs = await _plan(req.query, _iteration_cap(req.subquestions), out["errors"])
-    out["subquestions"] = subqs
-    sources = await _gather(req, subqs, out["errors"])
-    if not sources:
-        out["errors"].append("no sources gathered")
-        out["seconds"] = round(time.time() - t0, 1)
-        return out
-    out["report"] = await _synthesize(req, subqs, sources, out["errors"])
-    out["sources"] = [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources]
-    out["seconds"] = round(time.time() - t0, 1)
-    return out

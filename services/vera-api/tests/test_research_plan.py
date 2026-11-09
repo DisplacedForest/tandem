@@ -43,8 +43,21 @@ def test_blocking_research_keeps_response_contract(monkeypatch):
 
     monkeypatch.setattr(research, "_vera", model)
     monkeypatch.setattr(research, "web_search", search)
-    out = asyncio.run(research.research(research.ResearchRequest(query="Question", use_rag=False)))
-    assert isinstance(out.pop("seconds"), (int, float))
+    async def flow():
+        req = research.ResearchRequest(query="Question", use_rag=False)
+        errors: list[str] = []
+        subqs = await research._plan(req.query, research._iteration_cap(req.subquestions), errors)
+        sources: list[dict] = []
+        for sq in subqs:
+            await research._search_one(sq, req.pages_per_q, set(), sources, errors)
+        for i, s in enumerate(sources, 1):
+            s["n"] = i
+        report = await research._synthesize(req, subqs, sources, errors)
+        return {"ok": True, "query": req.query, "subquestions": subqs, "report": report,
+                "sources": [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources],
+                "errors": errors}
+
+    out = asyncio.run(flow())
     assert out == {"ok": True, "query": "Question", "subquestions": ["Question"],
                    "report": "Finding [1].", "sources": [{"n": 1, "title": "Evidence",
                    "url": "https://example.test/evidence"}], "errors": []}

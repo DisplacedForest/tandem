@@ -12,7 +12,6 @@ Tiered autonomy (mirrors the store's propose->commit gate):
 - propose-for-review (lossy/ambiguous): merges that would discard data, borderline promotions, conflicts.
 Review items become Pulse cards; nothing lossy is applied silently.
 
-POST /knowledge/groom_pass (gated, X-Agent-Token). dry_run reports intended actions and changes nothing.
 Kill switch: KNOWLEDGE_GROOM_ENABLED=false. Idempotent: a re-run on a groomed store is a no-op (propose
 tokens are content hashes, merged members are gone, promoted types are skipped).
 """
@@ -20,15 +19,9 @@ import json
 import os
 import time
 
-from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
-
 from . import groom_common as gcm
 from . import knowledge_store as ks
 from .pulse import HOUSEHOLD, _inject, _vera
-
-router = APIRouter()
-AGENT_TOKEN = os.environ.get("KNOWLEDGE_AGENT_TOKEN", "")
 
 MAX_REVIEW_CARDS = 10  # bound the nightly card volume; overflow is logged, never silently dropped
 
@@ -49,11 +42,6 @@ def _parse_json(txt):
         return json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
     except Exception:
         return {}
-
-
-class GroomPass(BaseModel):
-    dry_run: bool = False
-    run_id: str | None = None  # the session ties a night's ops together; standalone runs mint one
 
 
 async def run_pass(dry_run, run_id):
@@ -184,13 +172,6 @@ def summary_parts(out):
     if gc_n:
         parts.append(f"GC'd {gc_n}")
     return parts
-
-
-@router.post("/knowledge/groom_pass", tags=["knowledge"])
-async def groom_pass(b: GroomPass, x_agent_token: str = Header(default="")):
-    if not AGENT_TOKEN or x_agent_token != AGENT_TOKEN:
-        raise HTTPException(403, "groom_pass requires X-Agent-Token")
-    return await run(dry_run=b.dry_run, run_id=b.run_id)
 
 
 async def run(dry_run=False, run_id=None):
