@@ -11,6 +11,7 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
         .package(url: "https://github.com/socketio/socket.io-client-swift", from: "16.1.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
+        .package(url: "https://github.com/swiftlang/swift-cmark", from: "0.8.0"),
     ],
     targets: [
         .executableTarget(
@@ -22,6 +23,8 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "SocketIO", package: "socket.io-client-swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "cmark-gfm", package: "swift-cmark"),
+                .product(name: "cmark-gfm-extensions", package: "swift-cmark"),
             ],
             path: "Sources/Vera",
             resources: [.process("Resources")]

@@ -32,6 +32,8 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
     private var cache: [String: NativeTaskGenerationCompletion] = [:]
     private(set) var requests: [[NativeTaskGenerationMessage]] = []
     private(set) var offeredTools: [[String]] = []
+    private var classified: [String] = []
+    private var classifierReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"keep\": false}") }
     let script: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion
 
     init(_ script: @escaping @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion) {
@@ -39,11 +41,20 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
     }
 
     var callCount: Int { lock.withLock { requests.count } }
+    var classifierCalls: [String] { lock.withLock { classified } }
+    func classifier(_ reply: @escaping @Sendable () throws -> NativeTaskGenerationCompletion) { lock.withLock { classifierReply = reply } }
     var allRequests: [[NativeTaskGenerationMessage]] { lock.withLock { requests } }
     var allOffered: [[String]] { lock.withLock { offeredTools } }
 
     func complete(_ phase: String, _ attempt: String, _ messages: [NativeTaskGenerationMessage],
-                  _ tools: [NativeTaskGenerationTool]?) -> NativeTaskGenerationCompletion {
+                  _ tools: [NativeTaskGenerationTool]?) throws -> NativeTaskGenerationCompletion {
+        if messages.first?.content == NativeCompanionShape.classifierPrompt {
+            let reply = lock.withLock { () -> @Sendable () throws -> NativeTaskGenerationCompletion in
+                classified.append(messages.last?.content ?? "")
+                return classifierReply
+            }
+            return try reply()
+        }
         lock.lock()
         let key = phase + "|" + attempt
         requests.append(messages)
@@ -187,7 +198,7 @@ struct NativeCompanionHarness {
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
         let result = try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
-            model.complete(phase, attempt, messages, tools)
+            try model.complete(phase, attempt, messages, tools)
         }
         return try store.commitStep(claimed.id, generation: claimed.generation, step: result)
     }
@@ -196,7 +207,7 @@ struct NativeCompanionHarness {
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
         return try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
-            model.complete(phase, attempt, messages, tools)
+            try model.complete(phase, attempt, messages, tools)
         }
     }
 
@@ -250,7 +261,9 @@ extension SelfTest {
         try companionCommandRules()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
-        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        try companionShape()
+        try await companionClassification()
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -280,6 +293,8 @@ extension SelfTest {
         let done = try await harness.runUntilSettled()
         let result = try harness.result(done)
         try require(done.state == .completed && result["kind"] as? String == "companion_report", "The run ends with a companion report")
+        try require(result["shape"] as? String == "answer", "A short reply to a plain assignment is stored as an answer")
+        try require(harness.model.classifierCalls == ["Check the garden"], "The finished run asks the classifier once with the assignment")
         for request in harness.model.allRequests {
             try require(request.count >= 2 && request[0].role == "system" && request[1].role == "user"
                         && request[1].content.hasPrefix("Assignment:\n"), "Every request opens with the worker framing and the assignment")
@@ -290,6 +305,70 @@ extension SelfTest {
         try require(checkpoint.transcript.contains { $0.role == "tool" } && checkpoint.threadID == harness.thread.current,
                     "The transcript lives in the checkpoint, bound to the companion thread")
         try require(try harness.effects(id).map(\.state) == [.declined], "The ledger records the declined proposal and nothing else")
+    }
+
+    private static func companionShape() throws {
+        let require = NativeTaskFixture.require
+        try require(NativeCompanionShape.parseKeep("{\"keep\": true}") && NativeCompanionShape.parseKeep("  {\"keep\":true}\n"),
+                    "A strict keep reply reads as true")
+        for reply in ["{\"keep\": false}", "yes", "", "{\"keep\": \"true\"}", "{\"keep\": 1}", "{\"keep\": true, \"why\": true}",
+                      "[true]", "```json\n{\"keep\": true}\n```", "{\"Keep\": true}"] {
+            try require(!NativeCompanionShape.parseKeep(reply), "\(reply) does not read as a request to keep")
+        }
+        let decide = NativeCompanionShape.decide
+        try require(decide(false, "Tomorrow in Chicago: sunny, high of 61.") == "answer" && decide(true, "Short.") == "document",
+                    "The keep decision picks the shape for short text")
+        try require(decide(false, String(repeating: "a", count: 1501)) == "document" && decide(false, String(repeating: "a", count: 1500)) == "answer",
+                    "A reply over 1,500 characters becomes a document")
+        let documents = ["# Week\n\nQuiet.", "Here is the week.\n\n## Monday\n\nQuiet.", "Saturday\n=\nFree all day.",
+                         "Saturday\n--\nFree all day.", "~~~~\n~~~\n~~~~\n# Actual heading", "| Name | Price |\n|---|---|\n| A | 3 |",
+                         "> ## Quoted heading", "- item\n\n  ### Nested heading"]
+        for text in documents {
+            try require(decide(false, text) == "document", "\(text) has document structure")
+        }
+        let answers = ["~~~~\n~~~\n# Example\n~~~~", "- Buy milk\n---", "> Sam said 4 pm.\n---", "Run this:\n\n```sh\n# list everything\nls -la\n```",
+                       "Like this:\n```\n| a | b |\n|---|---|\n```", "#hashtag and ####### seven", "A is cheaper.\n\n---\n\nB lasts longer. Pick A | B.",
+                       "    # indented code"]
+        for text in answers {
+            try require(decide(false, text) == "answer", "\(text) has no document structure")
+        }
+    }
+
+    private static func companionClassification() async throws {
+        let require = NativeTaskFixture.require
+        func run(_ assignment: String, text: String, classifier: (@Sendable () throws -> NativeTaskGenerationCompletion)?,
+                 keep: Bool? = nil) async throws -> (shape: String?, calls: [String], checkpoint: NativeCompanionCheckpoint) {
+            let harness = try NativeCompanionHarness(rules: [:]) { _ in NativeCompanionScriptedModel.text(text) }
+            if let classifier { harness.model.classifier(classifier) }
+            let id = try harness.create(assignment)
+            if let keep {
+                let claimed = try harness.store.claim(workerTypes: ["companion"])!
+                var saved = NativeCompanionCheckpoint()
+                saved.keep = keep
+                _ = try harness.store.commitStep(id, generation: claimed.generation,
+                    step: NativeTaskStepResult(state: .queued, checkpoint: try saved.encoded(), event: "progress"))
+            }
+            let done = try await harness.runUntilSettled()
+            try require(done.state == .completed, "The classified run completes")
+            let checkpoint = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: done.checkpoint)
+            return (try harness.result(done)["shape"] as? String, harness.model.classifierCalls, checkpoint)
+        }
+        let kept = try await run("Write me a doc about the garden", text: "The garden has three beds.") { .text("{\"keep\": true}") }
+        try require(kept.shape == "document" && kept.calls == ["Write me a doc about the garden"] && kept.checkpoint.keep == true,
+                    "A keep answer makes a document, asks once with only the assignment and stores the decision")
+        let plain = try await run("What's in the garden?", text: "Three beds.") { .text("{\"keep\": false}") }
+        try require(plain.shape == "answer" && plain.calls.count == 1 && plain.checkpoint.keep == false, "A plain question stays an answer")
+        let malformed = try await run("Write me a doc", text: "Three beds.") { .text("Sure, a document.") }
+        try require(malformed.shape == "answer" && malformed.checkpoint.keep == false, "A malformed classification means an answer")
+        let failed = try await run("Write me a doc", text: "Three beds.") { throw NativeTaskGenerationFailure(code: "provider_response") }
+        try require(failed.shape == "answer" && failed.checkpoint.keep == false, "A failed classification means an answer, and the work still finishes")
+        let timedOut = try await run("Write me a doc", text: "Three beds.") { throw NativeCompanionDeadline() }
+        try require(timedOut.shape == "answer", "A timed out classification means an answer")
+        let replayed = try await run("What's in the garden?", text: "Three beds.", classifier: { .text("{\"keep\": false}") }, keep: true)
+        try require(replayed.shape == "document" && replayed.calls.isEmpty, "A stored decision is reused without asking again")
+        let structured = try await run("What's in the garden?", text: "# Beds\n\nThree.") { .text("{\"keep\": false}") }
+        let long = try await run("What's in the garden?", text: String(repeating: "beds ", count: 400)) { .text("{\"keep\": false}") }
+        try require(structured.shape == "document" && long.shape == "document", "Long or structured replies become documents regardless")
     }
 
     private static func companionProactiveRefusesWrites() async throws {
@@ -418,6 +497,9 @@ extension SelfTest {
                     "A hand-off write ends the run with nothing proposed or run")
         try require((try harness.result(done)["effects"] as? [[String: Any]])?.first?["outcome"] as? String == "handed to you",
                     "The result says the step was handed to the person")
+        let handed = try JSONDecoder().decode(NativeResearchTaskResult.self, from: done.result ?? Data())
+        try require(handed.shape == nil && harness.model.classifierCalls.isEmpty && (try harness.result(done))["shape"] == nil,
+                    "A hand-off result carries no shape and asks no classification")
     }
 
     private static func companionStaleAuthority() async throws {
@@ -472,7 +554,7 @@ extension SelfTest {
             let environment = harness.environment
             let crashing = Task {
                 try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
-                    model.complete(phase, attempt, messages, tools)
+                    try model.complete(phase, attempt, messages, tools)
                 }
             }
             for _ in 0..<200 where harness.service.count("water_bed") == 0 { try await Task.sleep(for: .milliseconds(5)) }
@@ -587,7 +669,7 @@ extension SelfTest {
         let started = ContinuousClock.now
         let running = Task {
             try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
-                model.complete(phase, attempt, messages, tools)
+                try model.complete(phase, attempt, messages, tools)
             }
         }
         for _ in 0..<200 where stopping.service.count("water_bed") == 0 { try await Task.sleep(for: .milliseconds(5)) }
@@ -809,7 +891,7 @@ extension SelfTest {
         var threw = false
         do {
             _ = try await NativeCompanionWorker.step(claimed, environment: canceling.environment) { phase, attempt, _, messages, tools, _ in
-                model.complete(phase, attempt, messages, tools)
+                try model.complete(phase, attempt, messages, tools)
             }
         } catch is CancellationError { threw = true }
         try require(threw && canceling.service.count("water_bed") == 0 && (try canceling.effects(cancelID)).first?.state == .proposed,

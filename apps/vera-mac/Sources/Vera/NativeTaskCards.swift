@@ -8,6 +8,7 @@ struct NativeTaskCardView: View {
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
     var onDecide: ((String) -> Void)? = nil
+    var onSaveAnswer: (() -> Void)? = nil
     var highlighted = false
 
     var body: some View {
@@ -25,6 +26,12 @@ struct NativeTaskCardView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if let answer = card.answer, card.status == .completed {
+                NativeArtifactMarkdown(text: answer).equatable()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .safeReportContent()
             }
             if let details = card.details, card.status == .needsInput {
                 let block = Text(details)
@@ -51,6 +58,12 @@ struct NativeTaskCardView: View {
             }
             if !card.sources.isEmpty && [.stopped, .needsInput, .failed].contains(card.status) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources))
+            }
+            if let onSaveAnswer, card.answer != nil, card.status == .completed {
+                Button("Save as document") { onSaveAnswer() }
+                    .buttonStyle(.bordered)
+                    .font(.system(size: 12))
+                    .accessibilityLabel("Save as document, \(card.title)")
             }
             if card.canCancel || !card.offeredChoices.isEmpty {
                 HStack(spacing: 12) {
@@ -92,6 +105,7 @@ struct NativeDisplayBlocksView: View {
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
     var onDecide: ((String, String) -> Void)? = nil
+    var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     @State private var openReport: NativeResearchArtifact?
 
@@ -105,6 +119,7 @@ struct NativeDisplayBlocksView: View {
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
                         onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
+                        onSaveAnswer: saved(card) ? nil : onSaveAnswer.map { action in { action(card.id) } },
                         highlighted: highlightedTaskID == card.id)
                 case .link(let link):
                     if let destination = link.destination {
@@ -130,6 +145,12 @@ struct NativeDisplayBlocksView: View {
             }
         }
         .sheet(item: $openReport) { NativeResearchReportView(artifact: $0) }
+    }
+
+    private func saved(_ card: NativeTaskCardPresentation) -> Bool { Self.answerSaved(card, in: blocks) }
+
+    static func answerSaved(_ card: NativeTaskCardPresentation, in blocks: [NativeDisplayBlock]) -> Bool {
+        blocks.contains { $0.id == "artifact:" + card.id }
     }
 
     private func connected(_ card: NativeTaskCardPresentation) -> Bool {
@@ -179,11 +200,17 @@ struct NativeResearchReportView: View {
         }
         .frame(minWidth: 560, idealWidth: 700, minHeight: 420, idealHeight: 640)
         .background(Theme.bg)
-        .markdownImageProvider(NativeResearchImageProvider())
-        .markdownInlineImageProvider(NativeResearchInlineImageProvider())
-        .environment(\.openURL, OpenURLAction { url in
-            NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
-        })
+        .safeReportContent()
+    }
+}
+
+extension View {
+    func safeReportContent() -> some View {
+        markdownImageProvider(NativeResearchImageProvider())
+            .markdownInlineImageProvider(NativeResearchInlineImageProvider())
+            .environment(\.openURL, OpenURLAction { url in
+                NativeResearchReportSafety.destination(url.absoluteString) == nil ? .discarded : .systemAction
+            })
     }
 }
 

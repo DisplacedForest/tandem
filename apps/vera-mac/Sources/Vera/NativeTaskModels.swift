@@ -465,6 +465,7 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     let sources: [NativeTaskSource]
     var title: String? = nil
     var summary: String? = nil
+    var shape: String? = nil
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

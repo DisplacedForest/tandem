@@ -54,6 +54,8 @@ docker compose logs vera-api | head -60
 
 Companion assignments run in the app's own task engine as the `companion` worker. Each run gets four model rounds and eight tool calls before it asks to continue, and a task stops at 32 rounds or 64 calls in total. The working transcript is capped at 32 messages and 128 KiB, and large tool results are shortened to fit. A run started from the panel is offered the tools enabled for the companion. A read-only run is offered read tools only.
 
+Short answers stay on the card, and you can save one as a document from there. Work becomes a document when you ask for something to keep, like a document, plan, list or letter, or when the result is long or laid out like a document.
+
 Every tool declares whether it reads or writes. Reads that fail with a network timeout retry twice. Writes are never retried. Before a write runs, the app records the exact action, its arguments, the rules and folder access in effect and a ten-minute expiry, then admits it in one database transaction that also checks the task is still running and not canceled. A tool that can accept an idempotency key receives one, and a tool that can look up its own result is asked after a timeout or relaunch whether the action happened. Built-in tools can't look up their own results yet, so an interrupted write from them is reported as uncertain and the person is asked. A local record of an action can't prove a remote service applied it exactly once.
 
 ### Durable task API

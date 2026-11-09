@@ -35,6 +35,7 @@ protocol NativeTaskProjectionRepository: NativeTaskRepository {
     func prepareTaskDecision(id: UUID, decisionID: String, choice: String) throws -> NativeTaskDecisionIntent
     func pendingTaskRetries() throws -> [NativeTaskDecisionIntent]
     func resolveTaskRetry(_ intent: NativeTaskDecisionIntent) throws
+    func saveTaskAnswer(id: UUID) throws -> [NativeTaskMessageUpdate]
 }
 
 extension LocalChatRepository: NativeTaskProjectionRepository {
@@ -240,6 +241,35 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
                                            messageID: reference.origin.assistantMessageID,
                                            blocks: envelope.displayBlocks, mirrors: mirrors)
+        }
+    }
+
+    func saveTaskAnswer(id: UUID) throws -> [NativeTaskMessageUpdate] {
+        try database.write { db in
+            guard let reference = try Self.readTaskReference(db, id: id) else { return [] }
+            let messageIDs = [reference.origin.assistantMessageID] + (try Self.taskCardMirrorIDs(db, referenceID: id))
+            var document: NativeResearchArtifact?
+            var updates: [NativeTaskMessageUpdate] = []
+            for messageID in messageIDs {
+                guard let row = try Row.fetchOne(db, sql: "SELECT conversation_id, display_blocks_json FROM messages WHERE id = ?",
+                                                 arguments: [messageID.uuidString]) else { continue }
+                let bytes: Data? = row["display_blocks_json"]
+                var blocks = try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? []
+                guard let index = blocks.firstIndex(where: { $0.id == "task:" + id.uuidString }),
+                      case .taskCard(let card) = blocks[index] else { continue }
+                if document == nil {
+                    guard let artifact = NativeTaskProjection.answerDocument(card) else { return [] }
+                    document = artifact
+                }
+                guard let document else { continue }
+                if !blocks.contains(where: { $0.id == "artifact:" + document.id }) {
+                    blocks.insert(.artifact(document), at: index + 1)
+                    try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
+                                   arguments: [try nativeTaskEncoded(blocks), messageID.uuidString])
+                }
+                updates.append(NativeTaskMessageUpdate(conversationID: row["conversation_id"], messageID: messageID, blocks: blocks))
+            }
+            return updates
         }
     }
 
