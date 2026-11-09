@@ -10,6 +10,18 @@ BUNDLE_NAME="Tandem"
 BUNDLE_ID="app.vera.mac"
 LOGO="Sources/Vera/Resources/vera-icon.png"
 BUILD_DIR="build"
+
+python_supported() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 14) else 1)' 2>/dev/null; }
+PYTHON="${VERA_PACKAGE_PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+  for candidate in python3.14 python3.15 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && python_supported "$candidate"; then PYTHON="$candidate"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ] || ! python_supported "$PYTHON"; then
+  echo "Packaging needs Python 3.14 or later. Install it, or set VERA_PACKAGE_PYTHON to its path." >&2
+  exit 1
+fi
 APP="$BUILD_DIR/$BUNDLE_NAME.app"
 # Single repo-wide version: prefer the root VERSION file, fall back to the app-local one.
 VERSION="$(cat "$APP_ROOT/../../VERSION" 2>/dev/null || cat VERSION 2>/dev/null || echo 0.0.0)"
@@ -33,7 +45,7 @@ if [ -e "$SEAL" ]; then echo "A runtime package build is already staged" >&2; rm
 trap 'rm -rf "$RUNTIME_STAGE"; rm -f "$SEAL"' EXIT
 RUNTIME_ARGS=(--destination "$RUNTIME_STAGE/PiRuntime" --cache "${VERA_RUNTIME_CACHE:-$APP_ROOT/build/runtime-cache}" --seal-source "$SEAL")
 if [ "${VERA_RUNTIME_OFFLINE:-0}" = "1" ]; then RUNTIME_ARGS+=(--offline); fi
-python3 "$APP_ROOT/scripts/package_runtime.py" "${RUNTIME_ARGS[@]}"
+"$PYTHON" "$APP_ROOT/scripts/package_runtime.py" "${RUNTIME_ARGS[@]}"
 RUNTIME_SHA="$(shasum -a 256 "$RUNTIME_STAGE/PiRuntime/manifest.json" | cut -d ' ' -f 1)"
 
 # 2. Release build
@@ -80,8 +92,8 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
   Sources/Vera/SafeAppReplacement.swift scripts/app-replacement/main.swift \
   -o "$APP/Contents/Helpers/VeraAppReplacement"
 
-python3 "$APP_ROOT/scripts/sign.py" "$APP"
-python3 "$APP_ROOT/scripts/package_runtime.py" --verify --destination "$APP/Contents/Resources/PiRuntime" --manifest-sha256 "$RUNTIME_SHA"
+"$PYTHON" "$APP_ROOT/scripts/sign.py" "$APP"
+"$PYTHON" "$APP_ROOT/scripts/package_runtime.py" --verify --destination "$APP/Contents/Resources/PiRuntime" --manifest-sha256 "$RUNTIME_SHA"
 
 rm -rf "$ICONSET"
 echo "==> Done: $APP_ROOT/$APP  (v$VERSION, build $BUILD_NUM)"
