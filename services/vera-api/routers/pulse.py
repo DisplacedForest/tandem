@@ -451,7 +451,7 @@ async def run_all(req: RunAllRequest):
     return _start(_do_run_all, req, "run_all")
 
 
-# ---- Pulse feed + lifecycle endpoints (standalone store, no OWUI folder) ----
+# ---- Pulse feed + lifecycle endpoints (standalone store) ----
 
 
 class BookmarkBody(BaseModel):

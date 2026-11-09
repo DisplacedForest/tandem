@@ -508,29 +508,6 @@ struct SidebarProjectRow: View {
     }
 }
 
-struct SidebarTileStyle: ButtonStyle {
-    var active = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        TileBody(configuration: configuration, active: active)
-    }
-
-    private struct TileBody: View {
-        let configuration: Configuration
-        let active: Bool
-        @State private var hovering = false
-
-        var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-            configuration.label
-                .background(shape.fill(configuration.isPressed || active ? Theme.surfaceSelected : hovering ? Theme.surfaceHover : Theme.surface))
-                .overlay(shape.stroke(Theme.hairline, lineWidth: 1))
-                .contentShape(shape)
-                .onHover { hovering = $0 }
-        }
-    }
-}
-
 struct CompactUpdateBadge: View {
     @EnvironmentObject var updates: UpdateChecker
     let onOpen: () -> Void
