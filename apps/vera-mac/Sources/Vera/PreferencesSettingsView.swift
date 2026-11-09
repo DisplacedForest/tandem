@@ -72,7 +72,7 @@ struct PreferencesSettingsView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {
-            try preferences.add(statement: text, check: NativePreferenceRecognizer.check(for: text, settings: true))
+            try preferences.add(statement: text, recognize: true)
             draft = ""
             reload(preferences)
         } catch let error as NativePreferenceStoreError {

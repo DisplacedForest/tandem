@@ -187,6 +187,8 @@ struct NativePreferenceStore: Sendable {
                 user_message_id TEXT NOT NULL UNIQUE,
                 outcome TEXT NOT NULL CHECK (outcome IN ('none', 'saved', 'removed')),
                 preference_id TEXT,
+                created_new INTEGER NOT NULL DEFAULT 0,
+                prior_json TEXT,
                 created_at DOUBLE NOT NULL
             );
             CREATE INDEX native_preference_captures_conversation ON native_preference_captures(conversation_id, created_at);
@@ -203,13 +205,13 @@ struct NativePreferenceStore: Sendable {
     }
 
     static func cleanStatement(_ statement: String) -> String? {
-        let value = collapsed(statement)
+        let value = collapsed(NativePreferenceRecognizer.named(statement))
         guard !value.isEmpty, value.count <= maximumStatementCharacters, !normalized(value).isEmpty else { return nil }
         return value
     }
 
     static func settingsStatement(_ statement: String) throws -> String {
-        let value = collapsed(statement)
+        let value = collapsed(NativePreferenceRecognizer.named(statement))
         guard !value.isEmpty, !normalized(value).isEmpty else { throw NativePreferenceStoreError(reason: .empty) }
         guard value.count <= maximumStatementCharacters else { throw NativePreferenceStoreError(reason: .tooLong) }
         return value
@@ -263,28 +265,36 @@ struct NativePreferenceStore: Sendable {
 
     @discardableResult
     func add(statement: String, kind: NativePreferenceKind = .other, strength: NativePreferenceStrength = .standing,
-             check: NativePreferenceCheck? = nil, quote: String? = nil, sourceTurnID: String? = nil, now: Date = Date()) throws -> NativePreference {
+             check: NativePreferenceCheck? = nil, recognize: Bool = false, quote: String? = nil, sourceTurnID: String? = nil,
+             now: Date = Date()) throws -> NativePreference {
         let clean = try Self.settingsStatement(statement)
+        let resolved = recognize ? NativePreferenceCheck.merge(deterministic: NativePreferenceRecognizer.check(for: clean, settings: true), classifier: check) : check
         let id = try database.write { db in
-            try Self.upsert(db, statement: clean, kind: kind, strength: strength, check: check, quote: quote, sourceTurnID: sourceTurnID, now: now)
+            try Self.upsert(db, statement: clean, kind: kind, strength: strength, check: resolved, quote: quote, sourceTurnID: sourceTurnID, now: now).id
         }
         guard let stored = try preference(id: id) else { throw NativePreferenceStoreError(reason: .failed) }
         return stored
     }
 
     private static func upsert(_ db: Database, statement: String, kind: NativePreferenceKind, strength: NativePreferenceStrength,
-                               check: NativePreferenceCheck?, quote: String?, sourceTurnID: String?, now: Date) throws -> String {
+                               check: NativePreferenceCheck?, quote: String?, sourceTurnID: String?, now: Date) throws -> (id: String, prior: String?) {
         let key = normalized(statement)
         let boundedQuote = quote.map { String($0.prefix(maximumQuoteCharacters)) }
         let spec = check.flatMap { $0.isValid ? $0.encodedJSON() : nil }
-        let rows = try Row.fetchAll(db, sql: "SELECT id, statement FROM native_preferences WHERE status = 'active' ORDER BY created_at, id")
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT id, statement, kind, strength, check_spec, quote FROM native_preferences WHERE status = 'active' ORDER BY created_at, id
+            """)
         if let existing = rows.first(where: { normalized($0["statement"] ?? "") == key }), let id: String = existing["id"] {
+            let fields: [String: Any] = ["statement": existing["statement"] as String? ?? "", "kind": existing["kind"] as String? ?? "other",
+                                         "strength": existing["strength"] as String? ?? "standing",
+                                         "check_spec": (existing["check_spec"] as String?) ?? NSNull(), "quote": (existing["quote"] as String?) ?? NSNull()]
+            let prior = String(decoding: try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), as: UTF8.self)
             try db.execute(sql: """
                 UPDATE native_preferences
                 SET statement = ?, kind = ?, strength = ?, check_spec = COALESCE(?, check_spec), quote = COALESCE(?, quote), updated_at = ?
                 WHERE id = ?
                 """, arguments: [statement, kind.rawValue, strength.rawValue, spec, boundedQuote, now.timeIntervalSince1970, id])
-            return id
+            return (id, prior)
         }
         guard rows.count < maximumActive else { throw NativePreferenceStoreError(reason: .full) }
         let id = UUID().uuidString
@@ -293,7 +303,7 @@ struct NativePreferenceStore: Sendable {
             VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """, arguments: [id, boundedQuote, sourceTurnID, statement, kind.rawValue, strength.rawValue, spec,
                              now.timeIntervalSince1970, now.timeIntervalSince1970])
-        return id
+        return (id, nil)
     }
 
     @discardableResult
@@ -357,11 +367,48 @@ struct NativePreferenceStore: Sendable {
     }
 
     private static func insertCapture(_ db: Database, _ key: NativePreferenceCaptureKey, outcome: NativePreferenceCaptureOutcomeKind,
-                                      preferenceID: String?, now: Date) throws {
+                                      preferenceID: String?, createdNew: Bool = false, prior: String? = nil, now: Date) throws {
         try db.execute(sql: """
-            INSERT INTO native_preference_captures(turn_id, conversation_id, user_message_id, outcome, preference_id, created_at)
-            VALUES(?, ?, ?, ?, ?, ?)
-            """, arguments: [key.turnID, key.conversationID, key.userMessageID, outcome.rawValue, preferenceID, now.timeIntervalSince1970])
+            INSERT INTO native_preference_captures(turn_id, conversation_id, user_message_id, outcome, preference_id, created_new, prior_json, created_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """, arguments: [key.turnID, key.conversationID, key.userMessageID, outcome.rawValue, preferenceID, createdNew, prior,
+                             now.timeIntervalSince1970])
+    }
+
+    @discardableResult
+    func revertCapture(turnID: String, now: Date = Date()) throws -> Bool {
+        try database.write { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT outcome, preference_id, created_new, prior_json FROM native_preference_captures WHERE turn_id = ?
+                """, arguments: [turnID]),
+                  let outcome = NativePreferenceCaptureOutcomeKind(rawValue: row["outcome"] ?? ""), outcome != .none,
+                  let id: String = row["preference_id"] else { return false }
+            let stamp = now.timeIntervalSince1970
+            switch outcome {
+            case .saved:
+                if (row["created_new"] as Bool?) == true {
+                    try db.execute(sql: "UPDATE native_preferences SET status = 'removed', updated_at = ? WHERE id = ?", arguments: [stamp, id])
+                } else if let raw: String = row["prior_json"],
+                          let prior = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] {
+                    try db.execute(sql: """
+                        UPDATE native_preferences SET statement = ?, kind = ?, strength = ?, check_spec = ?, quote = ?, updated_at = ? WHERE id = ?
+                        """, arguments: [prior["statement"] as? String ?? "", prior["kind"] as? String ?? "other",
+                                         prior["strength"] as? String ?? "standing", prior["check_spec"] as? String,
+                                         prior["quote"] as? String, stamp, id])
+                }
+            case .removed:
+                let statement = try String.fetchOne(db, sql: "SELECT statement FROM native_preferences WHERE id = ?", arguments: [id]) ?? ""
+                let active = try String.fetchAll(db, sql: "SELECT statement FROM native_preferences WHERE status = 'active'")
+                if active.count < Self.maximumActive, !active.contains(where: { Self.normalized($0) == Self.normalized(statement) }) {
+                    try db.execute(sql: "UPDATE native_preferences SET status = 'active', updated_at = ? WHERE id = ? AND status = 'removed'",
+                                   arguments: [stamp, id])
+                }
+            case .none:
+                return false
+            }
+            try db.execute(sql: "UPDATE native_preference_captures SET outcome = 'none' WHERE turn_id = ?", arguments: [turnID])
+            return true
+        }
     }
 
     func recordNoCapture(_ key: NativePreferenceCaptureKey, now: Date = Date()) throws {
@@ -375,10 +422,10 @@ struct NativePreferenceStore: Sendable {
         guard let clean = Self.cleanStatement(proposal.statement) else { throw NativePreferenceStoreError(reason: .empty) }
         return try database.write { db in
             guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
-            let id = try Self.upsert(db, statement: clean, kind: proposal.kind, strength: proposal.strength, check: proposal.check,
-                                     quote: quote, sourceTurnID: key.turnID, now: now)
-            try Self.insertCapture(db, key, outcome: .saved, preferenceID: id, now: now)
-            return id
+            let saved = try Self.upsert(db, statement: clean, kind: proposal.kind, strength: proposal.strength, check: proposal.check,
+                                        quote: quote, sourceTurnID: key.turnID, now: now)
+            try Self.insertCapture(db, key, outcome: .saved, preferenceID: saved.id, createdNew: saved.prior == nil, prior: saved.prior, now: now)
+            return saved.id
         }
     }
 
@@ -454,14 +501,22 @@ enum NativePreferenceRecognizer {
 
     static func named(_ statement: String) -> String {
         var value = statement
-        let context = "(?i)(\\b(?:use|using|with|write|writing|no|any|add|adding|type|typing|put|putting|include|including|the)\\s+)"
+        let context = "(?i)(\\b(?:use|using|avoid|avoiding|no|without|with|the|any|add|adding|put|putting|write|writing|type|typing|include|including)\\s+)"
+        let open = "[\"'\u{201C}\u{2018}]"
+        let close = "[\"'\u{201D}\u{2019}]"
         for (character, name) in [(emDash, "em dashes"), (enDash, "en dashes"), ("!", "exclamation marks")] {
             let escaped = NSRegularExpression.escapedPattern(for: character)
-            value = value.replacingOccurrences(of: context + "[\"'\u{201C}\u{2018}]?" + escaped + "+[\"'\u{201D}\u{2019}]?", with: "$1" + name,
-                                               options: .regularExpression)
-            value = value.replacingOccurrences(of: "[\"'\u{201C}\u{2018}]" + escaped + "+[\"'\u{201D}\u{2019}]", with: name, options: .regularExpression)
+            value = value.replacingOccurrences(of: context + open + "?" + escaped + "+" + close + "?", with: "$1" + name, options: .regularExpression)
+            value = value.replacingOccurrences(of: open + escaped + "+" + close, with: name, options: .regularExpression)
+            if character != "!" {
+                value = value.replacingOccurrences(of: "(^|\\s)" + escaped + "+(?=\\s|$|[.,;:!?)])", with: "$1" + name, options: .regularExpression)
+            }
         }
-        return value.replacingOccurrences(of: "\\s*" + emDash + "\\s*", with: ", ", options: .regularExpression)
+        value = value.replacingOccurrences(of: "(?<=[0-9])" + enDash + "(?=[0-9])", with: "-", options: .regularExpression)
+        for character in [emDash, enDash] {
+            value = value.replacingOccurrences(of: "\\s*" + character + "+\\s*", with: ", ", options: .regularExpression)
+        }
+        return value
     }
 
     struct Prohibition: Equatable, Sendable {

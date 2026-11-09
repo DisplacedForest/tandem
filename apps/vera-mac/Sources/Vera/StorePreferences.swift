@@ -82,4 +82,9 @@ extension ChatStore {
               let stored = try? store.preference(id: id), stored.status == .active else { return nil }
         return NativePreferenceCaptureOutcome.saved(stored.statement).note
     }
+
+    func revertPreferenceCapture(_ turn: NativeConversationTurn) {
+        guard let store = nativePreferenceStore, (try? store.revertCapture(turnID: turn.id.uuidString)) == true else { return }
+        preferencesRevision += 1
+    }
 }

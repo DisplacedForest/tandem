@@ -464,6 +464,7 @@ extension ChatStore {
             chatConfigurationError = "This answer couldn't be stopped. Try again."
             return
         }
+        revertPreferenceCapture(turn)
         recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
                               revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         resolveTurnConfirmation(messageID, approved: false)

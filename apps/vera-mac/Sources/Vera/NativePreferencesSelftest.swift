@@ -73,6 +73,15 @@ final class NativePreferenceGatedClassifier: @unchecked Sendable {
     }
 }
 
+final class NativePreferenceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool {
+        get { lock.withLock { flag } }
+        set { lock.withLock { flag = newValue } }
+    }
+}
+
 final class NativePreferenceClassifierCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
@@ -108,7 +117,16 @@ enum NativePreferencesSelftest {
     static let enDash = "\u{2013}"
     static let savedEmDash = #"{"preference": {"statement": "Never use em dashes.", "kind": "style", "strength": "hard", "check": null}}"#
 
+    private static var repositories: [LocalChatRepository] = []
+
+    static func tracked() throws -> LocalChatRepository {
+        let repository = try LocalChatRepository(inMemory: true)
+        repositories.append(repository)
+        return repository
+    }
+
     static func run() async throws {
+        defer { repositories.removeAll() }
         let require = NativeTaskFixture.require
         try detector(require)
         try recognizers(require)
@@ -130,6 +148,16 @@ enum NativePreferencesSelftest {
         try await storeTurns(require)
         try await storeAdjacencyAndStops(require)
         try await storeRevalidation(require)
+        try await storeStops(require)
+        try await literalBoundary(require)
+        var statements: [String] = []
+        for repository in repositories {
+            if let rows = try? await repository.database.read({ db in try String.fetchAll(db, sql: "SELECT statement FROM native_preferences") }) {
+                statements += rows
+            }
+        }
+        try require(!statements.isEmpty && statements.allSatisfy { !$0.contains(emDash) && !$0.contains(enDash) },
+                    "No stored statement in any test holds an em dash or en dash")
         print("NATIVE PREFERENCES SELFTEST OK")
     }
 
@@ -222,7 +250,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func migration(_ require: (Bool, String) throws -> Void) throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let tables = try repository.database.read { db in
             try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'native_preference%'")
         }
@@ -239,7 +267,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func writeAndReadBack(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let counter = NativePreferenceClassifierCounter(savedEmDash)
         let outcome = await NativePreferenceCapture.run(request("never respond with em dashes"), store: store, classify: counter.classify)
         try require(outcome == .saved("Never use em dashes."), "A detected preference is saved")
@@ -266,7 +294,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func failedWrite(_ require: (Bool, String) throws -> Void) async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let store = NativePreferenceStore(database: repository.database)
         try await repository.database.write { db in try db.execute(sql: "DROP TABLE native_preferences") }
         let counter = NativePreferenceClassifierCounter(savedEmDash)
@@ -278,7 +306,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func recognizerFallback(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let slow = SlowPreferenceTransport()
         let timeoutRaw = await NativePreferenceClassifier.request(transport: slow, model: "local-model", text: "never use em dashes",
                                                                    timeout: .milliseconds(100))
@@ -292,7 +320,7 @@ enum NativePreferencesSelftest {
                     "The fallback saves a hard style preference with the recognizer's check")
         try require(afterTimeout.note?.contains("it is saved: Don't use em dashes.") == true, "The fallback uses the same saved note")
 
-        let nullStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let nullStore = NativePreferenceStore(database: try tracked().database)
         let null = NativePreferenceClassifierCounter(#"{"preference": null}"#)
         let afterNull = await NativePreferenceCapture.run(request("never use em dashes or emoji"), store: nullStore, classify: null.classify)
         try require(afterNull == .none && nullStore.active().isEmpty, "A null classification is a rejection even with a recognizer match")
@@ -314,7 +342,7 @@ enum NativePreferencesSelftest {
                     "Only a single short line that is itself a prohibition falls back")
         let phrase = await NativePreferenceCapture.run(request("Never say 'great question'"), store: nullStore, classify: malformed.classify)
         try require(phrase == .saved("Don't say \"great question\"."), "Quotes around the banned phrase are allowed in the fallback")
-        let mixedStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let mixedStore = NativePreferenceStore(database: try tracked().database)
         let mixed = await NativePreferenceCapture.run(request("Never use emoji, always use em dashes"), store: mixedStore, classify: malformed.classify)
         try require(mixed == .saved("Don't use emoji.") && mixedStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)],
                     "The fallback bans only the object of the negative clause")
@@ -324,7 +352,7 @@ enum NativePreferencesSelftest {
         let plain = await NativePreferenceCapture.run(request("Never use bullet points"), store: nullStore, classify: failing.classify)
         let remaining = try nullStore.active().count
         try require(plain == .unavailable && remaining == 2 && failing.calls == 1, "A failed classifier with no recognizer match saves nothing")
-        let polar = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let polar = NativePreferenceStore(database: try tracked().database)
         let likes = #"{"preference": {"statement": "Always use emoji.", "kind": "style", "strength": "hard", "check": null}}"#
         _ = await NativePreferenceCapture.run(request("Always use emoji"), store: polar, classify: NativePreferenceClassifierCounter(likes).classify)
         try require(try polar.active().first?.check == nil, "A positive preference never gets a forbid check")
@@ -336,12 +364,12 @@ enum NativePreferencesSelftest {
             ("Always use em dashes; never use en dashes.", NativePreferenceCheck(forbidChars: [enDash])),
         ]
         for (statement, expected) in cases {
-            let mixedStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+            let mixedStore = NativePreferenceStore(database: try tracked().database)
             let reply = "{\"preference\": {\"statement\": \"\(statement.replacingOccurrences(of: "\"", with: "\\\""))\", \"kind\": \"style\", \"strength\": \"hard\", \"check\": null}}"
             _ = await NativePreferenceCapture.run(request("Always do this from now on"), store: mixedStore, classify: NativePreferenceClassifierCounter(reply).classify)
             try require(mixedStore.activeChecks() == [expected], "The merged check follows the statement's negative clauses: \(statement)")
         }
-        let ignored = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let ignored = NativePreferenceStore(database: try tracked().database)
         let calm = #"{"preference": {"statement": "Keep a calm tone.", "kind": "style", "strength": "standing", "check": null}}"#
         _ = await NativePreferenceCapture.run(request("Never use emoji. Also keep a calm tone from now on"), store: ignored,
                                               classify: NativePreferenceClassifierCounter(calm).classify)
@@ -358,7 +386,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func widerDetection(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let concise = #"{"preference": {"statement": "Keep replies concise.", "kind": "style", "strength": "standing", "check": null}}"#
         let saved = await NativePreferenceCapture.run(request("I prefer concise replies"), store: store, classify: NativePreferenceClassifierCounter(concise).classify)
         let avoid = #"{"preference": {"statement": "Avoid em dashes in all replies.", "kind": "style", "strength": "hard", "check": null}}"#
@@ -370,18 +398,18 @@ enum NativePreferencesSelftest {
         let going = await NativePreferenceCapture.run(request("keep going"), store: store, classify: null.classify)
         try require(route == .none && going == .none && null.calls == 2 && store.active().count == 2, "Ordinary messages reach the classifier and are rejected")
         let literal = #"{"preference": {"statement": "Never use \"\#(emDash)\".", "kind": "style", "strength": "hard", "check": null}}"#
-        let literalStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let literalStore = NativePreferenceStore(database: try tracked().database)
         let named = await NativePreferenceCapture.run(request("never use that dash"), store: literalStore, classify: NativePreferenceClassifierCounter(literal).classify)
         try require(named == .saved("Never use em dashes.") && literalStore.activeChecks() == [NativePreferenceCheck(forbidChars: [emDash])]
                     && literalStore.active().allSatisfy { !$0.statement.contains(emDash) }, "A literal em dash in the statement becomes a readable ban")
         let positive = #"{"preference": {"statement": "Never use emoji; instead use em dashes.", "kind": "style", "strength": "hard", "check": {"forbidEmoji": true}}}"#
-        let positiveStore = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let positiveStore = NativePreferenceStore(database: try tracked().database)
         _ = await NativePreferenceCapture.run(request("never use emoji, use em dashes instead"), store: positiveStore, classify: NativePreferenceClassifierCounter(positive).classify)
         try require(positiveStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)], "A positive instead clause never adds a ban to the classifier check")
     }
 
     private static func currency(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let counter = NativePreferenceClassifierCounter(savedEmDash)
         let stale = await NativePreferenceCapture.run(request("never use em dashes"), store: store, classify: counter.classify, isCurrent: { false })
         try require(stale == .none && counter.calls == 1, "A turn that stopped during classification saves nothing")
@@ -403,7 +431,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func limits(_ require: (Bool, String) throws -> Void) async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let store = NativePreferenceStore(database: repository.database)
         do {
             try store.add(statement: String(repeating: "a", count: 301))
@@ -459,7 +487,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func settingsEdits(_ require: (Bool, String) throws -> Void) throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let custom = NativePreferenceCheck(forbidChars: [emDash], maxCharacters: 500)
         let row = try store.add(statement: "Never use em dashes", check: custom)
         let same = try store.updateStatement(id: row.id, statement: "never use em dashes!")
@@ -471,7 +499,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func replay(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let counter = NativePreferenceClassifierCounter(savedEmDash)
         let same = request("never use em dashes", turn: "turn-1", message: "message-1")
         let first = await NativePreferenceCapture.run(same, store: store, classify: counter.classify)
@@ -488,7 +516,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func duplicates(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let first = await NativePreferenceCapture.run(request("never use em dashes"), store: store,
                                                       classify: NativePreferenceClassifierCounter(savedEmDash).classify)
         let louder = #"{"preference": {"statement": "never use EM dashes!", "kind": "style", "strength": "hard", "check": null}}"#
@@ -506,7 +534,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func undo(_ require: (Bool, String) throws -> Void) async throws {
-        let store = NativePreferenceStore(database: try LocalChatRepository(inMemory: true).database)
+        let store = NativePreferenceStore(database: try tracked().database)
         let counter = NativePreferenceClassifierCounter(savedEmDash)
         _ = await NativePreferenceCapture.run(request("never use em dashes", turn: "t1", message: "m1"), store: store, classify: counter.classify)
         let undone = request("never mind", turn: "t2", message: "m2", previous: "m1")
@@ -571,7 +599,7 @@ enum NativePreferencesSelftest {
         try require(!plain.sections.contains { $0.name == "preferences" } && plain.prompt.contains("USER CONTEXT\nAbout me"),
                     "Without preferences the context is unchanged and About you still works")
 
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let store = NativePreferenceStore(database: repository.database)
         try store.add(statement: "Never use em dashes.")
         let identity = NativePreferenceStore.identity(NativeWorkerIdentity(assistantName: "Nova", ownerName: "Jordan"), database: repository.database)
@@ -608,7 +636,7 @@ enum NativePreferencesSelftest {
     }
 
     private static func storeTurns(_ require: (Bool, String) throws -> Void) async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
                               artifactPersistenceEnabled: false)
@@ -682,7 +710,7 @@ enum NativePreferencesSelftest {
         try require((voice?.messages.first?["role"] as? String) == "system"
                     && (voice?.messages.first?["content"] as? String)?.contains("- Call me Sam") == true, "Voice replies carry preferences")
 
-        let off = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: try LocalChatRepository(inMemory: true),
+        let off = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: try tracked(),
                             artifactPersistenceEnabled: false)
         off.newConversation()
         defer { off.conversationTurnLoop?.cancel() }
@@ -708,8 +736,76 @@ enum NativePreferencesSelftest {
         }
     }
 
+    private static func literalBoundary(_ require: (Bool, String) throws -> Void) async throws {
+        let captured = NativePreferenceStore(database: try tracked().database)
+        let avoid = #"{"preference": {"statement": "Avoid \#(emDash) in all future replies.", "kind": "style", "strength": "hard", "check": null}}"#
+        let outcome = await NativePreferenceCapture.run(request("avoid that dash from now on"), store: captured,
+                                                        classify: NativePreferenceClassifierCounter(avoid).classify)
+        try require(outcome == .saved("Avoid em dashes in all future replies.") && captured.activeChecks() == [NativePreferenceCheck(forbidChars: [emDash])],
+                    "A classifier statement with a literal em dash after avoid saves its name and the ban")
+        let store = NativePreferenceStore(database: try tracked().database)
+        let named = try store.add(statement: "Never use \(emDash)", recognize: true)
+        try require(named.statement == "Never use em dashes" && named.check == NativePreferenceCheck(forbidChars: [emDash]),
+                    "A Settings entry with a literal em dash stores its name and the ban")
+        let punctuated = try store.add(statement: "Keep it short\(emDash)one paragraph", recognize: true)
+        try require(punctuated.statement == "Keep it short, one paragraph" && punctuated.check == nil, "An em dash used as punctuation becomes a comma")
+        let edited = try store.updateStatement(id: punctuated.id, statement: "No \(enDash) at all")
+        try require(edited.statement == "No en dashes at all" && edited.check == NativePreferenceCheck(forbidChars: [enDash]), "Edits are normalized too")
+        let range = try store.add(statement: "Answer in 2\(enDash)3 sentences")
+        try require(range.statement == "Answer in 2-3 sentences", "An en dash in a number range becomes a hyphen")
+    }
+
+    private static func stopStore(_ transport: NativePreferenceStubTransport, _ repository: LocalChatRepository, stopping: NativePreferenceFlag) -> ChatStore {
+        let store = turnStore(transport, repository)
+        store.nativeMemorySelectionTransform = { [weak store] selected in
+            if stopping.value, let store, let reply = store.selected?.messages.last?.id {
+                stopping.value = false
+                store.stopAnswer(reply)
+            }
+            return selected
+        }
+        return store
+    }
+
+    private static func settle(_ store: ChatStore, _ text: String) async throws {
+        try NativeTaskFixture.require(store.sendText(text, fromComposer: true), "The message sends: \(text)")
+        try await NativeSessionFixture.eventually("The turn settles: \(text)") {
+            store.conversationTurns.allSatisfy { $0.state != .pending && $0.state != .running } && store.selected?.messages.last?.state != .streaming
+        }
+    }
+
+    private static func storeStops(_ require: (Bool, String) throws -> Void) async throws {
+        let repository = try tracked()
+        let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
+        let stopping = NativePreferenceFlag()
+        let store = stopStore(transport, repository, stopping: stopping)
+        defer { store.conversationTurnLoop?.cancel() }
+        let preferences = NativePreferenceStore(database: repository.database)
+        stopping.value = true
+        let before = store.preferencesRevision
+        try await settle(store, "Never use em dashes")
+        try require(try preferences.active().isEmpty && store.preferencesRevision == before + 2 && transport.systemPrompts.isEmpty,
+                    "Stopping after the save but before the answer removes the new preference")
+        let rows = try await repository.database.read { db in try String.fetchAll(db, sql: "SELECT outcome FROM native_preference_captures") }
+        try require(rows == ["none"], "The stopped capture is marked so a replay never redoes it")
+
+        try await settle(store, "Please never use em dashes")
+        try require(try preferences.active().map(\.statement) == ["Never use em dashes."], "A turn that completes keeps its preference")
+        transport.reply = #"{"preference": {"statement": "never use EM dashes!", "kind": "style", "strength": "hard", "check": null}}"#
+        stopping.value = true
+        try await settle(store, "I told you, never use em dashes")
+        try require(try preferences.active().map(\.statement) == ["Never use em dashes."], "Stopping a duplicate update restores the old statement")
+        transport.reply = savedEmDash
+        try await settle(store, "Never use em dashes")
+        let beforeUndo = store.preferencesRevision
+        stopping.value = true
+        try await settle(store, "forget that")
+        try require(store.preferencesRevision == beforeUndo + 2 && preferences.active().map(\.statement) == ["Never use em dashes."],
+                    "Stopping an undo restores the removed preference")
+    }
+
     private static func storeRevalidation(_ require: (Bool, String) throws -> Void) async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try tracked()
         let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let store = turnStore(transport, repository)
         defer { store.conversationTurnLoop?.cancel() }
@@ -728,7 +824,7 @@ enum NativePreferencesSelftest {
 
     private static func storeAdjacencyAndStops(_ require: (Bool, String) throws -> Void) async throws {
         let emoji = #"{"preference": {"statement": "Never use emoji.", "kind": "style", "strength": "hard", "check": null}}"#
-        let firstRepository = try LocalChatRepository(inMemory: true)
+        let firstRepository = try tracked()
         let firstTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let first = turnStore(firstTransport, firstRepository)
         defer { first.conversationTurnLoop?.cancel() }
@@ -741,7 +837,7 @@ enum NativePreferencesSelftest {
         try require(try NativePreferenceStore(database: firstRepository.database).active().count == 1 && !firstTransport.systemPrompts[2].contains("was removed"),
                     "Undo after an interrupted unrelated request removes nothing")
 
-        let secondRepository = try LocalChatRepository(inMemory: true)
+        let secondRepository = try tracked()
         let secondTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let second = turnStore(secondTransport, secondRepository)
         defer { second.conversationTurnLoop?.cancel() }
@@ -756,7 +852,7 @@ enum NativePreferencesSelftest {
         try require(left == ["Never use em dashes."] && secondTransport.systemPrompts[2].contains("\"Never use emoji\" was removed"),
                     "Undo removes the preference an interrupted request captured")
 
-        let stopRepository = try LocalChatRepository(inMemory: true)
+        let stopRepository = try tracked()
         let stopTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let stopped = turnStore(stopTransport, stopRepository)
         defer { stopped.conversationTurnLoop?.cancel() }
