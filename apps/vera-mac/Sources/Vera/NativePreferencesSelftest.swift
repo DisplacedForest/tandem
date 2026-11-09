@@ -160,6 +160,16 @@ enum NativePreferencesSelftest {
         try require(R.check(for: "Please, from now on never use em dashes")?.forbidChars == [emDash], "Leading softeners are allowed")
         try require(R.check(for: "OK. Also don\u{2019}t use emoji.")?.forbidEmoji == true, "A later clause can carry the prohibition")
         try require(R.check(for: "Please keep answers short") == nil, "No deterministic check for an ordinary preference")
+        try require(R.check(for: "Never use em dashes, en dashes or hyphens") == NativePreferenceCheck(forbidChars: [emDash, enDash]),
+                    "A listed set of items inside one negative clause is all banned")
+        try require(R.check(for: "Don't use emoji or exclamation marks") == NativePreferenceCheck(forbidChars: ["!"], forbidEmoji: true),
+                    "Items joined by or are all banned")
+        try require(R.check(for: "Never use emoji, always use em dashes") == NativePreferenceCheck(forbidEmoji: true),
+                    "A comma before a new instruction still ends the negative clause")
+        try require(R.check(for: "Never use emoji, but em dashes are fine") == NativePreferenceCheck(forbidEmoji: true),
+                    "A contrast after but is never banned")
+        try require(R.check(for: "Don't use emoji but exclamation marks are fine") == NativePreferenceCheck(forbidEmoji: true),
+                    "But always ends the negative clause")
         let refused = ["I never use emoji anyway", "Alice wrote: never use emoji", "She said \"never use emoji\"",
                        "\"Never use emoji,\" she told me", "> never use emoji", "Should I never use em dashes?", "Never use em dashes?",
                        "Always use emoji", "Use exclamation marks more", "I love em dashes", "Stop thinking about emoji",

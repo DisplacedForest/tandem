@@ -439,6 +439,12 @@ enum NativePreferenceRecognizer {
                                 "saying", "add", "adding", "put", "putting", "write", "writing", "include", "including", "type", "typing", "with"]
     private static let phraseVerbs: Set<String> = ["say", "saying", "use", "using", "write", "writing", "type", "typing"]
 
+    private static let instructionStarts = [
+        "always", "never", "don't", "dont", "do not", "use", "using", "please", "stop", "no more", "quit", "also", "avoid", "keep",
+        "write", "say", "add", "make", "be", "try", "give", "answer", "reply", "respond", "call", "put", "include", "start", "end",
+        "from now on", "only", "skip", "leave", "stick",
+    ]
+
     struct Prohibition: Equatable, Sendable {
         let negator: String
         let verb: String?
@@ -453,6 +459,13 @@ enum NativePreferenceRecognizer {
             if !trimmed.isEmpty { result.append(trimmed) }
         }
         let joiners: [(match: String, drop: Int)] = [(" but ", 5), (" and always ", 5), (" and use ", 5)]
+        func startsInstruction(_ characters: [Character], from index: Int) -> Bool {
+            guard index < characters.count else { return false }
+            let rest = String(characters[index...]).trimmingCharacters(in: .whitespaces).lowercased()
+            return instructionStarts.contains { start in
+                rest.hasPrefix(start) && (rest.count == start.count || !rest[rest.index(rest.startIndex, offsetBy: start.count)].isLetter)
+            }
+        }
         for line in normalized.split(omittingEmptySubsequences: true, whereSeparator: \.isNewline) {
             let characters = Array(line.trimmingCharacters(in: .whitespaces))
             if characters.first == ">" { continue }
@@ -480,13 +493,15 @@ enum NativePreferenceRecognizer {
                     if character != "?" { keep(current) }
                     current = ""
                     continue
-                case ",", ";":
+                case "," where startsInstruction(characters, from: index + 1) || String(characters[(index + 1)...]).lowercased().hasPrefix(" but "),
+                     ";" where startsInstruction(characters, from: index + 1):
                     keep(current)
                     current = ""
                     continue
                 case " ":
                     let ahead = String(characters[index...].prefix(12)).lowercased()
-                    if let joiner = joiners.first(where: { ahead.hasPrefix($0.match) }) {
+                    if let joiner = joiners.first(where: { ahead.hasPrefix($0.match) }),
+                       joiner.match == " but " || startsInstruction(characters, from: index + joiner.drop) {
                         keep(current)
                         current = ""
                         skip = joiner.drop - 1
