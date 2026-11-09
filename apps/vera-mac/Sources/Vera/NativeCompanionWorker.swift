@@ -37,7 +37,7 @@ struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
     var outcome: String
 }
 
-struct NativeCompanionPending: Codable, Equatable, Sendable {
+struct NativeCompanionPending: Codable, Equatable, Hashable, Sendable {
     var kind: String
     var callID: String?
     var digest: String?
@@ -82,8 +82,20 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         return calls.filter { !answered.contains($0.id) }
     }
 
+    static let checkpointCeiling = NativeTaskStore.maximumJSONBytes - 16384
+    static let notKept = "{\"error\":\"Result not kept: this work ran out of room.\"}"
+
+    static func envelopeBytes(_ id: String, content: String = "") -> Int {
+        ((try? JSONEncoder().encode(NativeTaskGenerationMessage(role: "tool", content: content, toolCallID: id)))?.count ?? 4096) + 2
+    }
+
+    func reserve(excluding id: String? = nil) -> Int {
+        outstandingCalls.filter { $0.id != id }.reduce(0) { $0 + Self.envelopeBytes($1.id, content: Self.notKept) }
+    }
+
     mutating func answer(_ call: NativeTaskGenerationToolCall, _ content: String) {
-        let room = NativeTaskStore.maximumJSONBytes - 16384 - ((try? encoded().count) ?? NativeTaskStore.maximumJSONBytes) - 512
+        let current = (try? encoded().count) ?? Self.checkpointCeiling
+        let room = Self.checkpointCeiling - current - reserve(excluding: call.id) - Self.envelopeBytes(call.id) + Self.encodedLength("")
         transcript.append(NativeTaskGenerationMessage(role: "tool", content: Self.fitted(content, encodedBytes: room), toolCallID: call.id))
     }
 
@@ -442,14 +454,15 @@ private struct NativeCompanionRun {
             return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
         }
         let ceiling = NativeTaskStore.maximumJSONBytes - 65536
+        func recordable(_ message: NativeTaskGenerationMessage) throws -> Bool {
+            var trial = checkpoint
+            trial.transcript.append(message)
+            return try trial.encoded().count + trial.reserve() <= ceiling
+        }
         var assistant = NativeTaskGenerationMessage(role: "assistant", content: completion.content, toolCalls: completion.toolCalls)
-        var trial = checkpoint
-        trial.transcript.append(assistant)
-        if try trial.encoded().count > ceiling {
+        if try !recordable(assistant) {
             assistant = NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: completion.toolCalls)
-            trial = checkpoint
-            trial.transcript.append(assistant)
-            if try trial.encoded().count > ceiling { return try await finish(&checkpoint) }
+            if try !recordable(assistant) { return try await finish(&checkpoint) }
         }
         checkpoint.transcript.append(assistant)
         if let paused = try await answerOutstanding(&checkpoint) { return paused }

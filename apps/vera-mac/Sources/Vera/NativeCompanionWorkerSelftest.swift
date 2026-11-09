@@ -611,6 +611,25 @@ extension SelfTest {
         try require(try crowded.encoded().count < NativeTaskStore.maximumJSONBytes,
                     "Escaping-heavy results are cut to fit the saved checkpoint")
 
+        var envelopes = NativeCompanionCheckpoint()
+        let ids = (0..<64).map { index in String(repeating: "\u{1}", count: 120) + String(format: "%04d", index) }
+        envelopes.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 23000),
+                                                            toolCalls: ids.map { NativeTaskGenerationToolCall(id: $0, name: "garden_status", arguments: "{}") })]
+        envelopes.answer(NativeTaskGenerationToolCall(id: ids[0], name: "garden_status", arguments: "{}"), String(repeating: "\"", count: 32000))
+        for id in ids.dropFirst() { envelopes.answer(NativeTaskGenerationToolCall(id: id, name: "unknown", arguments: "{}"), NativeCompanionWorker.message("Unknown tool.")) }
+        try require(try envelopes.encoded().count < NativeTaskStore.maximumJSONBytes && envelopes.outstandingCalls.isEmpty,
+                    "Every call is answered and the checkpoint still fits, whatever the call ids look like")
+
+        let blind = try NativeCompanionHarness(rules: [.networkSends: .act], toolSeconds: 0.2, script: waterThenReport)
+        blind.service.applyThenStall = true
+        let blindID = try blind.create()
+        let asking = try await blind.runUntilSettled()
+        try require(asking.state == .needsDecision, "The unconfirmed write asks the person")
+        let canceled = try blind.store.cancel(blindID)
+        try require(canceled.state == .canceled
+                    && (try JSONDecoder().decode(NativeTaskCheckpoint.self, from: canceled.checkpoint)).unconfirmedEffects == ["Water a bed"],
+                    "Stopping while the person is asked whether it happened still names the action to check")
+
         let huge = String(repeating: "word ", count: 50000)
         let wordy = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty
