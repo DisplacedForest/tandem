@@ -2,8 +2,7 @@
 
 Two surfaces:
   GET  /kitchen/state  -> consolidated snapshot (below-min, expiring, expired, shopping
-                          list, today's meal plan, recipe names). The OWUI `kitchen`
-                          tool calls this; Vera reasons about cook-from-stock herself.
+                          list, today's meal plan, recipe names).
   POST /kitchen/check  -> zero-floor Pulse card: only writes a card when there's
                           something worth saying (low staples / expiring / a planned meal).
 
