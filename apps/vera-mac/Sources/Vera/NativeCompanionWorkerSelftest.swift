@@ -243,13 +243,14 @@ extension SelfTest {
         try await companionRecovery()
         try await companionApprovedCrash()
         try await companionRecoveredDecline()
+        try await companionStopAndOversize()
         try await companionRemoteSuccessThenTimeout()
         try await companionReadRetries()
         try await companionCapsAndFences()
         try companionCommandRules()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
-        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -573,6 +574,53 @@ extension SelfTest {
         checkpoint.note("Run a command: make build", "failed")
         try require(NativeCompanionWorker.effectsLine(checkpoint).contains("may have changed") && !NativeCompanionWorker.effectsLine(checkpoint).contains("Nothing was changed"),
                     "A failed command is reported as something that may have changed, never as nothing")
+    }
+
+    private static func companionStopAndOversize() async throws {
+        let require = NativeTaskFixture.require
+        let stopping = try NativeCompanionHarness(rules: [.networkSends: .act], toolSeconds: 60, script: waterThenReport)
+        stopping.service.hangWrites = true
+        let id = try stopping.create()
+        guard let claimed = try stopping.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+        let model = stopping.model
+        let environment = stopping.environment
+        let started = ContinuousClock.now
+        let running = Task {
+            try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
+                model.complete(phase, attempt, messages, tools)
+            }
+        }
+        for _ in 0..<200 where stopping.service.count("water_bed") == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        _ = try stopping.store.cancel(id)
+        var stopped = false
+        do { _ = try await running.value } catch is CancellationError { stopped = true }
+        try require(stopped && started.duration(to: .now) < .seconds(5) && stopping.service.appliedCount == 0
+                    && (try stopping.effects(id)).first?.state == .uncertain,
+                    "Stop work interrupts a running action at once and leaves its outcome uncertain")
+
+        let huge = String(repeating: "word ", count: 50000)
+        let wordy = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
+            NativeCompanionScriptedModel.toolResults(messages).isEmpty
+                ? NativeTaskGenerationCompletion(content: huge, toolCalls: [NativeTaskGenerationToolCall(id: "call-1", name: "water_bed", arguments: "{\"bed\":\"north\"}")],
+                                                 finishReason: "tool_calls")
+                : .text("Finished.")
+        }
+        _ = try wordy.create()
+        let kept = try await wordy.step()
+        try require(kept.state == .queued && wordy.service.count("water_bed") == 1 && kept.checkpoint.count < NativeTaskStore.maximumJSONBytes,
+                    "An oversized reply keeps its actions and drops its prose so the checkpoint still saves")
+
+        let bulky = String(repeating: "x", count: 15000)
+        let flooding = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
+            NativeCompanionScriptedModel.toolResults(messages).isEmpty && !messages.contains(where: { $0.role == "assistant" })
+                ? NativeTaskGenerationCompletion(content: "", toolCalls: (0..<20).map {
+                    NativeTaskGenerationToolCall(id: "call-\($0)", name: "water_bed", arguments: "{\"bed\":\"\(bulky)\"}") }, finishReason: "tool_calls")
+                : .text("Finished.")
+        }
+        _ = try flooding.create()
+        let refused = try await flooding.runUntilSettled()
+        try require(refused.state == .completed && flooding.service.count("water_bed") == 0,
+                    "Actions too large to record are never run")
     }
 
     private static func companionRemoteSuccessThenTimeout() async throws {

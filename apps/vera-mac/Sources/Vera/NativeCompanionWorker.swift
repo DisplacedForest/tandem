@@ -209,12 +209,21 @@ enum NativeCompanionWorker {
         NativeEffectProposal.canonicalArguments(.object(["error": .string(text)]))
     }
 
-    static func withDeadline<T: Sendable>(_ seconds: Double, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    static func withDeadline<T: Sendable>(_ seconds: Double, stopped: (@Sendable () -> Bool)? = nil,
+                                          _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await operation() }
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
                 throw NativeCompanionDeadline()
+            }
+            if let stopped {
+                group.addTask {
+                    while true {
+                        try await Task.sleep(for: .milliseconds(200))
+                        if stopped() { throw NativeCompanionStopped() }
+                    }
+                }
             }
             defer { group.cancelAll() }
             guard let first = try await group.next() else { throw NativeCompanionDeadline() }
@@ -290,6 +299,8 @@ enum NativeCompanionWorker {
 
 struct NativeCompanionDeadline: Error {}
 
+struct NativeCompanionStopped: Error {}
+
 private struct NativeCompanionRun {
     let task: NativeTaskRecord
     let dot: NativeCompanionTaskPayload
@@ -298,6 +309,16 @@ private struct NativeCompanionRun {
     let model: NativeCompanionWorker.Model
 
     var proactive: Bool { dot.mode == "proactive" }
+
+    var stopProbe: @Sendable () -> Bool {
+        let tasks = environment.tasks
+        let id = task.id
+        let generation = task.generation
+        return {
+            guard let current = try? tasks.get(id) else { return true }
+            return current.cancelRequested || current.state != .running || current.generation != generation
+        }
+    }
 
     var advertised: [NativeToolDefinition] {
         let usable = context.tools.filter { !NativeCompanionWorker.excludedToolIDs.contains($0.id) && $0.isAvailable() }
@@ -399,7 +420,17 @@ private struct NativeCompanionRun {
         if completion.toolCalls.isEmpty {
             return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: completion.content)
         }
-        checkpoint.transcript.append(NativeTaskGenerationMessage(role: "assistant", content: completion.content, toolCalls: completion.toolCalls))
+        let ceiling = NativeTaskStore.maximumJSONBytes - 65536
+        var assistant = NativeTaskGenerationMessage(role: "assistant", content: completion.content, toolCalls: completion.toolCalls)
+        var trial = checkpoint
+        trial.transcript.append(assistant)
+        if try trial.encoded().count > ceiling {
+            assistant = NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: completion.toolCalls)
+            trial = checkpoint
+            trial.transcript.append(assistant)
+            if try trial.encoded().count > ceiling { return try await finish(&checkpoint) }
+        }
+        checkpoint.transcript.append(assistant)
         if let paused = try await answerOutstanding(&checkpoint) { return paused }
         return try progress(checkpoint)
     }
@@ -481,10 +512,11 @@ private struct NativeCompanionRun {
             checkpoint.segmentCalls += 1
             checkpoint.calls += 1
             do {
-                let value = try await NativeCompanionWorker.withDeadline(seconds) { try await definition.execute(arguments) }
+                let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
+                if error is NativeCompanionStopped { throw CancellationError() }
                 try Task.checkCancellation()
                 let canRetry = NativeCompanionWorker.transient(error) && attempt < NativeCompanionWorker.readRetryDelays.count
                     && checkpoint.segmentCalls < environment.budget.calls && checkpoint.calls < environment.budget.taskCalls
@@ -552,7 +584,7 @@ private struct NativeCompanionRun {
         checkpoint.calls += 1
         let seconds = definition.timeout.map { Double($0.components.seconds) } ?? environment.defaultToolSeconds
         do {
-            let value = try await NativeCompanionWorker.withDeadline(seconds) {
+            let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) {
                 if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
                 return try await definition.execute(arguments)
             }
@@ -567,6 +599,11 @@ private struct NativeCompanionRun {
             checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: limit))
             return nil
         } catch {
+            if error is NativeCompanionStopped || error is CancellationError {
+                try? environment.ledger.markUncertain(digest: record.digest, reason: "stopped")
+                checkpoint.note(title, "unconfirmed")
+                throw CancellationError()
+            }
             if NativeCompanionWorker.definite(error) {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "refused")
                 try environment.ledger.observe(digest: record.digest, .absent)
