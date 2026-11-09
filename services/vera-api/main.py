@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, images, inference_admission, integrations, kitchen, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, research, scheduler, tasks, updates, vein_builder, vein_engine, weather, websearch
 from routers import native_generation, task_document, task_research
 
 # vera-api: ONE container, many capabilities.
@@ -80,10 +80,8 @@ CAPABILITIES = {
     "vein_builder": vein_builder.router,
     "weather": weather.router,
     "kitchen": kitchen.router,
-    "knowledge": knowledge.router,
     "knowledge_groom": knowledge_groom.router,
     "knowledge_restore": knowledge_restore.router,
-    "user_profile": user_profile.router,
     "household": household.router,
     "conversation_ingest": conversation_ingest.router,
     "documents": documents.router,
@@ -96,7 +94,6 @@ CAPABILITIES = {
     "actions": actions.router,
     "agentic": agentic.router,
     "overseerr": overseerr.router,
-    "reminders": reminders.router,
     "media_curation": media_curation.router,
     "research": research.router,
     "health": health.router,

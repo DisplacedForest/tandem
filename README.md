@@ -40,7 +40,7 @@ flowchart LR
     SEARX["SearXNG"]
     HA["Home Assistant"]
     INT["Grocy · Mealie · Overseerr · Unraid"]
-    SAT["satellite contracts<br/>voice · image · vision · coder"]
+    SAT["satellite contracts<br/>image · vision · coder"]
 
     APP --> LLM
     APP --> API
@@ -238,7 +238,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 <br>
 
-One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
+One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the coder model) on demand, and a Mac mini runs the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
 
 </details>
 
@@ -276,7 +276,7 @@ The full walkthrough, including native chat and every integration: **[docs/SETUP
 
 ## Constraints
 
-- The reference satellite services (voice, image, vision, coder) are MLX-based and require Apple Silicon. Each implements a documented HTTP contract (OpenAI Images, OpenAI chat, Wyoming) that any compatible service can satisfy: the contracts are the interface; the references are one implementation.
+- The reference satellite services (image, vision, coder) are MLX-based and require Apple Silicon. Each implements a documented HTTP contract (OpenAI Images, OpenAI chat) that any compatible service can satisfy: the contracts are the interface; the references are one implementation.
 - The native app requires macOS 26 or later. The packaged Pi runtime targets Apple silicon. The backend runs anywhere Docker runs.
 - Vera is built for a single household, not multi-tenancy.
 
