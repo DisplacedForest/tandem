@@ -10,7 +10,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
-| Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
+| Satellite services (image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
@@ -117,7 +117,7 @@ Recovery distinguishes never-sent messages from requests that might already have
 
 ### Native background research
 
-The Background work switch in Settings, Tools (previously called Deep research) gates both background research and background documents. It exposes `create_background_task` during typed chat. Required fields are `worker_type` (`research` or `document`), `objective`, and `deliverables`. An optional `title` names the result. Research needs a SearXNG URL from Settings, Search. With none set, the handoff is refused with a plain explanation. Documents do not search the web. Foreground chat uses this durable handoff for explicitly requested research and documents. Ordinary chat retains short web lookups through the search tool. Background handoff needs durable local chat storage. The original chat shows a persistent task card with progress, Stop, and an explicit Retry when it applies. Completion adds one read-only artifact: a cited report for research, a markdown document for a document task. Either one also appears in [Library](#library). The app restores cards after restart and refreshes saved task state before saving progress. Known task IDs are never recreated after a missing-task response. Saved reports stay readable if search is later unset. Voice handoff remains separate.
+The Background work switch in Settings, Tools (previously called Deep research) gates both background research and background documents. It exposes `create_background_task` during typed chat. Required fields are `worker_type` (`research` or `document`), `objective`, and `deliverables`. An optional `title` names the result. Research needs a SearXNG URL from Settings, Search. With none set, the handoff is refused with a plain explanation. Documents do not search the web. Foreground chat uses this durable handoff for explicitly requested research and documents. Ordinary chat retains short web lookups through the search tool. Background handoff needs durable local chat storage. The original chat shows a persistent task card with progress, Stop, and an explicit Retry when it applies. Completion adds one read-only artifact: a cited report for research, a markdown document for a document task. Either one also appears in [Library](#library). The app restores cards after restart and refreshes saved task state before saving progress. Known task IDs are never recreated after a missing-task response. Saved reports stay readable if search is later unset.
 
 The app saves a unique creation key, exact request, original conversation/message references, and model profile binding in its existing SQLite database before sending the request. Repeated handoff calls within the same user turn reuse that exact record, including when the model paraphrases the objective. Only a direct research or document request in the current message enables this handoff; quoted requests and earlier turns do not. Explicit “Do not use any tools” instructions remove every tool for that turn, and the same restriction is checked before dispatch. Direct English phrases such as “Please research lunar ice” or “Start background research about lunar ice” are supported. Send a new message for a separate research task. Restart and lost-response recovery replay the original body and key. Deleting a conversation marks unfinished handoffs for cancellation, including requests whose creation acknowledgment was lost. Once the orphaned request resolves to a terminal outcome, its content is removed; only a minimal reservation tombstone remains.
 
@@ -129,7 +129,7 @@ Typed `native_generation_timing` records in the macOS unified log contain only t
 
 The original saved profile must still exist with the same endpoint and model. Active-profile changes do not retarget existing work. Credential lookup is noninteractive; a locked or missing required credential leaves work waiting. Each task pins a finite generation request allowance (four by default), a 64 KiB serialized text-input limit, and a 1,024-token output limit. Completed generation responses are cached locally. An uncertain request after a crash remains charged to its allowance; it is never resent automatically under the same generation identity. A user retry stages a new attempt within the same allowance. Exhaustion stops the task without a misleading retry option. These are request and token limits, not a dollar-cost estimate; provider account limits remain authoritative.
 
-Cards and report blocks are saved separately from foreground reply text, so a later stream update cannot erase a completed report. Spoken text never incorporates a report, task card, or display link. The report view accepts only web link actions without embedded credentials and does not fetch embedded Markdown images. Existing voice playback reuses URL cleanup, but this does not enable native voice handoff.
+Cards and report blocks are saved separately from foreground reply text, so a later stream update cannot erase a completed report. The report view accepts only web link actions without embedded credentials and does not fetch embedded Markdown images.
 
 The persistent Vera conversation subscribes to the same TaskStore event API through its app-owned runtime connection. The app keeps the private session capability inside the connection owner. Event IDs trigger scoped task and transcript refreshes; they do not grant approval or declare completion. A cursor is saved only after the authoritative refresh succeeds, and reconnects replay from that cursor. Restart rehydrates tasks and transcript before resubscribing. Cards attach to the original handoff reply, or to the originating request if its reply was interrupted. Completed file outputs are revalidated against the configured workspace when opened. Closing the connection cancels the subscription. This is task progress, not an external MCP event subscription.
 
@@ -331,12 +331,6 @@ To change the shortcut, open Settings, Identity, find **Quick ask**, click the r
 
 The shortcut is stored as `companion_shortcut` in `~/.vera/config.json`. The value is lowercase tokens joined with plus signs: any of `control`, `option`, `shift` and `command`, then a key name such as `space`, `k` or `f5`, for example `option+shift+space`. At least one of control, option or command is required unless the key is a function key. When unset, the default applies.
 
-### Voice and dictation
-
-Set the voice service address under Settings, Services, Voice (`voice_base` in `~/.vera/config.json`) and use **Test voice** to check it. With an address set, the composer shows two separate controls. The microphone dictates into the message: press it to start, press it again to stop, and the transcribed text lands in the message field for you to edit and send. The waveform starts an in-app voice chat. Dictation and voice chat use the same speech service.
-
-With no address set, neither control appears, and the composer's plus menu has a **Voice is not set up** item that opens Settings. The first time you use the microphone, macOS asks for permission. If you declined, allow Tandem under Privacy & Security, Microphone in System Settings.
-
 ### The conversation and ongoing work
 
 The conversation header shows its title. Replies appear in bubbles, and your messages are right-aligned. A reply that produces a document, report, image or canvas piece gets a result row with an **Open** button. Reports and documents open in their reader, and canvas pieces open the canvas.
@@ -349,16 +343,14 @@ The **Ongoing work** panel on the right lists the background work of the current
 
 The companion is the small figure that stands for the assistant. Its conversation and sidebar entry use its saved name. Ordinary chat composers say **Message Tandem**. Renaming the companion keeps your conversation titles and history intact. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
 
-The figure appears wherever the companion does: the sidebar, Settings and the voice view, where it replaces the old orb. Outside the voice view its state follows the companion's own conversation and work, including its scheduled runs. Unrelated ordinary chats do not animate it. Waiting for a decision takes precedence over working; completed and canceled work clear the working state. Pausing rests the figure once current work has stopped. It has six states, each shown through motion rather than text:
+The figure appears wherever the companion does: the sidebar and Settings. Its state follows the companion's own conversation and work, including its scheduled runs. Unrelated ordinary chats do not animate it. Waiting for a decision takes precedence over working; completed and canceled work clear the working state. Pausing rests the figure once current work has stopped. Each state is shown through motion rather than text:
 
 - Ready: a slow breath and an occasional blink.
-- Thinking: a side to side sway while an answer is being generated, or while voice is transcribing or thinking.
-- Listening: perked up, only while the microphone is really capturing.
-- Speaking: a bounce, only while audio is really playing back.
+- Thinking: a side to side sway while an answer is being generated.
 - Resting: settled low with closed eyes while the app is inactive.
 - Needs you: only while a real question is waiting for your decision. It hops once and then holds the pose until the question is answered.
 
-In the active app window, the companion glances toward the pointer and then toward the composer while you type. Its eyes stay within the selected shape, and voice and resting cues keep priority. Pointer position stays in the app and is never recorded or sent to a model.
+In the active app window, the companion glances toward the pointer and then toward the composer while you type. Its eyes stay within the selected shape, and the resting cue keeps priority. Pointer position stays in the app and is never recorded or sent to a model.
 
 With Reduce Motion on in System Settings, each state is a still pose. Animation also stops while a view is hidden, so a figure you can't see costs nothing.
 
@@ -429,9 +421,9 @@ Not included: sandboxes or containers, network isolation, a terminal view, and c
 
 ### Preferences
 
-Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, voice reply, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
+Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
 
-You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets Vera acknowledge it. If the model can't answer, a plain instruction like "never use em dashes" or "don't say 'X'" is still saved. If the save fails, Vera tells you it wasn't saved. Only messages you type or dictate count: picking one of Vera's suggested options or asking for a revision never sets or removes a preference. You can keep up to 40 preferences of up to 300 characters each. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy.
+You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets Vera acknowledge it. If the model can't answer, a plain instruction like "never use em dashes" or "don't say 'X'" is still saved. If the save fails, Vera tells you it wasn't saved. Only messages you type count: picking one of Vera's suggested options or asking for a revision never sets or removes a preference. You can keep up to 40 preferences of up to 300 characters each. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy.
 
 ### Migrating Open WebUI knowledge collections
 
@@ -456,13 +448,13 @@ otherwise. Re-running is safe: files already present with identical content are 
 and the report lists everything created, uploaded, skipped, or failed. Chat history is not
 migrated; the native store starts fresh by design.
 
-Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, voice, and other autonomous paths cannot invoke them.
+Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, and other autonomous paths cannot invoke them.
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. Tool execution is bounded to four rounds, eight total calls, and two actual web searches. A reached limit triggers one bounded synthesis without tools. If synthesis cannot answer, the transcript retains useful evidence as an unfinished answer with follow-up or retry controls. A tool failure, malformed stream, or endpoint outage also preserves received text and activity.
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice is set up separately, see [Voice and dictation](#voice-and-dictation). Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
+Remote MCP read tools use the explicit setup described in [connected service tools](MCP.md).
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
@@ -581,7 +573,6 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Image gen | The Mac app talks to ComfyUI directly (see [Image generation](#image-generation)); the server stack uses the OpenAI Images API `POST {base}/v1/images/generations` | ComfyUI with the Qwen Image 2.1 weights for the app; `services/vera-image` serves the OpenAI contract for vera-api, `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
-| Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
 Reminders reaches EventKit, Apple's only supported door into Reminders, which must run
@@ -600,10 +591,9 @@ an explicit chat ask.
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
 prompt, then enable the Apple Reminders integration with the bridge URL.
 
-Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
-companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh`:
-runtime copy-out, both venvs, launchd agents), and the image/vision services ship launchd
-templates installed via `scripts/install-launchd.sh`.
+Every satellite env var (models, ports, paths) is documented in `.env.example`'s
+companion-services section. The image and vision services ship launchd templates installed
+via `scripts/install-launchd.sh`.
 
 ## 6. The scheduler
 

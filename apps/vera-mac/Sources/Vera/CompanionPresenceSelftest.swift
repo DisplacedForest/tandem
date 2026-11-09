@@ -59,8 +59,7 @@ extension SelfTest {
         let speaking = CompanionPresence.snapshot(store: store, voicePlaying: true, voiceConversationID: thread.id)
         try require(CompanionStateMapper.state(listening) == .listening && CompanionStateMapper.state(speaking) == .speaking,
                     "Companion voice keeps its actual ownership after navigating to an ordinary chat")
-        let voice = VoiceSession.preview(state: .idle, level: 0, store: store)
-        let presence = CompanionPresence(store: store, voice: voice)
+        let presence = CompanionPresence(store: store)
         presence.start()
         defer { presence.stop() }
         store.nativeTaskReferences = [running]

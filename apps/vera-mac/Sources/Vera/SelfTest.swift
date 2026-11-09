@@ -1,7 +1,6 @@
 import AppKit
 import Combine
 import Foundation
-import AVFoundation
 
 final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
     private let lock = NSLock()
@@ -440,7 +439,6 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }
         catch { print("SELFTEST ERROR: task engine \(error)"); exit(1) }
-        do { try await VoiceEntrySelftest.run() } catch { print("SELFTEST ERROR: voice entry \(error)"); exit(1) }
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()
@@ -3818,33 +3816,6 @@ enum SelfTest {
             }
             print("  presentation blocks OK (\(proseN) prose, \(chartN) chart, \(statN) stats)")
 
-            // Wyoming framing round-trip (encode → parse) — pure, local, no network.
-            var payload = Data(count: 320)
-            for i in 0..<320 { payload[i] = UInt8(i & 0xFF) }
-            let encoded = WyomingClient.encode(
-                type: "audio-chunk",
-                data: ["rate": 16000, "width": 2, "channels": 1, "timestamp": 0],
-                payload: payload)
-            guard let nl = encoded.firstIndex(of: 0x0A),
-                  let header = try? JSONSerialization.jsonObject(with: encoded[encoded.startIndex..<nl]) as? [String: Any],
-                  header["type"] as? String == "audio-chunk",
-                  let dataLen = header["data_length"] as? Int,
-                  header["payload_length"] as? Int == 320 else {
-                print("SELFTEST ERROR: wyoming header"); exit(1)
-            }
-            let dataStart = encoded.index(after: nl)
-            let dataEnd = encoded.index(dataStart, offsetBy: dataLen)
-            guard let dataDict = try? JSONSerialization.jsonObject(with: encoded[dataStart..<dataEnd]) as? [String: Any],
-                  dataDict["rate"] as? Int == 16000, dataDict["width"] as? Int == 2,
-                  dataDict["channels"] as? Int == 1 else {
-                print("SELFTEST ERROR: wyoming data"); exit(1)
-            }
-            let payloadBytes = Data(encoded[dataEnd..<encoded.index(dataEnd, offsetBy: 320)])
-            guard payloadBytes == payload else {
-                print("SELFTEST ERROR: wyoming payload bytes corrupted"); exit(1)
-            }
-            print("  wyoming framing OK (type=audio-chunk, data={rate,width,channels}, payload 320B intact)")
-
             // Scheduler plumbing: cron summaries + tolerant GET /scheduler/jobs decode (pure, local).
             let cronCases = [
                 ("0 5 * * *", "Daily 5:00 AM"), ("*/20 * * * *", "Every 20 min"),
@@ -4481,47 +4452,6 @@ enum SelfTest {
             }
             print("  reasoning strip OK (details removed, reply intact)")
 
-            let mapped = OWUISources.parse([
-                ["source": ["name": "BBC Sport"], "metadata": [["source": "https://bbc.co.uk/a"]]],
-                ["source": ["name": "https://theathletic.com/b"]],
-                ["source": ["name": "no url here"]],  // unresolvable -> dropped
-            ])
-            guard mapped.count == 2, mapped[0].n == 1, mapped[0].title == "BBC Sport",
-                  mapped[0].url == "https://bbc.co.uk/a", mapped[1].url == "https://theathletic.com/b" else {
-                print("SELFTEST ERROR: source mapping"); exit(1)
-            }
-            print("  source mapping OK (\(mapped.count) chips, unresolvable dropped)")
-
-            let legacyEvent: [String: Any] = ["content": "partial reply", "done": false]
-            let snapshotEvent: [String: Any] = ["output": [
-                ["type": "reasoning", "content": [["type": "output_text", "text": "thinking about it"]]],
-                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Paris is"]]],
-            ]]
-            let doneEvent: [String: Any] = ["done": true, "output": [
-                ["type": "reasoning", "content": [["type": "output_text", "text": "thinking about it"]]],
-                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Paris is the capital."]]],
-            ]]
-            let chunkEvent: [String: Any] = ["choices": [["delta": ["role": "assistant", "content": NSNull()]]]]
-            let toolTurnEvent: [String: Any] = ["done": true, "output": [
-                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Let me check.\n"]]],
-                ["type": "function_call", "id": "fc_1", "call_id": "c1", "name": "kitchen_status", "arguments": "{}", "status": "completed"],
-                ["type": "function_call_output", "id": "fco_1", "call_id": "c1", "output": [["type": "input_text", "text": "Low: <eggs> & milk"]], "status": "completed"],
-                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Here is the answer."]]],
-            ]]
-            let toolTurnText = VeraSocket.completionText(toolTurnEvent) ?? ""
-            let (toolClean, toolCalls) = ToolCallParser.parse(toolTurnText)
-            guard VeraSocket.completionText(legacyEvent) == "partial reply",
-                  VeraSocket.completionText(snapshotEvent) == "Paris is",
-                  VeraSocket.completionText(doneEvent) == "Paris is the capital.",
-                  VeraSocket.completionText(doneEvent)?.contains("thinking") == false,
-                  VeraSocket.completionText(chunkEvent) == nil,
-                  toolClean.hasPrefix("Let me check."), toolClean.hasSuffix("Here is the answer."),
-                  toolCalls.count == 1, toolCalls[0].name == "kitchen_status",
-                  toolCalls[0].detail == "Low: <eggs> & milk" else {
-                print("SELFTEST ERROR: completion event text extraction"); exit(1)
-            }
-            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil, tool-turn chips round-trip)")
-
             for preset in SchedulePreset.allCases {
                 guard SchedulePreset.match(preset.cron) == preset else {
                     print("SELFTEST ERROR: schedule preset \(preset.rawValue) round-trip"); exit(1)
@@ -4617,66 +4547,6 @@ enum SelfTest {
             print("SELFTEST ERROR: \(error)")
             exit(1)
         }
-    }
-
-    /// DEBUG-ONLY: stream a wav's PCM through the real Wyoming ASR server and print the
-    /// transcript, then round-trip the text through the TTS server. Proves the Swift Wyoming client
-    /// works against the live servers without a mic. Remove/guard after validation.
-    static func voiceE2E(wavPath: String) async {
-        let host = ProcessInfo.processInfo.environment["VERA_VOICE_HOST"] ?? "127.0.0.1"
-        let client = VoiceClient(host: host)
-        print("voice-e2e: host=\(host) wav=\(wavPath)")
-
-        guard let pcm = load16kMonoInt16(path: wavPath) else {
-            print("voice-e2e ERROR: could not read/convert \(wavPath)"); exit(1)
-        }
-        print("voice-e2e: \(pcm.count) PCM bytes (\(pcm.count / 2) samples @ 16k)")
-
-        do {
-            let stream = try await client.startTranscription()
-            // Feed in frames; size from env (samples) so we can probe engine chunk sensitivity.
-            let frameSamples = Int(ProcessInfo.processInfo.environment["VERA_E2E_FRAME"] ?? "512") ?? 512
-            let frameBytes = frameSamples * 2
-            var off = 0
-            while off < pcm.count {
-                let end = min(off + frameBytes, pcm.count)
-                stream.send(pcm.subdata(in: off..<end))
-                off = end
-            }
-            let text = try await stream.finish()
-            print("voice-e2e TRANSCRIPT: \(text.debugDescription)")
-
-            let wav = try await client.synthesize("End to end voice is working.", voice: nil)
-            print("voice-e2e TTS: \(wav.count) WAV bytes returned")
-            exit(text.isEmpty ? 1 : 0)
-        } catch {
-            print("voice-e2e ERROR: \(error)"); exit(1)
-        }
-    }
-
-    /// Read a WAV file and return int16 16 kHz mono little-endian PCM (downsampling/downmixing).
-    private static func load16kMonoInt16(path: String) -> Data? {
-        guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
-        let inFormat = file.processingFormat
-        let frames = AVAudioFrameCount(file.length)
-        guard frames > 0,
-              let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: frames),
-              (try? file.read(into: inBuf)) != nil,
-              let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000,
-                                         channels: 1, interleaved: true),
-              let conv = AVAudioConverter(from: inFormat, to: target) else { return nil }
-        let ratio = 16000.0 / inFormat.sampleRate
-        let outCap = AVAudioFrameCount(Double(frames) * ratio) + 1024
-        guard let outBuf = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: outCap) else { return nil }
-        var fed = false
-        var err: NSError?
-        conv.convert(to: outBuf, error: &err) { _, status in
-            if fed { status.pointee = .noDataNow; return nil }
-            fed = true; status.pointee = .haveData; return inBuf
-        }
-        guard err == nil, let ch = outBuf.int16ChannelData else { return nil }
-        let n = Int(outBuf.frameLength)
-        return Data(bytes: ch[0], count: n * 2)
     }
 
 }

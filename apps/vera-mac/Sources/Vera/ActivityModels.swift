@@ -23,23 +23,6 @@ struct ActivityEvent: Identifiable, Sendable, Hashable {
 
     /// Failure-shaped kinds tint the icon; everything else stays neutral.
     var failed: Bool { kind == "fail" || kind == "error" }
-
-    static func mock() -> [ActivityEvent] {
-        let now = Date()
-        func ev(_ source: String, _ kind: String, _ title: String, _ detail: String,
-                ago: TimeInterval, tool: String? = nil) -> ActivityEvent {
-            ActivityEvent(id: "\(source)-\(ago)", ts: now.addingTimeInterval(-ago),
-                          source: source, kind: kind, title: title, detail: detail,
-                          tool: tool, ref: nil)
-        }
-        return [
-            ev("scheduler", "ok", "River gauge run", "3 cards refreshed", ago: 480, tool: "vein_rivergauge"),
-            ev("scheduler", "ok", "Pulse briefing", "6 cards injected", ago: 1200, tool: "pulse"),
-            ev("action", "auto", "media.request", "applied: title=Dune Part Two", ago: 4200, tool: "media.request"),
-            ev("scheduler", "fail", "Geopolitics run", "feed timeout after 30s", ago: 7600, tool: "geopolitics"),
-            ev("action", "auto", "ha.service", "applied: climate.office", ago: 9800, tool: "ha.service"),
-        ]
-    }
 }
 
 /// Thin client for vera-api's agentic activity endpoint.

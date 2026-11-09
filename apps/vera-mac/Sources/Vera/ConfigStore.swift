@@ -1,4 +1,3 @@
-import Combine
 import SwiftUI
 
 /// Reads and writes `~/.vera/config.json` — the single on-disk config the app and its clients
@@ -84,7 +83,7 @@ final class ConfigStore: ObservableObject {
     static let envNames: [String: String] = [
         "model_base": "VERA_MODEL_BASE", "model_api_key": "VERA_MODEL_API_KEY",
         "model": "VERA_MODEL", "completions_url": "VERA_COMPLETIONS_URL",
-        "voice_base": "VERA_VOICE_BASE", "vera_api_base": "VERA_API_BASE",
+        "vera_api_base": "VERA_API_BASE",
         "owner_name": "VERA_OWNER_NAME", "assistant_name": "VERA_ASSISTANT_NAME",
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
         NativeImageTools.configKey: NativeImageTools.envName,
@@ -864,21 +863,6 @@ final class ConfigStore: ObservableObject {
         self[CompanionShortcut.configKey] = shortcut?.configValue ?? ""
     }
 
-    var voiceBase: URL? { Self.voiceBase(in: raw) }
-
-    nonisolated static func voiceBase(in raw: [String: Any]) -> URL? {
-        let env = ProcessInfo.processInfo.environment["VERA_VOICE_BASE"]
-        let v = (env?.isEmpty == false ? env : nil) ?? (raw["voice_base"] as? String)
-        let trimmed = v?.trimmingCharacters(in: .whitespaces)
-        return (trimmed?.isEmpty == false) ? URL(string: trimmed!) : nil
-    }
-
-    var voiceBasePublisher: AnyPublisher<URL?, Never> {
-        $raw.map { Self.voiceBase(in: $0) }.eraseToAnyPublisher()
-    }
-
-    var voiceConfigured: Bool { !(voiceBase?.host ?? "").isEmpty }
-
     /// The person's name — drives the greeting and the sidebar chip. Nil when unset.
     var ownerName: String? {
         let env = ProcessInfo.processInfo.environment["VERA_OWNER_NAME"]
@@ -949,16 +933,6 @@ enum ConnectionTest {
             throw TestError.message("Search answered but returned no results. Check that the JSON format is enabled on the server.")
         }
         return "Search is working"
-    }
-
-    static func voice(base: String) async throws -> String {
-        guard let url = URL(string: base), url.host != nil else {
-            throw TestError.message("Enter a valid voice URL first")
-        }
-        guard await VoiceClient(base: url).health() else {
-            throw TestError.message("Voice host not answering on the Wyoming port")
-        }
-        return "Voice service is reachable"
     }
 }
 

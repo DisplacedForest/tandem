@@ -33,6 +33,38 @@ def _relative(path):
     return os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
 
 
+MAC_APP_ROOT = os.path.join(REPO_ROOT, "apps", "vera-mac")
+
+MAC_APP_FORBIDDEN_TERMS = (
+    "owui",
+    "open webui",
+    "open-webui",
+    "openwebui",
+    "socket.io",
+    "socketio",
+    "starscream",
+)
+
+MAC_APP_RETIRED_KEYS = {
+    "apps/vera-mac/Sources/Vera/ConfigStore.swift": ("owui_email", "owui_password"),
+    "apps/vera-mac/Sources/Vera/SelfTest.swift": ("owui_email", "owui_password"),
+}
+
+
+def _mac_app_files():
+    for root, dirs, files in os.walk(os.path.join(MAC_APP_ROOT, "Sources")):
+        dirs[:] = [d for d in dirs if d not in (".build", "__pycache__")]
+        for name in files:
+            if name.endswith(".swift"):
+                yield os.path.join(root, name)
+    yield os.path.join(MAC_APP_ROOT, "Package.swift")
+    yield os.path.join(MAC_APP_ROOT, "Package.resolved")
+    scripts = os.path.join(MAC_APP_ROOT, "scripts")
+    for name in sorted(os.listdir(scripts)):
+        if name.endswith(".sh"):
+            yield os.path.join(scripts, name)
+
+
 def test_sources_read_no_chat_backend_env():
     offenders = []
     for path in _sources():
@@ -60,3 +92,25 @@ def test_guard_covers_the_engine_and_the_scripts():
     assert "scripts/rag-sync.py" in covered
     assert "scripts/vera-backup.sh" in covered
     assert MIGRATION_TOOL in covered
+
+
+def test_mac_app_mentions_no_retired_chat_backend():
+    offenders = []
+    for path in _mac_app_files():
+        rel = _relative(path)
+        text = open(path, encoding="utf-8").read().lower()
+        for literal in MAC_APP_RETIRED_KEYS.get(rel, ()):
+            text = text.replace(literal, "")
+        for term in MAC_APP_FORBIDDEN_TERMS:
+            if term in text:
+                offenders.append(f"{rel}: {term}")
+    assert offenders == []
+
+
+def test_guard_covers_the_mac_app():
+    covered = {_relative(p) for p in _mac_app_files()}
+    assert "apps/vera-mac/Package.swift" in covered
+    assert "apps/vera-mac/Package.resolved" in covered
+    assert "apps/vera-mac/Sources/Vera/ConfigStore.swift" in covered
+    assert "apps/vera-mac/Sources/Vera/VeraApp.swift" in covered
+    assert "apps/vera-mac/scripts/package.sh" in covered
