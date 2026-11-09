@@ -6,17 +6,15 @@ import Combine
 final class CompanionPresence: ObservableObject {
     @Published private(set) var state: CompanionState = .ready
     private weak var store: ChatStore?
-    private weak var voice: VoiceSession?
     private var subscriptions: Set<AnyCancellable> = []
     private var appActive = true
 
-    init(store: ChatStore, voice: VoiceSession) {
+    init(store: ChatStore) {
         self.store = store
-        self.voice = voice
     }
 
     func start() {
-        guard subscriptions.isEmpty, let store, let voice else { return }
+        guard subscriptions.isEmpty, let store else { return }
         appActive = NSApplication.shared.isActive
         let center = NotificationCenter.default
         center.publisher(for: NSApplication.didBecomeActiveNotification)
@@ -39,10 +37,7 @@ final class CompanionPresence: ObservableObject {
             store.$scheduleRuns.map { _ in () }.eraseToAnyPublisher(),
             store.$dotProfile.map { _ in () }.eraseToAnyPublisher(),
         ])
-        let voiceChanges = voice.$state.removeDuplicates().map { _ in () }
-            .merge(with: voice.$isPlayingAudio.removeDuplicates().map { _ in () },
-                        voice.$activeConversationID.removeDuplicates().map { _ in () })
-        storeChanges.merge(with: voiceChanges)
+        storeChanges
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
             .store(in: &subscriptions)
@@ -61,9 +56,7 @@ final class CompanionPresence: ObservableObject {
 
     private func refresh() {
         guard let store else { return }
-        let snapshot = Self.snapshot(store: store, appActive: appActive,
-                                     voiceCapturing: voice?.state == .listening, voicePlaying: voice?.isPlayingAudio == true,
-                                     voiceConversationID: voice?.activeConversationID)
+        let snapshot = Self.snapshot(store: store, appActive: appActive)
         let next = CompanionStateMapper.state(snapshot)
         if next != state { state = next }
     }

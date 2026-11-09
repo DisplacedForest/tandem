@@ -23,7 +23,7 @@ struct ShotView: View {
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
     var workColumn = false
     var workCollapsed = false
-    var voiceAvailability = ComposerVoiceAvailability(dictation: true, voiceChat: true)
+    var voiceAvailability = ComposerVoiceAvailability(dictation: false, voiceChat: false)
     var dictating = false
     var width: CGFloat = 1180
 

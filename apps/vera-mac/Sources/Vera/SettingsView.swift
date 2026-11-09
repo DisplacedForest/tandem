@@ -706,16 +706,9 @@ private struct SearchTab: View {
 }
 
 private struct ServicesTab: View {
-    @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
             EngineSection()
-            Section("Voice") {
-                ConfigField(label: "Base URL", key: "voice_base", placeholder: "http://my-voice-host:8131")
-                InlineTest(title: "Test voice") {
-                    try await ConnectionTest.voice(base: config["voice_base"])
-                }
-            }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -866,7 +859,7 @@ private struct IdentityTab: View {
         Form {
             Section("Identity") {
                 ConfigField(label: "Assistant's name", key: "assistant_name", placeholder: ConfigStore.defaultAssistantName,
-                            tip: "How your assistant is named across chat, voice and background work. Tandem is the app; this is the assistant.")
+                            tip: "How your assistant is named across chat and background work. Tandem is the app; this is the assistant.")
                 ConfigField(label: "Your name", key: "owner_name", placeholder: "how your assistant greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
             }

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: ChatStore
-    @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
@@ -20,52 +19,45 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack {
+        HStack(spacing: 0) {
+            VeraSidebar(collapsed: $sidebarCollapsed, search: $search, workflowEditor: workflowEditor, onSelect: select)
+            Rectangle().fill(Theme.hairline).frame(width: 1)
             HStack(spacing: 0) {
-                VeraSidebar(collapsed: $sidebarCollapsed, search: $search, workflowEditor: workflowEditor, onSelect: select)
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-                HStack(spacing: 0) {
-                    Group {
-                        switch store.section {
-                        case .vera: ChatPane(workCollapsed: companionPlacement == .header)
-                        case .chat: ChatPane(workCollapsed: false)
-                        case .pulse: PulseView()
-                        case .memory: MemoryView()
-                        case .agentic: AgenticView(workflowEditor: workflowEditor)
-                        case .scheduled: ScheduledView()
-                        case .artifacts: ArtifactsView()
-                        case .projects: ProjectsView()
-                        case .integrations: IntegrationsView()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if store.showCanvas, chatSection {
-                        Divider()
-                        CanvasPanel().frame(width: 480)
-                    } else if companionPlacement == .beside {
-                        CompanionThreadPanel()
-                            .frame(width: CompanionThreadPanelMetrics.width)
-                    } else if chatSection, ConversationPresence.showsWorkPanel(
-                        references: store.nativeTaskReferences, conversationID: store.selectedID,
-                        wide: wideEnoughForWork, canvasOpen: store.showCanvas) {
-                        OngoingWorkPanel(conversationID: store.selectedID, onSelect: store.revealOngoingWork)
-                            .frame(width: OngoingWorkMetrics.panelWidth)
+                Group {
+                    switch store.section {
+                    case .vera: ChatPane(workCollapsed: companionPlacement == .header)
+                    case .chat: ChatPane(workCollapsed: false)
+                    case .pulse: PulseView()
+                    case .memory: MemoryView()
+                    case .agentic: AgenticView(workflowEditor: workflowEditor)
+                    case .scheduled: ScheduledView()
+                    case .artifacts: ArtifactsView()
+                    case .projects: ProjectsView()
+                    case .integrations: IntegrationsView()
                     }
                 }
-                .background(Theme.ink)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if store.showCanvas, chatSection {
+                    Divider()
+                    CanvasPanel().frame(width: 480)
+                } else if companionPlacement == .beside {
+                    CompanionThreadPanel()
+                        .frame(width: CompanionThreadPanelMetrics.width)
+                } else if chatSection, ConversationPresence.showsWorkPanel(
+                    references: store.nativeTaskReferences, conversationID: store.selectedID,
+                    wide: wideEnoughForWork, canvasOpen: store.showCanvas) {
+                    OngoingWorkPanel(conversationID: store.selectedID, onSelect: store.revealOngoingWork)
+                        .frame(width: OngoingWorkMetrics.panelWidth)
+                }
             }
-            .ignoresSafeArea(.container, edges: .top)
-            .task { await store.connect() }
-
-            if voice.isActive {
-                VoiceView().transition(.opacity).zIndex(1)
-            }
+            .background(Theme.ink)
         }
+        .ignoresSafeArea(.container, edges: .top)
+        .task { await store.connect() }
         .modifier(CompanionAttentionWindow())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
-        .animation(.easeInOut(duration: 0.2), value: voice.isActive)
         .sheet(isPresented: $config.showOnboarding) { OnboardingSheet() }
         .confirmationDialog(
             deletionTitle,
@@ -1156,7 +1148,6 @@ struct ConversationResultRow: View {
 
 struct ComposerField: View {
     @EnvironmentObject var store: ChatStore
-    @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @FocusState private var focused: Bool
     @State private var editingProject: ProjectRecord?
@@ -1166,36 +1157,13 @@ struct ComposerField: View {
     @State private var mentionSelectionID: String?
     @State private var dismissedDraft: String?
     @State private var showingFolderUnsupported = false
-    @State private var dictation = ComposerDictationController()
-    @Environment(\.openSettings) private var openSettings
 
     private var route: NativeComposerRoute { NativeComposerRoute(store: store, assistant: nil) }
     private var draft: Binding<String> {
         Binding(get: { route.draft }, set: { route.draft = $0 })
     }
     private func submit() {
-        if canSend { dictation.detach(voice) }
         route.send()
-    }
-    private var voiceAvailability: ComposerVoiceAvailability {
-        ComposerVoiceAvailability(dictation: voice.supportsDictation, voiceChat: voice.supportsVoiceChat)
-    }
-
-    private func toggleDictation() {
-        if voice.isDictating {
-            voice.stopDictation()
-            return
-        }
-        let route = route
-        let store = store
-        dictation.start(voice: voice, conversationID: store.selectedID,
-                        read: { route.draft }, write: { route.draft = $0 },
-                        selected: { store.selectedID }, onFinal: { focused = true })
-    }
-
-    private func openVoiceSettings() {
-        store.settingsTab = .services
-        openSettings()
     }
     private var canSend: Bool { route.canSend }
     private var mentionQuery: ComposerMentionQuery? {
@@ -1277,18 +1245,6 @@ struct ComposerField: View {
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
-            if let error = voice.entryError {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                    Text(error).font(.system(size: 11))
-                    Button { voice.entryError = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss")
-                }
-                .foregroundStyle(Theme.textSecondary)
-            }
             if let error = store.grantError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
@@ -1326,10 +1282,6 @@ struct ComposerField: View {
                             }
                         }
                     }
-                    if !voiceAvailability.any {
-                        Divider()
-                        Button("Voice is not set up") { openVoiceSettings() }
-                    }
                 } label: {
                     ComposerControlGlyph(kind: .plus)
                 }
@@ -1366,11 +1318,6 @@ struct ComposerField: View {
                         submit()
                         return .handled
                     }
-                if voiceAvailability.any {
-                    ComposerVoiceControls(availability: voiceAvailability, dictating: voice.isDictating,
-                                          assistantName: store.conversationAssistantName,
-                                          onDictate: toggleDictation, onVoiceChat: { voice.start() })
-                }
                 if let stoppable = store.selected.flatMap({ store.stoppableAnswer(in: $0.id) }) {
                     Button { store.stopAnswer(stoppable) } label: {
                         ComposerControlGlyph(kind: .stop(enabled: true))
@@ -1402,9 +1349,7 @@ struct ComposerField: View {
         }
         .onDisappear {
             removePasteMonitor()
-            dictation.detach(voice)
         }
-        .onChange(of: store.selectedID) { _, _ in dictation.detach(voice) }
         .modifier(CompanionComposerAttention(focused: focused, draft: store.draft))
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .onChange(of: store.grantConsentTick) { _, _ in
