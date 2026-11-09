@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct VeraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: ChatStore
-    @StateObject private var voice: VoiceSession
     @StateObject private var config: ConfigStore
     @StateObject private var updates = UpdateChecker()
     @StateObject private var engine = EngineManager()
@@ -41,7 +40,6 @@ struct VeraApp: App {
         let fixture = NativePiNativeContext.candidate
         let configInstance = fixture?.config ?? ConfigStore()
         let native = NativeMCPUIFixture.current != nil ? NativeChatConfig(baseURL: URL(string: "https://fixture.invalid/v1")!, apiKey: nil, model: "fixture", chatTemplateKwargs: nil) : fixture == nil ? configInstance.nativeResolved : nil
-        let socket = fixture == nil ? VoiceSocketConfig.load().map { VeraSocket(config: $0) } : nil
         let repository: LocalChatRepository?
         let repositoryError: String?
         do {
@@ -108,19 +106,14 @@ struct VeraApp: App {
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
         _companion = StateObject(wrappedValue: CompanionCoordinator(store: storeInstance, config: configInstance))
-        let voiceInstance = VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
-                                         socket: socket, store: storeInstance)
-        voiceInstance.observe(configInstance)
-        _voice = StateObject(wrappedValue: voiceInstance)
-        _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance, voice: voiceInstance))
-        _companionPresence = StateObject(wrappedValue: CompanionPresence(store: storeInstance, voice: voiceInstance))
+        _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance))
+        _companionPresence = StateObject(wrappedValue: CompanionPresence(store: storeInstance))
     }
 
     var body: some Scene {
         WindowGroup("Tandem", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .environmentObject(voice)
                 .environmentObject(config)
                 .environmentObject(updates)
                 .environmentObject(engine)

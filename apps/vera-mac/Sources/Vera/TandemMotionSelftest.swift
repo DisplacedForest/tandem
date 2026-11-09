@@ -272,10 +272,6 @@ extension SelfTest {
                     && !TandemLogoPresence.decisionPending(confirmations: [:], assistantMessageID: nil, fallback: false),
                     "Without a turn record the shared pending flag decides")
 
-        var filter = PlaybackEventFilter()
-        try require(filter.admits(1) && filter.admits(3) && !filter.admits(2) && !filter.admits(3) && filter.admits(4),
-                    "A playback event that arrives after a newer one is ignored")
-
         try runTandemCueMapper()
         print("PASS tandem motion: twelve sequences, smoothstep sampling, live overlap, template mark, interruption, host visibility, Reduce Motion, cue mapping")
     }
