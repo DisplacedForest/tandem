@@ -75,7 +75,7 @@ swift build
 .build/debug/Vera --selftest
 ```
 
-Packaging also requires Python 3.14 or later to assemble the pinned portable runtime. See [Mac packaging](apps/vera-mac/README.md#package--install) for cache controls and the offline packaged-runtime contract.
+Packaging also requires Python 3.14 or later to assemble the pinned portable runtime. The packaging script finds `python3.14` on your PATH even when `python3` is older; set `VERA_PACKAGE_PYTHON` to use a specific interpreter. See [Mac packaging](apps/vera-mac/README.md#package--install) for cache controls and the offline packaged-runtime contract.
 
 The app builds **only on macOS**. It is SwiftUI/AppKit; on Linux (containers, cloud
 agents, CI shells) `swift build` fails at the toolchain or first Apple-framework import,
