@@ -23,9 +23,11 @@ def _resort() -> None:
     verbs = sorted(ORDER, key=lambda v: ORDER[v])
     specs = {v: SPEC[v] for v in verbs if v in SPEC}
     executors = {v: EXECUTORS[v] for v in verbs if v in EXECUTORS}
+    extra_specs = {v: s for v, s in SPEC.items() if v not in ORDER}
     extra_executors = {v: f for v, f in EXECUTORS.items() if v not in ORDER}
     SPEC.clear()
     SPEC.update(specs)
+    SPEC.update(extra_specs)
     EXECUTORS.clear()
     EXECUTORS.update(executors)
     EXECUTORS.update(extra_executors)

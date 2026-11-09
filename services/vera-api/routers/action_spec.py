@@ -1,7 +1,4 @@
-try:
-    from .action_registry import SPEC
-except ImportError:
-    from action_registry import SPEC
+from .action_registry import SPEC
 
 
 def is_autonomous(verb: str) -> bool:
