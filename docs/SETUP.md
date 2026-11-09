@@ -10,7 +10,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
-| Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
+| Satellite services (image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
@@ -573,7 +573,6 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Image gen | The Mac app talks to ComfyUI directly (see [Image generation](#image-generation)); the server stack uses the OpenAI Images API `POST {base}/v1/images/generations` | ComfyUI with the Qwen Image 2.1 weights for the app; `services/vera-image` serves the OpenAI contract for vera-api, `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
-| Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
 Reminders reaches EventKit, Apple's only supported door into Reminders, which must run
@@ -592,10 +591,9 @@ an explicit chat ask.
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
 prompt, then enable the Apple Reminders integration with the bridge URL.
 
-Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
-companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh`:
-runtime copy-out, both venvs, launchd agents), and the image/vision services ship launchd
-templates installed via `scripts/install-launchd.sh`.
+Every satellite env var (models, ports, paths) is documented in `.env.example`'s
+companion-services section. The image and vision services ship launchd templates installed
+via `scripts/install-launchd.sh`.
 
 ## 6. The scheduler
 
