@@ -30,6 +30,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var pause: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     var budget: NativeCompanionWorkerBudget = .standard
     var defaultToolSeconds: Double = 20
+    var preferences: @Sendable () -> [String] = { [] }
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -396,6 +397,7 @@ private struct NativeCompanionRun {
             "Only report what tool results show. Never claim an action happened unless its tool result confirms it. If something was declined, not done or uncertain, say so plainly.",
         ]
         if !dot.goal.isEmpty { lines.append("The companion's standing goal, for context: \(dot.goal)") }
+        if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
         if proactive { lines.append("This is a read-only check. You can look things up but cannot change anything.") }
         if finishing {
             lines.append("Stop using tools now. Answer the person directly, the way you would reply in a chat, and say plainly what you did. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")

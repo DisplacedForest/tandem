@@ -70,6 +70,7 @@ enum NativePreferencesSelftest {
         try await undo(require)
         try scope(require)
         try prompts(require)
+        try await companionPrompt(require)
         try await storeTurns(require)
         print("NATIVE PREFERENCES SELFTEST OK")
     }
@@ -297,6 +298,20 @@ enum NativePreferencesSelftest {
         try require(try research.taskRequest().workerType == "research", "Scheduled research runs use the research worker that carries preferences")
         let bare = NativeDocumentWorker.messages(payload: payload, checkpoint: checkpoint, identity: NativeWorkerIdentity(assistantName: "Nova", ownerName: nil))
         try require(bare.first?.content.contains(NativePreferencePrompt.header) == false, "No preferences leaves the document prompt unchanged")
+    }
+
+    private static func companionPrompt(_ require: (Bool, String) throws -> Void) async throws {
+        var harness = try NativeCompanionHarness(rules: [:]) { _ in NativeCompanionScriptedModel.text("Done.\n\nNothing else.") }
+        let preferences = NativePreferenceStore(database: harness.repository.database)
+        try preferences.add(statement: "Never use em dashes.")
+        harness.environment.preferences = { preferences.activeStatements() }
+        _ = try harness.create("Check the garden")
+        _ = try await harness.runUntilSettled()
+        let system = harness.model.allRequests.first?.first { $0.role == "system" }?.content ?? ""
+        try require(system.contains(NativePreferencePrompt.header) && system.contains("- Never use em dashes."),
+                    "The companion worker instructions carry preferences")
+        let relay = NativeCompanionWorkerRelay().environment(database: harness.repository.database)
+        try require(relay.preferences() == ["Never use em dashes."], "The live companion environment reads saved preferences")
     }
 
     private static func storeTurns(_ require: (Bool, String) throws -> Void) async throws {
