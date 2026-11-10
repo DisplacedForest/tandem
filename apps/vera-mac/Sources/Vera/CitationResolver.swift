@@ -25,6 +25,10 @@ enum CitationResolver {
         var quoted = false
     }
 
+    private static let markerLimit = 64
+    private static let entryLimit = 4000
+    private static let listLimit = 500
+
     private struct Segment {
         var lines: [String]
         var isCode: Bool
@@ -83,12 +87,14 @@ enum CitationResolver {
 
     static func withoutMatchingList(_ text: String, sources: [PulseSource]) -> String {
         let lines = text.components(separatedBy: "\n")
-        guard let last = headingIndices(lines).last else { return text }
+        guard sources.count <= listLimit, let last = headingIndices(lines).last else { return text }
         let entries = lines[(last + 1)...].filter { !isBlank($0) }
+        guard entries.count <= listLimit * 2 else { return text }
+        let byNumber = Dictionary(sources.map { ($0.n, $0) }, uniquingKeysWith: { first, _ in first })
         var numbered = 0
         for line in entries {
             if let prefix = entryPrefix(line) {
-                guard let source = sources.first(where: { $0.n == prefix.number }), entry(prefix.rest, matches: source) else {
+                guard let source = byNumber[prefix.number], entry(prefix.rest, matches: source) else {
                     return text
                 }
                 numbered += 1
@@ -179,7 +185,7 @@ enum CitationResolver {
         var plainCloses = Set<Int>()
         let brackets = bracketPairs(chars)
         let parens = parenPairs(chars)
-        let ticks = backtickPairs(chars)
+        let ticks = backtickRuns(chars)
         var trimFloor = 0
         var owed = false
         func restore() {
@@ -199,7 +205,7 @@ enum CitationResolver {
             if c == "`" {
                 restore()
                 let run = runLength(chars, at: i)
-                if let close = ticks[i] {
+                if let close = closingBackticks(ticks[run] ?? [], from: i + run) {
                     out.append(contentsOf: chars[i..<(close + run)])
                     i = close + run
                 } else {
@@ -224,14 +230,13 @@ enum CitationResolver {
                     i = paren + 1
                     continue
                 }
-                let inner = String(chars[(i + 1)..<close])
-                if inner.hasPrefix("^") {
+                if chars[i + 1] == "^" {
                     restore()
                     out.append(contentsOf: chars[i...close])
                     i = close + 1
                     continue
                 }
-                guard let numbers = markerNumbers(inner) else {
+                guard close - i - 1 <= markerLimit, let numbers = markerNumbers(String(chars[(i + 1)..<close])) else {
                     plainCloses.insert(close)
                     restore()
                     out.append(c)
@@ -272,27 +277,29 @@ enum CitationResolver {
         return end - index
     }
 
-    private static func backtickPairs(_ chars: [Character]) -> [Int: Int] {
-        var runs: [(start: Int, length: Int)] = []
+    private static func backtickRuns(_ chars: [Character]) -> [Int: [Int]] {
+        var runs: [Int: [Int]] = [:]
         var i = 0
         while i < chars.count {
-            if chars[i] == "\\" {
-                i += 2
-            } else if chars[i] == "`" {
+            if chars[i] == "`" {
                 let length = runLength(chars, at: i)
-                runs.append((i, length))
+                runs[length, default: []].append(i)
                 i += length
             } else {
                 i += 1
             }
         }
-        var pairs: [Int: Int] = [:]
-        var later: [Int: Int] = [:]
-        for run in runs.reversed() {
-            if let close = later[run.length] { pairs[run.start] = close }
-            later[run.length] = run.start
+        return runs
+    }
+
+    private static func closingBackticks(_ starts: [Int], from position: Int) -> Int? {
+        var low = 0
+        var high = starts.count
+        while low < high {
+            let middle = (low + high) / 2
+            if starts[middle] < position { low = middle + 1 } else { high = middle }
         }
-        return pairs
+        return low < starts.count ? starts[low] : nil
     }
 
     private static func bracketPairs(_ chars: [Character]) -> [Int: Int] {
@@ -353,7 +360,8 @@ enum CitationResolver {
     private static func trimHorizontal(_ out: inout [Character], floor: inout Int) {
         var keep = out.count
         while keep > floor, out[keep - 1] == " " || out[keep - 1] == "\t" { keep -= 1 }
-        guard keep < out.count, keep > floor, !out[keep - 1].isNewline else {
+        guard keep < out.count else { return }
+        guard keep > floor, !out[keep - 1].isNewline else {
             floor = out.count
             return
         }
@@ -562,6 +570,7 @@ enum CitationResolver {
     }
 
     private static func entryLink(_ rest: String) -> (url: String, title: String)? {
+        guard rest.utf16.count <= entryLimit else { return nil }
         let ns = rest as NSString
         let links = linkPattern?.matches(in: rest, range: NSRange(location: 0, length: ns.length)) ?? []
         if links.count > 1 { return nil }
@@ -579,13 +588,20 @@ enum CitationResolver {
         guard httpCount(rest) == 1,
               let start = rest.range(of: "https?://", options: [.regularExpression, .caseInsensitive])?.lowerBound else { return nil }
         let end = rest[start...].firstIndex { $0 == " " || $0 == "\t" } ?? rest.endIndex
-        var token = String(rest[start..<end])
-        if let close = token.firstIndex(of: ">") { token = String(token[..<close]) }
-        let trailing = CharacterSet(charactersIn: ".,;:!?")
-        token = token.trimmingTrailing(trailing)
-        while token.hasSuffix(")"), token.filter({ $0 == ")" }).count > token.filter({ $0 == "(" }).count {
-            token = String(token.dropLast()).trimmingTrailing(trailing)
+        var tail = rest[start..<end]
+        if let close = tail.firstIndex(of: ">") { tail = tail[..<close] }
+        let trailing: Set<Character> = [".", ",", ";", ":", "!", "?"]
+        func strip() {
+            while let last = tail.last, trailing.contains(last) { tail = tail.dropLast() }
         }
+        strip()
+        var surplus = tail.reduce(0) { $0 + ($1 == ")" ? 1 : $1 == "(" ? -1 : 0) }
+        while surplus > 0, tail.last == ")" {
+            tail = tail.dropLast()
+            surplus -= 1
+            strip()
+        }
+        let token = String(tail)
         let title = (String(rest[..<start]) + " " + String(rest[end...])).trimmingCharacters(in: separators)
         return (token, title)
     }
@@ -614,13 +630,5 @@ enum CitationResolver {
             end = previous
         }
         return String(text[..<end])
-    }
-}
-
-private extension String {
-    func trimmingTrailing(_ set: CharacterSet) -> String {
-        var scalars = Substring(self)
-        while let last = scalars.unicodeScalars.last, set.contains(last) { scalars = scalars.dropLast() }
-        return String(scalars)
     }
 }

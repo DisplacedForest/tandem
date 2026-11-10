@@ -222,7 +222,25 @@ enum CitationResolverSelftest {
         try check(spaced.refs == [1] && spaced.text.count == 100_000, "Leading spaces before a run of markers are kept")
         let manyTicks = CitationResolver.scan((1...1500).map { String(repeating: "`", count: $0) }.joined(separator: " "), known: [1])
         try check(manyTicks.refs.isEmpty, "A longer flood of code marks cites nothing")
+        let nested = CitationResolver.scan(
+            String(repeating: "[", count: 100_000) + "x" + String(repeating: "]", count: 100_000) + " end [1].", known: [1])
+        try check(nested.refs == [1] && nested.text.hasSuffix(" end."), "Deeply nested brackets still resolve what follows")
+        let tailed = CitationResolver.recover("Fact [1].\n\n## Sources\n1. https://example.org/a" + String(repeating: ")", count: 3000))
+        try check(tailed?.sources.first?.url == "https://example.org/a", "Surplus closing marks after an address are dropped, got \(String(describing: tailed?.sources.first?.url.count))")
+        try check(CitationResolver.recover("Fact [1].\n\n## Sources\n1. " + String(repeating: "[", count: 100_000) + " https://example.org/a") == nil,
+                  "An oversized entry is not recovered")
+        let many = (1...10_000).map { PulseSource(n: $0, title: "Source \($0)", url: "https://example.org/\($0)") }
+        let manyList = "Fact [1].\n\n## Sources\n" + many.map { "\($0.n). \($0.title)" }.joined(separator: "\n")
+        try check(CitationResolver.withoutMatchingList(manyList, sources: many) == manyList, "An oversized list is left as written")
         try check(Date().timeIntervalSince(started) < 5, "Hostile bracket floods are scanned in linear time")
+
+        try unchanged("Use `arr[1]\\`.")
+        try expect("Use \\`not code [1] here`.", becomes: "Use \\`not code here`.", refs: [1])
+        try expect("Text[1] [2].", becomes: "Text.", refs: [1, 2])
+        try expect("Text[1] [2]", becomes: "Text", refs: [1, 2])
+        try expect("  [1] [2] lead", becomes: "    lead", refs: [1, 2])
+        let wikiTail = CitationResolver.recover("Fact [1].\n\n## Sources\n1. (https://example.org/Frost_(weather)).")
+        try check(wikiTail?.sources.first?.url == "https://example.org/Frost_(weather)", "Balanced marks inside an address are kept")
 
         let splitFence = "> ~~~\n> quoted\n~~~\nvalue[1]\n~~~"
         try check(CitationResolver.scan(splitFence, known: [1]) == CitationResolver.Scan(text: splitFence, refs: [], markers: []),
