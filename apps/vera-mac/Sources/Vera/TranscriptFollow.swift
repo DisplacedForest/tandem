@@ -37,23 +37,25 @@ struct TranscriptFollow: Equatable {
         readerScrolling = reader
     }
 
-    mutating func geometry(_ next: TranscriptGeometry) {
+    @discardableResult
+    mutating func geometry(_ next: TranscriptGeometry) -> Bool {
         let distance = next.contentHeight - next.offset - next.containerHeight
         atLatest = distance <= Self.latestMargin
         defer { last = next }
-        guard let last else { return }
+        guard let last else { return false }
         let up = next.offset < last.offset - Self.movement
         let down = next.offset > last.offset + Self.movement
-        guard up || down else { return }
         let sameSize = abs(next.contentHeight - last.contentHeight) < Self.movement
             && abs(next.containerHeight - last.containerHeight) < Self.movement
+        guard up || down else { return following && !sameSize && distance > Self.restMargin && !readerScrolling }
         if readerScrolling { holding = false }
-        guard readerScrolling || (sameSize && !holding) else { return }
+        guard readerScrolling || (sameSize && !holding) else { return false }
         if up, distance > Self.restMargin {
             following = false
         } else if down, atLatest {
             following = true
         }
+        return false
     }
 
     mutating func jumpToLatest() {
@@ -115,7 +117,7 @@ extension SelfTest {
         follow.scope("a", sends: 0)
         follow.geometry(at(1400))
         try require(follow.following && follow.atLatest && !follow.showsJump, "A chat starts at the latest message and follows it")
-        follow.geometry(at(1400, content: 2300))
+        try require(follow.geometry(at(1400, content: 2300)), "Growth of any kind under a reader who is following asks the view to catch up")
         try require(follow.following && !follow.atLatest && !follow.showsJump, "Content growing under a reader who is following is not taken as scrolling away")
         follow.geometry(at(1700, content: 2300))
         try require(follow.following && follow.atLatest, "Following the growth keeps following")
@@ -126,7 +128,7 @@ extension SelfTest {
         follow.geometry(at(1970, content: 2600))
         follow.scrollPhase(reader: false)
         try require(!follow.following && !follow.showsJump, "A small scroll up stops following, with nothing below to jump to yet")
-        follow.geometry(at(1970, content: 2900))
+        try require(!follow.geometry(at(1970, content: 2900)), "Growth under a reader who scrolled away asks for nothing")
         try require(!follow.following && follow.showsJump, "The next growth leaves the reader in place and shows the way back")
         follow.geometry(at(1970, content: 2900, container: 560))
         follow.geometry(at(1970, content: 3200, container: 560))
@@ -163,6 +165,26 @@ extension SelfTest {
         follow.scope("b", sends: 1)
         try require(follow.following && follow.atLatest && !follow.holding && !follow.readerScrolling, "Another conversation starts fresh at its latest message")
         try require(!follow.sent(1), "A send in the conversation left behind does not carry over")
-        print("  transcript follow OK (follows at the bottom, growth is not scrolling, small and large scrolls away, scroll bar style moves, bounce, resize, updates while away, scroll back, arrow only with content below, reveal hold, explicit send, conversation change)")
+        let suite = "transcript-follow-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { throw NativeTaskFixture.Failure.assertion("Isolated transcript storage") }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let messages = [UUID(), UUID(), UUID()]
+        let saved = CompanionTranscriptContinuity(defaults: defaults)
+        _ = saved.begin(conversationID: "c", messages: messages)
+        saved.observe(visible: [messages[1], messages[2]], ordered: messages, conversationID: "c")
+        saved.follows(false, conversationID: "c")
+        try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == nil,
+                    "Nothing is saved while a saved position is still being restored")
+        saved.finishRestoring(conversationID: "c")
+        saved.follows(false, conversationID: "c")
+        try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == messages[1],
+                    "A small scroll up is saved with the message being read, without a gesture having been reported")
+        saved.follows(true, conversationID: "c")
+        try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == nil,
+                    "The arrow or a send is saved as back at the latest")
+        saved.follows(false, conversationID: "other")
+        try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == nil,
+                    "A stale callback for another conversation saves nothing")
+        print("  transcript follow OK (follows at the bottom, growth is not scrolling, small and large scrolls away, scroll bar style moves, bounce, resize, updates while away, scroll back, arrow only with content below, reveal hold, explicit send, conversation change, catch up on any growth, saved companion position)")
     }
 }

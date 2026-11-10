@@ -205,7 +205,7 @@ private struct ChatPane: View {
         guard store.composerSend.conversationID == conversationID else { return }
         var taken = false
         follow(conversationID) { taken = $0.sent(store.composerSend.count) }
-        if taken, store.isVeraThread(conversationID) { transcriptContinuity.followLatest(conversationID: conversationID) }
+        if taken, store.isVeraThread(conversationID) { transcriptContinuity.follows(true, conversationID: conversationID) }
     }
 
     private func revealPendingTask(_ proxy: ScrollViewProxy) {
@@ -338,10 +338,23 @@ private struct ChatPane: View {
                         TranscriptGeometry(offset: geometry.contentOffset.y, contentHeight: geometry.contentSize.height,
                                            containerHeight: geometry.containerSize.height)
                     } action: { _, next in
-                        let before = follow(convo.id).atLatest
-                        let after = follow(convo.id) { $0.geometry(next) }.atLatest
-                        if after != before, store.isVeraThread(convo.id) {
-                            transcriptContinuity.observe(nearBottom: after, conversationID: convo.id)
+                        let before = follow(convo.id)
+                        var catchUp = false
+                        let after = follow(convo.id) { catchUp = $0.geometry(next) }
+                        if store.isVeraThread(convo.id) {
+                            if after.atLatest != before.atLatest {
+                                transcriptContinuity.observe(nearBottom: after.atLatest, conversationID: convo.id)
+                            }
+                            if after.following != before.following {
+                                transcriptContinuity.follows(after.following, conversationID: convo.id)
+                            }
+                        }
+                        if catchUp {
+                            let id = convo.id
+                            Task { @MainActor in
+                                guard store.selectedID == id, follow(id).following else { return }
+                                proxy.scrollTo("bottom", anchor: .bottom)
+                            }
                         }
                     }
                     .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0) { visible in
@@ -377,7 +390,7 @@ private struct ChatPane: View {
                         if showsJump {
                             JumpToLatestButton {
                                 follow(convo.id) { $0.jumpToLatest() }
-                                if store.isVeraThread(convo.id) { transcriptContinuity.followLatest(conversationID: convo.id) }
+                                if store.isVeraThread(convo.id) { transcriptContinuity.follows(true, conversationID: convo.id) }
                                 if reduceMotion { proxy.scrollTo("bottom", anchor: .bottom) }
                                 else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
                             }
@@ -434,6 +447,9 @@ private struct ChatPane: View {
             }
         }
         .background(Theme.conversationBackground)
+        .onChange(of: conversation?.id) {
+            follow(conversation?.id ?? "")
+        }
         .onChange(of: store.selectedID) {
             if let revealConversationID, revealConversationID != store.selectedID { cancelTaskReveal() }
             refreshCompanionOpening()

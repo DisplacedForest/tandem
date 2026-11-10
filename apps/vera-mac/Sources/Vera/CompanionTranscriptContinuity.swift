@@ -12,6 +12,7 @@ final class CompanionTranscriptContinuity: ObservableObject {
     private(set) var restoring = true
     private var conversationID: String?
     private var userScrolled = false
+    private var firstVisible: UUID?
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
@@ -20,6 +21,7 @@ final class CompanionTranscriptContinuity: ObservableObject {
         self.conversationID = conversationID
         restoring = true
         userScrolled = false
+        firstVisible = nil
         let data = defaults.data(forKey: key(conversationID))
         position = data.flatMap { try? JSONDecoder().decode(CompanionTranscriptPosition.self, from: $0) } ?? CompanionTranscriptPosition()
         if !position.followsLatest && !messages.contains(where: { $0 == position.messageID }) { position = CompanionTranscriptPosition() }
@@ -36,8 +38,9 @@ final class CompanionTranscriptContinuity: ObservableObject {
     }
 
     func observe(visible: [UUID], ordered: [UUID], conversationID: String) {
-        guard self.conversationID == conversationID, !restoring, userScrolled,
-              let first = ordered.first(where: { visible.contains($0) }) else { return }
+        guard self.conversationID == conversationID, let first = ordered.first(where: { visible.contains($0) }) else { return }
+        firstVisible = first
+        guard !restoring, userScrolled else { return }
         position.messageID = first
         save()
     }
@@ -48,9 +51,13 @@ final class CompanionTranscriptContinuity: ObservableObject {
         save()
     }
 
-    func followLatest(conversationID: String) {
-        guard self.conversationID == conversationID else { return }
-        position.followsLatest = true
+    func follows(_ latest: Bool, conversationID: String) {
+        guard self.conversationID == conversationID, !restoring else { return }
+        if !latest {
+            guard let anchor = firstVisible ?? position.messageID else { return }
+            position.messageID = anchor
+        }
+        position.followsLatest = latest
         save()
     }
 
