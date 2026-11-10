@@ -163,13 +163,13 @@ struct MemoryView: View {
 
     private var statusDetail: String {
         switch store.memoryServiceState {
-        case .off: "Tandem doesn't use or save memories while Memory is off."
+        case .off: "While Memory is off, Tandem doesn't learn new memories or use them in chat."
         case .setupRequired: "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it."
         case .ready: "Tandem only uses memories you approved."
-        case .indexing: "Tandem is getting your approved memories ready."
+        case .indexing: "Tandem is preparing your memories or new suggestions."
         case .pendingReview: "Nothing changes until you accept it."
-        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. Memories you gave an end date are removed when that date passes."
-        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Chat still works, without your memories."
+        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. Nothing is removed unless you approve it, apart from temporary memories whose end date has passed."
+        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Chat still works."
         case .notice: ""
         }
     }
@@ -1032,9 +1032,9 @@ struct NativeMemoryShotSurface: View {
 
     private var stateCard: some View {
         let state: (String, String, String, Color) = switch variant {
-        case "memory-off": ("Memory is off", "Tandem doesn't use or save memories while Memory is off.", "pause.circle.fill", Theme.accent)
+        case "memory-off": ("Memory is off", "While Memory is off, Tandem doesn't learn new memories or use them in chat.", "pause.circle.fill", Theme.accent)
         case "memory-setup": ("Set up memory suggestions", "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it.", "gearshape.fill", Theme.accent)
-        case "memory-unavailable": ("Memory recall is unavailable", "The memory endpoint could not be reached. Chat still works, without your memories.", "exclamationmark.triangle.fill", .red)
+        case "memory-unavailable": ("Memory recall is unavailable", "The memory endpoint could not be reached. Chat still works.", "exclamationmark.triangle.fill", .red)
         default: ("Ready", "Tandem only uses memories you approved.", "checkmark.circle.fill", .green)
         }
         return HStack(spacing: 10) {
