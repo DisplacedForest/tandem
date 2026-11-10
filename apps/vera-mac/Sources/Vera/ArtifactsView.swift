@@ -209,8 +209,6 @@ struct ArtifactsView: View {
                 .accessibilityLabel("\(title). Clear filter")
             }
             if filtered.isEmpty {
-                Text("Nothing matches.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .padding(.top, 6)
                 Spacer(minLength: 0)
             } else {
                 ShotSafeScroll(renderSafe: renderSafe) {
@@ -235,12 +233,12 @@ struct ArtifactsView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if renderSafe {
-                Text(state.search.isEmpty ? "Search artifacts" : state.search).font(.system(size: 13))
+                Text(state.search.isEmpty ? "Search your Library" : state.search).font(.system(size: 13))
                     .foregroundStyle(state.search.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 Spacer(minLength: 0)
             } else {
-                TextField("Search artifacts", text: $state.search).textFieldStyle(.plain).font(.system(size: 13))
-                    .accessibilityLabel("Search artifacts")
+                TextField("Search your Library", text: $state.search).textFieldStyle(.plain).font(.system(size: 13))
+                    .accessibilityLabel("Search your Library")
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -325,7 +323,7 @@ private struct ArtifactDetail: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                Text("This artifact has no saved versions.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text("This item has no saved versions.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -510,7 +508,7 @@ private struct ArtifactContent: View {
     }
 
     private var missing: some View {
-        Text("This artifact is no longer on disk.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+        Text("This item is no longer on disk.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
     }
 
     @ViewBuilder
