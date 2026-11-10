@@ -14,6 +14,10 @@ enum Shot {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if NativeToolAccessShot.views[view] != nil {
+            NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view == "rules" || view == "rules-dark" || view == "rules-info" || view == "rules-unnamed" {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
