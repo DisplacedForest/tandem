@@ -157,6 +157,29 @@ enum ArtifactLibrarySelectionSelftest {
         try check(ArtifactLibrarySelection.companionFilterTitle(name: "  ") == "From your companion", "A blank name is your companion")
         try check(ArtifactLibrarySelection.companionFilterTitle(name: "Juniper") == "From Juniper", "A chosen name is used in the filter label")
 
+        try check(ArtifactLibrarySelection.companionOriginLabel(name: ConfigStore.defaultAssistantName) == "Your companion",
+                  "An unnamed companion is your companion in a row and in the detail header")
+        try check(ArtifactLibrarySelection.companionOriginLabel(name: "") == "Your companion", "A blank name is your companion in the origin label")
+        try check(ArtifactLibrarySelection.companionOriginLabel(name: "Juniper") == "Juniper", "A chosen name is used in the origin label")
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tandem-library-selection-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
+        let store = ChatStore(
+            nativeConfig: nil, nativeTransport: nil, repository: repository,
+            attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        store.ensureVeraThread()
+        guard let companionThread = store.veraThreadID else { throw Failure(description: "The companion thread exists") }
+        let companionOutput = record("doc-c", .document, "Morning notes", conversation: companionThread, origin: store.assistantName)
+        try check(store.artifactOriginLabel(companionOutput) == "Your companion",
+                  "An item from an unnamed companion never shows the built-in name as its origin")
+        try check(store.artifactOriginLabel(report) == "Greenhouse plan", "An item from an ordinary conversation keeps its conversation title")
+        try check(store.artifactOriginLabel(calendar) == "No conversation", "An item with no conversation says so")
+        store.adoptAssistantName("Juniper")
+        try check(store.artifactOriginLabel(companionOutput) == "Juniper", "An item from a named companion shows the chosen name")
+
         print("  artifact library selection OK")
     }
 }

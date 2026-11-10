@@ -124,10 +124,28 @@ struct ArtifactLibrarySelection: Equatable {
     }
 
     @MainActor
-    static func companionFilterTitle(name: String) -> String {
+    static func chosenCompanionName(_ name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == ConfigStore.defaultAssistantName { return "From your companion" }
-        return "From \(trimmed)"
+        return trimmed.isEmpty || trimmed == ConfigStore.defaultAssistantName ? nil : trimmed
+    }
+
+    @MainActor
+    static func companionFilterTitle(name: String) -> String {
+        "From \(chosenCompanionName(name) ?? "your companion")"
+    }
+
+    @MainActor
+    static func companionOriginLabel(name: String) -> String {
+        chosenCompanionName(name) ?? "Your companion"
+    }
+}
+
+extension ChatStore {
+    func artifactOriginLabel(_ record: ArtifactRecord) -> String {
+        if let id = record.conversationID, isVeraThread(id) {
+            return ArtifactLibrarySelection.companionOriginLabel(name: assistantName)
+        }
+        return ArtifactDateLabel.origin(record)
     }
 }
 
@@ -224,7 +242,8 @@ struct ArtifactsView: View {
                 ShotSafeScroll(renderSafe: renderSafe) {
                     VStack(spacing: 2) {
                         ForEach(filtered) { record in
-                            ArtifactRow(record: record, selected: record.id == selected?.id)
+                            ArtifactRow(record: record, origin: store.artifactOriginLabel(record),
+                                        selected: record.id == selected?.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture { state.selectedID = record.id }
                                 .accessibilityAddTraits(.isButton)
@@ -290,6 +309,7 @@ private struct ArtifactFilterPill: View {
 
 private struct ArtifactRow: View {
     let record: ArtifactRecord
+    let origin: String
     let selected: Bool
 
     var body: some View {
@@ -298,7 +318,7 @@ private struct ArtifactRow: View {
                 .frame(width: 18).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text("\(ArtifactDateLabel.origin(record)) · \(ArtifactDateLabel.text(record.updatedAt))")
+                Text("\(origin) · \(ArtifactDateLabel.text(record.updatedAt))")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -349,7 +369,7 @@ private struct ArtifactDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(record.title).font(.system(size: 17, weight: .semibold)).lineLimit(2)
                         .textSelection(.enabled)
-                    Text("\(record.kind.label) · \(ArtifactDateLabel.origin(record)) · \(ArtifactDateLabel.text(version?.createdAt ?? record.updatedAt))")
+                    Text("\(record.kind.label) · \(store.artifactOriginLabel(record)) · \(ArtifactDateLabel.text(version?.createdAt ?? record.updatedAt))")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
