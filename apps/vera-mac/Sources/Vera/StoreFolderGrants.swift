@@ -167,7 +167,7 @@ extension ChatStore {
         }
         var wrapped = definition
         wrapped.governed = true
-        wrapped.alwaysAsks = original.confirmation == .required && original.confirmationFor == nil
+        wrapped.alwaysAsks = original.demandsConfirmation
         wrapped.confirmationFor = { arguments in
             if original.proposesFor?(arguments) == true { return original.confirmationFor?(arguments) ?? (original.confirmation == .required) }
             let decision = decide(arguments).1.decision

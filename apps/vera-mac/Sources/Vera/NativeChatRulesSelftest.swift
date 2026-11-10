@@ -222,6 +222,15 @@ extension SelfTest {
                     "A lookup file that demands confirmation counts as another change")
         let guardedRuled = ruled(guarded, source(rules(.act, for: .otherChanges)))
         try require(guardedRuled.alwaysAsks && asks(guardedRuled) == true, "It always asks, whatever the rule says")
+        try require((try? watch.preflight?(["mode": .string("save"), "draft_json": .string("not json")])) == nil
+                        && (try? watch.preflight?(["mode": .string("save"), "draft_json": .string("{\"name\":\"Lumber\"}")])) != nil,
+                    "A shipped tool's own checks catch a field that is not a JSON object before anything is sent")
+        let malformed = try records.add(NativeRuleRecord(scope: .conversation(chat), action: .networkSends, toolID: watch.id, effect: .allow,
+                                                         statement: "Allow saving a watch once", remainingUses: 1))
+        ChatStore.reloadRules(durable, from: records)
+        try require(await run(ruled(watch, durable, store: records), ["mode": .string("save"), "draft_json": .string("not json")], confirmed: false) != nil
+                        && (try records.all().first { $0.id == malformed.id })?.remainingUses == 1,
+                    "A watch save with a malformed draft leaves a one-use allow unspent")
         try require(shipped.filter { $0.effect == .read }.allSatisfy { $0.confirmation == .none && $0.confirmationFor == nil },
                     "No shipped lookup can show a card")
 

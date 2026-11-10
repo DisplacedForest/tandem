@@ -193,8 +193,8 @@ enum NativeCapabilityTools {
             execute: { arguments in
                 try await call(declaration, arguments: arguments, base: base(), client: client)
             },
-            preflight: { _ in
-                guard resolve(declaration, base: base()) != nil else { throw NativeToolError.unavailable }
+            preflight: { arguments in
+                _ = try prepared(declaration, arguments: arguments, base: base())
             })
     }
 
@@ -231,12 +231,11 @@ enum NativeCapabilityTools {
         return components.url ?? resolved
     }
 
-    private static func call(
+    static func prepared(
         _ declaration: NativeToolDeclaration,
         arguments: [String: NativeJSONValue],
-        base: URL?,
-        client: NativeHTTPToolClient
-    ) async throws -> NativeJSONValue {
+        base: URL?
+    ) throws -> (target: URL, body: Data?) {
         guard let endpoint = resolve(declaration, base: base) else {
             throw NativeToolError.unavailable
         }
@@ -279,6 +278,16 @@ enum NativeCapabilityTools {
             }
             body = encoded
         }
+        return (target, body)
+    }
+
+    private static func call(
+        _ declaration: NativeToolDeclaration,
+        arguments: [String: NativeJSONValue],
+        base: URL?,
+        client: NativeHTTPToolClient
+    ) async throws -> NativeJSONValue {
+        let (target, body) = try prepared(declaration, arguments: arguments, base: base)
         let requestTimeout = max(declaration.timeoutSeconds - 1, 1)
         let data: Data
         let status: Int
