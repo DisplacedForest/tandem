@@ -185,6 +185,7 @@ struct NativeCompanionHarness {
     }
 
     func create(_ assignment: String = "Water the north bed", mode: String = "manual", scheduleID: String? = nil) throws -> String {
+        try requireSavedAllows()
         let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode, scheduleID: scheduleID)
         let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))
         let encoder = JSONEncoder()
@@ -195,6 +196,7 @@ struct NativeCompanionHarness {
 
     @discardableResult
     func step() async throws -> NativeTaskRecord {
+        try requireSavedAllows()
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
         let result = try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
@@ -204,6 +206,7 @@ struct NativeCompanionHarness {
     }
 
     func stepWithoutCommit() async throws -> NativeTaskStepResult {
+        try requireSavedAllows()
         guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("A companion task is queued") }
         let model = self.model
         return try await NativeCompanionWorker.step(claimed, environment: environment) { phase, attempt, _, messages, tools, _ in
@@ -248,6 +251,7 @@ extension SelfTest {
         try await companionReadLoopAndIsolation()
         try await companionProactiveRefusesWrites()
         try await companionUnattendedReadOnly()
+        try await companionSavedAllows()
         try await companionActWrite()
         try await companionOneUseGrant()
         try await companionAdmittedFolderWrites()
@@ -268,7 +272,7 @@ extension SelfTest {
         try await companionAssignmentEntry()
         try companionShape()
         try await companionClassification()
-        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -405,8 +409,8 @@ extension SelfTest {
             return NativeCompanionScriptedModel.text("The garden has three beds.")
         }
         for (mode, scheduleID) in [("scheduled", schedule as String?), ("scheduled", nil), ("proactive", nil)] {
-            let harness = try NativeCompanionHarness(rules: permissive, script: script)
-            harness.rules.setRecords(allows)
+            var harness = try NativeCompanionHarness(rules: permissive, script: script)
+            try harness.saveRecords(allows)
             let id = try harness.create(mode: mode, scheduleID: scheduleID)
             let origin = try harness.ledger.origin(taskID: id)
             try require(origin == NativeRunOrigin(mode: mode, scheduleID: scheduleID) && origin.unattended,
@@ -546,15 +550,9 @@ extension SelfTest {
             if results.count == 1 { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-2") }
             return NativeCompanionScriptedModel.text("Watered the north bed twice.")
         }
-        let clock = harness.clock
-        let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
-        let grant = try records.add(NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .allow,
-                                                     statement: "Water a bed once without asking", origin: .confirmCard, remainingUses: 1))
-        let rules = harness.rules
-        rules.setRecords(try records.active())
-        harness.environment.recordsChanged = {
-            if let active = try? records.active() { rules.setRecords(active) }
-        }
+        let records = harness.records
+        let grant = try harness.saveRecords([NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .allow,
+                                                              statement: "Water a bed once without asking", origin: .confirmCard, remainingUses: 1)])[0]
         let id = try harness.create()
         let paused = try await harness.runUntilSettled()
         let effects = try harness.effects(id)
@@ -592,21 +590,16 @@ extension SelfTest {
                 rules.resolver(for: thread.current, requestText: "").decision(for: action)
             })
             harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
-            let clock = harness.clock
-            let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
-            harness.environment.recordsChanged = {
-                if let active = try? records.active() { rules.setRecords(active) }
-            }
+            let records = harness.records
             let id = try harness.create("Save the note")
             let allow: NativeRuleRecord
             if scoped {
-                allow = try records.add(NativeRuleRecord(scope: .task(id), action: .fileEdits, effect: .allow, statement: "Edit files for this work"))
+                allow = try harness.saveRecords([NativeRuleRecord(scope: .task(id), action: .fileEdits, effect: .allow, statement: "Edit files for this work")])[0]
             } else {
-                _ = try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my files"))
-                allow = try records.add(NativeRuleRecord(action: .fileEdits, target: NativeRuleTarget.folder(open), effect: .allow,
-                                                         statement: "Edit the open folder once", remainingUses: 1))
+                allow = try harness.saveRecords([NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my files"),
+                                                 NativeRuleRecord(action: .fileEdits, target: NativeRuleTarget.folder(open), effect: .allow,
+                                                                  statement: "Edit the open folder once", remainingUses: 1)])[1]
             }
-            rules.setRecords(try records.active())
             let done = try await harness.runUntilSettled()
             let effects = try harness.effects(id)
             if scoped {
