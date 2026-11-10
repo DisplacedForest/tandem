@@ -382,7 +382,7 @@ final class NativeTaskLocalEngine: Sendable {
               let decoded = try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payloadData),
               decoded.dot == nil,
               (try? NativeResearchTaskRequest(objective: decoded.query, deliverables: decoded.deliverables,
-                                              workerType: workerType, title: decoded.title)) != nil else {
+                                              workerType: workerType, title: decoded.title, scheduleID: decoded.scheduleID)) != nil else {
             throw NativeTaskLocalStatus(code: 422, detail: "The task request is not valid")
         }
         return try store.create(workerType: workerType, payload: payloadData, idempotencyKey: key)
