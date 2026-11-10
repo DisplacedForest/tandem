@@ -117,6 +117,18 @@ struct ArtifactLibrarySelection: Equatable {
         filter = .all
         reconcile(records)
     }
+
+    mutating func apply(conversation: String?, open id: String?, in records: [ArtifactRecord]) {
+        if let conversation { adoptConversation(conversation, in: records) }
+        if let id { _ = open(id, in: records) }
+    }
+
+    @MainActor
+    static func companionFilterTitle(name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == ConfigStore.defaultAssistantName { return "From your companion" }
+        return "From \(trimmed)"
+    }
 }
 
 struct ArtifactsView: View {
@@ -133,7 +145,9 @@ struct ArtifactsView: View {
 
     private var conversationFilterTitle: String? {
         guard let conversationFilter = state.conversationFilter else { return nil }
-        if store.isVeraThread(conversationFilter) { return "From \(store.assistantName)" }
+        if store.isVeraThread(conversationFilter) {
+            return ArtifactLibrarySelection.companionFilterTitle(name: store.assistantName)
+        }
         return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
     }
 
@@ -161,28 +175,24 @@ struct ArtifactsView: View {
         .background(Theme.bg)
         .onAppear {
             if !renderSafe { store.reloadArtifacts() }
-            adoptPendingConversationFilter()
-            openRequested()
+            consumeRequests()
             state.reconcile(store.artifactRecords)
         }
-        .onChange(of: store.requestedArtifactID) { _, _ in openRequested() }
-        .onChange(of: store.pendingLibraryConversationID) { _, _ in adoptPendingConversationFilter() }
+        .onChange(of: store.requestedArtifactID) { _, _ in consumeRequests() }
+        .onChange(of: store.pendingLibraryConversationID) { _, _ in consumeRequests() }
         .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords) }
         .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords) }
         .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords) }
         .onChange(of: store.artifactRecords) { _, records in state.reconcile(records) }
     }
 
-    private func adoptPendingConversationFilter() {
-        guard let pending = store.pendingLibraryConversationID else { return }
+    private func consumeRequests() {
+        let conversation = store.pendingLibraryConversationID
+        let id = store.requestedArtifactID
+        guard conversation != nil || id != nil else { return }
         store.pendingLibraryConversationID = nil
-        state.adoptConversation(pending, in: store.artifactRecords)
-    }
-
-    private func openRequested() {
-        guard let id = store.requestedArtifactID else { return }
-        _ = state.open(id, in: store.artifactRecords)
         store.requestedArtifactID = nil
+        state.apply(conversation: conversation, open: id, in: store.artifactRecords)
     }
 
     private var listColumn: some View {

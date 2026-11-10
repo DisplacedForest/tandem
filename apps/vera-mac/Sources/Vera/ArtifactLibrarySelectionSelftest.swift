@@ -15,6 +15,7 @@ enum ArtifactLibrarySelectionSelftest {
                               createdAt: date, updatedAt: date, versionCount: 1)
     }
 
+    @MainActor
     static func run() throws {
         let report = record("doc-a", .document, "Heating report", conversation: "garden", origin: "Greenhouse plan")
         let notes = record("doc-b", .document, "Trip notes", conversation: "travel", origin: "Summer trip")
@@ -133,6 +134,28 @@ enum ArtifactLibrarySelectionSelftest {
         state.adoptConversation("travel", in: records)
         try check(state.conversationFilter == "travel" && state.search.isEmpty && state.filter == .all, "Adopting a conversation clears search and the kind filter")
         try check(state.selectedID == "doc-b" && state.selected(in: records)?.id == "doc-b", "Adopting a conversation selects its first item")
+
+        state = ArtifactLibrarySelection(selectedID: "doc-b", search: "trip")
+        state.apply(conversation: "travel", open: "img-a", in: records)
+        try check(state.selected(in: records)?.id == "img-a", "An open request arriving with a conversation filter still ends on the opened item")
+        try check(state.conversationFilter == nil && state.search.isEmpty, "The conversation filter that would hide the opened item is dropped")
+
+        state = ArtifactLibrarySelection(selectedID: "doc-b")
+        state.apply(conversation: "garden", open: "file-a", in: records)
+        try check(state.conversationFilter == "garden" && state.selected(in: records)?.id == "file-a", "A compatible conversation filter is kept when both arrive together")
+
+        state = ArtifactLibrarySelection(selectedID: "doc-b")
+        state.apply(conversation: "garden", open: "gone", in: records)
+        try check(state.conversationFilter == "garden" && state.selected(in: records)?.id == "doc-a", "A missing target with a conversation filter falls back to that conversation's first item")
+
+        state = ArtifactLibrarySelection(selectedID: "doc-b")
+        state.apply(conversation: nil, open: nil, in: records)
+        try check(state == ArtifactLibrarySelection(selectedID: "doc-b"), "No pending request changes nothing")
+
+        try check(ArtifactLibrarySelection.companionFilterTitle(name: ConfigStore.defaultAssistantName) == "From your companion",
+                  "An unnamed companion is your companion in the filter label")
+        try check(ArtifactLibrarySelection.companionFilterTitle(name: "  ") == "From your companion", "A blank name is your companion")
+        try check(ArtifactLibrarySelection.companionFilterTitle(name: "Juniper") == "From Juniper", "A chosen name is used in the filter label")
 
         print("  artifact library selection OK")
     }
