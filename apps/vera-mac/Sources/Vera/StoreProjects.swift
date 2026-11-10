@@ -122,6 +122,7 @@ extension ChatStore {
         }
         reloadProjects()
         for conversationID in released { refreshConversationGrants(conversationID) }
+        syncRuleProjects()
     }
 
     func projectConversations(_ id: String) -> [Conversation] {
@@ -181,6 +182,7 @@ extension ChatStore {
 
     func refreshConversationGrants(_ conversationID: String) {
         nativeGrantSource.set(effectiveGrants(for: conversationID), for: conversationID)
+        nativeRuleSource.setProject(conversations.first(where: { $0.id == conversationID })?.projectID, for: conversationID)
     }
 
     func effectiveGrants(for conversationID: String) -> [FolderGrant] {

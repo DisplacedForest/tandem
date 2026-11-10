@@ -42,6 +42,27 @@ enum NativeFolderIO {
         NativeToolError.failed("\(context): \(String(cString: strerror(Darwin.errno)))")
     }
 
+    enum Entry {
+        case absent
+        case present(stat)
+        case failed(Int32)
+    }
+
+    static func lookup(_ directory: NativeFolderDescriptor, _ name: String) -> Entry {
+        var info = stat()
+        if fstatat(directory.raw, name, &info, AT_SYMLINK_NOFOLLOW) == 0 { return .present(info) }
+        let code = Darwin.errno
+        return code == ENOENT ? .absent : .failed(code)
+    }
+
+    static func failure(_ code: Int32, _ context: String) -> NativeToolError {
+        NativeToolError.failed("\(context): \(String(cString: strerror(code)))")
+    }
+
+    static func requireLookup(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws {
+        if case .failed(let code) = lookup(directory, name) { throw failure(code, "Couldn't use \(display)") }
+    }
+
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
         let fd = open(grant.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { throw NativeFolderAccessError.notFound(grant.path) }
@@ -230,15 +251,6 @@ enum NativeFolderIO {
             unlinkat(directory.raw, temporary, 0)
             throw failure
         }
-    }
-
-    static func makeDirectory(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws -> Bool {
-        if let existing = status(directory, name) {
-            guard (existing.st_mode & S_IFMT) == S_IFDIR else { throw NativeFolderAccessError.exists(display) }
-            return false
-        }
-        guard mkdirat(directory.raw, name, 0o755) == 0 else { throw errno("Couldn't create \(display)") }
-        return true
     }
 
     static func rename(from: NativeFolderDescriptor, _ fromName: String, to: NativeFolderDescriptor, _ toName: String, display: String) throws {

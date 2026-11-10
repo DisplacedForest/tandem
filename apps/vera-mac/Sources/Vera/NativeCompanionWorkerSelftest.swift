@@ -248,6 +248,8 @@ extension SelfTest {
         try await companionReadLoopAndIsolation()
         try await companionProactiveRefusesWrites()
         try await companionActWrite()
+        try await companionOneUseGrant()
+        try await companionAdmittedFolderWrites()
         try await companionAskApproveAndDecline()
         try await companionHandOff()
         try await companionStaleAuthority()
@@ -259,6 +261,8 @@ extension SelfTest {
         try await companionReadRetries()
         try await companionCapsAndFences()
         try companionCommandRules()
+        try await companionProductionCommands()
+        try await companionFailedModeApproval()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
         try companionShape()
@@ -385,6 +389,88 @@ extension SelfTest {
         try require(harness.model.allOffered.allSatisfy { $0 == ["garden_status"] }, "A proactive run is offered read tools only")
         try require(NativeCompanionScriptedModel.toolResults(harness.model.allRequests.last ?? []).first?.contains("read-only") == true,
                     "The model is told why the write was refused")
+    }
+
+    private static func companionOneUseGrant() async throws {
+        let require = NativeTaskFixture.require
+        var harness = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+            let results = NativeCompanionScriptedModel.toolResults(messages)
+            if results.isEmpty { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}") }
+            if results.count == 1 { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-2") }
+            return NativeCompanionScriptedModel.text("Watered the north bed twice.")
+        }
+        let clock = harness.clock
+        let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
+        let grant = try records.add(NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .allow,
+                                                     statement: "Water a bed once without asking", origin: .confirmCard, remainingUses: 1))
+        let rules = harness.rules
+        rules.setRecords(try records.active())
+        harness.environment.recordsChanged = {
+            if let active = try? records.active() { rules.setRecords(active) }
+        }
+        let id = try harness.create()
+        let paused = try await harness.runUntilSettled()
+        let effects = try harness.effects(id)
+        try require(paused.state == .needsDecision && harness.service.count("water_bed") == 1 && effects.count == 2
+                    && effects.filter({ $0.state == .completed }).count == 1 && effects.filter({ $0.state == .proposed }).count == 1,
+                    "A one-use grant runs the tool once without a card and the next identical call asks")
+        try require(try records.record(id: grant.id)?.remainingUses == 0 && (effects.first { $0.state == .proposed }?.proposal.rulesRevision ?? 0) > (effects.first { $0.state == .completed }?.proposal.rulesRevision ?? 0),
+                    "The spent use is saved and the rules revision moved past the first proposal")
+        let digest = try harness.decision(paused)["digest"] as? String
+        try harness.reply(paused, "approve", digest: digest)
+        let done = try await harness.runUntilSettled()
+        try require(done.state == .completed && harness.service.count("water_bed") == 2 && (try records.record(id: grant.id))?.remainingUses == 0,
+                    "Approving the second call runs it without touching the spent grant")
+    }
+
+    private static func companionAdmittedFolderWrites() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-folder-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("open"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let open = grant.path + "/open"
+        for scoped in [false, true] {
+            let target = open + (scoped ? "/task.txt" : "/once.txt")
+            var harness = try NativeCompanionHarness(rules: [.fileEdits: scoped ? .ask : .act]) { messages in
+                let results = NativeCompanionScriptedModel.toolResults(messages)
+                if results.isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeFolderTools.writeName, "{\"path\":\"\(target)\",\"content\":\"x\"}")
+                }
+                return NativeCompanionScriptedModel.text("Saved it.")
+            }
+            let rules = harness.rules
+            let thread = harness.thread
+            let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
+                rules.resolver(for: thread.current, requestText: "").decision(for: action)
+            })
+            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            let clock = harness.clock
+            let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
+            harness.environment.recordsChanged = {
+                if let active = try? records.active() { rules.setRecords(active) }
+            }
+            let id = try harness.create("Save the note")
+            let allow: NativeRuleRecord
+            if scoped {
+                allow = try records.add(NativeRuleRecord(scope: .task(id), action: .fileEdits, effect: .allow, statement: "Edit files for this work"))
+            } else {
+                _ = try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my files"))
+                allow = try records.add(NativeRuleRecord(action: .fileEdits, target: NativeRuleTarget.folder(open), effect: .allow,
+                                                         statement: "Edit the open folder once", remainingUses: 1))
+            }
+            rules.setRecords(try records.active())
+            let done = try await harness.runUntilSettled()
+            let effects = try harness.effects(id)
+            if scoped {
+                try require(done.state == .completed && FileManager.default.fileExists(atPath: target) && effects.count == 1 && effects[0].state == .completed,
+                            "A task-scoped allow lets the worker write without asking, end to end")
+            } else {
+                try require(done.state == .completed && FileManager.default.fileExists(atPath: target) && effects.count == 1 && effects[0].state == .completed
+                            && (try records.record(id: allow.id))?.remainingUses == 0,
+                            "A broad forbid plus a narrower one-use allow gives exactly one worker write and a spent use")
+            }
+        }
     }
 
     private static func companionActWrite() async throws {
@@ -853,6 +939,86 @@ extension SelfTest {
         try require(decide(["command": .string("swift build $(cat token)")], acting) != .act(.rule),
                     "A command that is not plain asks at least, as it does in chat")
         try require(decide(["command": .string("rm -rf ../Other")], acting) == .handOff, "A sensitive command is always handed to the person")
+    }
+
+    private static func companionProductionCommands() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-commands-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        for approving in [false, true] {
+            var harness = try NativeCompanionHarness(rules: [.commands: approving ? .ask : .act]) { messages in
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeCommandTools.runName, "{\"command\":\"echo admitted\"}")
+                }
+                return NativeCompanionScriptedModel.text("Ran the check.")
+            }
+            let tools = ChatStore.companionCommandDefinitions(grants: { [grant] })
+            let thread = harness.thread
+            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            let id = try harness.create("Run the check")
+            var settled = try await harness.runUntilSettled()
+            if approving {
+                try require(settled.state == .needsDecision, "A command under an ask rule waits for the person")
+                try harness.reply(settled, "approve", digest: try harness.decision(settled)["digest"] as? String)
+                settled = try await harness.runUntilSettled()
+            }
+            let effects = try harness.effects(id)
+            var stdout = ""
+            if case .object(let fields)? = effects.first?.receipt, case .string(let text)? = fields["stdout"] { stdout = text }
+            try require(settled.state == .completed && effects.count == 1 && effects[0].state == .completed && stdout.contains("admitted"),
+                        approving ? "The production command tool runs a command the person approved in the worker"
+                                  : "The production command tool runs a command the ledger admitted automatically")
+        }
+        try require(!NativeRuleAdmission.admitted, "The admitted marker never leaks out of worker dispatch")
+        let foregroundCommand = NativeCommandTools.definitions(grants: { [grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
+                                                               live: { _, _ in .ask })[0]
+        var commandMessage = ""
+        do { _ = try await foregroundCommand.execute(["command": .string("echo leaked")]) } catch { commandMessage = error.localizedDescription }
+        try require(commandMessage == NativeRuleResolver.changedMessage, "A foreground command after worker runs still goes through its approval gate")
+        let foregroundWrite = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
+                                                            live: { _ in .ask }).first { $0.name == NativeFolderTools.writeName }!
+        var writeMessage = ""
+        do { _ = try await foregroundWrite.execute(["path": .string(grant.path + "/leak.txt"), "content": .string("x")]) } catch { writeMessage = error.localizedDescription }
+        try require(writeMessage == NativeRuleResolver.changedMessage && !FileManager.default.fileExists(atPath: grant.path + "/leak.txt"),
+                    "A foreground file write after worker runs still goes through its approval gate")
+    }
+
+    private static func companionFailedModeApproval() async throws {
+        let require = NativeTaskFixture.require
+        for durable in [false, true] {
+            let harness = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+            if durable {
+                ChatStore.prepareRules(harness.rules, from: NativeRuleRecordStore(database: harness.repository.database))
+            }
+            harness.rules.fail()
+            _ = try harness.create()
+            let paused = try await harness.runUntilSettled()
+            try require(paused.state == .needsDecision && harness.service.count("water_bed") == 0,
+                        "In failed mode an act rule becomes a question for the person")
+            try harness.reply(paused, "approve", digest: try harness.decision(paused)["digest"] as? String)
+            let done = try await harness.runUntilSettled()
+            try require(done.state == .completed && harness.service.count("water_bed") == 1,
+                        durable ? "A person's approval in failed mode runs the action on a durable source"
+                                : "A person's approval in failed mode runs the action")
+        }
+        let changed = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+        changed.rules.fail()
+        _ = try changed.create()
+        let waiting = try await changed.runUntilSettled()
+        changed.rules.setGlobal(NativeRules(choices: [.networkSends: .ask]))
+        try changed.reply(waiting, "approve", digest: try changed.decision(waiting)["digest"] as? String)
+        let refused = try await changed.runUntilSettled()
+        try require(waiting.state == .needsDecision && refused.state == .completed && changed.service.count("water_bed") == 0,
+                    "An approval given before a rule change in failed mode is stale and nothing runs")
+        let forbidden = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+        forbidden.rules.setRecords([NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .forbid, statement: "Never water the beds")])
+        forbidden.rules.fail()
+        _ = try forbidden.create()
+        let handed = try await forbidden.runUntilSettled()
+        try require(handed.state == .completed && forbidden.service.count("water_bed") == 0 && forbidden.rules.currentRecords.count == 1,
+                    "A retained forbid still hands the action off in failed mode, with no card to approve")
     }
 
     private static func companionCapsAndFences() async throws {

@@ -278,6 +278,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeEffectLedgerV29") { db in try NativeEffectLedgerStore.migrate(db) }
         migrator.registerMigration("nativeTaskDecisionChoicesV33") { db in try Self.migrateTaskDecisionChoices(db) }
         migrator.registerMigration("nativePreferencesV34") { db in try NativePreferenceStore.migrate(db) }
+        migrator.registerMigration("nativeRuleRecordsV35") { db in try NativeRuleRecordStore.migrate(db) }
         try migrator.migrate(database)
     }
 

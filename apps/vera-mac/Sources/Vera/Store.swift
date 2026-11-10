@@ -278,6 +278,7 @@ final class ChatStore: ObservableObject {
         self.attachmentStore = attachmentStore
         chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
+        prepareRuleRecords()
         loadArtifacts()
         if artifactPersistenceEnabled, let artifactRepository,
            (repository as? LocalChatRepository)?.database.path == LocalChatRepository.defaultURL.path {
@@ -2331,10 +2332,13 @@ final class ChatStore: ObservableObject {
         let resolver = ruleResolver(for: id, requestText: text)
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
+            let records = nativeRuleRecordStore
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
-                live: { rules.resolver(for: id, requestText: text).decision(for: $0) }, alwaysAvailable: true))
+                live: { rules.resolver(for: id, requestText: text).decision(for: $0) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: text, action: $0, subjects: $1) },
+                alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(

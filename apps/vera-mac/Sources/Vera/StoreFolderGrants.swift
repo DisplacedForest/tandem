@@ -101,10 +101,11 @@ extension ChatStore {
     func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger,
                                edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                                live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
+                               liveTargets: (@Sendable (NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
                                alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
         return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger,
-                                             edits: edits, trash: trash, live: live, alwaysAvailable: alwaysAvailable)
+                                             edits: edits, trash: trash, live: live, liveTargets: liveTargets, alwaysAvailable: alwaysAvailable)
     }
 
     func commandToolDefinitions(for turn: NativeConversationTurn, decision: NativeRuleDecision,
@@ -114,18 +115,68 @@ extension ChatStore {
         let conversationID = turn.conversationID
         let reasons = turnCommandReasonSource
         let rules = nativeRuleSource
+        let records = nativeRuleRecordStore
         let declines = turnDeclineSource
         let turnID = turn.id
         let scope = Self.scopedBlockID("", turn: turn)
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
+        let closures = Self.commandLive(rules, store: records, conversationID: conversationID, requestText: text)
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: scope + $0) }, record: record,
-                                              live: { command, action in
-                                                  let resolver = rules.resolver(for: conversationID, requestText: text)
-                                                  return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
-                                              },
+                                              live: closures.live, liveTargets: closures.liveTargets,
                                               declined: { declines.contains($0, turn: turnID) },
                                               alwaysAvailable: alwaysAvailable)
+    }
+
+    nonisolated static func commandDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
+                                            requestText: String, command: String, action: NativeActionClass,
+                                            subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, subjects: subjects)
+        let honoring = store != nil && resolver.durable
+        let decided = action == .commands ? resolver.decide(forCommand: command, honoringLimitedUse: honoring)
+            : resolver.decide(for: action, honoringLimitedUse: honoring)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+    }
+
+    nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String)
+        -> (live: @Sendable (String, NativeActionClass) -> NativeRuleDecision?,
+            liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?) {
+        let live: @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { command, action in
+            let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, targets: [])
+            return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+        }
+        let liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict? = { command, action, subjects in
+            commandDecision(rules, store: store, conversationID: conversationID, requestText: requestText,
+                            command: command, action: action, subjects: subjects)
+        }
+        return (live, liveTargets)
+    }
+
+    nonisolated static func prefixApprovalAnswers(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
+                                                  requestText: String, command: String, directory: String? = nil, grants: [FolderGrant] = [],
+                                                  fallback: NativeRuleDecision = .ask) -> Bool {
+        let closures = commandLive(rules, store: store, conversationID: conversationID, requestText: requestText)
+        let (_, decision, _) = NativeCommandTools.evaluate(command: command, directory: directory, grants: grants, fallback: fallback,
+                                                           live: closures.live, liveTargets: closures.liveTargets)
+        return decision == .act(.conversationPrefix)
+    }
+
+    nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
+                                           requestText: String, action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, subjects: subjects)
+        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+    }
+
+    nonisolated static func verdict(_ decision: NativeRuleDecision, authorizing: [String], resolver: NativeRuleResolver,
+                                    rules: NativeRuleSource, store: NativeRuleRecordStore?) -> NativeRuleVerdict {
+        guard case .act = decision, resolver.durable, let store else { return NativeRuleVerdict(decision) }
+        let revision = resolver.revision
+        return NativeRuleVerdict(decision, confirm: {
+            let confirmed = (try? store.confirm(revision: revision, authorizing: authorizing)) == .authorized
+            if confirmed, !authorizing.isEmpty { reloadRules(rules, from: store) }
+            return confirmed
+        })
     }
 
     func fileChangeLedger(for turn: NativeConversationTurn) -> NativeFileChangeLedger {
@@ -167,11 +218,15 @@ extension ChatStore {
     }
 
     func ruleResolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
-        NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText)
+        let projectID = conversations.first(where: { $0.id == conversationID })?.projectID
+        return NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText,
+                                  records: nativeRuleSource.currentRecords,
+                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID))
     }
 
     func syncRuleSource() {
         nativeRuleSource.replaceAll(conversations.map { ($0.id, $0.rules) })
+        syncRuleProjects()
     }
 
     func tightenConversationRule(_ choice: NativeRuleChoice, for action: NativeActionClass, conversationID: String? = nil) {

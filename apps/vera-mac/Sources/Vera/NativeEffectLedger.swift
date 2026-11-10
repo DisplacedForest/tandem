@@ -23,6 +23,7 @@ enum NativeEffectRefusal: String, Codable, Equatable, Sendable {
     case ruleAsks = "rule_asks"
     case ruleHandsOff = "rule_hands_off"
     case taskInactive = "task_inactive"
+    case grantSpent = "grant_spent"
 }
 
 enum NativeEffectObservation: Equatable, Sendable {
@@ -161,10 +162,11 @@ struct NativeEffectLedgerStore: Sendable {
 
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
                decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
-               live: (@Sendable () -> (rules: Int, grants: Int))? = nil) throws -> NativeEffectAdmission {
-        let current = now()
-        return try database.write { db in
+               live: (@Sendable () -> (rules: Int, grants: Int))? = nil, rulesDurable: Bool = false,
+               authorizedBy recordIDs: [String] = []) throws -> NativeEffectAdmission {
+        try database.write { db in
             let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
+            let current = now()
             guard let record = try Self.record(db, digest: digest) else { return .refused(.notFound) }
             guard record.proposal.digest == digest else { return .refused(.digestMismatch) }
             switch record.state {
@@ -188,6 +190,12 @@ struct NativeEffectLedgerStore: Sendable {
             default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
             }
             if record.proposal.rulesRevision != rulesRevision || record.proposal.rulesRevision != revisions.rules { return .refused(.staleRules) }
+            let failedRules = record.proposal.rulesRevision < 0
+            if failedRules {
+                guard case .ask = decision, recordIDs.isEmpty else { return .refused(.staleRules) }
+            } else if rulesDurable, (try? NativeRuleRecordStore.version(db)) != record.proposal.rulesRevision {
+                return .refused(.staleRules)
+            }
             if record.proposal.grantsRevision != grantsRevision || record.proposal.grantsRevision != revisions.grants { return .refused(.staleGrants) }
             switch decision {
             case .handOff: return .refused(.ruleHandsOff)
@@ -195,12 +203,28 @@ struct NativeEffectLedgerStore: Sendable {
                 guard let decisionID, !decisionID.isEmpty, NativeEffectProposal.bindsReply(reply, to: digest) else { return .refused(.ruleAsks) }
             case .act: break
             }
-            try db.execute(sql: """
-                UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
-                WHERE digest = ? AND state = 'proposed'
-                """, arguments: [decisionID, reply.map(NativeEffectProposal.canonicalArguments), current.timeIntervalSince1970, digest])
-            guard db.changesCount == 1, let admitted = try Self.record(db, digest: digest) else { return .refused(.alreadySettled) }
-            return .admitted(admitted)
+            var outcome = NativeEffectAdmission.refused(.alreadySettled)
+            try db.inSavepoint {
+                for recordID in Set(recordIDs).sorted() {
+                    switch try NativeRuleRecordStore.authorize(db, id: recordID, at: current) {
+                    case .authorized: break
+                    case .spent:
+                        outcome = .refused(.grantSpent)
+                        return .rollback
+                    case .stale:
+                        outcome = .refused(.staleRules)
+                        return .rollback
+                    }
+                }
+                try db.execute(sql: """
+                    UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
+                    WHERE digest = ? AND state = 'proposed'
+                    """, arguments: [decisionID, reply.map(NativeEffectProposal.canonicalArguments), current.timeIntervalSince1970, digest])
+                guard db.changesCount == 1, let admitted = try Self.record(db, digest: digest) else { return .rollback }
+                outcome = .admitted(admitted)
+                return .commit
+            }
+            return outcome
         }
     }
 

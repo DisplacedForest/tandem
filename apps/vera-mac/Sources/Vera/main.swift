@@ -127,6 +127,11 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await SelfTest.runCompanionIntroduction(); print("companion-introduction: PASS"); exit(0) }
         catch { print("companion-introduction: FAIL \(error)"); exit(1) }
     }
+} else if arguments.contains("--rule-records-selftest") {
+    NativeApplicationEntry.runAsync {
+        do { try await NativeRuleRecordsSelftest.run() }
+        catch { print("native-rule-records: FAIL \(error)"); exit(1) }
+    }
 } else if arguments.contains("--preferences-selftest") {
     NativeApplicationEntry.runAsync {
         do { try await NativePreferencesSelftest.run() }

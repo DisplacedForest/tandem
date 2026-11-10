@@ -223,12 +223,19 @@ extension SelfTest {
         var isDirectory: ObjCBool = false
         try require(manager.fileExists(atPath: root + "/made/deep", isDirectory: &isDirectory) && isDirectory.boolValue, "Folders are created with parents")
         try require(recorded.changes(for: "mk-1").map(\.path) == [root + "/made", root + "/made/deep"], "Each created folder is recorded")
+        let previousMask = umask(0o022)
+        umask(previousMask)
         do {
             _ = try NativeToolCallContext.$activityID.withValue("mk-2") {
-                try NativeFolderTools.makeDirectory(try access.locate(root + "/partial/" + String(repeating: "x", count: 300)), ledger: ledger)
+                try NativeFolderTools.$afterCommit.withValue({ umask(0o277) }) {
+                    defer { umask(previousMask) }
+                    return try NativeFolderTools.makeDirectory(try access.locate(root + "/partial/inner"), ledger: ledger)
+                }
             }
-            throw NativeTaskFixture.Failure.assertion("An overlong component fails")
+            throw NativeTaskFixture.Failure.assertion("A component that cannot be created fails")
         } catch is NativeToolError {}
+        umask(previousMask)
+        chmod(root + "/partial", 0o755)
         try require(recorded.changes(for: "mk-2").map(\.path) == [root + "/partial"], "A parent created before a failure is still recorded")
         do {
             _ = try NativeFolderTools.write(try access.locate(root + "/image.png"), content: "text", ledger: ledger)
