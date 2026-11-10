@@ -19,6 +19,8 @@ struct ShotView: View {
     var companionSelection: String? = nil
     var height: CGFloat = 760
     var artifactSelection: String? = nil
+    var artifactFilter: ArtifactKindFilter = .all
+    var artifactSearch = ""
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
     var workColumn = false
@@ -54,7 +56,9 @@ struct ShotView: View {
                 case .memory: memory
                 case .agentic: agenticBoard
                 case .scheduled: ScheduledView(renderSafe: true)
-                case .artifacts: ArtifactsView(initialSelection: artifactSelection)
+                case .artifacts:
+                    ArtifactsView(initialSelection: artifactSelection, initialFilter: artifactFilter,
+                                  initialSearch: artifactSearch)
                 case .projects: ProjectsView(initialSelection: projectSelection)
                 case .integrations:
                     IntegrationsView(initialTab: integrationsSeed?.tab ?? .personal,

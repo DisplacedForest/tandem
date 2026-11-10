@@ -65,28 +65,15 @@ enum ArtifactDateLabel {
     }
 }
 
-struct ArtifactsView: View {
-    @EnvironmentObject var store: ChatStore
-    @Environment(\.renderSafe) private var renderSafe
-    @State private var selectedID: String?
-    @State private var search = ""
-    @State private var filter: ArtifactKindFilter = .all
-    @State private var conversationFilter: String?
+struct ArtifactLibrarySelection: Equatable {
+    var selectedID: String?
+    var search = ""
+    var filter: ArtifactKindFilter = .all
+    var conversationFilter: String?
 
-    init(initialSelection: String? = nil, conversationFilter: String? = nil) {
-        _selectedID = State(initialValue: initialSelection)
-        _conversationFilter = State(initialValue: conversationFilter)
-    }
-
-    private var conversationFilterTitle: String? {
-        guard let conversationFilter else { return nil }
-        if store.isVeraThread(conversationFilter) { return "From \(store.assistantName)" }
-        return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
-    }
-
-    private var filtered: [ArtifactRecord] {
+    func visible(_ records: [ArtifactRecord]) -> [ArtifactRecord] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return store.artifactRecords.filter { record in
+        return records.filter { record in
             guard filter.matches(record.kind) else { return false }
             if let conversationFilter, record.conversationID != conversationFilter { return false }
             guard !query.isEmpty else { return true }
@@ -95,8 +82,67 @@ struct ArtifactsView: View {
         }
     }
 
+    func selected(in records: [ArtifactRecord]) -> ArtifactRecord? {
+        guard let selectedID else { return nil }
+        return visible(records).first { $0.id == selectedID }
+    }
+
+    func resolved(in records: [ArtifactRecord]) -> ArtifactRecord? {
+        var settled = self
+        settled.reconcile(records)
+        return settled.selected(in: records)
+    }
+
+    mutating func reconcile(_ records: [ArtifactRecord]) {
+        let shown = visible(records)
+        if let selectedID, shown.contains(where: { $0.id == selectedID }) { return }
+        selectedID = shown.first?.id
+    }
+
+    mutating func open(_ id: String, in records: [ArtifactRecord]) -> Bool {
+        guard let record = records.first(where: { $0.id == id }) else {
+            reconcile(records)
+            return false
+        }
+        search = ""
+        if !filter.matches(record.kind) { filter = .all }
+        if let conversationFilter, record.conversationID != conversationFilter { self.conversationFilter = nil }
+        selectedID = record.id
+        return true
+    }
+
+    mutating func adoptConversation(_ id: String, in records: [ArtifactRecord]) {
+        conversationFilter = id
+        search = ""
+        filter = .all
+        reconcile(records)
+    }
+}
+
+struct ArtifactsView: View {
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.renderSafe) private var renderSafe
+    @State private var state: ArtifactLibrarySelection
+
+    init(initialSelection: String? = nil, conversationFilter: String? = nil,
+         initialFilter: ArtifactKindFilter = .all, initialSearch: String = "") {
+        _state = State(initialValue: ArtifactLibrarySelection(
+            selectedID: initialSelection, search: initialSearch, filter: initialFilter,
+            conversationFilter: conversationFilter))
+    }
+
+    private var conversationFilterTitle: String? {
+        guard let conversationFilter = state.conversationFilter else { return nil }
+        if store.isVeraThread(conversationFilter) { return "From \(store.assistantName)" }
+        return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
+    }
+
+    private var filtered: [ArtifactRecord] {
+        state.visible(store.artifactRecords)
+    }
+
     private var selected: ArtifactRecord? {
-        store.artifactRecords.first { $0.id == selectedID }
+        state.resolved(in: store.artifactRecords)
     }
 
     var body: some View {
@@ -117,26 +163,25 @@ struct ArtifactsView: View {
             if !renderSafe { store.reloadArtifacts() }
             adoptPendingConversationFilter()
             openRequested()
+            state.reconcile(store.artifactRecords)
         }
         .onChange(of: store.requestedArtifactID) { _, _ in openRequested() }
         .onChange(of: store.pendingLibraryConversationID) { _, _ in adoptPendingConversationFilter() }
+        .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords) }
+        .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords) }
+        .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords) }
+        .onChange(of: store.artifactRecords) { _, records in state.reconcile(records) }
     }
 
     private func adoptPendingConversationFilter() {
         guard let pending = store.pendingLibraryConversationID else { return }
         store.pendingLibraryConversationID = nil
-        conversationFilter = pending
-        search = ""
-        filter = .all
-        selectedID = filtered.first?.id
+        state.adoptConversation(pending, in: store.artifactRecords)
     }
 
     private func openRequested() {
         guard let id = store.requestedArtifactID else { return }
-        guard let record = store.artifactRecords.first(where: { $0.id == id }) else { return }
-        if !filter.matches(record.kind) { filter = .all }
-        search = ""
-        selectedID = record.id
+        _ = state.open(id, in: store.artifactRecords)
         store.requestedArtifactID = nil
     }
 
@@ -145,12 +190,12 @@ struct ArtifactsView: View {
             searchField
             ArtifactFlowLayout(spacing: 6) {
                 ForEach(ArtifactKindFilter.allCases) { option in
-                    ArtifactFilterPill(title: option.title, selected: option == filter) { filter = option }
+                    ArtifactFilterPill(title: option.title, selected: option == state.filter) { state.filter = option }
                 }
             }
             if let title = conversationFilterTitle {
                 Button {
-                    conversationFilter = nil
+                    state.conversationFilter = nil
                 } label: {
                     HStack(spacing: 6) {
                         Text(title).font(.system(size: 12, weight: .medium))
@@ -171,11 +216,11 @@ struct ArtifactsView: View {
                 ShotSafeScroll(renderSafe: renderSafe) {
                     VStack(spacing: 2) {
                         ForEach(filtered) { record in
-                            ArtifactRow(record: record, selected: record.id == selectedID)
+                            ArtifactRow(record: record, selected: record.id == selected?.id)
                                 .contentShape(Rectangle())
-                                .onTapGesture { selectedID = record.id }
+                                .onTapGesture { state.selectedID = record.id }
                                 .accessibilityAddTraits(.isButton)
-                                .accessibilityAction { selectedID = record.id }
+                                .accessibilityAction { state.selectedID = record.id }
                         }
                     }
                     .padding(.bottom, 12)
@@ -190,11 +235,11 @@ struct ArtifactsView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if renderSafe {
-                Text(search.isEmpty ? "Search artifacts" : search).font(.system(size: 13))
-                    .foregroundStyle(search.isEmpty ? Theme.textSecondary : Theme.textPrimary)
+                Text(state.search.isEmpty ? "Search artifacts" : state.search).font(.system(size: 13))
+                    .foregroundStyle(state.search.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 Spacer(minLength: 0)
             } else {
-                TextField("Search artifacts", text: $search).textFieldStyle(.plain).font(.system(size: 13))
+                TextField("Search artifacts", text: $state.search).textFieldStyle(.plain).font(.system(size: 13))
                     .accessibilityLabel("Search artifacts")
             }
         }
@@ -209,7 +254,7 @@ struct ArtifactsView: View {
         if let selected {
             ArtifactDetail(record: selected).id(selected.id)
         } else {
-            Text("Select an artifact").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            Text("Nothing matches your search or filters.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
