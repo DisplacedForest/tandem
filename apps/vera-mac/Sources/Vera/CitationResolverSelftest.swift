@@ -263,6 +263,15 @@ enum CitationResolverSelftest {
         let fatLabel = "Fact [1].\n\n## Sources\n1. [" + String(repeating: "a", count: 301) + "](https://example.org/a)"
         try check(CitationResolver.withoutMatchingList(fatLabel, sources: [PulseSource(n: 1, title: "a", url: "https://example.org/a")]) == fatLabel,
                   "A very long link label keeps the list")
+        let titled = [PulseSource(n: 1, title: "Title", url: "https://example.org/a")]
+        let filler = String(repeating: "a", count: 301)
+        for entry in [filler + " [Title](https://example.org/a)", "[Title](https://example.org/a) " + filler,
+                      filler + " https://example.org/a", "https://example.org/a " + filler] {
+            let padded = "Fact [1].\n\n## Sources\n1. " + entry
+            try check(CitationResolver.withoutMatchingList(padded, sources: titled) == padded, "Long text around an address keeps the list")
+        }
+        try check(CitationResolver.withoutMatchingList("Fact [1].\n\n## Sources\n1. Title: [Title](https://example.org/a), 2024", sources: titled) == "Fact [1].",
+                  "Ordinary text around an address still matches")
         let nestedLabel = CitationResolver.recover("Fact [1].\n\n## Sources\n1. [[1] Frost guide](https://example.org/frost)")
         try check(nestedLabel?.sources.first?.url == "https://example.org/frost", "A label with its own brackets still gives its address")
 

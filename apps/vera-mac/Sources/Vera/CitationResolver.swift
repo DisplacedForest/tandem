@@ -630,7 +630,7 @@ enum CitationResolver {
 
     private static func writtenEntry(_ rest: String) -> WrittenEntry? {
         if httpCount(rest) > 0 {
-            guard let link = entryLink(rest), link.title.count <= labelLimit else { return nil }
+            guard let link = entryLink(rest), rest.count - link.url.count <= labelLimit else { return nil }
             return .address(normalized(link.url))
         }
         let label = rest.trimmingCharacters(in: separators).lowercased()
