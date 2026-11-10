@@ -224,6 +224,7 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
     var origin: NativeRuleOrigin
     var originConversationID: String?
     var originMessageID: String?
+    var originToolCallID: String?
     var quote: String?
     var reason: String?
     var remainingUses: Int?
@@ -235,7 +236,7 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
 
     init(id: String = UUID().uuidString.lowercased(), scope: NativeRuleScope = .everywhere, action: NativeActionClass?,
          toolID: String? = nil, target: NativeRuleTarget? = nil, effect: NativeRuleEffect, statement: String,
-         origin: NativeRuleOrigin = .settings, originConversationID: String? = nil, originMessageID: String? = nil,
+         origin: NativeRuleOrigin = .settings, originConversationID: String? = nil, originMessageID: String? = nil, originToolCallID: String? = nil,
          quote: String? = nil, reason: String? = nil, remainingUses: Int? = nil, expiresAt: Date? = nil,
          status: NativeRuleStatus = .active, createdAt: Date = Date(), updatedAt: Date? = nil, revokedAt: Date? = nil) {
         self.id = id
@@ -248,6 +249,7 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
         self.origin = origin
         self.originConversationID = originConversationID
         self.originMessageID = originMessageID
+        self.originToolCallID = originToolCallID
         self.quote = quote
         self.reason = reason
         self.remainingUses = remainingUses
@@ -267,7 +269,9 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
             throw NativeRuleRecordError.emptyScope
         }
         if let toolID = clean.toolID, toolID.isEmpty { clean.toolID = nil }
-        if clean.action == nil && (clean.toolID != nil || clean.target != nil) { throw NativeRuleRecordError.missingAction }
+        if clean.action == nil && clean.target != nil { throw NativeRuleRecordError.missingAction }
+        if clean.action == nil && clean.toolID != nil && clean.effect == .allow { throw NativeRuleRecordError.missingAction }
+        if clean.originToolCallID != nil && clean.originMessageID == nil { clean.originToolCallID = nil }
         if let action = clean.action, !NativeRuleRecordStore.storedActions.contains(action.rawValue) { throw NativeRuleRecordError.missingAction }
         if let target = clean.target, let action = clean.action {
             guard NativeRuleTarget.allowed(target.kind, action: action, effect: clean.effect) else { throw NativeRuleRecordError.invalidTarget }
@@ -302,7 +306,12 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     func applies(to query: NativeRuleQuery, at now: Date) -> Bool {
-        guard isLive(at: now), let action, action == query.action else { return false }
+        guard isLive(at: now) else { return false }
+        if let action {
+            guard action == query.action else { return false }
+        } else {
+            guard toolID != nil, effect.restricts else { return false }
+        }
         if let toolID, toolID != query.toolID { return false }
         return true
     }
@@ -398,8 +407,10 @@ struct NativeRuleRecordStore: Sendable {
     static let storedActions = ["file_edits", "commands", "trash", "network_sends", "risky_commands", "reminders", "service_changes", "other_changes",
                                 "credential_entry", "payments", "permanent_deletion"]
 
-    static func tableSQL(name: String, actions: [String]) -> String {
+    static func tableSQL(name: String, actions: [String], cards: Bool = false) -> String {
         let list = actions.map { "'\($0)'" }.joined(separator: ", ")
+        let toolCall = cards ? "\n                origin_tool_call_id TEXT," : ""
+        let toolWide = cards ? "\n                CHECK(action IS NOT NULL OR tool_id IS NULL OR effect != 'allow'),\n                CHECK(origin_tool_call_id IS NULL OR origin_message_id IS NOT NULL)," : ""
         return """
             CREATE TABLE \(name) (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -413,7 +424,7 @@ struct NativeRuleRecordStore: Sendable {
                 statement TEXT NOT NULL,
                 origin TEXT NOT NULL CHECK(origin IN ('settings', 'confirm_card', 'chat', 'model_card', 'migration')),
                 origin_conversation_id TEXT,
-                origin_message_id TEXT,
+                origin_message_id TEXT,\(toolCall)
                 quote TEXT,
                 reason TEXT,
                 remaining_uses INTEGER CHECK(remaining_uses IS NULL OR (remaining_uses >= 0 AND effect = 'allow')),
@@ -423,7 +434,7 @@ struct NativeRuleRecordStore: Sendable {
                 updated_at DOUBLE NOT NULL,
                 revoked_at DOUBLE,
                 CHECK((scope_kind = 'everywhere') = (scope_id IS NULL)),
-                CHECK((target_kind IS NULL) = (target_value IS NULL)),
+                CHECK((target_kind IS NULL) = (target_value IS NULL)),\(toolWide)
                 CHECK(target_kind IS NULL
                       OR (target_kind = 'command_prefix' AND action = 'commands' AND effect = 'allow')
                       OR (target_kind = 'folder' AND action IN ('file_edits', 'trash'))
@@ -454,8 +465,8 @@ struct NativeRuleRecordStore: Sendable {
         let dropped = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_rule_records WHERE action IS NOT NULL AND action NOT IN (\(kept))") ?? 0
         try db.execute(sql: tableSQL(name: "native_rule_records_next", actions: storedActions))
         try db.execute(sql: """
-            INSERT INTO native_rule_records_next(\(columns))
-            SELECT \(columns) FROM native_rule_records WHERE action IS NULL OR action IN (\(kept));
+            INSERT INTO native_rule_records_next(\(originalColumns))
+            SELECT \(originalColumns) FROM native_rule_records WHERE action IS NULL OR action IN (\(kept));
             DROP TABLE native_rule_records;
             ALTER TABLE native_rule_records_next RENAME TO native_rule_records;
             """)
@@ -463,10 +474,62 @@ struct NativeRuleRecordStore: Sendable {
         if dropped > 0 { _ = try advanceVersion(db) }
     }
 
-    private static let columns = """
+    static let cardIndexSQL = """
+            CREATE INDEX native_rule_records_status_action ON native_rule_records(status, action);
+            CREATE UNIQUE INDEX native_rule_records_origin_message ON native_rule_records(origin_message_id, COALESCE(origin_tool_call_id, ''))
+                WHERE origin_message_id IS NOT NULL;
+            """
+
+    static func migrateCards(_ db: Database) throws {
+        try db.execute(sql: tableSQL(name: "native_rule_records_next", actions: storedActions, cards: true))
+        try db.execute(sql: """
+            INSERT INTO native_rule_records_next(\(originalColumns))
+            SELECT \(originalColumns) FROM native_rule_records;
+            DROP TABLE native_rule_records;
+            ALTER TABLE native_rule_records_next RENAME TO native_rule_records;
+            """)
+        try db.execute(sql: cardIndexSQL)
+    }
+
+    static func migratePrefixes(_ db: Database) throws {
+        let rows = try Row.fetchAll(db, sql: "SELECT id, rules_json FROM conversations WHERE rules_json IS NOT NULL")
+        let stamp = Date()
+        var inserted = 0
+        for row in rows {
+            guard let conversationID: String = row["id"], let raw: String = row["rules_json"], let data = raw.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data), let json = object as? [String: Any],
+                  let listed = json["approved_command_prefixes"] else { continue }
+            var prefixes: [NativeRuleTarget] = []
+            var lost = false
+            for value in (listed as? [Any]) ?? [] {
+                guard let text = value as? String, !text.isEmpty, let target = NativeRuleTarget.make(.commandPrefix, text),
+                      !prefixes.contains(target) else { continue }
+                prefixes.append(target)
+            }
+            for prefix in prefixes {
+                let named = "In this chat, allow commands that start with \(prefix.value)"
+                let draft = NativeRuleRecord(scope: .conversation(conversationID), action: .commands, toolID: NativeCommandTools.toolID,
+                                             target: prefix, effect: .allow,
+                                             statement: named.count <= NativeRuleRecord.maximumStatementCharacters ? named : "In this chat, allow a command you approved earlier",
+                                             origin: .migration, originConversationID: conversationID,
+                                             reason: "Carried over from an approval you gave in this chat.", createdAt: stamp)
+                guard let record = try? NativeRuleRecord.validated(draft, creating: true) else { lost = true; continue }
+                try write(db, record, inserting: true)
+                inserted += 1
+            }
+            if lost { continue }
+            let kept = NativeConversationRules.encode(NativeConversationRules.decode(raw))
+            try db.execute(sql: "UPDATE conversations SET rules_json = ? WHERE id = ?", arguments: [kept, conversationID])
+        }
+        if inserted > 0 { _ = try advanceVersion(db) }
+    }
+
+    private static let originalColumns = """
         id, scope_kind, scope_id, action, tool_id, target_kind, target_value, effect, statement, origin, origin_conversation_id,
         origin_message_id, quote, reason, remaining_uses, expires_at, status, created_at, updated_at, revoked_at
         """
+
+    private static let columns = originalColumns + ", origin_tool_call_id"
 
     private static func decode(_ row: Row) -> NativeRuleRecord? {
         guard let id: String = row["id"], let scopeKind: String = row["scope_kind"],
@@ -489,7 +552,7 @@ struct NativeRuleRecordStore: Sendable {
         let updated: Double = row["updated_at"] ?? 0
         return NativeRuleRecord(id: id, scope: scope, action: action, toolID: row["tool_id"], target: target, effect: effect,
                                 statement: statement, origin: origin, originConversationID: row["origin_conversation_id"],
-                                originMessageID: row["origin_message_id"], quote: row["quote"], reason: row["reason"],
+                                originMessageID: row["origin_message_id"], originToolCallID: row["origin_tool_call_id"], quote: row["quote"], reason: row["reason"],
                                 remainingUses: row["remaining_uses"], expiresAt: expires.map(Date.init(timeIntervalSince1970:)),
                                 status: status, createdAt: Date(timeIntervalSince1970: created),
                                 updatedAt: Date(timeIntervalSince1970: updated), revokedAt: revoked.map(Date.init(timeIntervalSince1970:)))
@@ -499,8 +562,9 @@ struct NativeRuleRecordStore: Sendable {
         try Row.fetchOne(db, sql: "SELECT \(columns) FROM native_rule_records WHERE id = ?", arguments: [id]).flatMap(decode)
     }
 
-    private static func fetch(_ db: Database, originMessageID: String) throws -> NativeRuleRecord? {
-        try Row.fetchOne(db, sql: "SELECT \(columns) FROM native_rule_records WHERE origin_message_id = ?", arguments: [originMessageID])
+    private static func fetch(_ db: Database, originMessageID: String, originToolCallID: String? = nil) throws -> NativeRuleRecord? {
+        try Row.fetchOne(db, sql: "SELECT \(columns) FROM native_rule_records WHERE origin_message_id = ? AND COALESCE(origin_tool_call_id, '') = ?",
+                         arguments: [originMessageID, originToolCallID ?? ""])
             .flatMap(decode)
     }
 
@@ -510,20 +574,21 @@ struct NativeRuleRecordStore: Sendable {
             record.target?.value, record.effect.rawValue, record.statement, record.origin.rawValue, record.originConversationID,
             record.originMessageID, record.quote, record.reason, record.remainingUses, record.expiresAt?.timeIntervalSince1970,
             record.status.rawValue, record.createdAt.timeIntervalSince1970, record.updatedAt.timeIntervalSince1970,
-            record.revokedAt?.timeIntervalSince1970, record.id,
+            record.revokedAt?.timeIntervalSince1970, record.originToolCallID, record.id,
         ]
         if inserting {
             try db.execute(sql: """
                 INSERT INTO native_rule_records(scope_kind, scope_id, action, tool_id, target_kind, target_value, effect, statement, origin,
                     origin_conversation_id, origin_message_id, quote, reason, remaining_uses, expires_at, status, created_at, updated_at,
-                    revoked_at, id)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    revoked_at, origin_tool_call_id, id)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: arguments)
         } else {
             try db.execute(sql: """
                 UPDATE native_rule_records SET scope_kind = ?, scope_id = ?, action = ?, tool_id = ?, target_kind = ?, target_value = ?,
                     effect = ?, statement = ?, origin = ?, origin_conversation_id = ?, origin_message_id = ?, quote = ?, reason = ?,
-                    remaining_uses = ?, expires_at = ?, status = ?, created_at = ?, updated_at = ?, revoked_at = ?
+                    remaining_uses = ?, expires_at = ?, status = ?, created_at = ?, updated_at = ?, revoked_at = ?,
+                    origin_tool_call_id = ?
                 WHERE id = ?
                 """, arguments: arguments)
         }
@@ -539,7 +604,8 @@ struct NativeRuleRecordStore: Sendable {
         clean.revokedAt = nil
         let prepared = clean
         return try database.write { db in
-            if let message = prepared.originMessageID, let existing = try Self.fetch(db, originMessageID: message) { return existing }
+            if let message = prepared.originMessageID,
+               let existing = try Self.fetch(db, originMessageID: message, originToolCallID: prepared.originToolCallID) { return existing }
             try Self.write(db, prepared, inserting: true)
             _ = try Self.advanceVersion(db)
             guard let stored = try Self.fetch(db, id: prepared.id) else { throw NativeRuleRecordError.notFound }

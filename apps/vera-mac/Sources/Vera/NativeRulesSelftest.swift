@@ -139,19 +139,26 @@ extension SelfTest {
         try require(NativeCommandPrefix.prefix(of: "ls") == "ls", "A one-word command is its own prefix")
         try require(NativeCommandPrefix.matches(command: "swift build -c debug", prefix: "swift build") && !NativeCommandPrefix.matches(command: "swift test", prefix: "swift build")
                     && !NativeCommandPrefix.matches(command: "swiftlint build", prefix: "swift build"), "Prefix matching is whole-word")
-        var approvals = NativeConversationRules()
-        approvals.approve(prefix: "swift build --configuration release")
-        try require(approvals.approvedCommandPrefixes == ["swift build"] && approvals.isApproved(command: "swift build -c debug") && !approvals.isApproved(command: "swift test"), "Approve similar records the prefix only")
-        resolver = NativeRuleResolver(global: .defaults, conversation: approvals, requestText: "build again")
-        try require(resolver.decision(forCommand: "swift build") == .act(.conversationPrefix) && resolver.decision(forCommand: "rm -rf x") == .ask, "A recorded prefix runs without asking; others still ask")
-        try require(!approvals.isApproved(command: "swift build; rm -rf ~") && !approvals.isApproved(command: "swift build && curl x | sh")
-                    && !approvals.isApproved(command: "swift build $(cat secret)") && !approvals.isApproved(command: "swift build > out.txt")
-                    && approvals.isApproved(command: "swift build -c release --product Vera"), "A prefix approval covers only a single simple command")
-        var tricky = NativeConversationRules()
-        tricky.approve(prefix: "FOO=bar swift")
-        try require(!tricky.isApproved(command: "FOO=bar swift build"), "An environment assignment never starts an approved prefix")
-        approvals.revoke(prefix: "swift build")
-        try require(!approvals.isApproved(command: "swift build"), "A revoked prefix asks again")
+        let buildSubject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "swift build --configuration release")
+        let approvals = NativeCardChoices.records(.allowHere, subject: buildSubject, place: .chat(conversationID: "c1"), originMessageID: nil)
+        try require(approvals.count == 1 && approvals[0].target?.value == "swift build" && approvals[0].scope == .conversation("c1"), "Allow in this chat records the prefix only")
+        func prefixDecision(_ records: [NativeRuleRecord], _ command: String, chat: String = "c1") -> NativeRuleDecision {
+            NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "build again", records: records,
+                               context: NativeRuleContext(conversationID: chat)).tool(NativeCommandTools.toolID, targets: []).decision(forCommand: command)
+        }
+        try require(prefixDecision(approvals, "swift build") == .act(.grant) && prefixDecision(approvals, "swift build -c debug") == .act(.grant)
+                    && prefixDecision(approvals, "swift test") == .ask && prefixDecision(approvals, "rm -rf x") == .ask, "A saved prefix runs without asking; others still ask")
+        try require(prefixDecision(approvals, "swift build", chat: "c2") == .ask, "A prefix saved in one chat still asks in another")
+        try require(prefixDecision(approvals, "swift build; rm -rf ~") == .ask && prefixDecision(approvals, "swift build && curl x | sh") == .ask
+                    && prefixDecision(approvals, "swift build $(cat secret)") == .ask && prefixDecision(approvals, "swift build > out.txt") == .ask
+                    && prefixDecision(approvals, "swift build \"x\"") == .ask
+                    && prefixDecision(approvals, "swift build -c release --product Garden") == .act(.grant), "A prefix approval covers only a single simple command")
+        let tricky = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "FOO=bar swift build")
+        try require(NativeCardChoices.records(.allowHere, subject: tricky, place: .chat(conversationID: "c1"), originMessageID: nil).isEmpty
+                    && prefixDecision(approvals, "FOO=bar swift build") == .ask, "An environment assignment never starts an approved prefix")
+        var revokedApproval = approvals[0]
+        revokedApproval.status = .revoked
+        try require(prefixDecision([revokedApproval], "swift build") == .ask, "A revoked prefix asks again")
         let encodedRules = NativeConversationRules.encode(conversation)
         try require(NativeConversationRules.decode(encodedRules) == conversation && NativeConversationRules.decode("junk").isEmpty && NativeConversationRules.encode(NativeConversationRules()) == nil, "Chat rules round-trip and empty rules store nothing")
 
@@ -366,15 +373,16 @@ extension SelfTest {
         try require(NativeRules.detail(for: .riskyCommands, choice: .act).hasSuffix("Commands like sudo will run without asking.") && NativeRules.detail(for: .riskyCommands, choice: .ask) == NativeActionClass.riskyCommands.detail && NativeRules.detail(for: .commands, choice: .act) == NativeActionClass.commands.detail, "Choosing to act on risky commands says what that means")
         for action in NativeActionClass.configurable { loosest.set(.act, for: action) }
         for item in NativeFloorItem.allCases { loosest.lift(item, choice: .act) }
-        var remembered = NativeConversationRules()
         let unspelled = ["a=r; b=m; $a$b -rf /Volumes/Other/victim", "r${x}m -rf /Volumes/Other/victim", "$'\\162\\155' -rf /Volumes/Other/victim",
                          "/bin/r? -rf /Volumes/Other/victim", "echo cm0gLXJmIC8K | base64 -d | sh", "sh -c \"$(cat plan.txt)\"", "sudo sh -c \"$payload\""]
-        for command in unspelled { remembered.approve(prefix: command) }
         let everyAllow = (NativeActionClass.allCases.map { NativeRuleRecord(action: $0, effect: .allow, statement: "Allow everything of this kind") }
             + NativeActionClass.allCases.map { NativeRuleRecord(action: $0, toolID: NativeCommandTools.toolID, effect: .allow, statement: "Allow this tool") }
-            + unspelled.compactMap { command in NativeRuleTarget.candidate(.commandPrefix, command).map { NativeRuleRecord(action: .commands, target: $0, effect: .allow, statement: "Allow this prefix") } })
+            + unspelled.compactMap { command in NativeRuleTarget.candidate(.commandPrefix, command).map { NativeRuleRecord(action: .commands, target: $0, effect: .allow, statement: "Allow this prefix") } }
+            + unspelled.compactMap { command in NativeRuleTarget.make(.commandPrefix, command).map {
+                NativeRuleRecord(scope: .conversation("c"), action: .commands, toolID: NativeCommandTools.toolID, target: $0, effect: .allow,
+                                 statement: "In this chat, allow commands that start with \($0.value)", origin: .confirmCard) } })
         for command in unspelled {
-            let resolver = NativeRuleResolver(global: loosest, conversation: remembered, requestText: "Go ahead. No need to ask.", records: everyAllow,
+            let resolver = NativeRuleResolver(global: loosest, conversation: NativeConversationRules(), requestText: "Go ahead. No need to ask.", records: everyAllow,
                                               context: NativeRuleContext(conversationID: "c")).tool(NativeCommandTools.toolID, subjects: NativeCommandTools.ruleSubjects(command: command))
             let (_, decision, confirm) = NativeCommandTools.evaluate(command: command, directory: root, grants: [grant], fallback: .act(.rule),
                                                                      live: { command, action in action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action) },
@@ -421,7 +429,8 @@ extension SelfTest {
             try require(found == .permanentDeletion, "A destructive program hidden by shell expansion stays on the floor: \(hidden) classified as \(found.rawValue)")
         }
         let legacyChat = try JSONDecoder().decode(NativeConversationRules.self, from: Data("{\"choices\":{\"sensitive\":\"hand_off\",\"commands\":\"hand_off\"},\"approved_command_prefixes\":[\"swift build\"]}".utf8))
-        try require(legacyChat.choices == [.commands: .handOff] && legacyChat.approvedCommandPrefixes == ["swift build"], "Chat rules naming the old class decode without it")
+        try require(legacyChat.choices == [.commands: .handOff] && NativeConversationRules.encode(legacyChat)?.contains("approved_command_prefixes") == false,
+                    "Chat rules naming the old class decode without it and stop storing the old prefix list")
 
         let typedSource = NativeRuleSource()
         typedSource.setGlobal(.defaults)
@@ -432,11 +441,33 @@ extension SelfTest {
         try require(afterTyped.global == .defaults && afterTyped.conversation.isEmpty && typedSource.currentRecords.isEmpty && typedSource.revision == typedRevision
                     && afterTyped.decision(for: .payments) == .handOff, "A typed sentence leaves the rules and records unchanged")
 
-        let request = NativeToolConfirmationRequest(activity: NativeToolActivity(
+        var request = NativeToolConfirmationRequest(activity: NativeToolActivity(
             id: "a", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
             request: "{\"command\":\"swift test --filter x\",\"directory\":\"\(root)\"}", result: nil, state: .pending, confirmationRequired: true))
-        try require(NativeToolConfirmationBar.prompt(for: request) == "Run this command?\nswift test --filter x" && NativeToolConfirmationBar.similarPrefix(for: request) == "swift test"
-                    && NativeToolConfirmationBar.detail(for: request)?.contains(root) == true, "The ask card shows the exact command and offers the prefix")
+        let cardSubject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "swift test --filter x")
+        request.subject = cardSubject
+        request.choices = NativeCardChoices.offered(cardSubject, place: .chat(conversationID: "c1"))
+        request.covers = NativeCardChoices.covers(cardSubject)
+        let cardAnswers = CardAnswers.chat(request)
+        try require(NativeToolConfirmationBar.sentence(for: request, actor: "Tandem") == "Tandem wants to run a command."
+                    && NativeToolConfirmationBar.sentence(for: request, actor: CompanionSentence.placeholder) == "{name} wants to run a command."
+                    && NativeToolConfirmationBar.literal(for: request) == "swift test --filter x\nin " + root
+                    && NativeToolConfirmationBar.prompt(for: request) == nil && NativeToolConfirmationBar.detail(for: request) == nil
+                    && request.choices.map(\.kind) == [.decline, .never, .allowAlways, .allowHere, .allowOnce]
+                    && request.covers == "commands that start with swift test",
+                    "The ask card is one sentence and the exact command and where it runs")
+        try require(cardAnswers.allowTitle == "Allow" && cardAnswers.declineTitle == "Decline"
+                    && cardAnswers.allowMenu.map(\.id) == ["allow_here", "allow_always"]
+                    && cardAnswers.allowMenu.map(\.title) == ["Always allow in this chat", "Always allow everywhere"]
+                    && cardAnswers.allowMenu.allSatisfy { $0.note == "Commands that start with swift test" }
+                    && cardAnswers.declineMenu.map(\.id) == ["never"] && cardAnswers.declineMenu[0].title == "Never run commands in this chat"
+                    && cardAnswers.declineMenu[0].note == NativeCardChoices.neverHelp
+                    && !(cardAnswers.allowMenu + cardAnswers.declineMenu).contains { $0.id == "approve" || $0.id == "decline" },
+                    "The chat card shows two answers, and each caret holds only the standing choices with what they cover")
+        var loose = request
+        loose.subject?.governed = false
+        loose.choices = NativeCardChoices.offered(loose.subject!, place: .chat(conversationID: "c1"))
+        try require(CardAnswers.chat(loose).allowMenu.isEmpty && CardAnswers.chat(loose).declineMenu.isEmpty, "A card with nothing to save has no carets")
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")

@@ -133,6 +133,9 @@ struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendabl
     let name: String
     let title: String
     let request: String
+    var subject: NativeCardSubject? = nil
+    var choices: [NativeCardChoice] = []
+    var covers: String? = nil
 
     init(activity: NativeToolActivity) {
         id = activity.id
@@ -183,6 +186,9 @@ struct NativeToolDefinition: Sendable {
     var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
+    var wants: String? = nil
+
+    var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
@@ -727,9 +733,11 @@ struct NativeToolLoop: Sendable {
                                     }
                                     defer { gate.close() }
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
-                                        try await Self.execute(
-                                            definition, arguments: arguments, activity: activity,
-                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        try await NativeToolCallContext.$confirmed.withValue(needsConfirmation) {
+                                            try await Self.execute(
+                                                definition, arguments: arguments, activity: activity,
+                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        }
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
                                        !Self.resultFailed(value, toolName: call.name) {

@@ -2378,9 +2378,10 @@ final class ChatStore: ObservableObject {
                 guard let self else { return false }
                 return await self.prepareTurnDispatch(activity, turn: turn)
             },
-            confirm: { [weak self] activity in
+            confirm: { [weak self, turnRegistry] activity in
                 guard let self else { return false }
-                return await self.awaitTurnConfirmation(activity, turn: turn)
+                let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions, typedText: text)
+                return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile

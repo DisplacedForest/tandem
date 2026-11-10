@@ -366,6 +366,40 @@ extension NativeTaskDisplayFixture {
         try require(approveSnapshot.decision?.digest == digest, "A snapshot decision keeps its digest")
         let card = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
             .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
+        try require(NativeTaskCardPresentation.choiceTitle("approve") == "Allow once" && NativeTaskCardPresentation.choiceTitle("allow_here") == "Always allow in this task"
+                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Always allow everywhere" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow this"
+                    && NativeTaskCardPresentation.choiceTitle("never_commands") == "Never run commands in this task"
+                    && NativeTaskCardPresentation.choiceTitle("allow_schedule") == "Always allow for this schedule" && NativeTaskCardPresentation.choiceTitle("decline") == "Decline"
+                    && NativeTaskCardPresentation.choiceTitle("made_up") == nil, "Every card choice has a plain title and unknown ones have none")
+        let whole = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "This action every time", neverTitle: "Never allow this")
+        try require(whole.allowTitle == "Allow" && whole.declineTitle == "Decline"
+                    && whole.allowMenu.map(\.id) == ["allow_here", "allow_always"]
+                    && whole.allowMenu.map(\.title) == ["Always allow in this task", "Always allow everywhere"]
+                    && whole.allowMenu.allSatisfy { $0.note == "This action every time" }
+                    && whole.declineMenu.map(\.id) == ["never"] && whole.declineMenu[0].title == "Never allow this" && whole.declineMenu[0].note == nil,
+                    "A task card shows two answers, and each caret holds only the standing choices with what they cover")
+        try require(!(whole.allowMenu + whole.declineMenu).contains { $0.id == "approve" || $0.id == "decline" },
+                    "The one-time answers are the buttons themselves and never appear in a caret menu")
+        let commands = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: "Commands that start with make pdf", neverTitle: "ignored")
+        try require(commands.declineMenu.map(\.id) == ["never_commands"] && commands.declineMenu[0].title == "Never run commands in this task"
+                    && commands.declineMenu[0].note == NativeCardChoices.neverHelp
+                    && commands.allowMenu[0].spoken == "Always allow in this task. Commands that start with make pdf",
+                    "A command card's Never names its reach and says allowed commands still run")
+        let run = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: "Commands that start with make pdf", neverTitle: nil, run: true)
+        try require(run.allowMenu.map(\.title) == ["Always allow for this run", "Always allow everywhere"] && run.declineMenu[0].title == "Never run commands in this run",
+                    "On the Scheduled screen the standing choices speak of the run")
+        let long = String(repeating: "a", count: CardAnswers.displayLimit + 1)
+        let hidden = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "Commands that start with " + long, neverTitle: "Never edit in " + long)
+        let unlabelled = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
+        try require(hidden.allowMenu.isEmpty && hidden.declineMenu.isEmpty && unlabelled.allowMenu.isEmpty && unlabelled.declineMenu.isEmpty
+                    && CardAnswers.shown("Edits in a\nb") == nil && CardAnswers.shown("Edits in Greenhouse") == "Edits in Greenhouse",
+                    "A standing choice is never offered when what it covers can't be shown in full")
+        let plain = CardAnswers.task(choices: ["decline", "approve"], covers: nil, neverTitle: nil)
+        try require(plain.allowMenu.isEmpty && plain.declineMenu.isEmpty, "A card with nothing to save has no carets")
+        try require(NativeScheduleAnswer.route("retry") == .retry && NativeScheduleAnswer.route("stop") == .stop && NativeScheduleAnswer.route("cancel") == .stop
+                    && ["approve", "allow_here", "allow_always", "allow_schedule", "never", "never_commands", "decline", "continue", "finish", "it_happened", "it_did_not"]
+                        .allSatisfy { NativeScheduleAnswer.route($0) == .answer },
+                    "On the Scheduled screen only Retry retries and only Stop cancels, and every other answer reaches the waiting work")
         try require(card?.offeredChoices == ["approve", "decline"] && card?.canRetry == false,
                     "A paused card offers each known choice in order")
         do {

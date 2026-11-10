@@ -26,8 +26,6 @@
 1 apps/vera-mac/Sources/Vera/NativeProviderSmoke.swift
 2 apps/vera-mac/Sources/Vera/NativeResearchWorker.swift
 1 apps/vera-mac/Sources/Vera/NativeRules.swift
-1 apps/vera-mac/Sources/Vera/NativeRulesSelftest.swift
-1 apps/vera-mac/Sources/Vera/NativeTaskCardShot.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskTransportTiming.swift
 1 apps/vera-mac/Sources/Vera/OnboardingView.swift
 1 apps/vera-mac/Sources/Vera/PluginsView.swift

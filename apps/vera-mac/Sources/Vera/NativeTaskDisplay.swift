@@ -177,6 +177,8 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var workerType: String? = nil
     var choices: [String]? = nil
     var details: String? = nil
+    var covers: String? = nil
+    var neverTitle: String? = nil
     var answer: String? = nil
 
     var isDocument: Bool { workerType == "document" }
@@ -190,14 +192,12 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     static func choiceTitle(_ choice: String) -> String? {
         switch choice {
         case "retry": return "Retry"
-        case "approve": return "Approve"
-        case "decline": return "Decline"
         case "continue": return "Keep going"
         case "finish": return "Finish"
         case "it_happened": return "It happened"
         case "it_did_not": return "It didn't happen"
         case "stop": return "Stop here"
-        default: return nil
+        default: return NativeCardChoices.wireTitle(choice)
         }
     }
 

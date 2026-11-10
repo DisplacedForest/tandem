@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 enum NativeScheduleShotFixture {
-    static func populate(_ store: ChatStore, assistantPaused: Bool = false) {
+    static func populate(_ store: ChatStore, assistantPaused: Bool = false, waiting: (referenceID: String, prompt: String)? = nil) {
         if assistantPaused {
             store.adoptAssistantName(NativeDotShotFixture.name)
             store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .paused, setupCompleted: true)
@@ -43,8 +43,8 @@ enum NativeScheduleShotFixture {
             ],
             prices.id: [
                 NativeScheduleRun(scheduleID: prices.id, scheduledFor: today6, startedAt: today6, outcome: .waiting,
-                                  detail: "The model request did not complete. Retry this step?",
-                                  conversationID: "shot", taskReferenceID: "shot-task"),
+                                  detail: waiting?.prompt ?? "The model request did not complete. Retry this step?",
+                                  conversationID: "shot", taskReferenceID: waiting?.referenceID ?? "shot-task"),
             ],
         ]
     }
