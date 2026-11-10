@@ -16,6 +16,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
+from . import action_registry
 from . import media_store as mstore
 from . import overseerr
 from . import vein_engine
@@ -170,3 +171,11 @@ vein_engine.register("media_digest", _block_media_digest,
                      describe="collapses judged media candidates into one weekly digest item with per row add or skip actions; params: cap")
 
 
+def _record_item_decision(item: dict, decision: str, ok: bool) -> None:
+    mt, tid, title = item.get("media_type"), item.get("tmdb_id"), item.get("title", "")
+    status = {"skip": "skipped", "approve": "approved"}.get(decision)
+    if status and mt and tid is not None:
+        mstore.record(mt, tid, title, status)
+
+
+action_registry.register_item_decision_hook(_record_item_decision, order=10)

@@ -5,10 +5,9 @@ plus the page they came from, so the Pulse pipeline can download + re-host them.
 """
 
 import aiohttp
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from pydantic import BaseModel
 
-router = APIRouter()
 
 
 class ImageSearchRequest(BaseModel):
@@ -29,7 +28,6 @@ class ImageSearchResponse(BaseModel):
     results: list[ImageHit]
 
 
-@router.post("/images/search", response_model=ImageSearchResponse, tags=["images"])
 async def search(req: ImageSearchRequest) -> ImageSearchResponse:
     from . import integrations
     searxng = (integrations.integration("searxng") or {}).get("url", "")

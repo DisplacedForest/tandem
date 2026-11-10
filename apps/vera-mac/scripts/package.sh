@@ -60,7 +60,6 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
 cp "$BUILD_DIR/Vera.icns" "$APP/Contents/Resources/Vera.icns"
-# SwiftPM resource bundles (Vera_Vera.bundle = logo, Starscream_Starscream.bundle = ws privacy manifest)
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 
 cp -R "$RUNTIME_STAGE/PiRuntime" "$APP/Contents/Resources/PiRuntime"

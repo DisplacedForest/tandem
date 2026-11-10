@@ -21,7 +21,10 @@ its last outcome for the UI. A job still running when its next fire comes due is
 import asyncio
 import logging
 import os
+import threading
+from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -38,66 +41,46 @@ TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))
 _POLL_SECONDS = 20
 
 
-# ---- job handlers (each calls the same code its endpoint runs) ----------------------
-
-async def _job_pulse():
-    from . import pulse
-    # Follow the 202 trigger to completion so the job's recorded outcome is the run's
-    # actual result (cards, starvation warnings, gate kills), not the acknowledgement.
-    return await pulse.run_outcome(await pulse.run(pulse.PulseRequest()))
+REGISTRY: dict[str, tuple[str, str, object]] = {}
+GATES: dict[str, object] = {}
+_JOB_ORDER: dict[str, int] = {}
+_JOB_OWNERS: dict[str, str] = {}
+_write_lock = threading.RLock()
 
 
-async def _job_home_model():
-    from . import home_model
-    return await home_model.refresh()
+def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Awaitable[Any]], *,
+                 order: int, gate: Callable[[], str | None] | None = None) -> None:
+    owner = getattr(handler, "__module__", "") or ""
+    with _write_lock:
+        if job_id in _JOB_ORDER and _JOB_OWNERS.get(job_id) != owner:
+            raise ValueError(f"scheduler job already registered: {job_id}")
+        GATES.pop(job_id, None)
+        _JOB_OWNERS[job_id] = owner
+        REGISTRY[job_id] = (label, cron, handler)
+        _JOB_ORDER[job_id] = order
+        if gate is not None:
+            GATES[job_id] = gate
+        _reorder()
 
 
-async def _job_home_reconcile():
-    from . import home_reconcile
-    return await home_reconcile.run()
+def _reorder() -> None:
+    ordered = {j: REGISTRY[j] for j in sorted(_JOB_ORDER, key=lambda j: _JOB_ORDER[j]) if j in REGISTRY}
+    extras = {j: v for j, v in REGISTRY.items() if j not in _JOB_ORDER}
+    REGISTRY.clear()
+    REGISTRY.update(ordered)
+    REGISTRY.update(extras)
+    gates = {j: GATES[j] for j in ordered if j in GATES}
+    gates.update({j: g for j, g in GATES.items() if j not in gates})
+    GATES.clear()
+    GATES.update(gates)
 
 
-async def _job_home_digest():
-    from . import home
-    return await home.run_digest()
-
-
-async def _job_conversation_extract():
-    from . import conversation_extract
-    return await conversation_extract.run()
-
-
-async def _job_weight_fit():
-    from . import learn
-    coeffs = learn.fit_weights()
-    return {"installed": coeffs is not None, "coeffs": coeffs}
-
-
-async def _job_knowledge_groom():
-    from . import knowledge_groom
-    return await knowledge_groom.run()
-
-
-# id -> (label, default cron, handler). The shipped schedule; everything overridable.
-REGISTRY: dict[str, tuple[str, str, object]] = {
-    "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
-    "home_model":     ("Home model refresh",        "30 3 * * *",   _job_home_model),
-    "home_reconcile": ("Home map reconcile",        "0 3 * * *",    _job_home_reconcile),
-    "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),
-    "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
-    "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
-    "knowledge_groom": ("Knowledge store grooming",        "0 4 * * *",   _job_knowledge_groom),
-}
-
-
-# Jobs tied to an integration's experimental feature inherit its gate: while the gate
-# is closed the job shows as disabled (with the reason), the loop never fires it, and
-# manual runs are refused. Toggling the feature opens/closes these immediately.
-def _gate_home_modeling() -> str | None:
-    from . import integrations
-    if integrations.feature_enabled("home_assistant", "home_modeling"):
-        return None
-    return "requires the home_assistant integration with its home_modeling feature enabled"
+def unregister_job(job_id: str) -> None:
+    with _write_lock:
+        REGISTRY.pop(job_id, None)
+        GATES.pop(job_id, None)
+        _JOB_ORDER.pop(job_id, None)
+        _JOB_OWNERS.pop(job_id, None)
 
 
 def _vein_gate(kind: str):
@@ -109,16 +92,15 @@ def _vein_gate(kind: str):
     return gate
 
 
+def builtin_jobs() -> dict[str, tuple[str, str, object]]:
+    from . import builtin_capabilities
+    builtin_capabilities.load()
+    return REGISTRY
+
+
 def _registry() -> dict[str, tuple[str, str, object]]:
     from . import vein_engine
-    return {**REGISTRY, **vein_engine.dynamic_jobs()}
-
-
-GATES: dict[str, object] = {
-    "home_model": _gate_home_modeling,
-    "home_reconcile": _gate_home_modeling,
-    "home_digest": _gate_home_modeling,
-}
+    return {**builtin_jobs(), **vein_engine.dynamic_jobs()}
 
 
 # ---- effective config (env > db > registry) ------------------------------------------
@@ -138,6 +120,7 @@ def _env_enabled(job_id: str) -> bool | None:
 
 
 def _gate_reason(job_id: str) -> str | None:
+    builtin_jobs()
     gate = GATES.get(job_id)
     if gate is None and job_id.startswith("vein_"):
         gate = _vein_gate(job_id.removeprefix("vein_"))
@@ -421,7 +404,7 @@ async def start():
     global _task
     if ENABLED and _task is None:
         _task = asyncio.create_task(_loop())
-        log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(REGISTRY), _POLL_SECONDS, TZ)
+        log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(builtin_jobs()), _POLL_SECONDS, TZ)
     elif not ENABLED:
         log.info("scheduler disabled (SCHEDULER_ENABLED=false)")
 

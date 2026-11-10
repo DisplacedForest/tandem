@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from routers import action_store  # noqa: E402
 from routers import agentic  # noqa: E402
 from routers import scheduler_store  # noqa: E402
+from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
 
 @pytest.fixture(autouse=True)

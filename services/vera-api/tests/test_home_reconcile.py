@@ -120,6 +120,22 @@ def test_preview_diff_is_readonly():
     print("ok test_preview_diff_is_readonly")
 
 
+def test_rename_keeps_one_baseline_row():
+    _fresh_store()
+    old = {"switch.desk_lamp": {"domain": "switch", "integration": None,
+                                         "friendly_name": "Desk Lamp"}}
+    store.apply_diff(old, threshold=2)
+    new = {"switch.desk_lamp": {"domain": "switch", "integration": None,
+                                         "friendly_name": "Power Strip Desk Lamp"}}
+    r = store.apply_diff(new, threshold=2)
+    assert r["new"] == [] and r["removed"] == [], r
+    with store._conn() as c:
+        rows = c.execute("SELECT entity_id, friendly_name FROM seen_entities").fetchall()
+    assert [(x["entity_id"], x["friendly_name"]) for x in rows] == \
+        [("switch.desk_lamp", "Power Strip Desk Lamp")], rows
+    print("ok test_rename_keeps_one_baseline_row")
+
+
 # ---- drift ledger ----------------------------------------------------------
 
 def test_drift_dedup_and_resolve():
@@ -166,6 +182,7 @@ if __name__ == "__main__":
     test_diff_new_removed_debounce()
     test_apply_diff_first_run_silent_then_detects()
     test_preview_diff_is_readonly()
+    test_rename_keeps_one_baseline_row()
     test_drift_dedup_and_resolve()
     test_stale_by_last_verified()
     print("\nall home_reconcile tests passed")

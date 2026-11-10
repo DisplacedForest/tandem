@@ -19,6 +19,7 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from . import action_registry
 from .pulse import HOUSEHOLD, _inject, _vera
 from .persona import owner, voiced
 
@@ -555,3 +556,61 @@ async def kitchen_recipe(slug: str):
         "instructions": [x for x in steps if x],
         "image": f"{_mealie_url()}/api/media/recipes/{rid}/images/min-original.webp" if rid else None,
     }
+
+
+def _integration(iid: str) -> dict | None:
+    from . import integrations
+    return integrations.integration(iid)
+
+
+def _v_grocy(args):
+    if not args.get("product_id"):
+        return "kitchen.grocy_adjust needs product_id"
+    if args.get("op") not in ("add", "consume"):
+        return "op must be add or consume"
+    if not args.get("amount"):
+        return "kitchen.grocy_adjust needs amount"
+    return None
+
+
+def _p_grocy(args):
+    return f"Grocy {args.get('op')} {args.get('amount')} of product {args.get('product_id')}"
+
+
+def _v_mealie_import(args):
+    if not args.get("url"):
+        return "kitchen.mealie_import needs url"
+    return None
+
+
+def _p_mealie_import(args):
+    return f"Import the recipe at {args.get('url')} into Mealie (structured)"
+
+
+async def _x_grocy(args):
+    grocy = _integration("grocy")
+    if not grocy:
+        return {"ok": False, "error": "grocy integration not enabled"}
+    path = f"/api/stock/products/{args['product_id']}/{args['op']}"
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(
+            f"{grocy['url']}{path}", headers={"GROCY-API-KEY": grocy['api_key']},
+            json={"amount": args["amount"]}, timeout=aiohttp.ClientTimeout(total=15),
+        ) as r:
+            return {"ok": r.status < 300, "status": r.status}
+
+
+async def _x_mealie_import(args):
+    return await import_recipe(args["url"])
+
+
+action_registry.register_action(
+    "kitchen.grocy_adjust", validate=_v_grocy, preview=_p_grocy, risk="low", reversible=True,
+    autonomous=False, order=70, executor=_x_grocy,
+    summary="adjust kitchen stock (op is add or consume)",
+    args='{"product_id": N, "op": "add|consume", "amount": N}')
+action_registry.register_action(
+    "kitchen.mealie_import", validate=_v_mealie_import, preview=_p_mealie_import, risk="low",
+    reversible=True, autonomous=True, order=80, executor=_x_mealie_import,
+    summary="import a recipe by URL",
+    args='{"url": "..."}')

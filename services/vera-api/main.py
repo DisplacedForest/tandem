@@ -8,8 +8,11 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, images, inference_admission, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, tasks, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, inference_admission, integrations, kitchen, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, research, scheduler, tasks, vein_builder, vein_engine
 from routers import native_generation, task_document, task_research
+from routers import builtin_capabilities
+
+builtin_capabilities.load()
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -71,19 +74,13 @@ app = FastAPI(title="vera-api", version=VERSION, lifespan=lifespan)
 
 CAPABILITIES = {
     "household_gateway": household_gateway.router,
-    "search": websearch.router,
-    "images": images.router,
     "feedback": feedback.router,
     "pulse": pulse.router,
     "pulse_media": pulse_media.router,
     "pulse_veins": pulse_veins.router,
     "vein_builder": vein_builder.router,
-    "weather": weather.router,
     "kitchen": kitchen.router,
-    "knowledge": knowledge.router,
-    "knowledge_groom": knowledge_groom.router,
     "knowledge_restore": knowledge_restore.router,
-    "user_profile": user_profile.router,
     "household": household.router,
     "conversation_ingest": conversation_ingest.router,
     "documents": documents.router,
@@ -96,11 +93,9 @@ CAPABILITIES = {
     "actions": actions.router,
     "agentic": agentic.router,
     "overseerr": overseerr.router,
-    "reminders": reminders.router,
     "media_curation": media_curation.router,
     "research": research.router,
     "health": health.router,
-    "updates": updates.router,
     "scheduler": scheduler.router,
     "tasks": tasks.router,
     "native_generation": native_generation.router,

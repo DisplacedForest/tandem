@@ -9,6 +9,7 @@ import pytest
 from routers import action_store as astore
 from routers import actions
 from routers import pulse
+from routers import updates
 from routers import vein_engine
 
 

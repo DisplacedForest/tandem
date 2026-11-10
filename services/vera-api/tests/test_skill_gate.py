@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from routers import authoring, actions, action_store
+from routers import authoring, actions, action_store, kitchen
 from routers import action_spec as sp
 
 

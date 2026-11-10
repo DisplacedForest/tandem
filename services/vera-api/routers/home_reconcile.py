@@ -23,7 +23,10 @@ from fastapi import APIRouter
 
 from . import home_reconcile_store as store
 from . import knowledge_store as ks
+from . import scheduler
 from .actions import ProposeCard, propose_card
+from .ha_names import display_name, fetch_names
+from .home import _gate_home_modeling
 from .home_reconcile_match import classify_index, find_successor, match_entities
 from .pulse import HOUSEHOLD, _inject
 
@@ -60,11 +63,17 @@ NON_DURABLE_TYPES = {"live_source"}
 
 
 async def _fetch_states() -> list:
+    return (await _fetch_states_and_names())[0]
+
+
+async def _fetch_states_and_names() -> tuple:
     url, token = _ha()
     async with aiohttp.ClientSession() as s:
         async with s.get(f"{url}/api/states", headers={"Authorization": f"Bearer {token}"},
                          timeout=aiohttp.ClientTimeout(total=30)) as r:
-            return await r.json()
+            states = await r.json()
+        names = await fetch_names(s, url, token)
+    return states, names
 
 
 def _map_entity_refs(index: list) -> set:
@@ -100,7 +109,7 @@ async def run_reconcile(dry_run: bool = False) -> dict:
     if not _ha()[1]:
         return {"ok": False, "error": "home_assistant integration not enabled"}
 
-    states = await _fetch_states()
+    states, names = await _fetch_states_and_names()
     current_meta = {}
     for e in states:
         eid = e.get("entity_id")
@@ -108,7 +117,7 @@ async def run_reconcile(dry_run: bool = False) -> dict:
             continue
         current_meta[eid] = {
             "domain": eid.split(".")[0], "integration": None,
-            "friendly_name": (e.get("attributes") or {}).get("friendly_name") or eid,
+            "friendly_name": display_name(e, names) or eid,
         }
 
     index = _load_index()
@@ -149,7 +158,7 @@ async def run_reconcile(dry_run: bool = False) -> dict:
         m = a.get("match") or {}
         kind = a.get("kind", "continuous")
         expected = int(a.get("expected_min", 1) or 0)
-        resolved = match_entities(states, m)
+        resolved = match_entities(states, m, names)
         n = len(resolved)
         succ = find_successor(m["value"], states) if (n == 0 and m.get("by") == "entity") else None
         status = classify_index(n, kind, expected, can_succeed=succ is not None)
@@ -304,3 +313,11 @@ async def run(dry_run: bool = False):
 @router.get("/home/reconcile", tags=["home"])
 async def get_state():
     return {"last_run": store.last_run(), "open_drift": store.list_open()}
+
+
+async def _job_home_reconcile():
+    return await run()
+
+
+scheduler.register_job("home_reconcile", "Home map reconcile", "0 3 * * *", _job_home_reconcile,
+                       order=30, gate=_gate_home_modeling)

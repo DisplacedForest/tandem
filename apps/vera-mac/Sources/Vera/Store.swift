@@ -92,6 +92,7 @@ final class ChatStore: ObservableObject {
     var generatesConversationTitles = false
     var capturesPreferences = false
     @Published var preferencesRevision = 0
+    @Published var preferenceMarkers: [String: [UUID: TranscriptMarker]] = [:]
     var preferenceClassifier: (@Sendable (String) async -> String?)?
     var preferenceClassifierTimeout: Duration = .seconds(30)
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
@@ -736,6 +737,7 @@ final class ChatStore: ObservableObject {
         do {
             let msgs = try repository.messages(conversationID: id)
             conversations[idx].messages = msgs
+            refreshPreferenceMarkers(conversationID: id)
         } catch {
             chatConfigurationError = "Messages couldn't load: \(error.localizedDescription)"
         }

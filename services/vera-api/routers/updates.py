@@ -24,12 +24,10 @@ import os
 import uuid
 
 import aiohttp
-from fastapi import APIRouter
 
+from . import action_registry
 from . import vein_engine
 from . import pulse_store as store
-
-router = APIRouter()
 
 def _ha() -> tuple[str, str]:
     """(url, token) from the integration registry at call time; empty when disabled."""
@@ -286,3 +284,67 @@ async def _block_stack_updates(items, params, ctx):
 
 vein_engine.register("stack_updates", _block_stack_updates, monitor=True,
                      describe="emits one standing item summarizing pending component updates from the connected integrations, with per row apply actions")
+
+
+def _integration(iid: str) -> dict | None:
+    from . import integrations
+    return integrations.integration(iid)
+
+
+def _v_docker_update(args):
+    if not args.get("name") and not args.get("image"):
+        return "docker.update needs name or image"
+    return None
+
+
+def _p_docker_update(args):
+    who = args.get("name") or args.get("image")
+    detail = f" ({args['image']})" if args.get("name") and args.get("image") else ""
+    return f"Update container {who}{detail}. Pull the new image and recreate it"
+
+
+def _norm_image(ref: str) -> str:
+    ref = (ref or "").split("@", 1)[0]
+    colon, slash = ref.rfind(":"), ref.rfind("/")
+    return ref[:colon] if colon > slash else ref
+
+
+async def _x_docker_update(args):
+    unraid = _integration("unraid")
+    if not unraid:
+        return {"ok": False, "error": "unraid integration not enabled"}
+    api_url = unraid["url"]
+    want_name = (args.get("name") or "").lstrip("/")
+    want_image = _norm_image(args.get("image") or "")
+    hdr = {"x-api-key": unraid["api_key"], "Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(api_url, headers=hdr, timeout=aiohttp.ClientTimeout(total=20),
+                             json={"query": "{ docker { containers { id names image isUpdateAvailable } } }"}) as r:
+            data = await r.json()
+        conts = (((data or {}).get("data") or {}).get("docker") or {}).get("containers") or []
+        match = None
+        for c in conts:
+            names = [n.lstrip("/") for n in (c.get("names") or [])]
+            if (want_name and want_name in names) or (want_image and _norm_image(c.get("image")) == want_image):
+                match = c
+                break
+        if not match:
+            return {"ok": False, "error": f"container not found: {want_name or want_image}"}
+        mut = {"query": "mutation($id: PrefixedID!){ docker { updateContainer(id:$id){ id names state isUpdateAvailable } } }",
+               "variables": {"id": match["id"]}}
+        async with sess.post(api_url, headers=hdr, timeout=aiohttp.ClientTimeout(total=300), json=mut) as r:
+            res = await r.json()
+    if res.get("errors"):
+        return {"ok": False, "error": str(res["errors"])[:200]}
+    updated = (((res.get("data") or {}).get("docker") or {}).get("updateContainer") or {})
+    if updated.get("isUpdateAvailable"):
+        return {"ok": False, "container": want_name or want_image,
+                "error": "Unraid could not update this container (not GUI/template-managed)"}
+    return {"ok": True, "container": want_name or want_image, "state": updated.get("state")}
+
+
+action_registry.register_action(
+    "docker.update", validate=_v_docker_update, preview=_p_docker_update, risk="high",
+    reversible=False, autonomous=False, order=110, executor=_x_docker_update,
+    summary="update one container image (bounces the container)",
+    args='{"name": "...", "image": "..."}')

@@ -2,23 +2,25 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "routers"))
-import action_spec as sp  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from routers import action_spec as sp  # noqa: E402
+from routers import home as ha
+from routers import kitchen, knowledge_actions, updates
 
 
 def test_ha_allowlist():
-    assert sp.ha_allowed("climate", "set_temperature")
-    assert sp.ha_allowed("light", "turn_on")
-    assert sp.ha_allowed("switch", "toggle")
-    assert not sp.ha_allowed("lock", "unlock")          # safety: no lock control
-    assert not sp.ha_allowed("climate", "set_fan_mode")  # only the allowlisted climate service
+    assert ha.ha_allowed("climate", "set_temperature")
+    assert ha.ha_allowed("light", "turn_on")
+    assert ha.ha_allowed("switch", "toggle")
+    assert not ha.ha_allowed("lock", "unlock")          # safety: no lock control
+    assert not ha.ha_allowed("climate", "set_fan_mode")  # only the allowlisted climate service
 
 
 def test_media_player_allowed():
     # the whole media_player domain is in the default allowlist — playback control is benign
     for service in ("media_play", "media_pause", "media_next_track", "media_previous_track",
                     "volume_set", "select_source", "play_media"):
-        assert sp.ha_allowed("media_player", service)
+        assert ha.ha_allowed("media_player", service)
     assert sp.SPEC["ha.service"]["validate"](
         {"domain": "media_player", "service": "media_pause",
          "data": {"entity_id": "media_player.living_room"}}) is None
@@ -47,7 +49,7 @@ def test_grocy_validate():
 
 def test_update_install_allowed():
     # Applying an HA update.* entity is the HA-domain apply path for stack updates.
-    assert sp.ha_allowed("update", "install")
+    assert ha.ha_allowed("update", "install")
     assert sp.SPEC["ha.service"]["validate"](
         {"domain": "update", "service": "install", "data": {"entity_id": "update.bubble_card_update"}}) is None
 

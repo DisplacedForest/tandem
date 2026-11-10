@@ -19,6 +19,7 @@ from routers import scheduler_store  # noqa: E402
 from routers import workflow_projection  # noqa: E402
 from routers import workflow_registry  # noqa: E402
 from routers import workflow_store  # noqa: E402
+from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
 
 @pytest.fixture(autouse=True)

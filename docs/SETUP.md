@@ -10,7 +10,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
-| Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
+| Satellite services (image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
@@ -240,10 +240,10 @@ One caveat while this is the whole of it: the header is trusted. The roster sepa
 
 ### Reference corpus sync and backups
 
-Two host scripts cover the standing ops work, and each documents its own environment in its header:
+Two host scripts cover the standing ops work:
 
 - `scripts/rag-sync.py` reconciles a folder tree of reference documents into vera-api document collections: it walks `REFERENCE_ROOT/<domain>/`, uploads new and changed files, removes deleted ones, and is safe to re-run. It needs the vera-api base URL, passed as `--vera-api-base` or read from `VERA_API_BASE`, and has no default. `scripts/vera-rag-sync.sh` is the cron wrapper: it exports `REFERENCE_ROOT`, and when `VERA_API_BASE` is not already in the environment it reads it from the deployed vera-api env file (`VERA_API_ENV_FILE`).
-- `scripts/vera-backup.sh` is a reference nightly backup. It captures vera-api's `/data` stores out of the running container as two artifacts: `vera-data.tgz` with the volume's non-database tree, and `vera-data-dbs.tgz` with consistent SQLite snapshots taken through the backup API and integrity-checked before archiving. Restore by extracting the first into `/data`, then the second over it. The script archives the container's config alongside them and writes checksums and a manifest.
+- `scripts/vera-backup.sh` is a reference nightly backup. It captures vera-api's `/data` stores out of the running container as two artifacts: `vera-data.tgz` with the volume's non-database tree, and `vera-data-dbs.tgz` with consistent SQLite snapshots taken through the backup API and integrity-checked before archiving. Restore by extracting the first into `/data`, then the second over it. The script archives the container's config alongside them and writes checksums and a manifest. It's written for an Unraid host, run as root from cron, and keeps the newest 14 snapshots. Set `VERA_BACKUP_DEST` for the snapshot folder (default `/mnt/user/backups/vera`), `VERA_APPDATA_ROOT` if container appdata lives somewhere other than `/mnt/user/appdata`, and `VERA_CONTAINER` if the container isn't named `vera-api`.
 
 ## 3. The Mac app
 
@@ -423,7 +423,7 @@ Not included: sandboxes or containers, network isolation, a terminal view, and c
 
 Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
 
-You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets Vera acknowledge it. If the model can't answer, a plain instruction like "never use em dashes" or "don't say 'X'" is still saved. If the save fails, Vera tells you it wasn't saved. Only messages you type count: picking one of Vera's suggested options or asking for a revision never sets or removes a preference. You can keep up to 40 preferences of up to 300 characters each. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy.
+You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets Vera acknowledge it. If the model can't answer, a plain instruction like "never use em dashes" or "don't say 'X'" is still saved. If the save fails, Vera tells you it wasn't saved. Only messages you type count: picking one of Vera's suggested options or asking for a revision never sets or removes a preference. You can keep up to 40 preferences of up to 300 characters each. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy. When a preference is saved or removed from a conversation, a small marker appears under that message so you can see where it happened.
 
 ### Migrating Open WebUI knowledge collections
 
@@ -573,7 +573,6 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Image gen | The Mac app talks to ComfyUI directly (see [Image generation](#image-generation)); the server stack uses the OpenAI Images API `POST {base}/v1/images/generations` | ComfyUI with the Qwen Image 2.1 weights for the app; `services/vera-image` serves the OpenAI contract for vera-api, `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
-| Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
 Reminders reaches EventKit, Apple's only supported door into Reminders, which must run
@@ -584,18 +583,17 @@ to everyone.
 **If you run the Vera Mac app, native chat does not need this service.** Open Settings,
 Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
 OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
-Reminders switch in Settings, Plugins controls the optional vera-api bridge wiring and
-does not expose the native chat schema. This path does not need vera-api and runs only for
-an explicit chat ask.
+Reminders entry in Settings, Plugins points vera-api at the standalone bridge below and
+takes its URL. It does not expose the native chat schema. This path does not need vera-api
+and runs only for an explicit chat ask.
 
 `services/vera-reminders` remains the headless reference for deployments with no Mac
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
 prompt, then enable the Apple Reminders integration with the bridge URL.
 
-Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
-companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh`:
-runtime copy-out, both venvs, launchd agents), and the image/vision services ship launchd
-templates installed via `scripts/install-launchd.sh`.
+Every satellite env var (models, ports, paths) is documented in `.env.example`'s
+companion-services section. The image and vision services ship launchd templates installed
+via `scripts/install-launchd.sh`.
 
 ## 6. The scheduler
 
@@ -608,13 +606,15 @@ vera-api runs all recurring work itself, with no external cron. Defaults:
 | Pulse briefing | daily 5:00 | Nothing (core, needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Knowledge grooming | daily 4:00 | `KNOWLEDGE_GROOM_ENABLED` |
+| Ranking weight fit from feedback | Sundays 4:30 | Nothing |
+| Conversation extraction into the Profile Graph | daily 4:45 | Nothing |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
 Pipeline veins register their jobs dynamically (one per definition, appearing and disappearing with the definition file), and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).
 
 With home-modeling consent on, the capture stream also tees every numeric `sensor.*` reading into a dedicated series store (`SERIES_DB_PATH`, default `/data/series.db`) retained for `SERIES_RETAIN_DAYS` (default 365). This is the substrate household forecasting reads. Inspect it at `GET /home/series` (entities + counts) and `GET /home/series/{entity_id}` (raw points); on first init it backfills from the existing event log. With capture off it stays empty and both endpoints return empty cleanly.
 
-A gated job never fires while its gate is closed: on a fresh install, nothing is monitored until its vein is enabled or its feature is consented to. The app's **Workflows** view, in the sidebar's **More** menu, renders all of this as a canvas: every flow as a node connected to the surface it feeds (the Pulse feed, the veins, memory, actions), with live status and running-state. The topology comes from `GET /agentic/graph`, a server-declared manifest, so a new capability appears on the canvas without an app update. Schedules can be pinned with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
+A gated job never fires while its gate is closed: on a fresh install, no vein runs until it is enabled and the home modeling jobs do nothing until that feature is consented to. The ungated jobs in the table run on their schedule from the first start. The app's **Workflows** view, in the sidebar's **More** menu, renders all of this as a canvas: every flow as a node connected to the surface it feeds (the Pulse feed, the veins, memory, actions), with live status and running-state. The topology comes from `GET /agentic/graph`, a server-declared manifest, so a new capability appears on the canvas without an app update. Schedules can be pinned with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
 
 Clicking any flow opens it in the workflow editor, and the sidebar switches to the node library served by the API's workflow catalog. Every flow is served as a workflow definition with a Schedule trigger at the head reflecting its real schedule: scheduled code-backed flows project their steps, veins project one step per pipeline block, and Pulse serves its stored graph. In an editable flow like Pulse, drag nodes into the main workflow canvas (dropping one onto a wire splices it into the path), drag from a node's output port to another's input port to connect them, hover a wire for an insert shortcut, and pan or zoom the canvas to work with larger graphs. Select a node to configure it through fields rendered from its served schema, and use an explicit draft promotion when the graph is ready. Code-backed flows carry a locked profile: the graph reads and inspects like any other, structural editing is absent and rejected server-side, and the settings each node's schema declares (starting with the trigger's schedule) still round-trip through the same draft and promote path. Promotion applies a changed schedule to the built-in scheduler, which stays the thing that actually fires runs. The server validates every save and promotion and its message appears in the editor when a graph is rejected. Editing a draft never changes a published workflow.
 

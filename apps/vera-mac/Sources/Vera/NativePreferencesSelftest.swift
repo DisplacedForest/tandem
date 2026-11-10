@@ -165,6 +165,7 @@ enum NativePreferencesSelftest {
         try await storeAdjacencyAndStops(require)
         try await storeRevalidation(require)
         try await storeStops(require)
+        try await storeMarkersAtStartup(require)
         try await revertGuards(require)
         try await literalBoundary(require)
         var statements: [String] = []
@@ -668,6 +669,10 @@ enum NativePreferencesSelftest {
         }
         let saved = transport.systemPrompts[0]
         try require(store.preferencesRevision == startRevision + 1, "The store publishes a change after capture saves")
+        guard let savedMessage = store.selected?.messages.first(where: { $0.role == .user }), let markedConversation = store.selectedID else {
+            throw NativeTaskFixture.Failure.assertion("The preference message exists")
+        }
+        try require(store.preferenceMarker(for: savedMessage, in: markedConversation) == .preferenceSaved, "The message that saved a preference shows the saved marker")
         guard let firstReply = store.selected?.messages.last?.id else { throw NativeTaskFixture.Failure.assertion("A reply exists") }
         store.submitAsk(messageID: firstReply, selections: ["Never mind"], other: "")
         try await NativeSessionFixture.eventually("The ask answer completes") {
@@ -704,6 +709,10 @@ enum NativePreferencesSelftest {
             store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 2
         }
         try require(transport.classifierRequests == 1, "An ordinary message never classifies")
+        guard let ordinaryMessage = store.selected?.messages.last(where: { $0.role == .user }) else {
+            throw NativeTaskFixture.Failure.assertion("The ordinary message exists")
+        }
+        try require(store.preferenceMarker(for: ordinaryMessage, in: markedConversation) == nil, "A message that saves nothing shows no marker")
         try require(transport.systemPrompts[1].contains("- Never use em dashes.") && !transport.systemPrompts[1].contains("just set a preference"),
                     "Later turns follow the preference without the capture note")
 
@@ -717,6 +726,11 @@ enum NativePreferencesSelftest {
             store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 4
         }
         try require(store.preferencesRevision == startRevision + 3, "The store publishes a change after undo removes")
+        guard let undoMessage = store.selected?.messages.last(where: { $0.role == .user }) else {
+            throw NativeTaskFixture.Failure.assertion("The undo message exists")
+        }
+        try require(store.preferenceMarker(for: undoMessage, in: markedConversation) == .preferenceRemoved && store.preferenceMarker(for: savedMessage, in: markedConversation) == .preferenceSaved,
+                    "Undo shows the removed marker and the earlier saved marker stays")
         try require(transport.systemPrompts[3].contains("was removed at the person's request") && !transport.systemPrompts[3].contains("- Never use em dashes."),
                     "Undo removes the preference and the turn confirms it")
         try require(try NativePreferenceStore(database: repository.database).active().isEmpty && transport.classifierRequests == 2,
@@ -731,6 +745,24 @@ enum NativePreferencesSelftest {
             off.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 5
         }
         try require(transport.classifierRequests == 2, "Capture off never classifies")
+
+        store.newConversation()
+        try require(store.sendText("What should I cook tonight?", fromComposer: true), "A message sends in a second conversation")
+        try await NativeSessionFixture.eventually("The second conversation reply completes") {
+            store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 6
+        }
+        try require(store.selectedID != markedConversation && (store.selected?.messages ?? []).allSatisfy { store.preferenceMarker(for: $0, in: store.selectedID ?? "") == nil }
+                    && store.preferenceMarker(for: savedMessage, in: markedConversation) == .preferenceSaved,
+                    "A second conversation shows no marker and the first keeps its markers")
+
+        let relaunched = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
+                                   artifactPersistenceEnabled: false)
+        defer { relaunched.conversationTurnLoop?.cancel() }
+        await relaunched.connect()
+        relaunched.select(markedConversation)
+        try require(relaunched.preferenceMarker(for: savedMessage, in: markedConversation) == .preferenceSaved && relaunched.preferenceMarker(for: undoMessage, in: markedConversation) == .preferenceRemoved
+                    && relaunched.preferenceMarker(for: ordinaryMessage, in: markedConversation) == nil,
+                    "Markers come back after a relaunch when the conversation loads")
     }
 
     private static func turnStore(_ transport: NativePreferenceStubTransport, _ repository: LocalChatRepository) -> ChatStore {
@@ -810,6 +842,10 @@ enum NativePreferencesSelftest {
                     "Stopping after the save but before the answer removes the new preference")
         let rows = try await repository.database.read { db in try String.fetchAll(db, sql: "SELECT outcome FROM native_preference_captures") }
         try require(rows == ["none"], "The stopped capture is marked so a replay never redoes it")
+        guard let stoppedMessage = store.selected?.messages.last(where: { $0.role == .user }) else {
+            throw NativeTaskFixture.Failure.assertion("The stopped message exists")
+        }
+        try require(store.preferenceMarker(for: stoppedMessage, in: store.selectedID ?? "") == nil, "A stopped capture shows no marker")
 
         try await settle(store, "Please never use em dashes")
         try require(try preferences.active().map(\.statement) == ["Never use em dashes."], "A turn that completes keeps its preference")
@@ -824,6 +860,10 @@ enum NativePreferencesSelftest {
         try await settle(store, "forget that")
         try require(store.preferencesRevision == beforeUndo + 2 && preferences.active().map(\.statement) == ["Never use em dashes."],
                     "Stopping an undo restores the removed preference")
+        guard let stoppedUndo = store.selected?.messages.last(where: { $0.role == .user }) else {
+            throw NativeTaskFixture.Failure.assertion("The stopped undo exists")
+        }
+        try require(store.preferenceMarker(for: stoppedUndo, in: store.selectedID ?? "") == nil, "A stopped undo shows no marker")
 
         let shownRepository = try tracked()
         let shownTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
@@ -839,6 +879,45 @@ enum NativePreferencesSelftest {
         await gate.release()
         try require(try NativePreferenceStore(database: shownRepository.database).active().map(\.statement) == ["Never use em dashes."],
                     "Stopping after the acknowledgment is visible keeps the preference, and a second stop is harmless")
+    }
+
+    private static func storeMarkersAtStartup(_ require: (Bool, String) throws -> Void) async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vera-preference-markers-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("chat.sqlite")
+        let artifacts = folder.appendingPathComponent("artifacts")
+        let projects = folder.appendingPathComponent("projects")
+        let repository = try LocalChatRepository(url: file, artifactDirectory: artifacts, projectsDirectory: projects)
+        let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
+        let store = turnStore(transport, repository)
+        try await send(store, "Never respond with em dashes", settled: 1, transport)
+        try await send(store, "forget that", settled: 2, transport)
+        transport.reply = #"{"preference": null}"#
+        try await send(store, "I never thought about it", settled: 3, transport)
+        store.conversationTurnLoop?.cancel()
+        let users = (store.selected?.messages ?? []).filter { $0.role == .user }
+        guard let conversation = store.selectedID, users.count == 3 else { throw NativeTaskFixture.Failure.assertion("Three messages were sent") }
+        try require(transport.classifierRequests == 2 && store.preferenceMarker(for: users[2], in: conversation) == nil,
+                    "A message the classifier rejected shows no marker")
+
+        let reopened = try LocalChatRepository(url: file, artifactDirectory: artifacts, projectsDirectory: projects)
+        let relaunched = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: reopened,
+                                   artifactPersistenceEnabled: false)
+        defer { relaunched.conversationTurnLoop?.cancel() }
+        await relaunched.connect()
+        try await NativeSessionFixture.eventually("Startup fills the earlier conversation before it is opened") {
+            relaunched.conversations.first { $0.id == conversation }?.messages.isEmpty == false
+        }
+        try require(relaunched.selectedID != conversation && relaunched.preferenceMarker(for: users[0], in: conversation) == .preferenceSaved
+                    && relaunched.preferenceMarker(for: users[1], in: conversation) == .preferenceRemoved
+                    && relaunched.preferenceMarker(for: users[2], in: conversation) == nil,
+                    "Markers are ready for a conversation that startup filled before it was opened")
+        relaunched.select(conversation)
+        relaunched.refreshPreferenceMarkers(conversationID: conversation)
+        try require(relaunched.preferenceMarker(for: users[0], in: conversation) == .preferenceSaved
+                    && relaunched.preferenceMarker(for: users[1], in: conversation) == .preferenceRemoved
+                    && relaunched.preferenceMarker(for: users[2], in: conversation) == nil,
+                    "Opening a conversation that startup filled shows its markers")
     }
 
     private static func revertGuards(_ require: (Bool, String) throws -> Void) async throws {

@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from routers import integrations as ig  # noqa: E402
 from routers import integrations_store as ist  # noqa: E402
+from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
 _ENV_VARS = ["GROCY_URL", "GROCY_API_KEY", "MEALIE_URL", "MEALIE_API_KEY",
              "HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN", "OVERSEERR_URL",
