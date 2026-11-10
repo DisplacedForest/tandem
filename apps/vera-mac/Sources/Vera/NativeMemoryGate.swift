@@ -386,8 +386,8 @@ enum NativeMemoryGate {
     static let diagnosticLimit = 200
     static let contextCeiling = 2_000
     static let bank = "household"
-    static let contextStart = "USER-APPROVED MEMORY CONTEXT"
-    static let contextEnd = "END USER-APPROVED MEMORY CONTEXT"
+    static let contextStart = "What the user asked you to remember"
+    static let contextEnd = "End of what the user asked you to remember"
     static let reportFieldLimit = 96
     static let reportFieldCharacters = [("a", "z"), ("A", "Z"), ("0", "9")].reduce(CharacterSet(charactersIn: ".-_:/")) { set, bounds in
         set.union(CharacterSet(charactersIn: Unicode.Scalar(bounds.0)...Unicode.Scalar(bounds.1)))

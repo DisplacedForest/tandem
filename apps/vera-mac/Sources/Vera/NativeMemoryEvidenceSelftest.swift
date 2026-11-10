@@ -104,7 +104,7 @@ enum NativeMemoryEvidenceSelftest {
         off.sendText("What is the current livestock?")
         try await waitForTurn(off)
         try require(!noMemoryTransport.histories.isEmpty, "memory-off fixture never sent its request")
-        try require(!(noMemoryTransport.histories.last?.first?.content ?? "").contains("USER-APPROVED MEMORY CONTEXT"), "memory off still retrieved")
+        try require(!(noMemoryTransport.histories.last?.first?.content ?? "").contains("What the user asked you to remember"), "memory off still retrieved")
         try repository.deleteConversation("chat-a")
         try require(try repository.memoryEvidence(stock.id).last?.sourceText == nil, "deleted original chat survived in archive")
         var excluded = try repository.listConversations().first { $0.id == "chat-b" }!
@@ -256,7 +256,7 @@ enum NativeMemoryEvidenceSelftest {
             await gate.release()
             try await waitForTurn(store)
             try require(!transport.histories.isEmpty, "held lookup never resumed")
-            try require(!(transport.histories.last?.first?.content ?? "").contains("USER-APPROVED MEMORY CONTEXT"), "memory survived held lookup after " + change)
+            try require(!(transport.histories.last?.first?.content ?? "").contains("What the user asked you to remember"), "memory survived held lookup after " + change)
         }
         print("  memory adversarial: PASS (source edit/delete/privacy/exclusion, stale embedding/editor, revision citations, mixed sources, held lookup remove/exclude/off)")
     }

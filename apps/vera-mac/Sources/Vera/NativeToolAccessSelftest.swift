@@ -35,7 +35,8 @@ extension SelfTest {
     static func runToolSystemAccess() async throws {
         let require = NativeTaskFixture.require
         let reminderNames = Set(NativeRemindersTools.definitions(service: NativeToolAccessFixtureService(.authorized)).map(\.name))
-        let privateWords = reminderNames.union(["apple-reminders", "APP POLICY", "TOOLS", "NOT AVAILABLE", "isAvailable"])
+        let privateWords = reminderNames.union(["apple-reminders", "APP POLICY", "TOOLS", "NOT AVAILABLE", "isAvailable", NativeContextAssembler.policyHeading,
+            NativeContextAssembler.toolsHeading, NativeContextAssembler.unavailableHeading, NativeContextAssembler.sessionHeading])
 
         func store(_ service: NativeToolAccessFixtureService, enabled: Set<String> = [NativeRemindersTools.toolID, "contacts"],
                    contacts: NativeSystemAccess = .granted, repository: LocalChatRepository? = nil,
