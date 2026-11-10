@@ -210,21 +210,16 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
 }
 
 struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
-    static let maximumPrefixes = 64
-
     var choices: [NativeActionClass: NativeRuleChoice] = [:]
-    var approvedCommandPrefixes: [String] = []
 
-    var isEmpty: Bool { choices.isEmpty && approvedCommandPrefixes.isEmpty }
+    var isEmpty: Bool { choices.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
         case choices
-        case approvedCommandPrefixes = "approved_command_prefixes"
     }
 
-    init(choices: [NativeActionClass: NativeRuleChoice] = [:], approvedCommandPrefixes: [String] = []) {
+    init(choices: [NativeActionClass: NativeRuleChoice] = [:]) {
         self.choices = choices
-        self.approvedCommandPrefixes = approvedCommandPrefixes
     }
 
     init(from decoder: any Decoder) throws {
@@ -236,14 +231,11 @@ struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
             parsed[action] = choice
         }
         choices = parsed
-        let prefixes = (try? container.decodeIfPresent([String].self, forKey: .approvedCommandPrefixes)) ?? []
-        approvedCommandPrefixes = Array(prefixes.filter { !$0.isEmpty }.prefix(Self.maximumPrefixes))
     }
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) }), forKey: .choices)
-        try container.encode(approvedCommandPrefixes, forKey: .approvedCommandPrefixes)
     }
 
     static func encode(_ rules: NativeConversationRules) -> String? {
@@ -265,23 +257,6 @@ struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
         } else {
             choices[action] = choice
         }
-    }
-
-    mutating func approve(prefix: String) {
-        let trimmed = NativeCommandPrefix.normalize(prefix)
-        guard !trimmed.isEmpty, !approvedCommandPrefixes.contains(trimmed) else { return }
-        approvedCommandPrefixes.append(trimmed)
-        if approvedCommandPrefixes.count > Self.maximumPrefixes { approvedCommandPrefixes.removeFirst() }
-    }
-
-    mutating func revoke(prefix: String) {
-        approvedCommandPrefixes.removeAll { $0 == prefix }
-    }
-
-    func isApproved(command: String) -> Bool {
-        let own = NativeCommandPrefix.prefix(of: command)
-        guard !own.isEmpty, NativeCommandPrefix.isSimple(command) else { return false }
-        return approvedCommandPrefixes.contains { NativeCommandPrefix.matches(command: command, prefix: $0) }
     }
 }
 
@@ -1005,13 +980,8 @@ struct NativeRuleResolver: Sendable {
     }
 
     func decide(forCommand command: String, honoringLimitedUse: Bool = false) -> (decision: NativeRuleDecision, authorizedBy: [String]) {
-        let full = query(for: .commands, command: command)
-        let resolved = resolve(full, honoringLimitedUse: honoringLimitedUse)
-        if resolved.resolution != nil { return (resolved.decision, resolved.authorizedBy) }
-        let base = resolved.decision
-        guard base == .ask, !failed, conversation.isApproved(command: command),
-              !NativeRuleMatcher.restrictsUntargeted(records, query: full, context: context, at: now) else { return (base, []) }
-        return (.act(.conversationPrefix), [])
+        let resolved = resolve(query(for: .commands, command: command), honoringLimitedUse: honoringLimitedUse)
+        return (resolved.decision, resolved.authorizedBy)
     }
 
     func decision(for action: NativeActionClass) -> NativeRuleDecision {

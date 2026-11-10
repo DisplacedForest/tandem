@@ -102,7 +102,7 @@ struct ConversationRulesButton: View {
     @EnvironmentObject private var store: ChatStore
     @State private var open = false
 
-    private var tightened: Bool { !store.selectedConversationRules.isEmpty }
+    private var tightened: Bool { !store.selectedConversationRules.isEmpty || !store.approvedCommandRecords(for: store.selectedID).isEmpty }
 
     var body: some View {
         Button {
@@ -130,21 +130,25 @@ struct ConversationRulesEditor: View {
     var embedded = false
     var draft: Binding<[NativeActionClass: NativeRuleChoice]>? = nil
     var revokedPrefixes: Binding<Set<String>>? = nil
+    @State private var revision = 0
 
     private var rules: NativeConversationRules {
         conversationID.map { store.conversationRules(for: $0) } ?? store.selectedConversationRules
     }
 
-    private var shownPrefixes: [String] {
-        guard let revokedPrefixes else { return rules.approvedCommandPrefixes }
-        return rules.approvedCommandPrefixes.filter { !revokedPrefixes.wrappedValue.contains($0) }
+    private var shownPrefixes: [NativeRuleRecord] {
+        _ = revision
+        let approved = store.approvedCommandRecords(for: conversationID ?? store.selectedID)
+        guard let revokedPrefixes else { return approved }
+        return approved.filter { !revokedPrefixes.wrappedValue.contains($0.id) }
     }
 
-    private func revoke(_ prefix: String) {
+    private func revoke(_ record: NativeRuleRecord) {
         if let revokedPrefixes {
-            revokedPrefixes.wrappedValue.insert(prefix)
+            revokedPrefixes.wrappedValue.insert(record.id)
         } else {
-            store.revokeCommandPrefix(prefix, conversationID: conversationID)
+            store.revokeRuleRecord(id: record.id)
+            revision += 1
         }
     }
 
@@ -190,12 +194,13 @@ struct ConversationRulesEditor: View {
             if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 Text("Commands approved for this chat").font(.system(size: 12, weight: .medium))
-                ForEach(shownPrefixes, id: \.self) { prefix in
+                ForEach(shownPrefixes, id: \.id) { record in
+                    let prefix = record.target?.value ?? ""
                     HStack(spacing: 8) {
                         Text(prefix).font(.system(size: 11, design: .monospaced))
                         Spacer(minLength: 8)
                         Button {
-                            revoke(prefix)
+                            revoke(record)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                         }

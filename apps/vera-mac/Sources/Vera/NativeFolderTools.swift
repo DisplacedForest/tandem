@@ -51,18 +51,18 @@ enum NativeFolderTools {
             if NativeRuleAdmission.admitted { return {} }
             if let liveTargets {
                 return try NativeRuleResolver.gate(liveTargets(action, declared), fallback: nil, planned: planned, action: action,
-                                                   approved: planned.requiresConfirmation)
+                                                   approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
-            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             return {}
         }
         let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> () throws -> Void = { action, arguments, keys, planned in
             if NativeRuleAdmission.admitted { return {} }
             if let liveTargets {
                 return try NativeRuleResolver.gate(liveTargets(action, subjects(arguments, keys)), fallback: nil, planned: planned, action: action,
-                                                   approved: planned.requiresConfirmation)
+                                                   approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
-            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             return {}
         }
         let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> () throws -> Void = { arguments, keys in
@@ -205,6 +205,13 @@ enum NativeFolderTools {
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
             targeted.ruleSubjects = declared(paths)
+            if let liveTargets, let action = definition.action {
+                let fallback = definition.confirmation == .required
+                let subjectsFor = declared(paths)
+                targeted.confirmationFor = { arguments in
+                    liveTargets(action, subjectsFor(arguments))?.decision.requiresConfirmation ?? fallback
+                }
+            }
             return targeted
         }
     }

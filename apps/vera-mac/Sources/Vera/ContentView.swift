@@ -688,7 +688,7 @@ struct MessageRow: View {
     var onOpenArtifact: ((Artifact) -> Void)? = nil
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
-    var onToolDecision: ((NativeToolDecision) -> Void)? = nil
+    var onToolDecision: ((NativeCardChoiceKind) -> Void)? = nil
     var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -716,8 +716,8 @@ struct MessageRow: View {
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
                                 detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: store.assistantName),
-                                onDecision: { onToolDecision?($0 ? .approve : .decline) },
-                                onApproveSimilar: NativeToolConfirmationBar.similarPrefix(for: pendingConfirmation).map { _ in { onToolDecision?(.approveSimilar) } })
+                                onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
+                                onChoice: { onToolDecision?($0) })
                         }
                     }
                     AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
@@ -943,7 +943,7 @@ struct NativeToolConfirmationBar: View {
     var allowApprove = true
     var allowDecline = true
     var onDecision: (Bool) -> Void
-    var onApproveSimilar: (() -> Void)? = nil
+    var onChoice: ((NativeCardChoiceKind) -> Void)? = nil
     @Environment(\.renderSafe) private var renderSafe
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
@@ -980,11 +980,13 @@ struct NativeToolConfirmationBar: View {
         return nil
     }
 
-    static func similarPrefix(for request: NativeToolConfirmationRequest) -> String? {
-        guard request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
-              let command = NativeCommandTools.command(inRequest: request.request) else { return nil }
-        let prefix = NativeCommandPrefix.prefix(of: command)
-        return prefix.isEmpty ? nil : prefix
+    private var saving: [NativeCardChoice] {
+        guard onChoice != nil else { return [] }
+        return request.choices.filter { $0.kind.saves }
+    }
+
+    private var approveTitle: String {
+        request.choices.first(where: { $0.kind == .allowOnce })?.title ?? "Approve"
     }
 
     private var lines: [String] { (prompt ?? "Run \(request.title)?").components(separatedBy: "\n") }
@@ -1018,23 +1020,36 @@ struct NativeToolConfirmationBar: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if !saving.isEmpty {
+                VStack(alignment: .trailing, spacing: 6) {
+                    if let covers = request.covers, saving.contains(where: { $0.kind.approves }) {
+                        Text("A saved choice covers \(covers).")
+                            .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        ForEach(saving, id: \.self) { choice in
+                            Button(choice.title) { onChoice?(choice.kind) }
+                                .buttonStyle(ConversationButtonStyle(kind: .secondary))
+                                .disabled(choice.kind.approves ? !allowApprove : !allowDecline)
+                                .help(choice.kind == .never && request.toolID == NativeCommandTools.toolID ? NativeCardChoices.neverHelp : "")
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Button("Decline") { onDecision(false) }
                     .buttonStyle(ConversationButtonStyle(kind: .secondary))
                     .disabled(!allowDecline)
-                if let onApproveSimilar, let prefix = Self.similarPrefix(for: request) {
-                    Button("Approve similar") { onApproveSimilar() }
-                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
-                        .disabled(!allowApprove)
-                        .help("Also run later commands in this chat that start with \"\(prefix)\" without asking")
-                }
                 if defaultApproval {
-                    Button("Approve") { onDecision(true) }
+                    Button(approveTitle) { onDecision(true) }
                         .buttonStyle(ConversationButtonStyle(kind: .primary))
                         .keyboardShortcut(.defaultAction).disabled(!allowApprove)
                 } else {
-                    Button("Approve") { onDecision(true) }
+                    Button(approveTitle) { onDecision(true) }
                         .buttonStyle(ConversationButtonStyle(kind: .primary))
                         .disabled(!allowApprove)
                 }

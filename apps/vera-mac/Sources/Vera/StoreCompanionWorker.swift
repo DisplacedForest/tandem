@@ -40,6 +40,13 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             ledger: NativeEffectLedgerStore(database: database),
             tasks: NativeTaskStore(database: database))
         environment.preferences = { NativePreferenceStore(database: database).activeStatements() }
+        environment.saveRules = { [weak self] records in
+            let store = NativeRuleRecordStore(database: database)
+            var saved = true
+            for record in records where (try? store.add(record)) == nil { saved = false }
+            if let rules = self?.lock.withLock({ self?.rules }) { ChatStore.reloadRules(rules, from: store) }
+            return saved
+        }
         environment.recordsChanged = { [weak self] in
             guard let rules = self?.lock.withLock({ self?.rules }) else { return }
             ChatStore.reloadRules(rules, from: NativeRuleRecordStore(database: database))

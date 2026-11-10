@@ -66,16 +66,16 @@ struct NativeTaskCardView: View {
                     .accessibilityLabel("Save as document, \(card.title)")
             }
             if card.canCancel || !card.offeredChoices.isEmpty {
-                HStack(spacing: 12) {
-                    ForEach(card.offeredChoices, id: \.self) { choice in
-                        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-                            Button(title) { answer(choice) }
-                                .buttonStyle(.bordered)
-                                .disabled(!canAnswer(choice))
-                                .accessibilityLabel("\(title), answer for \(card.title)")
+                VStack(alignment: .leading, spacing: 8) {
+                    if !savingChoices.isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(savingChoices, id: \.self) { choice in choiceButton(choice) }
                         }
                     }
-                    if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
+                    HStack(spacing: 12) {
+                        ForEach(card.offeredChoices.filter { !savingChoices.contains($0) }, id: \.self) { choice in choiceButton(choice) }
+                        if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).fixedSize() }
+                    }
                 }
                 .font(.system(size: 12))
             }
@@ -87,6 +87,22 @@ struct NativeTaskCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
         .animation(.easeOut(duration: 0.3), value: highlighted)
+    }
+
+    private var savingChoices: [String] {
+        card.offeredChoices.filter { NativeCardChoices.kind(wire: $0)?.saves == true }
+    }
+
+    @ViewBuilder
+    private func choiceButton(_ choice: String) -> some View {
+        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
+            Button(title) { answer(choice) }
+                .buttonStyle(.bordered)
+                .disabled(!canAnswer(choice))
+                .fixedSize()
+                .help(choice == NativeCardChoices.commandNever ? NativeCardChoices.neverHelp : "")
+                .accessibilityLabel("\(title), answer for \(card.title)")
+        }
     }
 
     private func canAnswer(_ choice: String) -> Bool {

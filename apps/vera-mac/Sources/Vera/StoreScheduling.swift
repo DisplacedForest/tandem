@@ -54,7 +54,11 @@ extension ChatStore {
 
     func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
         guard let reference = run.taskReferenceID else { return }
-        if choice == "retry" { retryNativeTask(reference) } else { cancelNativeTask(reference) }
+        switch NativeScheduleAnswer.route(choice) {
+        case .retry: retryNativeTask(reference)
+        case .stop: cancelNativeTask(reference)
+        case .answer: answerNativeTask(reference, choice: choice)
+        }
     }
 
     func postScheduleCheckIns() {
@@ -355,5 +359,19 @@ extension ChatStore {
             try? store.save(saved)
         }
         return conversation.id
+    }
+}
+
+enum NativeScheduleAnswer: Equatable {
+    case retry
+    case stop
+    case answer
+
+    static func route(_ choice: String) -> NativeScheduleAnswer {
+        switch choice.lowercased() {
+        case "retry": return .retry
+        case "stop", "cancel": return .stop
+        default: return .answer
+        }
     }
 }

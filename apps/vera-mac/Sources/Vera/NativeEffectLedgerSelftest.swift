@@ -403,8 +403,10 @@ extension SelfTest {
         rules.set(NativeConversationRules(choices: [.commands: .handOff]), for: "conversation-1")
         try require(rules.revision == 2 && resolver.revision == 1 && rules.resolver(for: "conversation-1", requestText: "").revision == 2,
                     "set bumps the rules revision once and a resolver keeps the revision it was created with")
-        rules.set(NativeConversationRules(choices: [.commands: .handOff], approvedCommandPrefixes: ["swift build"]), for: "conversation-1")
-        try require(rules.revision == 3, "A prefix change through the source bumps the rules revision")
+        rules.setRecords([NativeRuleRecord(scope: .conversation("conversation-1"), action: .commands, toolID: NativeCommandTools.toolID,
+                                           target: NativeRuleTarget.make(.commandPrefix, "swift build"), effect: .allow,
+                                           statement: "In this chat, allow commands starting with swift build")])
+        try require(rules.revision == 3, "A record change through the source bumps the rules revision")
         rules.replaceAll([("conversation-2", NativeConversationRules(choices: [.trash: .handOff]))])
         try require(rules.revision == 4, "replaceAll bumps the rules revision once")
 

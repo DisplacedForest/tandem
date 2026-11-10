@@ -251,6 +251,7 @@ extension SelfTest {
         try await companionOneUseGrant()
         try await companionAdmittedFolderWrites()
         try await companionAskApproveAndDecline()
+        try await companionCardChoices()
         try await companionHandOff()
         try await companionStaleAuthority()
         try await companionRecovery()
@@ -524,6 +525,70 @@ extension SelfTest {
                     "A hand-off after a completed write never claims nothing changed")
     }
 
+    private static func companionCardChoices() async throws {
+        let require = NativeTaskFixture.require
+        func prepared() throws -> (NativeCompanionHarness, NativeRuleRecordStore) {
+            var harness = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+                let results = NativeCompanionScriptedModel.toolResults(messages)
+                if results.isEmpty { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}") }
+                if results.count == 1 { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"south\"}", id: "call-2") }
+                return NativeCompanionScriptedModel.text("Watered both beds.")
+            }
+            let clock = harness.clock
+            let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
+            let rules = harness.rules
+            harness.environment.saveRules = { drafts in
+                var saved = true
+                for draft in drafts where (try? records.add(draft)) == nil { saved = false }
+                if let active = try? records.active() { rules.setRecords(active) }
+                return saved
+            }
+            return (harness, records)
+        }
+
+        let (allowing, allowed) = try prepared()
+        let allowID = try allowing.create()
+        let asked = try await allowing.runUntilSettled()
+        try require(asked.state == .needsDecision && (try allowed.all()).isEmpty, "Nothing is saved while the card is waiting")
+        try allowing.reply(asked, "allow_here", digest: try allowing.decision(asked)["digest"] as? String)
+        let finished = try await allowing.runUntilSettled()
+        let kept = try allowed.active()
+        try require(finished.state == .completed && allowing.service.count("water_bed") == 2,
+                    "Allow for this task runs the action and the next matching one without another card")
+        try require(kept.count == 1 && kept[0].scope == .task(allowID) && kept[0].effect == .allow && kept[0].action == .networkSends
+                    && kept[0].toolID == "garden" && kept[0].target == nil && kept[0].origin == .confirmCard,
+                    "Allow for this task saves one whole-tool allow scoped to the task")
+        let effects = try allowing.effects(allowID)
+        try require(effects.count == 2 && effects.allSatisfy { $0.state == .completed } && effects.filter { $0.decisionID != nil }.count == 1,
+                    "One action was admitted by the answer and the other by the saved rule")
+        let elsewhere = NativeRuleResolver(global: NativeRules(choices: [.networkSends: .ask]), conversation: NativeConversationRules(), requestText: "",
+                                           records: kept, context: NativeRuleContext(conversationID: "other", taskID: "another-task")).tool("garden", targets: [])
+        try require(elsewhere.decision(for: .networkSends) == .ask, "A task allow covers nothing outside its task")
+
+        let (unbound, unboundRecords) = try prepared()
+        _ = try unbound.create()
+        let waiting = try await unbound.runUntilSettled()
+        try unbound.reply(waiting, "allow_always", digest: "0000")
+        let still = try await unbound.runUntilSettled()
+        try require(still.state == .needsDecision && unbound.service.count("water_bed") == 0 && (try unboundRecords.all()).isEmpty,
+                    "A standing allow bound to another proposal runs nothing and saves nothing")
+        try unbound.reply(still, "allow_schedule", digest: try unbound.decision(still)["digest"] as? String)
+        let refused = try await unbound.runUntilSettled()
+        try require(refused.state == .needsDecision && unbound.service.count("water_bed") == 0 && (try unboundRecords.all()).isEmpty,
+                    "A choice the card did not offer runs nothing and saves nothing")
+
+        let (refusing, forbidden) = try prepared()
+        let neverID = try refusing.create()
+        let pending = try await refusing.runUntilSettled()
+        try refusing.reply(pending, "never", digest: try refusing.decision(pending)["digest"] as? String)
+        let stopped = try await refusing.runUntilSettled()
+        let nevers = try forbidden.active()
+        try require(stopped.state == .completed && refusing.service.count("water_bed") == 0, "Never allow runs nothing")
+        try require(nevers.count == 1 && nevers[0].effect == .forbid && nevers[0].scope == .task(neverID) && nevers[0].toolID == "garden",
+                    "Never allow saves one never for the tool, scoped to the task")
+        try require((try refusing.effects(neverID)).first?.state == .declined, "The refused action is recorded as declined")
+    }
+
     private static func companionAskApproveAndDecline() async throws {
         let require = NativeTaskFixture.require
         let harness = try NativeCompanionHarness(rules: [.networkSends: .ask], script: waterThenReport)
@@ -532,7 +597,7 @@ extension SelfTest {
         try require(paused.state == .needsDecision && harness.service.count("water_bed") == 0, "An ask write pauses before dispatch")
         let decision = try harness.decision(paused)
         let digest = decision["digest"] as? String ?? ""
-        try require(decision["choices"] as? [String] == ["approve", "decline"], "The decision offers approve and decline")
+        try require(decision["choices"] as? [String] == ["decline", "never", "allow_always", "allow_here", "approve"], "The decision offers every choice a whole-tool card has")
 
         let unbound = try harness.reply(paused, "approve", digest: "0000")
         try require(unbound.state == .queued, "A reply is accepted by the engine")

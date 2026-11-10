@@ -50,6 +50,14 @@ extension ChatStore {
         (try? nativeRuleRecordStore?.all()) ?? []
     }
 
+    func approvedCommandRecords(for conversationID: String?) -> [NativeRuleRecord] {
+        guard let conversationID else { return [] }
+        let now = Date()
+        return ruleRecords.filter {
+            $0.scope == .conversation(conversationID) && $0.effect == .allow && $0.target?.kind == .commandPrefix && $0.isLive(at: now)
+        }
+    }
+
     @discardableResult
     func addRuleRecord(_ record: NativeRuleRecord) -> NativeRuleRecord? {
         guard let store = nativeRuleRecordStore, let saved = try? store.add(record) else { return nil }

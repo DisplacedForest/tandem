@@ -72,14 +72,6 @@ final class NativeDeclineSource: @unchecked Sendable {
     }
 }
 
-enum NativeToolDecision: Equatable, Sendable {
-    case approve
-    case approveSimilar
-    case decline
-
-    var approved: Bool { self != .decline }
-}
-
 extension ChatStore {
     var selectedGrants: [FolderGrant] { selected?.grants ?? [] }
     var selectedConversationRules: NativeConversationRules { selected?.rules ?? NativeConversationRules() }
@@ -150,15 +142,6 @@ extension ChatStore {
                             command: command, action: action, subjects: subjects)
         }
         return (live, liveTargets)
-    }
-
-    nonisolated static func prefixApprovalAnswers(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
-                                                  requestText: String, command: String, directory: String? = nil, grants: [FolderGrant] = [],
-                                                  fallback: NativeRuleDecision = .ask) -> Bool {
-        let closures = commandLive(rules, store: store, conversationID: conversationID, requestText: requestText)
-        let (_, decision, _) = NativeCommandTools.evaluate(command: command, directory: directory, grants: grants, fallback: fallback,
-                                                           live: closures.live, liveTargets: closures.liveTargets)
-        return decision == .act(.conversationPrefix)
     }
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
@@ -232,18 +215,6 @@ extension ChatStore {
     func tightenConversationRule(_ choice: NativeRuleChoice, for action: NativeActionClass, conversationID: String? = nil) {
         guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].rules.tighten(choice, for: action, global: nativeRules)
-        persistRules(index)
-    }
-
-    func approveCommandPrefix(_ command: String, conversationID: String) {
-        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-        conversations[index].rules.approve(prefix: command)
-        persistRules(index)
-    }
-
-    func revokeCommandPrefix(_ prefix: String, conversationID: String? = nil) {
-        guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-        conversations[index].rules.revoke(prefix: prefix)
         persistRules(index)
     }
 

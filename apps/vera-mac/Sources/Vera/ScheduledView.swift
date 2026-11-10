@@ -276,7 +276,7 @@ private struct ScheduleRunRow: View {
         switch choice.lowercased() {
         case "retry": return "Retry"
         case "stop", "cancel": return "Stop"
-        default: return choice.prefix(1).uppercased() + choice.dropFirst()
+        default: return NativeTaskCardPresentation.choiceTitle(choice) ?? (choice.prefix(1).uppercased() + choice.dropFirst())
         }
     }
 }

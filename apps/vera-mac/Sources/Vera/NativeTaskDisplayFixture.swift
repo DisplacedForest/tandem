@@ -366,6 +366,15 @@ extension NativeTaskDisplayFixture {
         try require(approveSnapshot.decision?.digest == digest, "A snapshot decision keeps its digest")
         let card = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
             .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
+        try require(NativeTaskCardPresentation.choiceTitle("approve") == "Allow once" && NativeTaskCardPresentation.choiceTitle("allow_here") == "Allow for this task"
+                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Always allow" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow"
+                    && NativeTaskCardPresentation.choiceTitle("never_commands") == "Never run commands in this task"
+                    && NativeTaskCardPresentation.choiceTitle("allow_schedule") == "Allow for this schedule" && NativeTaskCardPresentation.choiceTitle("decline") == "Decline"
+                    && NativeTaskCardPresentation.choiceTitle("made_up") == nil, "Every card choice has a plain button title and unknown ones have none")
+        try require(NativeScheduleAnswer.route("retry") == .retry && NativeScheduleAnswer.route("stop") == .stop && NativeScheduleAnswer.route("cancel") == .stop
+                    && ["approve", "allow_here", "allow_always", "allow_schedule", "never", "never_commands", "decline", "continue", "finish", "it_happened", "it_did_not"]
+                        .allSatisfy { NativeScheduleAnswer.route($0) == .answer },
+                    "On the Scheduled screen only Retry retries and only Stop cancels, and every other answer reaches the waiting work")
         try require(card?.offeredChoices == ["approve", "decline"] && card?.canRetry == false,
                     "A paused card offers each known choice in order")
         do {

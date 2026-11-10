@@ -399,8 +399,13 @@ struct ShotView: View {
     }
 
     private var shotConfirmation: NativeToolConfirmationRequest {
-        NativeToolConfirmationRequest(activity: NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
-                                                                   request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true))
+        var request = NativeToolConfirmationRequest(activity: NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                                                                 request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true))
+        let subject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "make pdf")
+        request.subject = subject
+        request.choices = NativeCardChoices.offered(subject, place: .chat(conversationID: store.selectedID ?? "shot"))
+        request.covers = NativeCardChoices.covers(subject)
+        return request
     }
 
     private var folderMessages: [Message] {
@@ -544,7 +549,8 @@ struct ShotView: View {
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
-                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil, companionThread: store.isVeraThread(store.selectedID))
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil,
+                        onToolDecision: command ? { _ in } : nil, companionThread: store.isVeraThread(store.selectedID))
                     if let marker = shotMarker(for: message) {
                         TranscriptMarkerRow(marker: marker)
                     }

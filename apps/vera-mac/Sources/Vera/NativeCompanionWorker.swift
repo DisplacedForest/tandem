@@ -32,6 +32,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var defaultToolSeconds: Double = 20
     var preferences: @Sendable () -> [String] = { [] }
     var recordsChanged: @Sendable () -> Void = {}
+    var saveRules: @Sendable ([NativeRuleRecord]) -> Bool = { _ in false }
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -399,6 +400,32 @@ private struct NativeCompanionRun {
         advertised.first { $0.name == name }
     }
 
+    func cardSubject(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass) -> NativeCardSubject {
+        var command: String?
+        if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
+        return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
+                                 targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command)
+    }
+
+    func cardPlace(_ authority: NativeCompanionWorkerAuthority) -> NativeCardPlace {
+        .task(taskID: task.id, conversationID: context.threadID, scheduleID: authority.resolver.context?.scheduleID)
+    }
+
+    func approvalChoices(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass,
+                         authority: NativeCompanionWorkerAuthority) -> [String] {
+        let subject = cardSubject(definition, arguments, action: action)
+        return NativeCardChoices.offered(subject, place: cardPlace(authority)).map { NativeCardChoices.wire($0, subject: subject) }
+    }
+
+    func approvalDetails(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass,
+                         authority: NativeCompanionWorkerAuthority, argumentsJSON: String) -> String {
+        let details = NativeCompanionWorker.details(definition.title, argumentsJSON: argumentsJSON)
+        let subject = cardSubject(definition, arguments, action: action)
+        let saving = NativeCardChoices.offered(subject, place: cardPlace(authority)).contains { $0.kind.saves && $0.kind.approves }
+        guard saving, let covers = NativeCardChoices.covers(subject) else { return details }
+        return details + "\nA saved choice covers \(covers)."
+    }
+
     func authority() -> NativeCompanionWorkerAuthority {
         let base = environment.authority(context.threadID, dot.assignment)
         var resolver = base.resolver
@@ -662,9 +689,11 @@ private struct NativeCompanionRun {
         let record = try environment.ledger.propose(proposal)
         if decision == .ask {
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title)
-            return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", ["approve", "decline"],
+            return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?",
+                                              approvalChoices(definition, arguments, action: action, authority: authority),
                                               extra: ["digest": record.digest,
-                                                      "details": NativeCompanionWorker.details(definition.title, argumentsJSON: record.proposal.argumentsJSON)])
+                                                      "details": approvalDetails(definition, arguments, action: action, authority: authority,
+                                                                                 argumentsJSON: record.proposal.argumentsJSON)])
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
@@ -846,8 +875,20 @@ private struct NativeCompanionRun {
                 break
             }
             let bound = NativeEffectProposal.bindsReply(reply, to: digest)
-            if action == "decline" || record.state == .declined {
+            let chosen = action.flatMap(NativeCardChoices.kind(wire:))
+            let asked = definition(named: call.name)
+            let askedArguments = asked.flatMap { try? $0.validatedArguments(call.arguments) }
+            let offered: [String] = {
+                guard let asked, let askedArguments else { return ["decline", "approve"] }
+                return approvalChoices(asked, askedArguments, action: record.proposal.action, authority: authority())
+            }()
+            if action == "decline" || chosen == .never || record.state == .declined {
                 if record.state == .proposed { try environment.ledger.decline(digest: digest, decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply) }
+                if chosen == .never, bound, let action, offered.contains(action), let asked, let askedArguments {
+                    let drafts = NativeCardChoices.records(.never, subject: cardSubject(asked, askedArguments, action: record.proposal.action),
+                                                           place: cardPlace(authority()), originMessageID: nil)
+                    if !drafts.isEmpty { _ = environment.saveRules(drafts) }
+                }
                 checkpoint.note(title, "declined")
                 checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
                 for remaining in checkpoint.outstandingCalls {
@@ -856,9 +897,9 @@ private struct NativeCompanionRun {
                 let text = "\(context.assistantName) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
                 return try await conclude(&checkpoint, text: text)
             }
-            guard action == "approve", bound else {
+            guard let action, let chosen, chosen.approves, offered.contains(action), bound else {
                 checkpoint.pending = pending
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", ["approve", "decline"],
+                return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", offered,
                                                   extra: ["digest": digest,
                                                           "details": NativeCompanionWorker.details(definition(named: call.name)?.title ?? record.proposal.function,
                                                                                                    argumentsJSON: record.proposal.argumentsJSON)])
@@ -876,6 +917,11 @@ private struct NativeCompanionRun {
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
                                                          live: liveRevisions, rulesDurable: authority.resolver.durable)
+            if chosen.saves, case .admitted = admission {
+                let drafts = NativeCardChoices.records(chosen, subject: cardSubject(definition, arguments, action: record.proposal.action),
+                                                       place: cardPlace(authority), originMessageID: nil)
+                if !drafts.isEmpty { _ = environment.saveRules(drafts) }
+            }
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
                                       key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action, &checkpoint)
         case "reconcile":

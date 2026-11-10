@@ -133,6 +133,9 @@ struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendabl
     let name: String
     let title: String
     let request: String
+    var subject: NativeCardSubject? = nil
+    var choices: [NativeCardChoice] = []
+    var covers: String? = nil
 
     init(activity: NativeToolActivity) {
         id = activity.id
@@ -727,9 +730,11 @@ struct NativeToolLoop: Sendable {
                                     }
                                     defer { gate.close() }
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
-                                        try await Self.execute(
-                                            definition, arguments: arguments, activity: activity,
-                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        try await NativeToolCallContext.$confirmed.withValue(needsConfirmation) {
+                                            try await Self.execute(
+                                                definition, arguments: arguments, activity: activity,
+                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        }
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
                                        !Self.resultFailed(value, toolName: call.name) {
