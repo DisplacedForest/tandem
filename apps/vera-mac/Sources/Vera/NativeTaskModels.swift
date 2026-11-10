@@ -58,19 +58,26 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     let workerType: String
     let title: String?
     let dot: NativeCompanionTaskPayload?
+    let scheduleID: String?
 
-    init(objective: String, deliverables: [String], workerType: String = "research", title: String? = nil) throws {
-        let dot = workerType == "companion" ? try NativeCompanionTaskPayload(assignment: objective, mode: "manual", goal: "") : nil
-        try self.init(validating: objective, deliverables: deliverables, workerType: workerType, title: title, dot: dot)
+    init(objective: String, deliverables: [String], workerType: String = "research", title: String? = nil,
+         scheduleID: String? = nil) throws {
+        let dot = workerType == "companion"
+            ? try NativeCompanionTaskPayload(assignment: objective, mode: scheduleID == nil ? "manual" : "scheduled", goal: "", scheduleID: scheduleID)
+            : nil
+        try self.init(validating: objective, deliverables: deliverables, workerType: workerType, title: title, dot: dot, scheduleID: scheduleID)
     }
 
     init(dot: NativeCompanionTaskPayload, title: String? = nil) throws {
-        try self.init(validating: dot.assignment, deliverables: [], workerType: "companion", title: title, dot: dot)
+        try self.init(validating: dot.assignment, deliverables: [], workerType: "companion", title: title, dot: dot, scheduleID: dot.scheduleID)
     }
 
     private init(validating objective: String, deliverables: [String], workerType: String, title: String?,
-                 dot: NativeCompanionTaskPayload?) throws {
+                 dot: NativeCompanionTaskPayload?, scheduleID: String?) throws {
         let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard NativeRunOrigin.validSchedule(scheduleID), dot.map({ $0.scheduleID == scheduleID }) ?? true else {
+            throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
+        }
         guard Self.workerTypes.contains(workerType) else {
             throw NativeTaskError.invalidRequest("Background work must be research or a document.")
         }
@@ -101,6 +108,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         self.deliverables = items
         self.workerType = workerType
         self.dot = dot
+        self.scheduleID = scheduleID
     }
 
     var displayTitle: String { title ?? objective }
@@ -108,15 +116,18 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case objective, deliverables, title, dot
         case workerType = "worker_type"
+        case scheduleID = "schedule_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let dot = try container.decodeIfPresent(NativeCompanionTaskPayload.self, forKey: .dot)
         try self.init(validating: container.decode(String.self, forKey: .objective),
                       deliverables: container.decode([String].self, forKey: .deliverables),
                       workerType: container.decodeIfPresent(String.self, forKey: .workerType) ?? "research",
                       title: container.decodeIfPresent(String.self, forKey: .title),
-                      dot: container.decodeIfPresent(NativeCompanionTaskPayload.self, forKey: .dot))
+                      dot: dot,
+                      scheduleID: dot == nil ? container.decodeIfPresent(String.self, forKey: .scheduleID) : dot?.scheduleID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -126,19 +137,23 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         if workerType != "research" { try container.encode(workerType, forKey: .workerType) }
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(dot, forKey: .dot)
+        if dot == nil { try container.encodeIfPresent(scheduleID, forKey: .scheduleID) }
     }
 }
 
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
-    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding"]
+    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id"]
 
     let assignment: String
     let mode: String
     let goal: String
     let connectedToolIDs: [String]?
+    let scheduleID: String?
 
-    init(assignment: String, mode: String, goal: String = "", connectedToolIDs: [String]? = nil) throws {
+    var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
+
+    init(assignment: String, mode: String, goal: String = "", connectedToolIDs: [String]? = nil, scheduleID: String? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
@@ -157,15 +172,20 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
                 throw NativeTaskError.invalidRequest("Connected services must be a short list of distinct names.")
             }
         }
+        guard NativeRunOrigin.validSchedule(scheduleID), scheduleID == nil || mode == "scheduled" else {
+            throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
+        }
         self.assignment = cleanAssignment
         self.mode = mode
         self.goal = cleanGoal
         self.connectedToolIDs = connectedToolIDs
+        self.scheduleID = scheduleID
     }
 
     enum CodingKeys: String, CodingKey {
         case assignment, mode, goal
         case connectedToolIDs = "connected_tool_ids"
+        case scheduleID = "schedule_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -173,7 +193,8 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         try self.init(assignment: container.decode(String.self, forKey: .assignment),
                       mode: container.decode(String.self, forKey: .mode),
                       goal: container.decodeIfPresent(String.self, forKey: .goal) ?? "",
-                      connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs))
+                      connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
+                      scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -182,6 +203,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         try container.encode(mode, forKey: .mode)
         try container.encode(goal, forKey: .goal)
         try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
+        try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
     }
 }
 
@@ -212,10 +234,12 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
     let pagesPerQuestion: Int
     let nativeBinding: NativeTaskAdmissionBinding?
     let dot: NativeCompanionTaskPayload?
+    let scheduleID: String?
 
     init(request: NativeResearchTaskRequest, nativeBinding: NativeTaskAdmissionBinding? = nil,
          options: NativeTaskResearchOptions = .standard) {
         self.nativeBinding = nativeBinding
+        scheduleID = request.scheduleID
         if let dot = request.dot {
             query = dot.assignment
             deliverables = []
@@ -240,6 +264,7 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
         case pagesPerQuestion = "pages_per_q"
         case useRAG = "use_rag"
         case nativeBinding = "native_binding"
+        case scheduleID = "schedule_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -255,7 +280,12 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
             subquestions = 0
             pagesPerQuestion = 0
             self.dot = dot
+            scheduleID = dot.scheduleID
             return
+        }
+        scheduleID = try container.decodeIfPresent(String.self, forKey: .scheduleID)
+        guard NativeRunOrigin.validSchedule(scheduleID) else {
+            throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
         }
         query = try container.decode(String.self, forKey: .query)
         deliverables = try container.decodeIfPresent([String].self, forKey: .deliverables) ?? []
@@ -281,6 +311,7 @@ struct NativeResearchTaskPayload: Codable, Equatable, Hashable, Sendable {
         try container.encode(subquestions, forKey: .subquestions)
         try container.encode(pagesPerQuestion, forKey: .pagesPerQuestion)
         try container.encodeIfPresent(nativeBinding, forKey: .nativeBinding)
+        try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
     }
 }
 
