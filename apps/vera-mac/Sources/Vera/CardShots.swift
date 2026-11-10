@@ -43,9 +43,9 @@ enum CardShot {
                     CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
                 }
             }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
-        case "card-task", "card-task-command":
+        case "card-task", "card-task-command", "card-task-asks":
             size = CGSize(width: 1180, height: 1040)
-            seedTask(command: variant == "card-task-command", store: store)
+            seedTask(command: variant == "card-task-command", asks: variant == "card-task-asks", store: store)
             let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
@@ -183,7 +183,7 @@ enum CardShot {
         ], confirmation: request)
     }
 
-    static func seedTask(command: Bool, store: ChatStore) {
+    static func seedTask(command: Bool, asks: Bool = false, store: ChatStore) {
         store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
         store.openVeraThread()
         guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
@@ -193,7 +193,7 @@ enum CardShot {
             : "{\"message\":\"Please book the workshop inspection for Tuesday morning and confirm by email.\",\"to\":\"inspections@example.com\"}"
         let subject = command
             ? NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: toolTitle, command: "make pdf")
-            : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle)
+            : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle, alwaysAsks: asks)
         let place = NativeCardPlace.task(taskID: "card-task", conversationID: threadID, scheduleID: nil)
         let offered = NativeCardChoices.offered(subject, place: place)
         let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
