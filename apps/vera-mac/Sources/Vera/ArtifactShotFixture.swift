@@ -6,6 +6,8 @@ enum ArtifactShotFixture {
     struct Seeded {
         let store: ChatStore
         let selection: String?
+        var filter: ArtifactKindFilter = .all
+        var search = ""
     }
 
     static func store(variant: String) -> Seeded {
@@ -73,7 +75,11 @@ enum ArtifactShotFixture {
         case "artifacts-trashed": selection = trashed?.artifactID
         default: selection = document?.artifactID
         }
-        return Seeded(store: store, selection: selection)
+        switch variant {
+        case "artifacts-filter-images": return Seeded(store: store, selection: selection, filter: .image)
+        case "artifacts-no-results": return Seeded(store: store, selection: selection, search: "zucchini trellis")
+        default: return Seeded(store: store, selection: selection)
+        }
     }
 
     private static func gradientPNG() -> Data {
