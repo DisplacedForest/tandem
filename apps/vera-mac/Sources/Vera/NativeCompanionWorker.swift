@@ -787,7 +787,7 @@ private struct NativeCompanionRun {
         }
         if readOnlyRefusal(record.proposal) != nil {
             checkpoint.note(title, "unconfirmed")
-            checkpoint.answer(call, NativeCompanionWorker.message("An earlier attempt at this may have changed something. It was not checked or tried again because this run is read-only. Say so in your reply."))
+            checkpoint.answer(call, NativeCompanionWorker.message(NativeReadOnlyRun.unchecked))
             return nil
         }
         if let definition, let hook = definition.reconcile {
@@ -858,6 +858,12 @@ private struct NativeCompanionRun {
                 }
                 return try await finish(&checkpoint)
             default:
+                if origin.unattended {
+                    for remaining in checkpoint.outstandingCalls {
+                        checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: this run reached its limit."))
+                    }
+                    return try await finish(&checkpoint)
+                }
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "Keep going, or finish with what it has?", ["continue", "finish"])
             }
@@ -938,6 +944,11 @@ private struct NativeCompanionRun {
                 let text = "\(context.assistantName) stopped at your request. It could not confirm whether this happened: \(title)."
                 return try await conclude(&checkpoint, text: text)
             default:
+                if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
+                    checkpoint.note(title, "unconfirmed")
+                    checkpoint.answer(call, NativeCompanionWorker.message(NativeReadOnlyRun.unchecked))
+                    return nil
+                }
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) can't tell whether this happened: \(title). Please check, then say what you found.",
                                                   ["it_happened", "it_did_not", "stop"])

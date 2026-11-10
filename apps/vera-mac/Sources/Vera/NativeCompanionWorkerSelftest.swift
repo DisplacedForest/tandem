@@ -464,6 +464,35 @@ extension SelfTest {
             try require(outcomes == [uncertain ? "unconfirmed" : NativeReadOnlyRun.outcome],
                         uncertain ? "An interrupted earlier change stays marked as unconfirmed" : "A resumed approval on a scheduled task is left undone")
         }
+        func reschedule(_ harness: NativeCompanionHarness, _ taskID: String, _ waiting: NativeTaskRecord) async throws {
+            try await harness.repository.database.write { db in
+                try db.execute(sql: "UPDATE native_engine_tasks SET payload = replace(payload, '\"mode\":\"manual\"', '\"mode\":\"scheduled\"') WHERE id = ?",
+                               arguments: [taskID])
+            }
+            guard let decisionID = waiting.decisionID() else { throw NativeTaskFixture.Failure.assertion("The saved question has an id") }
+            _ = try harness.store.respond(taskID, decisionID: decisionID, replyKey: UUID().uuidString, reply: try NativeTaskStore.canonical([String: Any]()))
+        }
+        let capped = try NativeCompanionHarness(rules: permissive) { messages in
+            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
+        }
+        let cappedID = try capped.create()
+        let atCap = try await capped.runUntilSettled(40)
+        try require(atCap.state == .needsDecision && (try capped.decision(atCap)["choices"] as? [String]) == ["continue", "finish"],
+                    "The saved limit fixture waits at the keep going question first")
+        try await reschedule(capped, cappedID, atCap)
+        try require(try await capped.runUntilSettled(40).state == .completed,
+                    "A limit question saved on a scheduled task finishes when it resumes without an answer")
+        let unsure = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
+        unsure.service.transportFailWrites = true
+        let unsureID = try unsure.create()
+        let checking = try await unsure.runUntilSettled()
+        try require(checking.state == .needsDecision && (try unsure.decision(checking)["choices"] as? [String])?.contains("it_happened") == true,
+                    "The saved check fixture waits at the did this happen question first")
+        try await reschedule(unsure, unsureID, checking)
+        let moved = try await unsure.runUntilSettled()
+        try require(moved.state == .completed && unsure.service.count("water_bed") == 1
+                        && (try unsure.result(moved)["effects"] as? [[String: String]] ?? []).contains { $0["outcome"] == "unconfirmed" },
+                    "A did this happen question saved on a scheduled task resumes without asking again and stays unconfirmed")
         let attended = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
         let id = try attended.create()
         let done = try await attended.runUntilSettled()

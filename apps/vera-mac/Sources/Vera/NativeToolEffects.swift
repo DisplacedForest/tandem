@@ -56,6 +56,8 @@ enum NativeReadOnlyRun {
     static let outcome = "left undone"
     static let reason = "Not allowed: this run was started by a schedule or by Tandem itself, so it is read-only and changes are refused. Carry on with what you can read, and say in your reply what you left undone."
 
+    static let unchecked = "An earlier attempt at this may have changed something. It was not checked or tried again because this run is read-only. Say so in your reply."
+
     static func refusal(run: NativeRunOrigin, call: NativeRunCall) -> String? {
         guard run.unattended, call.effect == .write else { return nil }
         return reason
