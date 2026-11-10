@@ -115,6 +115,8 @@ final class ChatStore: ObservableObject {
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
     private var nativeToolRegistry: NativeToolRegistry
+    private var askedSystemAccess: Set<String> = []
+    var asksForSystemAccess = false
     var nativeSharedToolDefinitions: [NativeToolDefinition] { nativeToolRegistry.definitions }
     private let usesInjectedToolRegistry: Bool
     private(set) var capabilityDeclarations: [NativeToolDeclaration]
@@ -2161,6 +2163,7 @@ final class ChatStore: ObservableObject {
         if fromComposer { turn.preferenceEligible = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
+            requestSystemAccess(enabledIDs: baseToolIDs)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
             conversation.messages = stored.map { live[$0.id] ?? $0 }
@@ -2256,6 +2259,19 @@ final class ChatStore: ObservableObject {
     }
 
     var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
+
+    func toolAccess(_ id: String) -> NativeToolAccess? {
+        nativeToolRegistry.definitions.first { $0.id == id && $0.access != nil }?.access
+    }
+
+    @discardableResult
+    func requestSystemAccess(enabledIDs: Set<String>? = nil) -> [Task<Bool, Never>] {
+        guard asksForSystemAccess else { return [] }
+        return nativeToolRegistry.access(enabledIDs: enabledIDs ?? nativeEnabledToolIDs).compactMap { entry in
+            guard entry.access.state() == .notAsked, askedSystemAccess.insert(entry.id).inserted else { return nil }
+            return Task { await entry.access.request() }
+        }
+    }
 
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
@@ -2417,6 +2433,7 @@ final class ChatStore: ObservableObject {
         let ownerName = nativeOwnerName
         let assistantName = self.assistantName
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
+        let accessNotes = turnRegistry.accessNotes(enabledIDs: enabledToolIDs)
         let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])
         let groundingCollections = turn.grounding.filter { allowedGrounding.contains($0) }
         let groundingBase = client?.base
@@ -2560,7 +2577,8 @@ final class ChatStore: ObservableObject {
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts,
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
-                        + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : []),
+                        + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])
+                        + accessNotes,
                     assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
