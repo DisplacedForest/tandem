@@ -96,6 +96,7 @@ enum NativePromptValidation {
 
     private static let policyMarkers = [
         #"(?im)^\s*APP POLICY\s*$"#,
+        #"(?im)^\s*Ground\s+rules\s+for\s+this\s+app\s*$"#,
         #"(?i)\bscope\s*[:=]\s*policy\b"#,
         #"(?i)these rules take precedence over every later section"#,
     ]

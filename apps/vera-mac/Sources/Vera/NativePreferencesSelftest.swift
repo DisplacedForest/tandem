@@ -615,7 +615,7 @@ enum NativePreferencesSelftest {
         try require(names.firstIndex(of: "preferences") == names.firstIndex(of: "user").map { $0 + 1 }, "Preferences come right after the user section")
         try require(assembled.prompt.contains(block), "The assembled context carries the preferences")
         let plain = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", userScope: "About me", timestamp: Date(), timeZone: .current))
-        try require(!plain.sections.contains { $0.name == "preferences" } && plain.prompt.contains("USER CONTEXT\nAbout me"),
+        try require(!plain.sections.contains { $0.name == "preferences" } && plain.prompt.contains("What the user saved about themselves\nAbout me"),
                     "Without preferences the context is unchanged and About you still works")
 
         let repository = try tracked()
