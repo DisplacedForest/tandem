@@ -493,13 +493,44 @@ extension SelfTest {
         broken.attach(allocator: { throw NativeRuleRecordError.notFound })
         broken.setGlobal(NativeRules(choices: [.trash: .act]))
         let failedMint = broken.revision
-        try require(broken.hasFailed && broken.currentRecords.map(\.effect) == [.forbid] && broken.revision != failedMint
-                    && broken.resolver(for: "c", requestText: "").revision != broken.resolver(for: "c", requestText: "").revision,
-                    "A failed version advance drops saved allows and never repeats a revision")
-        let doomed = try ledger.propose(effectProposal(clock, rules: failedMint, key: "record-doomed"))
-        try require(try ledger.admit(digest: doomed.digest, generation: 1, rulesRevision: failedMint, grantsRevision: 0, decision: .act(.rule),
-                                     decisionID: nil, reply: nil, live: { (rules: broken.revision, grants: 0) }) == .refused(.staleRules),
-                    "Every admission under a failed version is stale")
+        try require(broken.hasFailed && broken.currentRecords.map(\.effect) == [.forbid] && failedMint < 0 && broken.revision == failedMint
+                    && broken.resolver(for: "c", requestText: "").revision == broken.resolver(for: "c", requestText: "").revision,
+                    "A failed version advance drops saved allows and holds one negative revision between changes")
+        var seen: Set<Int> = [failedMint]
+        var fresh = true
+        for index in 0..<5 {
+            if index % 2 == 0 { broken.setGlobal(NativeRules(choices: [.trash: index % 4 == 0 ? .ask : .act])) } else { broken.publish([], version: 99) }
+            let next = broken.revision
+            if next >= 0 || seen.contains(next) { fresh = false }
+            seen.insert(next)
+        }
+        try require(fresh, "Every rule change attempt in failed mode moves to a new negative revision that never repeats an earlier one")
+        let failedNow = broken.revision
+        let doomed = try ledger.propose(effectProposal(clock, rules: failedNow, key: "record-doomed"))
+        try require(try ledger.admit(digest: doomed.digest, generation: 1, rulesRevision: failedNow, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil, live: { (rules: broken.revision, grants: 0) }, rulesDurable: true) == .refused(.staleRules),
+                    "An automatic admission with a failed revision is refused")
+        let asked = try ledger.propose(effectProposal(clock, rules: failedNow, key: "record-asked"))
+        let reply: NativeJSONValue = .object(["action": .string("approve"), "digest": .string(asked.digest)])
+        try require(try ledger.admit(digest: asked.digest, generation: 1, rulesRevision: failedNow, grantsRevision: 0, decision: .ask,
+                                     decisionID: "decision-failed", reply: reply, live: { (rules: broken.revision, grants: 0) }, rulesDurable: true,
+                                     authorizedBy: ["some-allow"]) == .refused(.staleRules),
+                    "A failed-mode admission that names an authorizing record is refused")
+        try require(try ledger.admit(digest: asked.digest, generation: 1, rulesRevision: failedNow, grantsRevision: 0, decision: .ask,
+                                     decisionID: nil, reply: nil, live: { (rules: broken.revision, grants: 0) }, rulesDurable: true) == .refused(.ruleAsks),
+                    "A failed-mode ask without the person's bound reply is refused")
+        guard case .admitted = try ledger.admit(digest: asked.digest, generation: 1, rulesRevision: failedNow, grantsRevision: 0, decision: .ask,
+                                                decisionID: "decision-failed", reply: reply, live: { (rules: broken.revision, grants: 0) },
+                                                rulesDurable: true) else {
+            throw NativeTaskFixture.Failure.assertion("A person's approval admits at the stable failed revision")
+        }
+        let later = try ledger.propose(effectProposal(clock, rules: failedNow, key: "record-later"))
+        broken.setGlobal(NativeRules(choices: [.trash: .handOff]))
+        let laterReply: NativeJSONValue = .object(["action": .string("approve"), "digest": .string(later.digest)])
+        try require(try ledger.admit(digest: later.digest, generation: 1, rulesRevision: failedNow, grantsRevision: 0, decision: .ask,
+                                     decisionID: "decision-later", reply: laterReply, live: { (rules: broken.revision, grants: 0) },
+                                     rulesDurable: true) == .refused(.staleRules),
+                    "An approval given before a failed-mode rule change is stale")
     }
 
     private static func runNativeRulePublicationOrder() throws {

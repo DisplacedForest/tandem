@@ -190,7 +190,12 @@ struct NativeEffectLedgerStore: Sendable {
             default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
             }
             if record.proposal.rulesRevision != rulesRevision || record.proposal.rulesRevision != revisions.rules { return .refused(.staleRules) }
-            if rulesDurable, (try? NativeRuleRecordStore.version(db)) != record.proposal.rulesRevision { return .refused(.staleRules) }
+            let failedRules = record.proposal.rulesRevision < 0
+            if failedRules {
+                guard case .ask = decision, recordIDs.isEmpty else { return .refused(.staleRules) }
+            } else if rulesDurable, (try? NativeRuleRecordStore.version(db)) != record.proposal.rulesRevision {
+                return .refused(.staleRules)
+            }
             if record.proposal.grantsRevision != grantsRevision || record.proposal.grantsRevision != revisions.grants { return .refused(.staleGrants) }
             switch decision {
             case .handOff: return .refused(.ruleHandsOff)

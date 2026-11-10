@@ -442,15 +442,15 @@ enum NativeRuleRecordsSelftest {
         try repository.database.write { db in try db.execute(sql: "DROP TABLE native_rule_records") }
         ChatStore.reloadRules(source, from: records)
         let after = source.revision
-        try require(source.hasFailed && source.currentRecords == [forbid] && after != before && source.revision != after
+        try require(source.hasFailed && source.currentRecords == [forbid] && after != before && after < 0 && source.revision == after
                     && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask,
-                    "A failed reload fails closed: allows are dropped, restrictions stay and no revision ever repeats")
+                    "A failed reload fails closed: allows are dropped, restrictions stay and the revision is a stable negative one")
         let launchRepository = try LocalChatRepository(inMemory: true)
         try launchRepository.database.write { db in try db.execute(sql: "DROP TABLE native_rule_version") }
         let failedLaunch = NativeRuleSource()
         failedLaunch.setRecords([record(.allow, .trash)])
         ChatStore.prepareRules(failedLaunch, from: store(launchRepository, clock: NativeEffectTestClock(start)))
-        try require(failedLaunch.hasFailed && failedLaunch.currentRecords.isEmpty && failedLaunch.revision != failedLaunch.revision,
+        try require(failedLaunch.hasFailed && failedLaunch.currentRecords.isEmpty && failedLaunch.revision < 0 && failedLaunch.revision == failedLaunch.revision,
                     "A launch that cannot advance the version fails closed")
     }
 

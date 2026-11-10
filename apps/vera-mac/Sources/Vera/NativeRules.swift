@@ -612,6 +612,15 @@ final class NativeRuleSource: @unchecked Sendable {
     private var failed = false
     private var failureRevision = 0
 
+    private static let failureLock = NSLock()
+    nonisolated(unsafe) private static var failureCounter = 0
+
+    private static func nextFailureRevision() -> Int {
+        failureLock.lock(); defer { failureLock.unlock() }
+        failureCounter -= 1
+        return failureCounter
+    }
+
     var revision: Int {
         lock.lock(); defer { lock.unlock() }
         return currentRevision()
@@ -633,10 +642,7 @@ final class NativeRuleSource: @unchecked Sendable {
     }
 
     private func currentRevision() -> Int {
-        if failed {
-            failureRevision -= 1
-            return failureRevision
-        }
+        if failed { return failureRevision }
         return allocator == nil ? revisionValue : version
     }
 
@@ -655,6 +661,7 @@ final class NativeRuleSource: @unchecked Sendable {
             Logger(subsystem: "Vera", category: "rules").error("rules_version_unavailable")
         }
         failed = true
+        failureRevision = Self.nextFailureRevision()
         records = NativeRuleRecord.strictFallback(records)
     }
 
@@ -665,6 +672,7 @@ final class NativeRuleSource: @unchecked Sendable {
         guard let allocator, !failed else {
             apply()
             revisionValue += 1
+            if failed { failureRevision = Self.nextFailureRevision() }
             lock.unlock()
             return
         }
@@ -684,7 +692,10 @@ final class NativeRuleSource: @unchecked Sendable {
     func publish(_ next: [NativeRuleRecord], version snapshot: Int) -> Bool {
         changeLock.lock(); defer { changeLock.unlock() }
         lock.lock(); defer { lock.unlock() }
-        if failed { return true }
+        if failed {
+            failureRevision = Self.nextFailureRevision()
+            return true
+        }
         guard allocator != nil else {
             if records != next { records = next; revisionValue += 1 }
             return true

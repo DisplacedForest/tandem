@@ -262,6 +262,7 @@ extension SelfTest {
         try await companionCapsAndFences()
         try companionCommandRules()
         try await companionProductionCommands()
+        try await companionFailedModeApproval()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
         try companionShape()
@@ -982,6 +983,42 @@ extension SelfTest {
         do { _ = try await foregroundWrite.execute(["path": .string(grant.path + "/leak.txt"), "content": .string("x")]) } catch { writeMessage = error.localizedDescription }
         try require(writeMessage == NativeRuleResolver.changedMessage && !FileManager.default.fileExists(atPath: grant.path + "/leak.txt"),
                     "A foreground file write after worker runs still goes through its approval gate")
+    }
+
+    private static func companionFailedModeApproval() async throws {
+        let require = NativeTaskFixture.require
+        for durable in [false, true] {
+            let harness = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+            if durable {
+                ChatStore.prepareRules(harness.rules, from: NativeRuleRecordStore(database: harness.repository.database))
+            }
+            harness.rules.fail()
+            _ = try harness.create()
+            let paused = try await harness.runUntilSettled()
+            try require(paused.state == .needsDecision && harness.service.count("water_bed") == 0,
+                        "In failed mode an act rule becomes a question for the person")
+            try harness.reply(paused, "approve", digest: try harness.decision(paused)["digest"] as? String)
+            let done = try await harness.runUntilSettled()
+            try require(done.state == .completed && harness.service.count("water_bed") == 1,
+                        durable ? "A person's approval in failed mode runs the action on a durable source"
+                                : "A person's approval in failed mode runs the action")
+        }
+        let changed = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+        changed.rules.fail()
+        _ = try changed.create()
+        let waiting = try await changed.runUntilSettled()
+        changed.rules.setGlobal(NativeRules(choices: [.networkSends: .ask]))
+        try changed.reply(waiting, "approve", digest: try changed.decision(waiting)["digest"] as? String)
+        let refused = try await changed.runUntilSettled()
+        try require(waiting.state == .needsDecision && refused.state == .completed && changed.service.count("water_bed") == 0,
+                    "An approval given before a rule change in failed mode is stale and nothing runs")
+        let forbidden = try NativeCompanionHarness(rules: [.networkSends: .act], script: waterThenReport)
+        forbidden.rules.setRecords([NativeRuleRecord(action: .networkSends, toolID: "garden", effect: .forbid, statement: "Never water the beds")])
+        forbidden.rules.fail()
+        _ = try forbidden.create()
+        let handed = try await forbidden.runUntilSettled()
+        try require(handed.state == .completed && forbidden.service.count("water_bed") == 0 && forbidden.rules.currentRecords.count == 1,
+                    "A retained forbid still hands the action off in failed mode, with no card to approve")
     }
 
     private static func companionCapsAndFences() async throws {
