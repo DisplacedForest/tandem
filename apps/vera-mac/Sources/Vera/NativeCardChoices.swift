@@ -97,7 +97,7 @@ enum NativeCardChoices {
         case NativeCardChoiceKind.allowOnce.rawValue: return "Allow once"
         case NativeCardChoiceKind.allowHere.rawValue: return "Allow for this task"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Allow for this schedule"
-        case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow"
+        case NativeCardChoiceKind.allowAlways.rawValue: return "Allow everywhere"
         case NativeCardChoiceKind.never.rawValue: return "Never allow this"
         case commandNever: return "Never run commands in this task"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
@@ -105,7 +105,17 @@ enum NativeCardChoices {
         }
     }
 
-    static let neverHelp = "Commands you chose to always allow still run."
+    static let appliesLead = "Applies to "
+
+    static func split(details: String) -> (applies: String?, literal: String?) {
+        var lines = details.components(separatedBy: "\n")
+        var applies: String?
+        if let last = lines.last, last.hasPrefix(appliesLead) { applies = last; lines.removeLast() }
+        let literal = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (applies, literal.isEmpty ? nil : literal)
+    }
+
+    static let neverHelp = "Commands you allowed everywhere still run."
 
     static func coverage(_ subject: NativeCardSubject) -> NativeCardCoverage {
         guard subject.governed else { return .none }
@@ -169,7 +179,7 @@ enum NativeCardChoices {
         var choices = [decline]
         if let never { choices.append(never) }
         if standing {
-            choices.append(NativeCardChoice(kind: .allowAlways, title: "Always allow"))
+            choices.append(NativeCardChoice(kind: .allowAlways, title: "Allow everywhere"))
             if case .task(_, _, let scheduleID) = place, scheduleID != nil, subject.scheduleInstructed {
                 choices.append(NativeCardChoice(kind: .allowSchedule, title: "Allow for this schedule"))
             }

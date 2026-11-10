@@ -215,14 +215,14 @@ enum NativeCompanionWorker {
 
     static func details(_ title: String, argumentsJSON: String) -> String {
         guard let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any],
-              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return title + "\n" + argumentsJSON }
+              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return argumentsJSON }
         let lines = values.keys.sorted().map { key -> String in
             let label = key.replacingOccurrences(of: "_", with: " ")
             let shown = label.prefix(1).uppercased() + label.dropFirst()
             if case .string(let text)? = values[key] { return "\(shown): \(text)" }
             return "\(shown): " + NativeEffectProposal.canonicalArguments(values[key] ?? .null)
         }
-        return ([title] + lines).joined(separator: "\n")
+        return lines.joined(separator: "\n")
     }
 
     static func target(_ arguments: [String: NativeJSONValue]) -> String? {
@@ -442,7 +442,7 @@ private struct NativeCompanionRun {
         let details = NativeCompanionWorker.details(title, argumentsJSON: argumentsJSON)
         let saving = NativeCardChoices.offered(subject, place: cardPlace(authority)).contains { $0.kind.saves && $0.kind.approves }
         guard saving, let covers = NativeCardChoices.covers(subject) else { return details }
-        return details + "\nApplies to \(covers)."
+        return (details.isEmpty ? "" : details + "\n") + NativeCardChoices.appliesLead + covers + "."
     }
 
     func authority() -> NativeCompanionWorkerAuthority {

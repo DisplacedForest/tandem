@@ -184,12 +184,17 @@ struct ConversationRulesEditor: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
-                Picker(action.title, selection: binding(for: action)) {
-                    ForEach(choices(for: action), id: \.self) { choice in
-                        Text(choice.title).tag(choice)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(action.title).font(.system(size: 12))
+                    Picker(action.title, selection: binding(for: action)) {
+                        ForEach(choices(for: action), id: \.self) { choice in
+                            Text(choice.title).tag(choice)
+                        }
                     }
+                    .labelsHidden()
+                    .font(.system(size: 12))
+                    .fixedSize()
                 }
-                .font(.system(size: 12))
             }
             if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)

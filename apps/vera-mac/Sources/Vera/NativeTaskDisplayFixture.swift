@@ -367,7 +367,7 @@ extension NativeTaskDisplayFixture {
         let card = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
             .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
         try require(NativeTaskCardPresentation.choiceTitle("approve") == "Allow once" && NativeTaskCardPresentation.choiceTitle("allow_here") == "Allow for this task"
-                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Always allow" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow this"
+                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Allow everywhere" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow this"
                     && NativeTaskCardPresentation.choiceTitle("never_commands") == "Never run commands in this task"
                     && NativeTaskCardPresentation.choiceTitle("allow_schedule") == "Allow for this schedule" && NativeTaskCardPresentation.choiceTitle("decline") == "Decline"
                     && NativeTaskCardPresentation.choiceTitle("made_up") == nil, "Every card choice has a plain button title and unknown ones have none")

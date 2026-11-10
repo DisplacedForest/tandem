@@ -265,10 +265,7 @@ private struct ScheduleRunRow: View {
                     if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                 }
                 if !choices.isEmpty {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { choiceButtons }
-                        VStack(alignment: .leading, spacing: 6) { choiceButtons }
-                    }
+                    ChoiceFlow(spacing: 8, lineSpacing: 6) { choiceButtons }
                 }
             }
         }
