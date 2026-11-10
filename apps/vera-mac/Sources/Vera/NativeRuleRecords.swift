@@ -268,6 +268,7 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
         }
         if let toolID = clean.toolID, toolID.isEmpty { clean.toolID = nil }
         if clean.action == nil && (clean.toolID != nil || clean.target != nil) { throw NativeRuleRecordError.missingAction }
+        if let action = clean.action, !NativeRuleRecordStore.storedActions.contains(action.rawValue) { throw NativeRuleRecordError.missingAction }
         if let target = clean.target, let action = clean.action {
             guard NativeRuleTarget.allowed(target.kind, action: action, effect: clean.effect) else { throw NativeRuleRecordError.invalidTarget }
             let value = target.kind == .folder ? NativeRuleTarget.realFolder(target.value) : target.value
@@ -393,13 +394,18 @@ struct NativeRuleRecordStore: Sendable {
         self.now = now
     }
 
-    static func migrate(_ db: Database) throws {
-        try db.execute(sql: """
-            CREATE TABLE native_rule_records (
+    static let originalActions = ["file_edits", "commands", "trash", "network_sends", "sensitive"]
+    static let storedActions = ["file_edits", "commands", "trash", "network_sends", "risky_commands", "reminders", "service_changes", "other_changes",
+                                "credential_entry", "payments", "permanent_deletion"]
+
+    static func tableSQL(name: String, actions: [String]) -> String {
+        let list = actions.map { "'\($0)'" }.joined(separator: ", ")
+        return """
+            CREATE TABLE \(name) (
                 id TEXT PRIMARY KEY NOT NULL,
                 scope_kind TEXT NOT NULL CHECK(scope_kind IN ('everywhere', 'project', 'conversation', 'task', 'schedule')),
                 scope_id TEXT,
-                action TEXT CHECK(action IS NULL OR action IN ('file_edits', 'commands', 'trash', 'network_sends', 'sensitive')),
+                action TEXT CHECK(action IS NULL OR action IN (\(list))),
                 tool_id TEXT,
                 target_kind TEXT CHECK(target_kind IS NULL OR target_kind IN ('recipient', 'service', 'command_prefix', 'folder')),
                 target_value TEXT,
@@ -423,14 +429,38 @@ struct NativeRuleRecordStore: Sendable {
                       OR (target_kind = 'folder' AND action IN ('file_edits', 'trash'))
                       OR (target_kind IN ('recipient', 'service') AND action = 'network_sends'))
             );
+            """
+    }
+
+    static let indexSQL = """
             CREATE INDEX native_rule_records_status_action ON native_rule_records(status, action);
             CREATE UNIQUE INDEX native_rule_records_origin_message ON native_rule_records(origin_message_id) WHERE origin_message_id IS NOT NULL;
+            """
+
+    static func migrate(_ db: Database) throws {
+        try db.execute(sql: tableSQL(name: "native_rule_records", actions: originalActions))
+        try db.execute(sql: indexSQL)
+        try db.execute(sql: """
             CREATE TABLE native_rule_version (
                 id INTEGER PRIMARY KEY CHECK(id = 1),
                 value INTEGER NOT NULL
             );
             INSERT INTO native_rule_version(id, value) VALUES(1, 0);
             """)
+    }
+
+    static func migrateActions(_ db: Database) throws {
+        let kept = storedActions.map { "'\($0)'" }.joined(separator: ", ")
+        let dropped = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_rule_records WHERE action IS NOT NULL AND action NOT IN (\(kept))") ?? 0
+        try db.execute(sql: tableSQL(name: "native_rule_records_next", actions: storedActions))
+        try db.execute(sql: """
+            INSERT INTO native_rule_records_next(\(columns))
+            SELECT \(columns) FROM native_rule_records WHERE action IS NULL OR action IN (\(kept));
+            DROP TABLE native_rule_records;
+            ALTER TABLE native_rule_records_next RENAME TO native_rule_records;
+            """)
+        try db.execute(sql: indexSQL)
+        if dropped > 0 { _ = try advanceVersion(db) }
     }
 
     private static let columns = """

@@ -42,21 +42,17 @@ struct DotSheetShot: View {
                 }
                 row("What asks first") {
                     VStack(alignment: .leading, spacing: 5) {
-                        ForEach(NativeActionClass.allCases, id: \.self) { action in
+                        ForEach(NativeActionClass.configurable, id: \.self) { action in
                             HStack {
                                 Text(action.title).font(.system(size: 12))
                                 Spacer(minLength: 8)
-                                if action.isFixed {
-                                    Text("Always handed to you").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                                } else {
-                                    HStack(spacing: 4) {
-                                        Text(resolver.choice(for: action).title).font(.system(size: 12))
-                                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
-                                    }
-                                    .padding(.horizontal, 7).padding(.vertical, 2)
-                                    .background(RoundedRectangle(cornerRadius: 5).fill(Theme.surface))
-                                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.hairline, lineWidth: 1))
+                                HStack(spacing: 4) {
+                                    Text(resolver.choice(for: action).title).font(.system(size: 12))
+                                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
                                 }
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.surface))
+                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.hairline, lineWidth: 1))
                             }
                         }
                     }

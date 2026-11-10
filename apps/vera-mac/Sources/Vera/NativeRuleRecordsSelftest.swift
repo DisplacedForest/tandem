@@ -25,7 +25,9 @@ enum NativeRuleRecordsSelftest {
         try precedence(require)
         try scopes(require)
         try inactive(require)
-        try sensitiveAndText(require)
+        try floorAndText(require)
+        try floorResolution(require)
+        try actionMigration(require)
         try limitedUse(require)
         try await consumeOnce(require)
         try sourceRevisions(require)
@@ -198,8 +200,8 @@ enum NativeRuleRecordsSelftest {
         let narrow = resolver([record(.allow, target: alice)])
         try require(narrow.resolve(toAlice, honoringLimitedUse: false).decision == .act(.grant), "A recipient allow acts for that recipient")
         let other = narrow.resolve(toBob, honoringLimitedUse: false)
-        try require(other.decision == .handOff && other.resolution == nil, "Another recipient falls back to the class default")
-        try require(narrow.decision(for: .networkSends) == .handOff, "A class-level decision ignores the recipient allow")
+        try require(other.decision == .ask && other.resolution == nil, "Another recipient falls back to the class default")
+        try require(narrow.decision(for: .networkSends) == .ask, "A class-level decision ignores the recipient allow")
 
         let forbid = record(.forbid)
         let override = resolver([forbid, record(.allow, target: alice)])
@@ -283,14 +285,110 @@ enum NativeRuleRecordsSelftest {
                     "A spent record never matches")
     }
 
-    private static func sensitiveAndText(_ require: (Bool, String) throws -> Void) throws {
-        let sensitive = resolver([record(.allow, .sensitive), record(.allow, .sensitive, tool: "vault")])
-        let resolved = sensitive.resolve(NativeRuleQuery(action: .sensitive, toolID: "vault"), honoringLimitedUse: true)
-        try require(sensitive.decision(for: .sensitive) == .handOff && resolved.decision == .handOff && resolved.resolution == nil,
-                    "A record on the sensitive class changes nothing")
+    private static func floorAndText(_ require: (Bool, String) throws -> Void) throws {
+        let held = resolver([record(.allow, .payments), record(.allow, .payments, tool: "vault")])
+        let resolved = held.resolve(NativeRuleQuery(action: .payments, toolID: "vault"), honoringLimitedUse: true)
+        try require(held.decision(for: .payments) == .handOff && resolved.decision == .handOff && resolved.resolution == nil,
+                    "A record on a held floor class changes nothing")
         let text = resolver([record(.allow, nil, statement: "You can always trash my downloads")])
         try require(text.decision(for: .trash) == .ask && text.resolve(NativeRuleQuery(action: .trash), honoringLimitedUse: true).resolution == nil,
                     "A text-only record never matches")
+    }
+
+    private static func floorResolution(_ require: (Bool, String) throws -> Void) throws {
+        for action in [NativeActionClass.credentialEntry, .payments, .permanentDeletion] {
+            guard let item = action.floorItem else { throw NativeTaskFixture.Failure.assertion("\(action.rawValue) is a floor class") }
+            try require(resolver([]).decision(for: action) == .handOff, "\(action.rawValue) hands off with nothing lifted")
+            let allowed = resolver([record(.allow, action)])
+            try require(allowed.decision(for: action) == .handOff && allowed.resolve(NativeRuleQuery(action: action), honoringLimitedUse: true).decision == .handOff,
+                        "An everywhere allow never opens a held \(action.rawValue)")
+            let tooled = resolver([record(.allow, action, tool: "vault")]).resolve(NativeRuleQuery(action: action, toolID: "vault"), honoringLimitedUse: true)
+            try require(tooled.decision == .handOff && tooled.resolution == nil && tooled.authorizedBy.isEmpty, "A tool allow never opens a held \(action.rawValue)")
+            var asking = NativeRules.defaults
+            asking.lift(item, choice: .ask)
+            try require(resolver([], global: asking).decision(for: action) == .ask, "A lifted \(action.rawValue) set to ask asks")
+            var acting = asking
+            acting.set(.act, for: action)
+            try require(resolver([], global: acting).decision(for: action) == .act(.rule), "A lifted \(action.rawValue) set to act acts")
+            try require(resolver([record(.allow, action)], global: asking).decision(for: action) == .act(.grant), "A lifted \(action.rawValue) honors an allow record")
+            var chat = NativeConversationRules()
+            chat.tighten(.act, for: action, global: asking)
+            let loosened = NativeRuleResolver(global: asking, conversation: NativeConversationRules(choices: [action: .act]), requestText: "",
+                                              context: NativeRuleContext(conversationID: "c1"), now: start)
+            try require(chat.isEmpty && loosened.decision(for: action) == .ask, "A chat cannot loosen a lifted \(action.rawValue) below the global choice")
+        }
+    }
+
+    private static func actionMigration(_ require: (Bool, String) throws -> Void) throws {
+        try require(Set(NativeRuleRecordStore.storedActions) == Set(NativeActionClass.allCases.map(\.rawValue)), "Every action class can be stored")
+        let insert = """
+            INSERT INTO native_rule_records(id, scope_kind, scope_id, action, tool_id, target_kind, target_value, effect, statement, origin,
+                origin_conversation_id, origin_message_id, quote, reason, remaining_uses, expires_at, status, created_at, updated_at, revoked_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        func row(_ id: String, scope: String = "everywhere", scopeID: String? = nil, action: String?, tool: String? = nil, targetKind: String? = nil,
+                 targetValue: String? = nil, effect: String, origin: String = "settings", conversation: String? = nil, message: String? = nil,
+                 uses: Int? = nil, expires: Double? = nil, status: String = "active", revoked: Double? = nil) -> StatementArguments {
+            [id, scope, scopeID, action, tool, targetKind, targetValue, effect, "Rule " + id, origin, conversation, message,
+             "a quote", "a reason", uses, expires, status, 1_800_000_000.25, 1_800_000_100.5, revoked]
+        }
+        func snapshot(_ db: Database) throws -> [String: [String: DatabaseValue]] {
+            var rows: [String: [String: DatabaseValue]] = [:]
+            for found in try Row.fetchAll(db, sql: "SELECT * FROM native_rule_records") {
+                let values = Dictionary(uniqueKeysWithValues: found.columnNames.map { ($0, found[$0] as DatabaseValue) })
+                rows[found["id"] as String] = values
+            }
+            return rows
+        }
+        func version(_ db: Database) throws -> Int { try Int.fetchOne(db, sql: "SELECT value FROM native_rule_version WHERE id = 1") ?? -1 }
+        func rejects(_ queue: DatabaseQueue, _ arguments: StatementArguments) -> Bool {
+            do { try queue.write { try $0.execute(sql: insert, arguments: arguments) }; return false } catch { return true }
+        }
+
+        let queue = try DatabaseQueue()
+        try queue.write { db in
+            try NativeRuleRecordStore.migrate(db)
+            try db.execute(sql: insert, arguments: row("allow-send", action: "network_sends", tool: "mail", targetKind: "recipient", targetValue: "alice@example.com",
+                                                       effect: "allow", origin: "chat", conversation: "c1", message: "m1", uses: 3, expires: 1_800_003_600.75))
+            try db.execute(sql: insert, arguments: row("ask-trash", scope: "conversation", scopeID: "c1", action: "trash", effect: "ask"))
+            try db.execute(sql: insert, arguments: row("hand-commands", scope: "project", scopeID: "p1", action: "commands", effect: "hand_off", status: "revoked", revoked: 1_800_000_200))
+            try db.execute(sql: insert, arguments: row("forbid-folder", action: "file_edits", targetKind: "folder", targetValue: "/Volumes/Notes/Locked", effect: "forbid"))
+            try db.execute(sql: insert, arguments: row("allow-prefix", action: "commands", targetKind: "command_prefix", targetValue: "swift build", effect: "allow"))
+            try db.execute(sql: insert, arguments: row("text-only", action: nil, effect: "ask", origin: "chat"))
+            try db.execute(sql: insert, arguments: row("old-one", action: "sensitive", effect: "allow"))
+            try db.execute(sql: insert, arguments: row("old-two", action: "sensitive", tool: "vault", effect: "hand_off", message: "m2"))
+        }
+        let before = try queue.read { db in (try snapshot(db), try version(db)) }
+        try queue.write { try NativeRuleRecordStore.migrateActions($0) }
+        let after = try queue.read { db in
+            (try snapshot(db), try version(db),
+             Set(try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'native_rule_records' AND sql IS NOT NULL")))
+        }
+        var expected = before.0
+        expected.removeValue(forKey: "old-one")
+        expected.removeValue(forKey: "old-two")
+        try require(expected.count == 6 && after.0 == expected, "Every row outside the old class survives byte for byte")
+        try require(after.0["old-one"] == nil && after.0["old-two"] == nil, "Rows on the old class are dropped")
+        try require(after.1 > before.1, "Dropping rows advances the rules version")
+        try require(after.2 == ["native_rule_records_status_action", "native_rule_records_origin_message"], "Both indexes exist after the rebuild")
+        try require(!rejects(queue, row("pay", action: "payments", effect: "allow")), "A payments row can be stored")
+        try require(rejects(queue, row("old-three", action: "sensitive", effect: "allow")), "A row on the old class is rejected")
+        try require(rejects(queue, row("uses-ask", action: "trash", effect: "ask", uses: 2)), "Remaining uses on a non-allow are rejected")
+        try require(rejects(queue, row("prefix-forbid", action: "commands", targetKind: "command_prefix", targetValue: "rm", effect: "forbid")),
+                    "A command prefix forbid is rejected")
+        try require(rejects(queue, row("folder-commands", action: "commands", targetKind: "folder", targetValue: "/Volumes/Notes", effect: "forbid")),
+                    "A folder target on commands is rejected")
+        try require(rejects(queue, row("duplicate-message", action: "trash", effect: "ask", message: "m1")), "A duplicate origin message is rejected")
+
+        let clean = try DatabaseQueue()
+        try clean.write { db in
+            try NativeRuleRecordStore.migrate(db)
+            try db.execute(sql: insert, arguments: row("allow-send", action: "network_sends", effect: "allow"))
+        }
+        let cleanBefore = try clean.read { try version($0) }
+        try clean.write { try NativeRuleRecordStore.migrateActions($0) }
+        let cleanAfter = try clean.read { db in (try version(db), try snapshot(db).count) }
+        try require(cleanAfter.0 == cleanBefore && cleanAfter.1 == 1, "A database without old rows keeps its rules version")
     }
 
     private static func limitedUse(_ require: (Bool, String) throws -> Void) throws {
@@ -645,7 +743,7 @@ enum NativeRuleRecordsSelftest {
         let allowing = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "",
                                           records: [record(.allow, target: recipient("alice@example.com"))], context: NativeRuleContext(conversationID: "c1"), now: start)
         let spoofed = NativeCompanionWorker.ruleDecision(send, spoof, resolver: allowing, honoringLimitedUse: true)
-        try require(spoofed.decision == .handOff && spoofed.authorizedBy.isEmpty && NativeCompanionWorker.ruleQuery(send, spoof, action: .networkSends).targets.isEmpty,
+        try require(spoofed.decision == .ask && spoofed.authorizedBy.isEmpty && NativeCompanionWorker.ruleQuery(send, spoof, action: .networkSends).targets.isEmpty,
                     "A path that looks like a recipient never satisfies a recipient allow")
         let acting = NativeRules(choices: [.networkSends: .act])
         let restricted = NativeRuleResolver(global: acting, conversation: NativeConversationRules(), requestText: "",

@@ -22,10 +22,25 @@ extension SelfTest {
 
         var global = NativeRules.defaults
         try require(global.choice(for: .fileEdits) == .act && global.choice(for: .commands) == .ask
-                    && global.choice(for: .trash) == .ask && global.choice(for: .networkSends) == .handOff
-                    && global.choice(for: .sensitive) == .handOff, "Defaults match the safe set")
-        global.set(.act, for: .sensitive)
-        try require(global.choice(for: .sensitive) == .handOff, "Sensitive actions stay at hand off")
+                    && global.choice(for: .trash) == .ask && global.choice(for: .networkSends) == .ask
+                    && global.choice(for: .riskyCommands) == .handOff && global.choice(for: .otherChanges) == .ask, "Defaults match the safe set")
+        try require(NativeActionClass.configurable == [.fileEdits, .commands, .trash, .networkSends, .riskyCommands, .reminders, .serviceChanges, .otherChanges], "Only ordinary classes are configurable")
+        for item in NativeFloorItem.allCases where item.isLiftable {
+            guard let action = item.actionClass else { continue }
+            try require(global.holds(action) && !global.isLifted(item) && global.choice(for: action) == .handOff, "A floor item is held by default: \(item)")
+        }
+        var floor = NativeRules.defaults
+        floor.set(.act, for: .payments)
+        try require(floor == .defaults && floor.holds(.payments) && NativeRuleResolver(global: floor, conversation: NativeConversationRules(), requestText: "").choice(for: .payments) == .handOff,
+                    "Setting a held floor class changes nothing")
+        floor.lift(.payments)
+        try require(floor.choice(for: .payments) == .ask && floor.isLifted(.payments) && !floor.holds(.payments), "Lifting a floor item makes it ask first")
+        floor.set(.act, for: .payments)
+        try require(floor.choice(for: .payments) == .act, "A lifted floor class takes a choice")
+        floor.restore(.payments)
+        try require(floor == .defaults && floor.holds(.payments) && floor.choice(for: .payments) == .handOff, "Restoring puts the floor item back")
+        floor.lift(.ruleChanges)
+        try require(floor == .defaults && !floor.isLifted(.ruleChanges) && !NativeFloorItem.ruleChanges.isLiftable, "Rule changes can never be lifted")
         global.set(.act, for: .commands)
         let encoded = try JSONEncoder().encode(global)
         let decoded = try JSONDecoder().decode(NativeRules.self, from: encoded)
@@ -68,37 +83,37 @@ extension SelfTest {
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
         let classify: (String) -> NativeActionClass = { NativeCommandClassifier.classify($0, grants: sample) }
         try require(classify("swift build") == .commands && classify("rm -rf build") == .commands && classify("rm -rf /Volumes/Notes/Greenhouse/build") == .commands && classify("rm -rf ./build/out") == .commands, "Ordinary commands inside the grant are commands")
-        try require(classify("rm -rf ../Other") == .sensitive && classify("rm -rf build/../../Other") == .sensitive && classify("mv notes.txt /Volumes/Elsewhere/") == .sensitive, "Relative paths that leave the grant are sensitive")
+        try require(classify("rm -rf ../Other") == .permanentDeletion && classify("rm -rf build/../../Other") == .permanentDeletion && classify("mv notes.txt /Volumes/Elsewhere/") == .permanentDeletion, "Relative paths that leave the grant are permanent deletion")
         try require(classify("printf ready & git push origin main") == .networkSends && classify("make & scp out host:") == .networkSends, "A single ampersand still separates commands")
-        try require(classify("cd /Volumes/Other && rm -rf documents") == .sensitive && classify("cd sub && rm -rf old") == .sensitive && classify("popd && rm x") == .sensitive && classify("cd .. && rm x") == .sensitive, "Directory changes are tracked before destructive commands")
-        try require(classify("r\"\"m /Volumes/Other/doc.txt") == .sensitive && classify("g''it push origin main") == .sensitive && classify("rm -rf \"/Volumes/Other\"/x") == .sensitive
-                    && classify("rm -rf \"build\"") == .commands && classify("rm -rf $HOME/x") == .sensitive, "Quotes or variables inside a word never slip past classification")
-        try require(classify("cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim") == .sensitive && classify("(cd sub && rm -rf old)") == .sensitive && classify("(make)") == .commands,
+        try require(classify("cd /Volumes/Other && rm -rf documents") == .permanentDeletion && classify("cd sub && rm -rf old") == .permanentDeletion && classify("popd && rm x") == .permanentDeletion && classify("cd .. && rm x") == .permanentDeletion, "Directory changes are tracked before destructive commands")
+        try require(classify("r\"\"m /Volumes/Other/doc.txt") == .permanentDeletion && classify("g''it push origin main") == .riskyCommands && classify("rm -rf \"/Volumes/Other\"/x") == .permanentDeletion
+                    && classify("rm -rf \"build\"") == .commands && classify("rm -rf $HOME/x") == .permanentDeletion, "Quotes or variables inside a word never slip past classification")
+        try require(classify("cd /Volumes/Other && (cd /Volumes/Notes/Greenhouse); rm -rf victim") == .permanentDeletion && classify("(cd sub && rm -rf old)") == .permanentDeletion && classify("(make)") == .commands,
                     "Subshells remove directory trust for destructive commands")
-        try require(classify("find /Volumes/Other -delete") == .sensitive && classify("find . -name '*.o' -delete") == .commands && classify("find /Volumes/Other -name x") == .commands && classify("find . -exec rm {} \\;") == .sensitive,
+        try require(classify("find /Volumes/Other -delete") == .permanentDeletion && classify("find . -name '*.o' -delete") == .commands && classify("find /Volumes/Other -name x") == .commands && classify("find . -exec rm {} \\;") == .permanentDeletion,
                     "find with an effect is destructive")
-        try require(classify("\"command\" rm -rf /Volumes/Other/old") == .sensitive && classify("'env' rm -rf /Volumes/Other/old") == .sensitive && classify("command make") == .commands && classify("FOO=\"$X\" make") == .sensitive
-                    && classify("env -u FOO rm -rf /Volumes/Other/old") == .sensitive && classify("env -u FOO git push origin main") == .sensitive && classify("env FOO=bar make") == .commands && classify("nice -n 5 make") == .sensitive, "Quoted launchers and launcher options never hide the real executable")
-        for (command, expected) in [("env </dev/null rm -rf /Volumes/Other/old", NativeActionClass.sensitive), ("env FOO=bar </dev/null scp out host:", .sensitive), ("2>/dev/null rm -rf /Volumes/Other/x", .sensitive),
+        try require(classify("\"command\" rm -rf /Volumes/Other/old") == .permanentDeletion && classify("'env' rm -rf /Volumes/Other/old") == .permanentDeletion && classify("command make") == .commands && classify("FOO=\"$X\" make") == .riskyCommands
+                    && classify("env -u FOO rm -rf /Volumes/Other/old") == .permanentDeletion && classify("env -u FOO git push origin main") == .riskyCommands && classify("env FOO=bar make") == .commands && classify("nice -n 5 make") == .riskyCommands, "Quoted launchers and launcher options never hide the real executable")
+        for (command, expected) in [("env </dev/null rm -rf /Volumes/Other/old", NativeActionClass.permanentDeletion), ("env FOO=bar </dev/null scp out host:", .riskyCommands), ("2>/dev/null rm -rf /Volumes/Other/x", .permanentDeletion),
                                     ("make > out.log", .commands), ("./scripts/run.sh 2>&1", .commands), ("~/tools/run", .commands),
-                                    ("rm>out=log ../victim", .sensitive), ("env FOO=bar rm>out=log ../victim", .sensitive), ("scp>out=log out host:", .sensitive), ("FOO=bar make", .commands), ("CC=clang make", .commands), ("FOO=a$X make", .sensitive), ("1X=y make", .sensitive), ("arch -arm64 rm ../victim", .sensitive), ("arch -arm64 scp out host:", .sensitive), ("xcrun swift build", .commands), ("timeout 30 make", .sensitive), ("timeout 30 rm ../victim", .sensitive), ("stdbuf -o0 scp out host:", .sensitive),
+                                    ("rm>out=log ../victim", .permanentDeletion), ("env FOO=bar rm>out=log ../victim", .permanentDeletion), ("scp>out=log out host:", .riskyCommands), ("FOO=bar make", .commands), ("CC=clang make", .commands), ("FOO=a$X make", .riskyCommands), ("1X=y make", .riskyCommands), ("arch -arm64 rm ../victim", .permanentDeletion), ("arch -arm64 scp out host:", .riskyCommands), ("xcrun swift build", .commands), ("timeout 30 make", .riskyCommands), ("timeout 30 rm ../victim", .permanentDeletion), ("stdbuf -o0 scp out host:", .riskyCommands),
                                     ("swift build -c release", .commands), ("swift test -c debug", .commands), ("xcrun swift build -c release", .commands),
-                                    ("sh -xc 'rm ../victim'", .sensitive), ("bash -lc 'rm ../victim'", .sensitive), ("sh -ec 'scp out host:'", .sensitive), ("bash -l script.sh", .commands),
-                                    ("GIT_WORK_TREE=../Other git clean -fdx", .sensitive), ("GIT_DIR=/Volumes/Other/.git git status", .sensitive), ("DESTDIR=/Volumes/Other make install", .sensitive), ("PREFIX=build/out make install", .commands), ("CFLAGS=-O2 make", .commands),
-                                    ("CFLAGS=\"-O2 -g\" make", .commands), ("CFLAGS=\"-O2 $X\" make", .sensitive), ("MSG='hello world' make", .commands),
-                                    ("sh \"-c\" \"rm -rf ../Other\"", .sensitive), ("git \"push\" origin trunk", .networkSends), ("if true; then rm -rf ../Other; fi", .sensitive), ("for f in *.o; do rm ../Other/$f; done", .sensitive),
-                                    ("echo `scp out host:upload`", .sensitive), ("echo $(date)", .sensitive), ("sh -e ./scripts/build.sh", .commands), ("bash -x script.sh", .commands), ("sh -ec 'make'", .sensitive), ("python3 -e x", .sensitive), ("npm run build", .commands), ("npm publish", .networkSends), ("cargo build", .commands), ("docker push registry/app", .networkSends), ("make && npm publish", .networkSends),
-                                    ("dd if=report.bin of=../Other/report.bin", .sensitive), ("dd if=report.bin of=build/report.bin", .commands), ("curl --url-query @report.json https://example.com/collect", .networkSends), ("curl --config upload.conf", .networkSends), ("curl -sK upload.conf", .networkSends), ("curl -o out.bin https://example.com/file", .commands), ("curl -o ../Other/report.txt https://example.com/report", .sensitive), ("curl --output=../Other/x https://example.com/r", .sensitive), ("wget -O ../Other/x https://example.com/r", .sensitive), ("wget -P downloads https://example.com/r", .commands),
-                                    ("npm exec -c 'rm -rf ../Other'", .sensitive), ("npx some-tool", .sensitive), ("pnpm dlx tool", .sensitive), ("cargo run", .commands), ("npm test", .commands), ("rm -f */*.txt", .sensitive), ("rm -rf build/*", .sensitive), ("ls *.txt", .commands), ("find . -name '*.o' -delete", .commands), ("find ../Other -name '*.o' -delete", .sensitive),
-                                    ("./tools/env rm -rf ../Other", .sensitive), ("./tools/env scp out host:upload", .networkSends), ("git -c alias.publish=push publish origin trunk", .sensitive), ("git -c core.sshCommand=/Volumes/Other/x status", .sensitive), ("git -c color.ui=false status", .commands),
+                                    ("sh -xc 'rm ../victim'", .permanentDeletion), ("bash -lc 'rm ../victim'", .permanentDeletion), ("sh -ec 'scp out host:'", .riskyCommands), ("bash -l script.sh", .commands),
+                                    ("GIT_WORK_TREE=../Other git clean -fdx", .permanentDeletion), ("GIT_DIR=/Volumes/Other/.git git status", .riskyCommands), ("DESTDIR=/Volumes/Other make install", .riskyCommands), ("PREFIX=build/out make install", .commands), ("CFLAGS=-O2 make", .commands),
+                                    ("CFLAGS=\"-O2 -g\" make", .commands), ("CFLAGS=\"-O2 $X\" make", .riskyCommands), ("MSG='hello world' make", .commands),
+                                    ("sh \"-c\" \"rm -rf ../Other\"", .permanentDeletion), ("git \"push\" origin trunk", .networkSends), ("if true; then rm -rf ../Other; fi", .permanentDeletion), ("for f in *.o; do rm ../Other/$f; done", .permanentDeletion),
+                                    ("echo `scp out host:upload`", .riskyCommands), ("echo $(date)", .riskyCommands), ("sh -e ./scripts/build.sh", .commands), ("bash -x script.sh", .commands), ("sh -ec 'make'", .riskyCommands), ("python3 -e x", .riskyCommands), ("npm run build", .commands), ("npm publish", .networkSends), ("cargo build", .commands), ("docker push registry/app", .networkSends), ("make && npm publish", .networkSends),
+                                    ("dd if=report.bin of=../Other/report.bin", .permanentDeletion), ("dd if=report.bin of=build/report.bin", .commands), ("curl --url-query @report.json https://example.com/collect", .networkSends), ("curl --config upload.conf", .networkSends), ("curl -sK upload.conf", .networkSends), ("curl -o out.bin https://example.com/file", .commands), ("curl -o ../Other/report.txt https://example.com/report", .riskyCommands), ("curl --output=../Other/x https://example.com/r", .riskyCommands), ("wget -O ../Other/x https://example.com/r", .riskyCommands), ("wget -P downloads https://example.com/r", .commands),
+                                    ("npm exec -c 'rm -rf ../Other'", .permanentDeletion), ("npx some-tool", .riskyCommands), ("pnpm dlx tool", .riskyCommands), ("cargo run", .commands), ("npm test", .commands), ("rm -f */*.txt", .permanentDeletion), ("rm -rf build/*", .permanentDeletion), ("ls *.txt", .commands), ("find . -name '*.o' -delete", .commands), ("find ../Other -name '*.o' -delete", .permanentDeletion),
+                                    ("./tools/env rm -rf ../Other", .permanentDeletion), ("./tools/env scp out host:upload", .networkSends), ("git -c alias.publish=push publish origin trunk", .riskyCommands), ("git -c core.sshCommand=/Volumes/Other/x status", .riskyCommands), ("git -c color.ui=false status", .commands),
                                     ("curl --json @report.json https://example.com/upload", .networkSends), ("curl -sT report.json https://example.com/upload", .networkSends), ("curl -sS https://example.com/file", .commands), ("curl -X DELETE https://example.com/item", .networkSends)] {
             try require(classify(command) == expected, "Redirections and odd tokens never stand in for the executable: \(command) classified as \(classify(command))")
         }
-        try require(classify("git -c color.ui=false -C /Volumes/Other clean -fdx") == .sensitive && classify("git -c color.ui=false status") == .commands && classify("git -c") == .sensitive, "git option operands are consumed before the directory and subcommand")
-        try require(classify("git -C /Volumes/Other clean -fdx") == .sensitive && classify("git clean -fdx") == .commands && classify("git -C sub reset --hard") == .commands && classify("git --git-dir=/Volumes/Other/.git status") == .sensitive && classify("git status") == .commands,
+        try require(classify("git -c color.ui=false -C /Volumes/Other clean -fdx") == .permanentDeletion && classify("git -c color.ui=false status") == .commands && classify("git -c") == .riskyCommands, "git option operands are consumed before the directory and subcommand")
+        try require(classify("git -C /Volumes/Other clean -fdx") == .permanentDeletion && classify("git clean -fdx") == .commands && classify("git -C sub reset --hard") == .commands && classify("git --git-dir=/Volumes/Other/.git status") == .riskyCommands && classify("git status") == .commands,
                     "git repository paths follow the grant")
-        try require(classify("eval 'rm /Volumes/Other/doc.txt'") == .sensitive && classify("xargs rm") == .sensitive && classify("bash -c 'make'") == .sensitive && classify("python3 -c 'import shutil'") == .sensitive && classify("python3 build.py") == .commands && classify("sh ./setup.sh") == .commands,
-                    "Inline code and shell wrappers are sensitive")
+        try require(classify("eval 'rm /Volumes/Other/doc.txt'") == .permanentDeletion && classify("xargs rm") == .permanentDeletion && classify("bash -c 'make'") == .riskyCommands && classify("python3 -c 'import shutil'") == .riskyCommands && classify("python3 build.py") == .commands && classify("sh ./setup.sh") == .commands,
+                    "Inline code and shell wrappers are risky")
         let plain: (String) -> Bool = { NativeCommandClassifier.isPlain($0, grants: sample) }
         for bypass in ["env </dev/null rm -rf /Volumes/Other/old", "rm>out=log ../victim", "env FOO=bar rm>out=log ../victim", "scp>out=log out host:", "arch -arm64 rm ../victim", "timeout 30 rm ../victim",
                        "sh -xc 'rm ../victim'", "bash -lc 'rm ../victim'", "GIT_WORK_TREE=../Other git clean -fdx", "CFLAGS=\"-O2 $X\" make", "sh \"-c\" \"rm -rf ../Other\"",
@@ -109,13 +124,13 @@ extension SelfTest {
         for everyday in ["make", "swift build -c release", "xcrun swift build", "CFLAGS=\"-O2 -g\" make", "CC=clang make", "sh -e ./scripts/build.sh", "npm run build", "./scripts/build.sh", "python3 build.py", "git status", "rm -rf build"] {
             try require(plain(everyday), "An everyday command is plain: \(everyday)")
         }
-        try require(classify("make && ./run.sh") == .commands && classify("make; ./run.sh") == .commands && classify("if true; then rm -rf ../Other; fi") == .sensitive && classify("make && rm -rf ../Other") == .sensitive && classify("make; sudo make install") == .sensitive && classify("make && git push origin trunk") == .networkSends,
+        try require(classify("make && ./run.sh") == .commands && classify("make; ./run.sh") == .commands && classify("if true; then rm -rf ../Other; fi") == .permanentDeletion && classify("make && rm -rf ../Other") == .permanentDeletion && classify("make; sudo make install") == .riskyCommands && classify("make && git push origin trunk") == .networkSends,
                     "A command that is not plain still hands off on a destructive token and still counts as sending on a sending token")
         try require(NativeRuleDecision.act(.rule).atLeastAsk == .ask && NativeRuleDecision.ask.atLeastAsk == .ask && NativeRuleDecision.handOff.atLeastAsk == .handOff, "A command that is not plain is at least ask")
-        try require(classify("\"git\" push origin main") == .networkSends && classify("'rm' /Volumes/Other/doc.txt") == .sensitive && classify("g\\it push") == .sensitive && classify("$SHELL -c x") == .sensitive, "Quoted or escaped executable names never slip past classification")
-        try require(classify("rm -rf /Volumes/Other/Documents") == .sensitive && classify("rm ~/notes.txt") == .sensitive && classify("sudo make install") == .sensitive
-                    && classify("cat ~/.ssh/id_rsa") == .sensitive && classify("make && security find-generic-password") == .sensitive && classify("cp secret.pem /tmp/x") == .sensitive,
-                    "Privileged commands and destructive commands outside the grant are sensitive")
+        try require(classify("\"git\" push origin main") == .networkSends && classify("'rm' /Volumes/Other/doc.txt") == .permanentDeletion && classify("g\\it push") == .riskyCommands && classify("$SHELL -c x") == .riskyCommands, "Quoted or escaped executable names never slip past classification")
+        try require(classify("rm -rf /Volumes/Other/Documents") == .permanentDeletion && classify("rm ~/notes.txt") == .permanentDeletion && classify("sudo make install") == .riskyCommands
+                    && classify("cat ~/.ssh/id_rsa") == .riskyCommands && classify("make && security find-generic-password") == .riskyCommands && classify("cp secret.pem /tmp/x") == .permanentDeletion,
+                    "Privileged commands are risky and destructive commands outside the grant are permanent deletion")
         try require(classify("git push origin main") == .networkSends && classify("curl -X POST https://x") == .networkSends && classify("make; scp out host:") == .networkSends
                     && classify("npm publish") == .networkSends && classify("curl https://example.com") == .commands && classify("git status") == .commands,
                     "Commands that send follow the sending rule")
@@ -150,7 +165,7 @@ extension SelfTest {
         try manager.createSymbolicLink(at: inside.appendingPathComponent("escape"), withDestinationURL: outside)
         let grant = try FolderGrant.make(url: inside)
         let root = grant.path
-        try require(NativeCommandClassifier.classify("rm -rf escape/secret.txt", grants: [grant], directory: root) == .sensitive
+        try require(NativeCommandClassifier.classify("rm -rf escape/secret.txt", grants: [grant], directory: root) == .permanentDeletion
                     && NativeCommandClassifier.classify("rm -rf sub/old", grants: [grant], directory: root) == .commands, "A destructive operand through a symlink is resolved and refused")
         let location = NativeFolderLocation(root: grant, components: [])
         let directory = try NativeFolderIO.walk(location, components: [])
@@ -254,10 +269,14 @@ extension SelfTest {
         }
         try require(declinedAgain?.activities.first?.state == .failed && repeatTransport.histories[1].last?.content.contains("already declined") == true && recorder.recorded.count == 2, "A declined request is refused on every execution path, even when no card would show")
         try require(NativeToolRequestKey.canonical(name: "run_command", request: "{\"directory\":\"/a\",\"command\":\"ls\"}") == NativeToolRequestKey.canonical(name: "run_command", request: "{ \"command\": \"ls\", \"directory\": \"/a\" }"), "Decline keys ignore argument order and spacing")
-        let (sensitiveRun, sensitiveTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
-        try require(sensitiveRun?.activities.first?.state == .failed && sensitiveTransport.histories[1].last?.content.contains("hand off") == true && recorder.recorded.count == 2, "A sensitive command is handed off even when commands act")
-        let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in true })
-        try require(sendRun?.activities.first?.state == .failed && sendTransport.histories[1].last?.content.contains("send on your behalf") == true && recorder.recorded.count == 2, "A sending command follows the sending rule (hand off by default)")
+        let (deletionRun, deletionTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
+        try require(deletionRun?.activities.first?.state == .failed && deletionTransport.histories[1].last?.content.contains("handed to the user") == true
+                    && deletionTransport.histories[1].last?.content.contains(NativeFloorItem.permanentDeletion.reason) == true && recorder.recorded.count == 2,
+                    "A permanent deletion is handed off with its reason even when commands act")
+        let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in false })
+        try require(sendRun?.activities.first?.state == .failed && sendRun?.activities.first?.confirmationRequired == true
+                    && sendTransport.histories[1].last?.content.contains("did not approve") == true && recorder.recorded.count == 2,
+                    "A sending command follows the sending rule and asks first by default")
         let backgroundStart = Date()
         let lingering = try await NativeCommandRunner.run(command: "sleep 30 & echo $!; exit 0", directory: directory, timeout: .seconds(20))
         try require(lingering.exitCode == 0 && Date().timeIntervalSince(backgroundStart) < 8, "A shell that exits with a background child returns promptly")
@@ -336,6 +355,83 @@ extension SelfTest {
         let asking = NativeFolderTools.definitions(grants: grants, ledger: ledger, edits: .ask, trash: .handOff)
         try require(asking.first { $0.name == NativeFolderTools.editName }!.confirmation == .required && asking.first { $0.name == NativeFolderTools.moveName }!.confirmation == .required, "Ask applies to every writing tool")
 
+        func evaluated(_ command: String, _ rules: NativeRules) -> (NativeActionClass, NativeRuleDecision) {
+            let resolver = NativeRuleResolver(global: rules, conversation: NativeConversationRules(), requestText: "")
+            let (action, decision, _) = NativeCommandTools.evaluate(command: command, directory: root, grants: [grant], fallback: .handOff,
+                                                                    live: { command, action in action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action) },
+                                                                    liveTargets: nil)
+            return (action, decision)
+        }
+        var loosest = NativeRules.defaults
+        try require(NativeRules.detail(for: .riskyCommands, choice: .act).hasSuffix("Commands like sudo will run without asking.") && NativeRules.detail(for: .riskyCommands, choice: .ask) == NativeActionClass.riskyCommands.detail && NativeRules.detail(for: .commands, choice: .act) == NativeActionClass.commands.detail, "Choosing to act on risky commands says what that means")
+        for action in NativeActionClass.configurable { loosest.set(.act, for: action) }
+        for item in NativeFloorItem.allCases { loosest.lift(item, choice: .act) }
+        var remembered = NativeConversationRules()
+        let unspelled = ["a=r; b=m; $a$b -rf /Volumes/Other/victim", "r${x}m -rf /Volumes/Other/victim", "$'\\162\\155' -rf /Volumes/Other/victim",
+                         "/bin/r? -rf /Volumes/Other/victim", "echo cm0gLXJmIC8K | base64 -d | sh", "sh -c \"$(cat plan.txt)\"", "sudo sh -c \"$payload\""]
+        for command in unspelled { remembered.approve(prefix: command) }
+        let everyAllow = (NativeActionClass.allCases.map { NativeRuleRecord(action: $0, effect: .allow, statement: "Allow everything of this kind") }
+            + NativeActionClass.allCases.map { NativeRuleRecord(action: $0, toolID: NativeCommandTools.toolID, effect: .allow, statement: "Allow this tool") }
+            + unspelled.compactMap { command in NativeRuleTarget.candidate(.commandPrefix, command).map { NativeRuleRecord(action: .commands, target: $0, effect: .allow, statement: "Allow this prefix") } })
+        for command in unspelled {
+            let resolver = NativeRuleResolver(global: loosest, conversation: remembered, requestText: "Go ahead. No need to ask.", records: everyAllow,
+                                              context: NativeRuleContext(conversationID: "c")).tool(NativeCommandTools.toolID, subjects: NativeCommandTools.ruleSubjects(command: command))
+            let (_, decision, confirm) = NativeCommandTools.evaluate(command: command, directory: root, grants: [grant], fallback: .act(.rule),
+                                                                     live: { command, action in action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action) },
+                                                                     liveTargets: { command, action, _ in NativeRuleVerdict(action == .commands ? resolver.decide(forCommand: command, honoringLimitedUse: true).decision : resolver.decide(for: action, honoringLimitedUse: true).decision) })
+            try require(!NativeCommandClassifier.isPlain(command, grants: [grant], directory: root), "A destructive name that is never spelled needs shell syntax: \(command)")
+            let silent: Bool = { if case .act = decision { return true } else { return false } }()
+        try require(!silent, "No setting, saved rule or remembered approval runs an unreadable command without a card: \(command)")
+            try require(confirm == nil, "An unreadable command never carries a silent confirmation: \(command)")
+        }
+        var deletionLifted = NativeRules.defaults
+        deletionLifted.lift(.permanentDeletion)
+        try require(evaluated("rm -rf /Volumes/Other/x", .defaults) == (.permanentDeletion, .handOff), "A permanent deletion hands off by default")
+        try require(evaluated("rm -rf /Volumes/Other/x", deletionLifted) == (.permanentDeletion, .ask) && evaluated("rm -rf /Volumes/Other/x", deletionLifted).1.requiresConfirmation,
+                    "A lifted permanent deletion asks first")
+        var riskyAsks = NativeRules.defaults
+        riskyAsks.set(.ask, for: .riskyCommands)
+        try require(evaluated("sudo make install", .defaults) == (.riskyCommands, .handOff) && evaluated("sudo make install", riskyAsks) == (.riskyCommands, .ask),
+                    "A risky command hands off by default and asks when risky commands ask")
+
+        let legacy = try JSONDecoder().decode(NativeRules.self, from: Data("{\"sensitive\":\"hand_off\",\"network_sends\":\"hand_off\",\"commands\":\"ask\"}".utf8))
+        try require(legacy.choices == [.commands: .ask] && legacy.choice(for: .networkSends) == .ask && legacy.holds(.payments) && legacy.holds(.credentialEntry) && legacy.holds(.permanentDeletion),
+                    "Rules saved before the floor decode without the old class and sends ask first")
+        let revised = try JSONDecoder().decode(NativeRules.self, from: Data("{\"sensitive\":\"hand_off\",\"network_sends\":\"hand_off\",\"commands\":\"ask\",\"defaults_revision\":\"2\"}".utf8))
+        try require(revised.choice(for: .networkSends) == .handOff && revised.choices.count == 2, "A hand off chosen after the upgrade is kept")
+        var chosen = NativeRules.defaults
+        chosen.set(.handOff, for: .networkSends)
+        let reread = try JSONDecoder().decode(NativeRules.self, from: try JSONEncoder().encode(chosen))
+        try require(reread == chosen && reread.choice(for: .networkSends) == .handOff, "A chosen hand off for sends survives a save and reload")
+        var liftedRules = NativeRules.defaults
+        liftedRules.lift(.payments, choice: .act)
+        let liftedReread = try JSONDecoder().decode(NativeRules.self, from: try JSONEncoder().encode(liftedRules))
+        try require(liftedReread == liftedRules && liftedReread.isLifted(.payments) && !liftedReread.isLifted(.credentialEntry), "A lifted floor item survives a save and reload")
+        let bare = try JSONDecoder().decode(NativeRules.self, from: Data("{\"payments\":\"act\",\"credential_entry\":\"ask\",\"permanent_deletion\":\"act\",\"defaults_revision\":\"2\"}".utf8))
+        try require(!bare.isLifted(.payments) && !bare.isLifted(.credentialEntry) && !bare.isLifted(.permanentDeletion) && bare.holds(.payments), "A bare class name in settings never lifts a floor item")
+        let marked = try JSONDecoder().decode(NativeRules.self, from: Data("{\"lifted.payments\":\"act\",\"lifted.rule_changes\":\"act\"}".utf8))
+        try require(marked.isLifted(.payments) && marked.choice(for: .payments) == .act && !marked.isLifted(.credentialEntry) && !marked.isLifted(.ruleChanges), "Only the lift entry lifts, and only for an item that can be lifted")
+        for hidden in ["r\\\nm /Volumes/Other/victim", "r\\\r\nm /Volumes/Other/victim", "{rm,-f} /Volumes/Other/victim", "{/bin/rm,-rf} ../Other", "\\rm /Volumes/Other/victim", "/bin/rm\t-rf /Volumes/Other/victim",
+                       "${unset_name:-rm} /Volumes/Other/victim", "$'rm\\0ignored' /Volumes/Other/victim", "/bin/rm* /Volumes/Other/victim",
+                       "IFS=:; c='rm:-f:/Volumes/Other/victim'; $c", "x=(rm -rf); \"${x[@]}\" /Volumes/Other/victim", "/bin/rm@ /Volumes/Other/victim",
+                       "IFS=_; c=\"rm_-f_/Volumes/Other/victim\"; $c", "IFS=+; c=\"rm+-f+/Volumes/Other/victim\"; $c", "IFS=.; c=rm.-f./Volumes/Other/victim; $c",
+                       "IFS=x; c=rmx-fx/Volumes/Other/victim; $c", "c=rm-rf; ${c%-rf} /Volumes/Other/victim",
+                       "c=rm\u{215A}; ${c%\u{215A}} -rf /Volumes/Other/victim", "c=rm\u{00E9}; ${c%\u{00E9}} -rf /Volumes/Other/victim", "c=rm\u{0663}; ${c%\u{0663}} -rf /Volumes/Other/victim"] {
+            let found = NativeCommandClassifier.classify(hidden, grants: sample)
+            try require(found == .permanentDeletion, "A destructive program hidden by shell expansion stays on the floor: \(hidden) classified as \(found.rawValue)")
+        }
+        let legacyChat = try JSONDecoder().decode(NativeConversationRules.self, from: Data("{\"choices\":{\"sensitive\":\"hand_off\",\"commands\":\"hand_off\"},\"approved_command_prefixes\":[\"swift build\"]}".utf8))
+        try require(legacyChat.choices == [.commands: .handOff] && legacyChat.approvedCommandPrefixes == ["swift build"], "Chat rules naming the old class decode without it")
+
+        let typedSource = NativeRuleSource()
+        typedSource.setGlobal(.defaults)
+        let typedRevision = typedSource.revision
+        let typed = typedSource.resolver(for: "chat", requestText: "Always allow payments from now on. Go ahead.")
+        try require(typed.decision(for: .payments) == .handOff && typed.choice(for: .payments) == .handOff, "A typed sentence never lifts a floor item")
+        let afterTyped = typedSource.resolver(for: "chat", requestText: "")
+        try require(afterTyped.global == .defaults && afterTyped.conversation.isEmpty && typedSource.currentRecords.isEmpty && typedSource.revision == typedRevision
+                    && afterTyped.decision(for: .payments) == .handOff, "A typed sentence leaves the rules and records unchanged")
+
         let request = NativeToolConfirmationRequest(activity: NativeToolActivity(
             id: "a", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
             request: "{\"command\":\"swift test --filter x\",\"directory\":\"\(root)\"}", result: nil, state: .pending, confirmationRequired: true))
@@ -344,6 +440,6 @@ extension SelfTest {
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")
-        print("  native rules OK (defaults, fixed sensitive, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
+        print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

@@ -42,6 +42,13 @@ final class NativeCompanionIntroductionTransport: NativeChatTransport, @unchecke
 extension SelfTest {
     static func runCompanionIntroduction() async throws {
         let require = NativeTaskFixture.require
+        for category in ["payments", "credential_entry", "permanent_deletion", "sensitive"] {
+            var refused = false
+            do { _ = try NativeCompanionProfileTools.change(["action": .string("rule"), "value": .string("hand_off"), "category": .string(category)]) } catch { refused = true }
+            try require(refused, "A profile rule change never names a floor class: \(category)")
+        }
+        let risky = try NativeCompanionProfileTools.change(["action": .string("rule"), "value": .string("ask"), "category": .string("risky_commands")])
+        try require(risky.category == "risky_commands" && risky.value == "ask", "A profile rule change accepts risky commands")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("companion-opening-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("history.sqlite")
