@@ -7,6 +7,7 @@ ItemDecisionHook = Callable[[dict, str, bool], None]
 SPEC: dict[str, dict] = {}
 EXECUTORS: dict[str, Executor] = {}
 ORDER: dict[str, int] = {}
+OWNERS: dict[str, str] = {}
 ITEM_DECISION_HOOKS: list[ItemDecisionHook] = []
 CATALOG_EXTRAS: dict[str, Callable[[], Any]] = {}
 _HOOK_ORDER: list[tuple[int, ItemDecisionHook]] = []
@@ -36,7 +37,8 @@ def _resort() -> None:
 def register_action(verb: str, *, validate: Callable[[dict], str | None], preview: Callable[[dict], str],
                     risk: str, reversible: bool, autonomous: bool, order: int, executor: Executor,
                     **extra: Any) -> None:
-    if verb in ORDER:
+    owner = getattr(executor, "__module__", "") or ""
+    if verb in ORDER and OWNERS.get(verb) != owner:
         raise ValueError(f"action verb already registered: {verb}")
     entry = {"validate": validate, "preview": preview, "risk": risk, "reversible": reversible,
              "autonomous": autonomous, **extra}
@@ -44,6 +46,7 @@ def register_action(verb: str, *, validate: Callable[[dict], str | None], previe
     SPEC[verb] = entry
     EXECUTORS[verb] = executor
     ORDER[verb] = order
+    OWNERS[verb] = owner
     _resort()
 
 
@@ -51,9 +54,13 @@ def unregister_action(verb: str) -> None:
     SPEC.pop(verb, None)
     EXECUTORS.pop(verb, None)
     ORDER.pop(verb, None)
+    OWNERS.pop(verb, None)
 
 
 def register_item_decision_hook(fn: ItemDecisionHook, *, order: int) -> None:
+    identity = (getattr(fn, "__module__", ""), getattr(fn, "__qualname__", ""))
+    _HOOK_ORDER[:] = [(o, f) for o, f in _HOOK_ORDER
+                      if (getattr(f, "__module__", ""), getattr(f, "__qualname__", "")) != identity]
     _HOOK_ORDER.append((order, fn))
     _HOOK_ORDER.sort(key=lambda pair: pair[0])
     ITEM_DECISION_HOOKS.clear()
@@ -61,27 +68,11 @@ def register_item_decision_hook(fn: ItemDecisionHook, *, order: int) -> None:
 
 
 def register_catalog_extra(key: str, fn: Callable[[], Any]) -> None:
-    if key == "verbs" or key in CATALOG_EXTRAS:
+    current = CATALOG_EXTRAS.get(key)
+    same_owner = current is not None and getattr(current, "__module__", "") == getattr(fn, "__module__", None)
+    if key == "verbs" or (current is not None and not same_owner):
         raise ValueError(f"catalog key already registered: {key}")
     CATALOG_EXTRAS[key] = fn
-
-
-def snapshot() -> dict[str, Any]:
-    return {"spec": dict(SPEC), "executors": dict(EXECUTORS), "order": dict(ORDER),
-            "hooks": list(_HOOK_ORDER), "extras": dict(CATALOG_EXTRAS)}
-
-
-def restore(saved: dict[str, Any]) -> None:
-    SPEC.clear()
-    SPEC.update(saved["spec"])
-    EXECUTORS.clear()
-    EXECUTORS.update(saved["executors"])
-    ORDER.clear()
-    ORDER.update(saved["order"])
-    _HOOK_ORDER[:] = saved["hooks"]
-    ITEM_DECISION_HOOKS[:] = [fn for _, fn in _HOOK_ORDER]
-    CATALOG_EXTRAS.clear()
-    CATALOG_EXTRAS.update(saved["extras"])
 
 
 def load_builtin() -> None:

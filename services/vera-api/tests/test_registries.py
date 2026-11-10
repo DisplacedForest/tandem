@@ -369,60 +369,113 @@ def test_a_second_thread_waits_for_the_load_instead_of_reading_empty_tables() ->
     _fresh(
         "import builtins, threading\n"
         "from routers import builtin_capabilities, scheduler\n"
-        "started, release = threading.Event(), threading.Event()\n"
+        "paused, release, attempted = threading.Event(), threading.Event(), threading.Event()\n"
         "real_import = builtins.__import__\n"
         "def slow_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
-        "    if level == 1 and fromlist and 'authoring' in fromlist and not started.is_set():\n"
-        "        started.set()\n"
-        "        release.wait(10)\n"
+        "    if level == 1 and fromlist and 'authoring' in fromlist and not paused.is_set():\n"
+        "        paused.set()\n"
+        "        assert release.wait(120)\n"
         "    return real_import(name, globals, locals, fromlist, level)\n"
+        "class Watched:\n"
+        "    def __init__(self, inner):\n"
+        "        self.inner = inner\n"
+        "    def __enter__(self):\n"
+        "        if threading.current_thread().name == 'reader':\n"
+        "            attempted.set()\n"
+        "        return self.inner.__enter__()\n"
+        "    def __exit__(self, *exc):\n"
+        "        return self.inner.__exit__(*exc)\n"
+        "builtin_capabilities._lock = Watched(builtin_capabilities._lock)\n"
         "builtins.__import__ = slow_import\n"
-        "loader = threading.Thread(target=builtin_capabilities.load)\n"
+        "loader = threading.Thread(target=builtin_capabilities.load, name='loader')\n"
         "loader.start()\n"
-        "assert started.wait(10)\n"
+        "assert paused.wait(120)\n"
         "seen = {}\n"
         "def read():\n"
         "    seen['jobs'] = list(scheduler.builtin_jobs())\n"
         "    seen['gate'] = scheduler._gate_reason('home_model')\n"
-        "reader = threading.Thread(target=read)\n"
+        "reader = threading.Thread(target=read, name='reader')\n"
         "reader.start()\n"
-        "reader.join(0.5)\n"
-        "assert reader.is_alive(), seen\n"
+        "assert attempted.wait(120)\n"
+        "reader.join(0.2)\n"
+        "assert reader.is_alive() and not seen, seen\n"
         "release.set()\n"
-        "loader.join(30)\n"
-        "reader.join(30)\n"
+        "loader.join(120)\n"
+        "reader.join(120)\n"
         "builtins.__import__ = real_import\n"
+        "assert not loader.is_alive() and not reader.is_alive()\n"
         f"assert seen['jobs'] == list({ORDERED_JOBS!r}), seen\n"
         "assert seen['gate'] and 'home_modeling' in seen['gate'], seen\n"
     )
 
 
-def test_a_failed_load_rolls_back_and_the_next_load_succeeds() -> None:
-    _fresh(
-        "from routers import action_registry, builtin_capabilities, scheduler\n"
-        "real = action_registry.register_action\n"
-        "calls = {'n': 0}\n"
-        "def flaky(verb, **kw):\n"
-        "    real(verb, **kw)\n"
-        "    calls['n'] += 1\n"
-        "    if calls['n'] == 3:\n"
-        "        raise RuntimeError('boom')\n"
-        "action_registry.register_action = flaky\n"
-        "try:\n"
-        "    builtin_capabilities.load()\n"
-        "except RuntimeError as e:\n"
-        "    assert str(e) == 'boom'\n"
-        "else:\n"
-        "    raise AssertionError('load did not fail')\n"
-        "assert not action_registry.SPEC and not action_registry.EXECUTORS and not action_registry.ORDER\n"
-        "assert not action_registry.ITEM_DECISION_HOOKS and not action_registry.CATALOG_EXTRAS\n"
-        "assert not scheduler.REGISTRY and not scheduler.GATES\n"
-        "action_registry.register_action = real\n"
-        "builtin_capabilities.load()\n"
-        f"assert list(action_registry.SPEC) == list({ORDERED_VERBS!r})\n"
-        f"assert list(scheduler.REGISTRY) == list({ORDERED_JOBS!r})\n"
-        "assert len(action_registry.ITEM_DECISION_HOOKS) == 2\n"
+_FAIL_THEN_RETRY = (
+    "from routers import action_registry, builtin_capabilities, scheduler\n"
+    "real = action_registry.register_action\n"
+    "calls = {'n': 0, 'limit': FAIL_AT}\n"
+    "def flaky(verb, **kw):\n"
+    "    real(verb, **kw)\n"
+    "    calls['n'] += 1\n"
+    "    if calls['n'] == calls['limit']:\n"
+    "        raise RuntimeError('boom')\n"
+    "action_registry.register_action = flaky\n"
+    "for attempt, reader in enumerate((builtin_capabilities.load, scheduler.builtin_jobs,\n"
+    "                                  action_registry.load_builtin)):\n"
+    "    calls['n'] = 0\n"
+    "    calls['limit'] = FAIL_AT if attempt == 0 else 1\n"
+    "    try:\n"
+    "        reader()\n"
+    "    except RuntimeError as e:\n"
+    "        assert str(e) == 'boom'\n"
+    "    else:\n"
+    "        raise AssertionError('a failed load must surface to every reader')\n"
+    "action_registry.register_action = real\n"
+    "builtin_capabilities.load()\n"
+)
+
+
+def _retry_script(preimport: str, fail_at: int) -> str:
+    return (
+        preimport + _FAIL_THEN_RETRY.replace("FAIL_AT", str(fail_at))
+        + f"assert list(action_registry.SPEC) == list({ORDERED_VERBS!r}), list(action_registry.SPEC)\n"
+        + f"assert list(action_registry.EXECUTORS) == list({ORDERED_VERBS!r})\n"
+        + f"assert list(scheduler.REGISTRY) == list({ORDERED_JOBS!r}), list(scheduler.REGISTRY)\n"
+        + "assert list(scheduler.GATES) == ['home_model', 'home_reconcile', 'home_digest']\n"
+        + "assert len(action_registry.ITEM_DECISION_HOOKS) == 2, action_registry.ITEM_DECISION_HOOKS\n"
+        + "assert list(action_registry.CATALOG_EXTRAS) == ['ha_allowlist']\n"
     )
+
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3, 5, 8, 11])
+def test_a_load_that_fails_midway_surfaces_and_the_retry_completes(fail_at: int) -> None:
+    _fresh(_retry_script("", fail_at))
+
+
+@pytest.mark.parametrize("first", ["home", "kitchen", "knowledge_actions", "media_curation", "pulse"])
+def test_retry_completes_when_an_owner_was_imported_before_the_failed_load(first: str) -> None:
+    _fresh(_retry_script(f"import routers.{first}\n", 2))
+
+
+def test_the_same_owner_may_register_again_and_another_owner_may_not(throwaway_verbs: list[str]) -> None:
+    throwaway_verbs.append("zz.repeat")
+    action_registry.register_action(
+        "zz.repeat", validate=_validate, preview=_preview, risk="low",
+        reversible=True, autonomous=False, order=990, executor=_noop)
+    action_registry.register_action(
+        "zz.repeat", validate=_validate, preview=_preview, risk="none",
+        reversible=True, autonomous=False, order=991, executor=_noop)
+    assert action_registry.SPEC["zz.repeat"]["risk"] == "none"
+    assert list(action_registry.SPEC).count("zz.repeat") == 1
+
+    async def foreign(args: dict) -> dict:
+        return {}
+
+    foreign.__module__ = "somewhere.else"
+    with pytest.raises(ValueError):
+        action_registry.register_action(
+            "zz.repeat", validate=_validate, preview=_preview, risk="low",
+            reversible=True, autonomous=False, order=992, executor=foreign)
+    assert action_registry.SPEC["zz.repeat"]["risk"] == "none"
 
 
 def test_gate_table_order_does_not_depend_on_what_is_imported_first() -> None:

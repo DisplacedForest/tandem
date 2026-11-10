@@ -43,12 +43,16 @@ _POLL_SECONDS = 20
 REGISTRY: dict[str, tuple[str, str, object]] = {}
 GATES: dict[str, object] = {}
 _JOB_ORDER: dict[str, int] = {}
+_JOB_OWNERS: dict[str, str] = {}
 
 
 def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Awaitable[Any]], *,
                  order: int, gate: Callable[[], str | None] | None = None) -> None:
-    if job_id in _JOB_ORDER:
+    owner = getattr(handler, "__module__", "") or ""
+    if job_id in _JOB_ORDER and _JOB_OWNERS.get(job_id) != owner:
         raise ValueError(f"scheduler job already registered: {job_id}")
+    GATES.pop(job_id, None)
+    _JOB_OWNERS[job_id] = owner
     REGISTRY[job_id] = (label, cron, handler)
     _JOB_ORDER[job_id] = order
     if gate is not None:
@@ -64,23 +68,11 @@ def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Await
     GATES.update(gates)
 
 
-def snapshot() -> dict[str, dict]:
-    return {"registry": dict(REGISTRY), "gates": dict(GATES), "order": dict(_JOB_ORDER)}
-
-
-def restore(saved: dict[str, dict]) -> None:
-    REGISTRY.clear()
-    REGISTRY.update(saved["registry"])
-    GATES.clear()
-    GATES.update(saved["gates"])
-    _JOB_ORDER.clear()
-    _JOB_ORDER.update(saved["order"])
-
-
 def unregister_job(job_id: str) -> None:
     REGISTRY.pop(job_id, None)
     GATES.pop(job_id, None)
     _JOB_ORDER.pop(job_id, None)
+    _JOB_OWNERS.pop(job_id, None)
 
 
 def _vein_gate(kind: str):
