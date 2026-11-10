@@ -144,6 +144,11 @@ extension ChatStore {
         return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
     }
 
+    nonisolated static func prefixApprovalAnswers(_ rules: NativeRuleSource, conversationID: String, requestText: String, command: String) -> Bool {
+        commandDecision(rules, conversationID: conversationID, requestText: requestText, command: command, action: .commands,
+                        subjects: NativeCommandTools.ruleSubjects(command: command)).decision == .act(.conversationPrefix)
+    }
+
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, subjects: subjects)

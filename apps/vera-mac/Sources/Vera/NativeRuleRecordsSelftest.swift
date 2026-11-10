@@ -45,6 +45,8 @@ enum NativeRuleRecordsSelftest {
         try await boundFootprint(require)
         try await creationRace(require)
         try await significantWhitespace(require)
+        try prefixApprovalShortcut(require)
+        try await commandValidationFirst(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -1117,5 +1119,59 @@ enum NativeRuleRecordsSelftest {
                         && reread?.target?.isSatisfied(by: child, restricting: true) == true,
                         "A folder named \(name.debugDescription) round-trips through the store unchanged and matches itself")
         }
+    }
+
+    private static func prefixApprovalShortcut(_ require: (Bool, String) throws -> Void) throws {
+        func source() -> NativeRuleSource {
+            let source = NativeRuleSource()
+            source.setGlobal(NativeRules(choices: [.commands: .ask]))
+            source.set(NativeConversationRules(approvedCommandPrefixes: ["echo hello"]), for: "c1")
+            return source
+        }
+        let plain = source()
+        try require(ChatStore.prefixApprovalAnswers(plain, conversationID: "c1", requestText: "", command: "echo hello"),
+                    "With zero records a prefix approved earlier in the chat still answers the confirmation without a card")
+        try require(!ChatStore.prefixApprovalAnswers(plain, conversationID: "c1", requestText: "", command: "echo goodbye"),
+                    "A command outside the approved prefix still presents a confirmation")
+        let asking = source()
+        asking.setRecords([record(.ask, .commands, statement: "Always ask before any command")])
+        try require(!ChatStore.prefixApprovalAnswers(asking, conversationID: "c1", requestText: "", command: "echo hello"),
+                    "A prefix approved earlier plus a saved ask record presents a confirmation")
+        let broken = source()
+        broken.fail()
+        try require(!ChatStore.prefixApprovalAnswers(broken, conversationID: "c1", requestText: "", command: "echo hello"),
+                    "A prefix approved earlier in failed mode presents a confirmation")
+        let preapproved = NativeRuleSource()
+        preapproved.setGlobal(NativeRules(choices: [.commands: .actIfPreapproved]))
+        preapproved.setRecords([record(.ask, .commands)])
+        try require(preapproved.resolver(for: "c1", requestText: "Go ahead and run it, no need to ask.").decision(forCommand: "echo hello") == .ask,
+                    "A saved ask record also overrides a request pre-approval")
+        let failedPreapproval = NativeRuleSource()
+        failedPreapproval.setGlobal(NativeRules(choices: [.commands: .actIfPreapproved]))
+        failedPreapproval.fail()
+        try require(failedPreapproval.resolver(for: "c1", requestText: "Go ahead and run it, no need to ask.").decision(forCommand: "echo hello") == .ask,
+                    "Failed mode also overrides a request pre-approval")
+    }
+
+    private static func commandValidationFirst(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.commands: .ask]))
+        let once = try records.add(record(.allow, .commands, uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let command = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
+                                                     liveTargets: { command, action, subjects in
+            ChatStore.commandDecision(source, store: records, conversationID: "c1", requestText: "", command: command, action: action, subjects: subjects)
+        })[0]
+        let outcome = await run(command, ["command": .string("echo hi\u{0}there")])
+        try require(outcome != "ran" && (try records.record(id: once.id))?.remainingUses == 1,
+                    "A command with an embedded NUL is refused before a one-use allow is spent")
+        var runnerRefused = false
+        do { try NativeCommandRunner.validate("echo hi\u{0}there") } catch { runnerRefused = true }
+        try require(runnerRefused, "The runner uses the same validator")
     }
 }

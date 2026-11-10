@@ -114,6 +114,7 @@ enum NativeCommandTools {
                 guard command.utf8.count <= NativeCommandLimits.maximumCommandLength else {
                     throw NativeToolError.invalidArguments("The command is too long")
                 }
+                try NativeCommandRunner.validate(command)
                 let activityID = NativeToolCallContext.activityID ?? UUID().uuidString.lowercased()
                 if let request = NativeToolCallContext.request, declined(NativeToolRequestKey.canonical(name: runName, request: request)) {
                     throw NativeToolError.failed("The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again.")

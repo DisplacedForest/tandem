@@ -133,12 +133,16 @@ enum NativeCommandRunner {
         }
     }
 
-    static func run(command: String, directory: NativeFolderDescriptor, timeout: Duration,
-                    outputCap: Int = NativeCommandLimits.outputCap,
-                    environment: [String: String] = environment()) async throws -> NativeCommandOutcome {
+    static func validate(_ command: String) throws {
         guard !command.isEmpty, command.utf8.count <= NativeCommandLimits.maximumCommandLength, !command.contains("\0") else {
             throw NativeToolError.invalidArguments("The command must be between 1 and \(NativeCommandLimits.maximumCommandLength) bytes")
         }
+    }
+
+    static func run(command: String, directory: NativeFolderDescriptor, timeout: Duration,
+                    outputCap: Int = NativeCommandLimits.outputCap,
+                    environment: [String: String] = environment()) async throws -> NativeCommandOutcome {
+        try validate(command)
         var out: [Int32] = [-1, -1]
         var err: [Int32] = [-1, -1]
         guard pipe(&out) == 0 else { throw NativeFolderIO.errno("Couldn't create the output pipe") }
