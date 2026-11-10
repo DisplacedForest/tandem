@@ -384,6 +384,8 @@ extension SelfTest {
         let acting = NativeCompanionWorker.ruleDecision(undeclared, [:], resolver: NativeRuleResolver(global: otherActs, conversation: NativeConversationRules(), requestText: ""),
                                                         honoringLimitedUse: true)
         try require(acting.action == .otherChanges && acting.decision == .act(.rule), "An undeclared write acts when other changes are set to act")
+        try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID) && effects["apple_reminders_create"] != nil, "Background work is never offered the reminder tools")
+        try require(NativeCompanionWorker.handOffText(name: "Ada", title: "Pay the invoice", action: .payments).contains(NativeFloorItem.payments.title) && !NativeCompanionWorker.handOffText(name: "Ada", title: "Pay the invoice", action: .payments).contains("always"), "A floor stop names its item and never claims always")
         try require(NativeCompanionWorker.handOffText(name: "Ada", title: "Pay the invoice", action: .payments).hasSuffix(NativeFloorItem.payments.reason)
                     && NativeCompanionWorker.handOffText(name: "Ada", title: "Send a note", action: .networkSends) == "Ada stopped before this step because your rules hand it to you: Send a note.",
                     "A floor hand off gives its reason and an ordinary one keeps its wording")

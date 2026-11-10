@@ -149,18 +149,27 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
         var parsed: [NativeActionClass: NativeRuleChoice] = [:]
         for (key, value) in raw {
             guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
+            if action.floorItem == nil { parsed[action] = choice }
+        }
+        for item in NativeFloorItem.allCases {
+            guard let action = item.actionClass, let value = raw[Self.liftedPrefix + item.rawValue],
+                  let choice = NativeRuleChoice(rawValue: value) else { continue }
             parsed[action] = choice
         }
         if raw[Self.defaultsKey] == nil, parsed[.networkSends] == .handOff { parsed.removeValue(forKey: .networkSends) }
         choices = parsed
     }
 
+    static let liftedPrefix = "lifted."
+
     static let defaultsKey = "defaults_revision"
     static let defaultsRevision = "2"
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
-        var raw = Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) })
+        var raw = Dictionary(uniqueKeysWithValues: choices.map { entry in
+            (entry.key.floorItem.map { Self.liftedPrefix + $0.rawValue } ?? entry.key.rawValue, entry.value.rawValue)
+        })
         raw[Self.defaultsKey] = Self.defaultsRevision
         try container.encode(raw)
     }
@@ -533,8 +542,9 @@ enum NativeCommandClassifier {
     }
 
     static func namesDestructiveProgram(_ command: String) -> Bool {
-        var spaced = command.filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
-        for separator in [";", "|", "&", "(", ")", "{", "}", "<", ">", "=", "\n", "`", "$"] { spaced = spaced.replacingOccurrences(of: separator, with: " ") }
+        var spaced = command.replacingOccurrences(of: "\\\r\n", with: "").replacingOccurrences(of: "\\\n", with: "")
+            .filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
+        for separator in [";", "|", "&", "(", ")", "{", "}", ",", "<", ">", "=", "\n", "\r", "`", "$"] { spaced = spaced.replacingOccurrences(of: separator, with: " ") }
         let names = spaced.split(whereSeparator: { $0.isWhitespace }).map { word in word.split(separator: "/").last.map(String.init) ?? String(word) }
         let git = names.contains("git")
         return names.contains { destructive.contains($0) || findEffects.contains($0) || (git && destructiveGit.contains($0)) }

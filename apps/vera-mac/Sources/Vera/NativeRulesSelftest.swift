@@ -385,6 +385,14 @@ extension SelfTest {
         liftedRules.lift(.payments, choice: .act)
         let liftedReread = try JSONDecoder().decode(NativeRules.self, from: try JSONEncoder().encode(liftedRules))
         try require(liftedReread == liftedRules && liftedReread.isLifted(.payments) && !liftedReread.isLifted(.credentialEntry), "A lifted floor item survives a save and reload")
+        let bare = try JSONDecoder().decode(NativeRules.self, from: Data("{\"payments\":\"act\",\"credential_entry\":\"ask\",\"permanent_deletion\":\"act\",\"defaults_revision\":\"2\"}".utf8))
+        try require(!bare.isLifted(.payments) && !bare.isLifted(.credentialEntry) && !bare.isLifted(.permanentDeletion) && bare.holds(.payments), "A bare class name in settings never lifts a floor item")
+        let marked = try JSONDecoder().decode(NativeRules.self, from: Data("{\"lifted.payments\":\"act\",\"lifted.rule_changes\":\"act\"}".utf8))
+        try require(marked.isLifted(.payments) && marked.choice(for: .payments) == .act && !marked.isLifted(.credentialEntry) && !marked.isLifted(.ruleChanges), "Only the lift entry lifts, and only for an item that can be lifted")
+        for hidden in ["r\\\nm /Volumes/Other/victim", "r\\\r\nm /Volumes/Other/victim", "{rm,-f} /Volumes/Other/victim", "{/bin/rm,-rf} ../Other", "\\rm /Volumes/Other/victim", "/bin/rm\t-rf /Volumes/Other/victim"] {
+            let found = NativeCommandClassifier.classify(hidden, grants: sample)
+            try require(found == .permanentDeletion, "A destructive program hidden by shell expansion stays on the floor: \(hidden) classified as \(found.rawValue)")
+        }
         let legacyChat = try JSONDecoder().decode(NativeConversationRules.self, from: Data("{\"choices\":{\"sensitive\":\"hand_off\",\"commands\":\"hand_off\"},\"approved_command_prefixes\":[\"swift build\"]}".utf8))
         try require(legacyChat.choices == [.commands: .handOff] && legacyChat.approvedCommandPrefixes == ["swift build"], "Chat rules naming the old class decode without it")
 

@@ -276,11 +276,12 @@ protocol NativeRemindersService: AnyObject, Sendable {
 }
 
 enum NativeRemindersTools {
+    static let toolID = "apple-reminders"
     static func definitions(service: any NativeRemindersService) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { service.nativeAuthorization == .authorized }
         return [
             NativeToolDefinition(
-                id: "apple-reminders",
+                id: toolID,
                 name: "apple_reminders_get_lists",
                 title: "List reminder lists",
                 description: "List available Apple Reminders lists by exact name. Use this first when the user names a list informally, including shopping or grocery list requests, then use the returned exact name. Never invent a list name.",
@@ -293,7 +294,7 @@ enum NativeRemindersTools {
                     return try encode(["lists": lists])
                 }),
             NativeToolDefinition(
-                id: "apple-reminders",
+                id: toolID,
                 name: "apple_reminders_list",
                 title: "List reminders",
                 description: "Read the contents of an Apple Reminders list. Use this for natural requests such as what is on my shopping list. If the exact saved list name is unknown, call apple_reminders_get_lists first.",
@@ -312,7 +313,7 @@ enum NativeRemindersTools {
                     return try encode(["reminders": reminders])
                 }),
             NativeToolDefinition(
-                id: "apple-reminders",
+                id: toolID,
                 name: "apple_reminders_create",
                 title: "Create reminder",
                 description: "Create an Apple Reminder after an explicit chat request.",
@@ -338,7 +339,7 @@ enum NativeRemindersTools {
                     return try encode(["reminder": reminder])
                 }),
             NativeToolDefinition(
-                id: "apple-reminders",
+                id: toolID,
                 name: "apple_reminders_complete",
                 title: "Complete reminder",
                 description: "Mark one Apple Reminder complete after an explicit chat request.",

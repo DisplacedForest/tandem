@@ -37,7 +37,7 @@ struct RulesSettingsTab: View {
                     .padding(.vertical, 2)
                 }
             }
-            Section("Always handed to you") {
+            Section("Handed to you") {
                 ForEach(NativeFloorItem.allCases, id: \.self) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)

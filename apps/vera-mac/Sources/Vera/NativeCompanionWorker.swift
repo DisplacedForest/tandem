@@ -133,7 +133,7 @@ enum NativeCompanionWorker {
     static let reportCharacters = 40000
     static let summaryCharacters = 280
     static let readRetryDelays: [Duration] = [.milliseconds(100), .milliseconds(500)]
-    static let excludedToolIDs: Set<String> = [NativeTaskTools.toolID, NativeScheduleTools.toolID]
+    static let excludedToolIDs: Set<String> = [NativeTaskTools.toolID, NativeScheduleTools.toolID, NativeRemindersTools.toolID]
 
     static func make(exchange: NativeTaskGenerationExchange, environment: NativeCompanionWorkerEnvironment) -> NativeTaskWorker {
         NativeTaskWorker(timeoutSeconds: stepTimeoutSeconds) { task in
@@ -258,7 +258,7 @@ enum NativeCompanionWorker {
 
     static func handOffText(name: String, title: String, action: NativeActionClass?) -> String {
         guard let item = action?.floorItem else { return "\(name) stopped before this step because your rules hand it to you: \(title)." }
-        return "\(name) stopped before this step because it is always handed to you: \(title). \(item.reason)"
+        return "\(name) stopped before this step and handed it to you: \(title). It counts as \"\(item.title)\". \(item.reason)"
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
