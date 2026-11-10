@@ -21,6 +21,7 @@ its last outcome for the UI. A job still running when its next fire comes due is
 import asyncio
 import logging
 import os
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -44,19 +45,25 @@ REGISTRY: dict[str, tuple[str, str, object]] = {}
 GATES: dict[str, object] = {}
 _JOB_ORDER: dict[str, int] = {}
 _JOB_OWNERS: dict[str, str] = {}
+_write_lock = threading.RLock()
 
 
 def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Awaitable[Any]], *,
                  order: int, gate: Callable[[], str | None] | None = None) -> None:
     owner = getattr(handler, "__module__", "") or ""
-    if job_id in _JOB_ORDER and _JOB_OWNERS.get(job_id) != owner:
-        raise ValueError(f"scheduler job already registered: {job_id}")
-    GATES.pop(job_id, None)
-    _JOB_OWNERS[job_id] = owner
-    REGISTRY[job_id] = (label, cron, handler)
-    _JOB_ORDER[job_id] = order
-    if gate is not None:
-        GATES[job_id] = gate
+    with _write_lock:
+        if job_id in _JOB_ORDER and _JOB_OWNERS.get(job_id) != owner:
+            raise ValueError(f"scheduler job already registered: {job_id}")
+        GATES.pop(job_id, None)
+        _JOB_OWNERS[job_id] = owner
+        REGISTRY[job_id] = (label, cron, handler)
+        _JOB_ORDER[job_id] = order
+        if gate is not None:
+            GATES[job_id] = gate
+        _reorder()
+
+
+def _reorder() -> None:
     ordered = {j: REGISTRY[j] for j in sorted(_JOB_ORDER, key=lambda j: _JOB_ORDER[j]) if j in REGISTRY}
     extras = {j: v for j, v in REGISTRY.items() if j not in _JOB_ORDER}
     REGISTRY.clear()
@@ -69,10 +76,11 @@ def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Await
 
 
 def unregister_job(job_id: str) -> None:
-    REGISTRY.pop(job_id, None)
-    GATES.pop(job_id, None)
-    _JOB_ORDER.pop(job_id, None)
-    _JOB_OWNERS.pop(job_id, None)
+    with _write_lock:
+        REGISTRY.pop(job_id, None)
+        GATES.pop(job_id, None)
+        _JOB_ORDER.pop(job_id, None)
+        _JOB_OWNERS.pop(job_id, None)
 
 
 def _vein_gate(kind: str):

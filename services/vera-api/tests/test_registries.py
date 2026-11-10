@@ -486,3 +486,118 @@ def test_gate_table_order_does_not_depend_on_what_is_imported_first() -> None:
             "scheduler.builtin_jobs()\n"
             "assert list(scheduler.GATES) == ['home_model', 'home_reconcile', 'home_digest'], list(scheduler.GATES)\n"
         )
+
+
+_WRITER_RACE = (
+    "import threading\n"
+    "from routers import action_registry, scheduler\n"
+    "paused, release, attempted = threading.Event(), threading.Event(), threading.Event()\n"
+    "class Watched:\n"
+    "    def __init__(self, inner):\n"
+    "        self.inner = inner\n"
+    "    def __enter__(self):\n"
+    "        if threading.current_thread().name == 'second':\n"
+    "            attempted.set()\n"
+    "        return self.inner.__enter__()\n"
+    "    def __exit__(self, *exc):\n"
+    "        return self.inner.__exit__(*exc)\n"
+)
+
+
+def test_two_threads_registering_actions_both_keep_their_entries() -> None:
+    _fresh(
+        _WRITER_RACE
+        + "action_registry._write_lock = Watched(action_registry._write_lock)\n"
+        "real_resort = action_registry._resort\n"
+        "def slow_resort():\n"
+        "    if threading.current_thread().name == 'first' and not paused.is_set():\n"
+        "        paused.set()\n"
+        "        assert release.wait(120)\n"
+        "    real_resort()\n"
+        "action_registry._resort = slow_resort\n"
+        "async def run(args):\n"
+        "    return {}\n"
+        "def add(verb, order):\n"
+        "    action_registry.register_action(verb, validate=lambda a: None, preview=lambda a: verb,\n"
+        "                                    risk='low', reversible=True, autonomous=False,\n"
+        "                                    order=order, executor=run)\n"
+        "first = threading.Thread(target=add, args=('zz.first', 2), name='first')\n"
+        "second = threading.Thread(target=add, args=('zz.second', 1), name='second')\n"
+        "first.start()\n"
+        "assert paused.wait(120)\n"
+        "second.start()\n"
+        "assert attempted.wait(120)\n"
+        "second.join(0.2)\n"
+        "assert second.is_alive() and 'zz.second' not in action_registry.SPEC\n"
+        "release.set()\n"
+        "first.join(120)\n"
+        "second.join(120)\n"
+        "assert not first.is_alive() and not second.is_alive()\n"
+        "assert list(action_registry.SPEC) == ['zz.second', 'zz.first'], list(action_registry.SPEC)\n"
+        "assert list(action_registry.EXECUTORS) == ['zz.second', 'zz.first']\n"
+    )
+
+
+def test_two_threads_registering_jobs_both_keep_their_entries() -> None:
+    _fresh(
+        _WRITER_RACE
+        + "scheduler._write_lock = Watched(scheduler._write_lock)\n"
+        "real_reorder = scheduler._reorder\n"
+        "def slow_reorder():\n"
+        "    if threading.current_thread().name == 'first' and not paused.is_set():\n"
+        "        paused.set()\n"
+        "        assert release.wait(120)\n"
+        "    real_reorder()\n"
+        "scheduler._reorder = slow_reorder\n"
+        "async def run():\n"
+        "    return {}\n"
+        "def gate():\n"
+        "    return 'closed'\n"
+        "def add(job, order):\n"
+        "    scheduler.register_job(job, job, '0 1 * * *', run, order=order, gate=gate)\n"
+        "first = threading.Thread(target=add, args=('zz_first', 2), name='first')\n"
+        "second = threading.Thread(target=add, args=('zz_second', 1), name='second')\n"
+        "first.start()\n"
+        "assert paused.wait(120)\n"
+        "second.start()\n"
+        "assert attempted.wait(120)\n"
+        "second.join(0.2)\n"
+        "assert second.is_alive() and 'zz_second' not in scheduler.REGISTRY\n"
+        "release.set()\n"
+        "first.join(120)\n"
+        "second.join(120)\n"
+        "assert not first.is_alive() and not second.is_alive()\n"
+        "assert list(scheduler.REGISTRY) == ['zz_second', 'zz_first'], list(scheduler.REGISTRY)\n"
+        "assert list(scheduler.GATES) == ['zz_second', 'zz_first']\n"
+    )
+
+
+def test_an_owner_imported_in_another_thread_during_a_load_is_not_lost() -> None:
+    _fresh(
+        "import threading\n"
+        "from routers import action_registry, builtin_capabilities, scheduler\n"
+        "paused, release = threading.Event(), threading.Event()\n"
+        "real_resort = action_registry._resort\n"
+        "def slow_resort():\n"
+        "    if threading.current_thread().name == 'importer' and not paused.is_set():\n"
+        "        paused.set()\n"
+        "        assert release.wait(120)\n"
+        "    real_resort()\n"
+        "action_registry._resort = slow_resort\n"
+        "def import_home():\n"
+        "    import routers.home\n"
+        "importer = threading.Thread(target=import_home, name='importer')\n"
+        "importer.start()\n"
+        "assert paused.wait(120)\n"
+        "loader = threading.Thread(target=builtin_capabilities.load, name='loader')\n"
+        "loader.start()\n"
+        "loader.join(0.5)\n"
+        "release.set()\n"
+        "importer.join(120)\n"
+        "loader.join(120)\n"
+        "assert not importer.is_alive() and not loader.is_alive()\n"
+        f"assert list(action_registry.SPEC) == list({ORDERED_VERBS!r}), list(action_registry.SPEC)\n"
+        f"assert list(action_registry.EXECUTORS) == list({ORDERED_VERBS!r})\n"
+        f"assert list(scheduler.REGISTRY) == list({ORDERED_JOBS!r}), list(scheduler.REGISTRY)\n"
+        "assert list(action_registry.CATALOG_EXTRAS) == ['ha_allowlist']\n"
+    )
