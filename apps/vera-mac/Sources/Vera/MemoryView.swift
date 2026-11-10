@@ -92,7 +92,7 @@ struct MemoryView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Memory").font(.system(size: 26, weight: .bold))
                     .accessibilityAddTraits(.isHeader)
-                Text("A local, reviewable library of what Vera may remember about you.")
+                Text("A local, reviewable library of what Tandem may remember about you.")
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -130,7 +130,7 @@ struct MemoryView: View {
                 }
             }
             Spacer()
-            SettingsLink { Text("Memory settings") }
+            SettingsSectionLink("Memory settings", tab: .memory)
                 .accessibilityLabel("Memory settings")
                 .accessibilityHint("Opens Memory settings")
         }
@@ -163,13 +163,13 @@ struct MemoryView: View {
 
     private var statusDetail: String {
         switch store.memoryServiceState {
-        case .off: "Nothing is retrieved, generated, maintained, or added to chat while Memory is off."
-        case .setupRequired: "Choose an extraction model to suggest changes. Approved memory can be searched locally without one."
-        case .ready: "Only approved, relevant, unexpired items can be added to native chat requests."
-        case .indexing: "Vera is preparing approved memory."
-        case .pendingReview: "Nothing in the queue changes approved memory until you accept it."
-        case .maintenanceNeeded: "Review capacity, expiry, or consolidation suggestions. Only expired episodic items are removed automatically."
-        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Ordinary chat continues without memory context."
+        case .off: "While Memory is off, Tandem doesn't learn new memories or use them in chat."
+        case .setupRequired: "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it."
+        case .ready: "Tandem only uses memories you approved."
+        case .indexing: "Tandem is preparing your memories or new suggestions."
+        case .pendingReview: "Nothing changes until you accept it."
+        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. They only take effect when you approve them."
+        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Chat still works."
         case .notice: ""
         }
     }
@@ -197,7 +197,7 @@ struct MemoryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Ask Memory to change").font(.system(size: 16, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
-            Text("Describe what to remember, correct, merge, suppress, expire, or forget. Vera turns the request into a proposal for review.")
+            Text("Describe what to remember, correct, merge, suppress, expire, or forget. Tandem turns the request into a proposal for review.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             HStack(spacing: 10) {
                 TextField("For example, remember that I prefer morning meetings", text: $changeRequest)
@@ -428,7 +428,7 @@ private struct MemoryRemovalConfirmation: ViewModifier {
             }
             Button("Cancel", role: .cancel) { memory = nil }
         } message: { _ in
-            Text("Vera stops using this memory now and after relaunch. The source conversation stays. Delete it separately if you want it gone too.")
+            Text("Tandem stops using this memory now and after relaunch. The source conversation stays. Delete it separately if you want it gone too.")
         }
     }
 }
@@ -552,7 +552,7 @@ private struct NativeUpcomingSubjectView: View {
                     .keyboardShortcut(.cancelAction)
                     .accessibilityLabel("Done")
             }
-            Text("Nothing here is current yet. Vera starts using it when the planned date arrives.")
+            Text("Nothing here is current yet. Tandem starts using it when the planned date arrives.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -899,7 +899,7 @@ struct MemoryDetailView: View {
                 Spacer()
                 Button("Delete", role: .destructive) { pendingRemoval = memory }
                     .accessibilityLabel("Delete memory")
-                    .accessibilityHint("Asks for confirmation before Vera stops using this memory")
+                    .accessibilityHint("Asks for confirmation before Tandem stops using this memory")
                 if memory.domainEntityID != nil {
                     Button("Correct") { correcting = true }
                         .buttonStyle(.borderedProminent)
@@ -990,7 +990,7 @@ struct NativeMemoryShotSurface: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack { VeraMark(size: 20); Text("Vera").font(.system(size: 15, weight: .semibold)) }
+                HStack { VeraMark(size: 20); Text("Tandem").font(.system(size: 15, weight: .semibold)) }
                 Label("Pulse", systemImage: "newspaper")
                 Label("Memory", systemImage: "tray.full").foregroundStyle(Theme.accent)
                 Divider().overlay(Theme.hairline)
@@ -1006,7 +1006,7 @@ struct NativeMemoryShotSurface: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Memory").font(.system(size: 25, weight: .bold))
-                            Text("A local, reviewable library of what Vera may remember about you.")
+                            Text("A local, reviewable library of what Tandem may remember about you.")
                                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         }
                         Spacer()
@@ -1032,10 +1032,10 @@ struct NativeMemoryShotSurface: View {
 
     private var stateCard: some View {
         let state: (String, String, String, Color) = switch variant {
-        case "memory-off": ("Memory is off", "Nothing is retrieved, generated, maintained, or added to chat.", "pause.circle.fill", Theme.accent)
-        case "memory-setup": ("Set up embeddings to use memory in chat", "Ordinary chat still works without memory context.", "gearshape.fill", Theme.accent)
-        case "memory-unavailable": ("Memory recall is unavailable", "The embeddings endpoint could not be reached. Ordinary chat continues.", "exclamationmark.triangle.fill", .red)
-        default: ("Ready", "Only approved, relevant, unexpired items can be added to native chat requests.", "checkmark.circle.fill", .green)
+        case "memory-off": ("Memory is off", "While Memory is off, Tandem doesn't learn new memories or use them in chat.", "pause.circle.fill", Theme.accent)
+        case "memory-setup": ("Set up memory suggestions", "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it.", "gearshape.fill", Theme.accent)
+        case "memory-unavailable": ("Memory recall is unavailable", "The memory endpoint could not be reached. Chat still works.", "exclamationmark.triangle.fill", .red)
+        default: ("Ready", "Tandem only uses memories you approved.", "checkmark.circle.fill", .green)
         }
         return HStack(spacing: 10) {
             Image(systemName: state.2).foregroundStyle(state.3)

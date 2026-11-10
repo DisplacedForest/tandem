@@ -59,7 +59,6 @@ final class CompanionTranscriptContinuity: ObservableObject {
 }
 
 struct CompanionOpeningView: View {
-    @Environment(\.openSettings) private var openSettings
     let error: String?
     var needsConnection = false
     var canRetry = true
@@ -72,7 +71,7 @@ struct CompanionOpeningView: View {
                 Text(error).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                 if needsConnection {
-                    Button("Open Settings") { openSettings() }.buttonStyle(.bordered)
+                    SettingsSectionLink("Open Settings", tab: .connection).buttonStyle(.bordered)
                 } else if canRetry {
                     Button("Try again", action: retry).buttonStyle(.bordered)
                 }
@@ -87,10 +86,12 @@ struct CompanionOpeningView: View {
 }
 
 extension ChatStore {
+    nonisolated static let companionNeedsConnection = "Choose a chat connection in Settings to start the conversation."
+
     var companionOpeningError: String? {
         if let chatConfigurationError { return chatConfigurationError }
         if repository == nil { return "Local history couldn't open. Reopen Tandem to try again." }
-        if !pendingProfileAvailable { return "Choose a chat connection in Settings to start the conversation." }
+        if !pendingProfileAvailable { return Self.companionNeedsConnection }
         return nil
     }
 }

@@ -106,10 +106,8 @@ struct VeinsView: View {
     @State private var builderConfigured = false
     @State private var browsing = false
 
-    // A vein's unmet requirement points at Plugins, now a Settings tab: select it, then open Settings.
     private func openPlugins() {
-        store.settingsTab = .plugins
-        openSettings()
+        OpenSettingsSection(store: store, openSettings: openSettings)(.plugins)
     }
 
     var body: some View {

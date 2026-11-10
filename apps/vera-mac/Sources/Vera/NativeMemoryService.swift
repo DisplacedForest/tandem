@@ -16,7 +16,7 @@ enum NativeMemoryServiceState: Equatable, Sendable {
         case .off: "Memory is off"
         case .setupRequired: "Set up memory suggestions"
         case .ready: "Ready"
-        case .indexing: "Indexing approved memory"
+        case .indexing: "Working on your memories"
         case .pendingReview(let count): "\(count) change\(count == 1 ? "" : "s") waiting for review"
         case .maintenanceNeeded: "Memory needs review"
         case .retrievalUnavailable: "Memory recall is unavailable"
