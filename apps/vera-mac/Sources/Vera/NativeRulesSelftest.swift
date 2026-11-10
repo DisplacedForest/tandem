@@ -455,6 +455,107 @@ extension SelfTest {
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")
+        let forbidden = ["Ver" + "a", "declared table", "pre-approval is recognized", "working directory", "without saying what kind", " her ", " she "]
+        for named in ["Ada", "  Ada  ", nil, "", "   "] {
+            let saved = CompanionSentence.savedName(named)
+            let strings = RulesCopy.screenStrings(name: named)
+            for sentence in strings {
+                for word in forbidden {
+                    try require(!sentence.contains(word), "Rules screen copy avoids \(word): \(sentence)")
+                }
+                if saved == nil {
+                    try require(!sentence.contains("Tandem") && !sentence.contains(CompanionSentence.placeholder), "Unnamed copy never names a default: \(sentence)")
+                }
+            }
+            if let saved {
+                try require(strings[0].contains(saved), "The header names the companion: \(strings[0])")
+            } else {
+                try require(strings[0] == "These apply everywhere, including work your companion does without you. A chat can make them stricter, never looser.", "Unnamed header: \(strings[0])")
+            }
+            for choice in NativeRuleChoice.allCases {
+                let line = CompanionSentence.plain(RulesCopy.explanationTemplate(choice), name: named)
+                try require(!line.contains(CompanionSentence.placeholder) && (choice == .ask || line.hasPrefix(saved ?? "Your companion ")), "Explanation starts with the subject: \(line)")
+            }
+        }
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: nil) == "Your companion does it and shows you what happened.", "Unnamed first line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.actIfPreapproved), name: nil) == "Your companion does it only when your message says to, like \"go ahead\". Otherwise you get asked.", "Unnamed second line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.handOff), name: nil) == "Your companion tells you the step and you do it yourself.", "Unnamed fourth line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: "Ada") == "Ada does it and shows you what happened.", "Named first line")
+        try require(NativeRuleChoice.allCases.map(\.title) == ["Do it without asking", "Do it when I say go ahead", "Ask first", "Leave it to me"], "The four choices use plain titles")
+        try require(CompanionSentence.savedName(nil) == nil && CompanionSentence.savedName(" \n") == nil && CompanionSentence.savedName(" Ada ") == "Ada", "A blank name counts as unnamed")
+        for color in CompanionColor.allCases {
+            let light = CompanionColor.contrast(color.textHex(dark: false), CompanionColor.lightBackgroundHex)
+            let dark = CompanionColor.contrast(color.textHex(dark: true), CompanionColor.darkBackgroundHex)
+            let darkest = CompanionColor.contrast(color.textHex(dark: true), "#181818")
+            try require(light >= 4.5 && dark >= 4.5 && darkest >= 4.5, "\(color.rawValue) text color reads in both appearances: \(light) \(dark) \(darkest)")
+            print("    \(color.rawValue) text light \(color.textHex(dark: false)) dark \(color.textHex(dark: true))")
+        }
+        unsetenv("VERA_ASSISTANT_NAME")
+        let nameDisk = CompanionAppearanceFixtureDisk()
+        let nameConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { nameDisk.contents },
+                                     nativeMCP: NativeMCPManager(servers: []),
+                                     writeConfiguration: { nameDisk.contents = $0; nameDisk.writes += 1 })
+        let nameChat = ChatStore()
+        nameChat.followSavedCompanionName(of: nameConfig)
+        func screenIsClean(_ expectedSubject: String) throws {
+            let strings = RulesCopy.screenStrings(name: nameChat.companionDisplayName)
+            try require(strings.allSatisfy { !$0.contains("Ver" + "a") && !$0.contains("Tandem") }, "The rules screen carries no default name")
+            try require(strings[0].contains(expectedSubject), "The rules header follows the saved name: \(strings[0])")
+            try require(CompanionState.ready.accessibilityLabel(name: nameChat.companionDisplayName) == "\(expectedSubject == "your companion" ? "Your companion" : expectedSubject) is ready",
+                        "The avatar label follows the saved name")
+        }
+        func identityMatchesMain() throws {
+            try require(nameChat.assistantName == nameConfig.assistantName, "The effective identity is the resolved name: \(nameChat.assistantName)")
+        }
+        try require(nameChat.companionDisplayName == nil && !nameChat.companionHasSavedName, "A fresh store has no saved name")
+        try screenIsClean("your companion")
+        nameConfig["assistant_name"] = "Ada"
+        try require(nameChat.companionDisplayName == nil, "An unsaved edit does not change the shown name")
+        try nameConfig.save()
+        try require(nameChat.companionDisplayName == "Ada", "Saving settings with no model configured still updates the shown name")
+        try require(nameConfig.nativeResolved == nil, "No model is configured in this fixture")
+        try screenIsClean("Ada")
+        nameChat.adoptAssistantName(nameConfig.assistantName)
+        try identityMatchesMain()
+        nameConfig["assistant_name"] = ""
+        try nameConfig.save()
+        try require(nameChat.companionDisplayName == nil, "Clearing the name and saving returns to unnamed")
+        try screenIsClean("your companion")
+        nameChat.adoptAssistantName(nameConfig.assistantName)
+        try require(nameChat.assistantName == ConfigStore.defaultAssistantName, "Identity still falls back to the built-in default")
+        let nameFake = CompanionAppearanceFixtureStore()
+        var renamed = CompanionAppearanceDraft(name: "", appearance: nameFake.load())
+        renamed.name = "Wren"
+        try renamed.commit(config: nameConfig, store: nameFake, chat: nameChat)
+        try require(nameChat.companionDisplayName == "Wren", "Saving a name from Appearance updates the value")
+        try identityMatchesMain()
+        try screenIsClean("Wren")
+        try require(DotProfileCopy.saveName("Fern", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == "Fern", "Saving a name from companion setup updates the value")
+        try identityMatchesMain()
+        try require(DotProfileCopy.saveName("", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == nil, "Clearing the name from companion setup returns to unnamed")
+        try identityMatchesMain()
+        let launched = ChatStore()
+        nameConfig["assistant_name"] = "Ada"
+        launched.followSavedCompanionName(of: nameConfig)
+        try require(launched.companionDisplayName == "Ada", "A name saved before launch is shown")
+        nameConfig["assistant_name"] = ""
+        launched.followSavedCompanionName(of: nameConfig)
+        try require(launched.companionDisplayName == nil, "No saved name at launch is unnamed")
+
+        setenv("VERA_ASSISTANT_NAME", "Orion", 1)
+        defer { unsetenv("VERA_ASSISTANT_NAME") }
+        let overridden = ChatStore()
+        overridden.adoptAssistantName(nameConfig.assistantName)
+        overridden.followSavedCompanionName(of: nameConfig)
+        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "A name from the environment is shown and is the identity")
+        try nameConfig.save()
+        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "Saving settings leaves an environment name alone")
+        nameConfig["assistant_name"] = "Ada"
+        try nameConfig.save()
+        try require(overridden.companionDisplayName == "Orion" && overridden.assistantName == "Orion", "The environment name still wins after a file name is saved")
+        unsetenv("VERA_ASSISTANT_NAME")
+        try nameConfig.save()
+        try require(overridden.companionDisplayName == "Ada", "Without the environment name the saved file name shows")
         print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

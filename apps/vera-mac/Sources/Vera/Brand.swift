@@ -94,6 +94,72 @@ extension EnvironmentValues {
     }
 }
 
+enum CompanionSentence {
+    static let placeholder = "{name}"
+    static let unnamedSubject = "your companion"
+
+    static func savedName(_ name: String?) -> String? {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func startsSentence(after prefix: String) -> Bool {
+        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
+        guard let last = trimmed.last else { return true }
+        return ".!?".contains(last) && prefix.hasSuffix(" ")
+    }
+
+    static func subject(name: String?, after prefix: String) -> String {
+        if let saved = savedName(name) { return saved }
+        return startsSentence(after: prefix) ? unnamedSubject.prefix(1).uppercased() + unnamedSubject.dropFirst() : unnamedSubject
+    }
+
+    static func plain(_ template: String, name: String?) -> String {
+        var result = ""
+        for (index, part) in parts(template).enumerated() {
+            if index > 0 { result += subject(name: name, after: result) }
+            result += part
+        }
+        return result
+    }
+
+    static func parts(_ template: String) -> [String] {
+        template.components(separatedBy: placeholder)
+    }
+}
+
+struct CompanionNamedText: View {
+    var template: String
+    @Environment(\.companionName) private var name
+    @Environment(\.companionAppearance) private var appearance
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var sentence: Text {
+        var prefix = ""
+        var text = Text("")
+        for (index, part) in CompanionSentence.parts(template).enumerated() {
+            if index > 0 {
+                let subject = CompanionSentence.subject(name: name, after: prefix)
+                if CompanionSentence.savedName(name) != nil {
+                    text = text + Text(subject).bold().foregroundStyle(appearance.color.textColor(for: colorScheme))
+                } else {
+                    text = text + Text(subject)
+                }
+                prefix += subject
+            }
+            text = text + Text(part)
+            prefix += part
+        }
+        return text
+    }
+
+    var body: some View {
+        sentence
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(CompanionSentence.plain(template, name: name))
+    }
+}
+
 private struct CompanionAppearanceKey: EnvironmentKey {
     static let defaultValue = CompanionAppearance.default
 }

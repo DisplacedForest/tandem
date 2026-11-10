@@ -16,9 +16,9 @@ enum CompanionState: String, CaseIterable, Sendable {
     }
 
     func accessibilityLabel(name: String?) -> String {
-        guard let name, !name.isEmpty else { return displayName }
-        if self == .needsYou { return "\(name) needs you" }
-        return "\(name) is \(displayName.lowercased())"
+        let subject = CompanionSentence.savedName(name) ?? "Your companion"
+        if self == .needsYou { return "\(subject) needs you" }
+        return "\(subject) is \(displayName.lowercased())"
     }
 }
 
