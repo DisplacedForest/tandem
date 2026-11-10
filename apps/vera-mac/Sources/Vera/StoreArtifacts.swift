@@ -29,12 +29,11 @@ extension ChatStore {
     }
 
     func artifactSource(_ version: ArtifactVersion) -> Result<Data, ArtifactExportProblem> {
-        guard let url = attachmentStore.url(for: version.fileName),
-              FileManager.default.fileExists(atPath: url.path) else { return .failure(.sourceMissing) }
+        guard let url = attachmentStore.url(for: version.fileName) else { return .failure(.sourceMissing) }
         do {
             return .success(try Data(contentsOf: url))
         } catch {
-            return .failure(.sourceUnreadable)
+            return .failure(ArtifactExporter.sourceProblem(for: error))
         }
     }
 

@@ -19,20 +19,22 @@ struct ArtifactExportAttempt: Equatable, Identifiable, Sendable {
 }
 
 enum ArtifactExportNotice: Equatable, Identifiable {
-    case saved(id: UUID, fileName: String)
+    case saved(id: UUID, title: String, fileName: String)
     case failed(ArtifactExportAttempt, ArtifactExportProblem)
 
     var id: UUID {
         switch self {
-        case .saved(let id, _): return id
+        case .saved(let id, _, _): return id
         case .failed(let attempt, _): return attempt.id
         }
     }
 
     var message: String {
         switch self {
-        case .saved(_, let fileName):
-            return "Saved \"\(fileName)\"."
+        case .saved(_, let title, let fileName):
+            let stem = (fileName as NSString).deletingPathExtension
+            if stem == title || fileName == title { return "Saved \"\(fileName)\"." }
+            return "Saved \"\(title)\" as \"\(fileName)\"."
         case .failed(let attempt, let problem):
             let lead = "Couldn't save \"\(attempt.title)\"."
             switch problem {
@@ -85,11 +87,15 @@ struct ArtifactExporter {
         } catch {
             return .failed(attempt, Self.problem(for: error))
         }
-        return .saved(id: attempt.id, fileName: attempt.destination.lastPathComponent)
+        return .saved(id: attempt.id, title: attempt.title, fileName: attempt.destination.lastPathComponent)
     }
 
     static func problem(for error: Error) -> ArtifactExportProblem {
         problem(for: error as NSError, depth: 0) ?? .other
+    }
+
+    static func sourceProblem(for error: Error) -> ArtifactExportProblem {
+        problem(for: error as NSError, depth: 0) == .folderUnavailable ? .sourceMissing : .sourceUnreadable
     }
 
     private static func problem(for error: NSError, depth: Int) -> ArtifactExportProblem? {

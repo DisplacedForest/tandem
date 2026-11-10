@@ -81,7 +81,7 @@ enum ArtifactShotFixture {
         case "artifacts-no-results": return Seeded(store: store, selection: selection, search: "zucchini trellis")
         case "artifacts-saved":
             return Seeded(store: store, selection: selection,
-                          notice: .saved(id: UUID(), fileName: "Greenhouse heating options.md"))
+                          notice: .saved(id: UUID(), title: "Greenhouse heating options", fileName: "Greenhouse heating options.md"))
         case "artifacts-save-failed", "artifacts-save-missing":
             guard let document else { return Seeded(store: store, selection: selection) }
             let attempt = ArtifactExportAttempt(

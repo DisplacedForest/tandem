@@ -49,6 +49,7 @@ enum ArtifactExportSelftest {
         let unreadableSource = sources.appendingPathComponent("unreadable.md")
         defer {
             try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: attachments.path)
             try? manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadableSource.path)
             try? manager.removeItem(at: root)
         }
@@ -57,8 +58,7 @@ enum ArtifactExportSelftest {
         let fileReader: (ArtifactVersion) -> Result<Data, ArtifactExportProblem> = { version in
             reads.append(version)
             let url = sources.appendingPathComponent(version.fileName)
-            guard manager.fileExists(atPath: url.path) else { return .failure(.sourceMissing) }
-            do { return .success(try Data(contentsOf: url)) } catch { return .failure(.sourceUnreadable) }
+            do { return .success(try Data(contentsOf: url)) } catch { return .failure(ArtifactExporter.sourceProblem(for: error)) }
         }
         let exporter = ArtifactExporter(read: { fileReader($0) })
 
@@ -69,7 +69,7 @@ enum ArtifactExportSelftest {
         let documentDestination = out.appendingPathComponent("Heating report.md")
         let documentAttempt = attempt(report, documentVersion, to: documentDestination)
         let documentNotice = exporter.run(documentAttempt)
-        try check(documentNotice == .saved(id: documentAttempt.id, fileName: "Heating report.md"), "A document export is saved under its file name")
+        try check(documentNotice == .saved(id: documentAttempt.id, title: "Heating report", fileName: "Heating report.md"), "A document export is saved under its file name")
         try check((try? Data(contentsOf: documentDestination)) == documentBytes, "The saved document has the source bytes")
         try check(documentNotice.message == "Saved \"Heating report.md\".", "The saved message names the file")
         try check(!documentNotice.canChooseLocation, "A saved notice offers no recovery")
@@ -81,7 +81,7 @@ enum ArtifactExportSelftest {
         let imageVersion = version("img-a-v1", artifact: dusk.id, ordinal: 1, fileName: "img-a-1.png")
         let imageDestination = out.appendingPathComponent("Greenhouse at dusk.png")
         let imageAttempt = attempt(dusk, imageVersion, to: imageDestination)
-        try check(exporter.run(imageAttempt) == .saved(id: imageAttempt.id, fileName: "Greenhouse at dusk.png"), "An image export is saved")
+        try check(exporter.run(imageAttempt) == .saved(id: imageAttempt.id, title: "Greenhouse at dusk", fileName: "Greenhouse at dusk.png"), "An image export is saved")
         try check((try? Data(contentsOf: imageDestination)) == imageBytes, "The saved image has the exact binary bytes")
 
         let notes = record("doc-b", .document, "Trip notes")
@@ -172,7 +172,7 @@ enum ArtifactExportSelftest {
         try manager.createDirectory(at: missingFolder, withIntermediateDirectories: true)
         chosen = strandedDestination
         guard let again = flow.chooseAnother(strandedAttempt) else { throw Failure(description: "Choosing the same place again runs the export") }
-        try check(again == .saved(id: strandedAttempt.id, fileName: "Heating report.md"), "The same place works once the cause is fixed, with the same attempt")
+        try check(again == .saved(id: strandedAttempt.id, title: "Heating report", fileName: "Heating report.md"), "The same place works once the cause is fixed, with the same attempt")
         try check(reads.last == documentVersion, "Saving to the same place again reads the same version")
         try check((try? Data(contentsOf: strandedDestination)) == documentBytes, "The file saved to the same place has the right bytes")
         try manager.removeItem(at: missingFolder)
@@ -182,14 +182,16 @@ enum ArtifactExportSelftest {
         try manager.createDirectory(at: elsewhere, withIntermediateDirectories: true)
         chosen = elsewhere.appendingPathComponent("Heating report copy.md")
         guard let moved = flow.chooseAnother(strandedAttempt) else { throw Failure(description: "Choosing another location runs the export") }
-        try check(moved == .saved(id: strandedAttempt.id, fileName: "Heating report copy.md"), "Another location is saved with the same attempt")
+        try check(moved == .saved(id: strandedAttempt.id, title: "Heating report", fileName: "Heating report copy.md"), "Another location is saved with the same attempt")
+        try check(moved.message == "Saved \"Heating report\" as \"Heating report copy.md\".", "A save under another name still names the item it saved")
+        try check(documentNotice.message == "Saved \"Heating report.md\".", "A save under the item's own name says it once")
         try check((try? Data(contentsOf: elsewhere.appendingPathComponent("Heating report copy.md"))) == documentBytes, "The new location has the bytes")
         try check(reads.last == documentVersion, "Another location keeps the same version")
         try check(offered.last?.0 == "Heating report.md" && offered.last?.1 == nil,
                   "A folder that no longer exists is not offered, and the previous file name is")
 
         chosen = out.appendingPathComponent("Heating report from locked.md")
-        guard case .saved = flow.chooseAnother(lockedAttempt) ?? .saved(id: UUID(), fileName: "") else {
+        guard case .saved = flow.chooseAnother(lockedAttempt) ?? .saved(id: UUID(), title: "", fileName: "") else {
             throw Failure(description: "Choosing another location from a locked folder saves")
         }
         try check(offered.last?.0 == "Heating report.md" && samePath(offered.last?.1, locked),
@@ -207,7 +209,7 @@ enum ArtifactExportSelftest {
         guard let begun = flow.begin(notes, version: firstVersion, fileName: "Trip notes.md") else {
             throw Failure(description: "A chosen destination runs the export")
         }
-        try check(begun == .saved(id: begun.id, fileName: "Trip notes again.md"), "Beginning an export with a destination saves it")
+        try check(begun.isSaved && begun.message.contains("Trip notes again.md"), "Beginning an export with a destination saves it")
 
         let paths = [out.path, locked.path, missingFolder.path, root.path, strandedDestination.path]
         for problem in ArtifactExportProblem.allCases {
@@ -236,6 +238,14 @@ enum ArtifactExportSelftest {
         try check(store.artifactSource(stored) == .success(storedBytes), "The store reads the original bytes")
         guard let storedURL = store.attachmentStore.url(for: stored.fileName) else { throw Failure(description: "The stored file has a location") }
         try check(samePath(storedURL.deletingLastPathComponent(), attachments), "The stored file lives in the temporary folder")
+        try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: storedURL.path)
+        try check(store.artifactSource(stored) == .failure(.sourceUnreadable), "An original that can't be opened reads as unreadable, not missing")
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: storedURL.path)
+        try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: attachments.path)
+        let shutOut = store.artifactSource(stored)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: attachments.path)
+        try check(shutOut == .failure(.sourceUnreadable), "An original in a folder that can't be entered reads as unreadable, not missing")
+        try check(store.artifactSource(stored) == .success(storedBytes), "The original reads again once access is back")
         try manager.removeItem(at: storedURL)
         try check(store.artifactSource(stored) == .failure(.sourceMissing), "A deleted original reads as missing")
 
