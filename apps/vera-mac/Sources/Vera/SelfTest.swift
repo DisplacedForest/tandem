@@ -399,6 +399,7 @@ enum SelfTest {
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
+        do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }
         do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeCompanionWorker() } catch { print("SELFTEST ERROR: companion worker \(error)"); exit(1) }

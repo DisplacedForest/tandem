@@ -162,6 +162,37 @@ enum NativeToolError: Error, LocalizedError, Equatable {
     }
 }
 
+enum NativeSystemAccess: Equatable, Sendable {
+    case granted
+    case notAsked
+    case refused
+}
+
+struct NativeToolAccess: Sendable {
+    let subject: String
+    let settingsPane: URL?
+    let state: @Sendable () -> NativeSystemAccess
+    let request: @Sendable () async -> Bool
+
+    func note(_ state: NativeSystemAccess) -> String? {
+        switch state {
+        case .granted: return nil
+        case .notAsked:
+            return "\(subject) is switched on, but Tandem hasn't been given access to \(subject) on this Mac yet and macOS is asking the person now. If they ask for anything that needs \(subject), say that plainly, ask them to allow it, and suggest they ask again afterwards. Do not say it was done."
+        case .refused:
+            return "\(subject) is switched on, but Tandem doesn't have access to \(subject) on this Mac. If the person asks for anything that needs \(subject), say that plainly and tell them to turn on Tandem under System Settings, Privacy & Security, \(subject). Do not say it was done."
+        }
+    }
+
+    func status(_ state: NativeSystemAccess) -> (line: String, action: String)? {
+        switch state {
+        case .granted: return nil
+        case .notAsked: return ("Tandem hasn't asked for access to \(subject) yet.", "Allow access")
+        case .refused: return ("Tandem doesn't have access to \(subject).", "Open System Settings")
+        }
+    }
+}
+
 struct NativeToolDefinition: Sendable {
     let id: String
     let name: String
@@ -183,6 +214,7 @@ struct NativeToolDefinition: Sendable {
     var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
+    var access: NativeToolAccess? = nil
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
@@ -244,6 +276,18 @@ struct NativeToolRegistry: Sendable {
     func active(enabledIDs: Set<String>) -> [NativeToolDefinition] {
         definitions.filter { enabledIDs.contains($0.id) && $0.isAvailable() }
     }
+
+    func access(enabledIDs: Set<String>) -> [(id: String, access: NativeToolAccess)] {
+        var seen = Set<String>()
+        return definitions.compactMap { definition in
+            guard enabledIDs.contains(definition.id), let access = definition.access, seen.insert(definition.id).inserted else { return nil }
+            return (definition.id, access)
+        }
+    }
+
+    func accessNotes(enabledIDs: Set<String>) -> [String] {
+        access(enabledIDs: enabledIDs).compactMap { $0.access.note($0.access.state()) }
+    }
 }
 
 enum NativeRemindersAuthorization: Equatable, Sendable {
@@ -279,7 +323,18 @@ enum NativeRemindersTools {
     static let toolID = "apple-reminders"
     static func definitions(service: any NativeRemindersService) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { service.nativeAuthorization == .authorized }
-        return [
+        let access = NativeToolAccess(
+            subject: "Reminders",
+            settingsPane: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders"),
+            state: {
+                switch service.nativeAuthorization {
+                case .authorized: return .granted
+                case .notDetermined: return .notAsked
+                case .denied: return .refused
+                }
+            },
+            request: { await service.nativeRequestAccess() })
+        let tools = [
             NativeToolDefinition(
                 id: toolID,
                 name: "apple_reminders_get_lists",
@@ -358,6 +413,11 @@ enum NativeRemindersTools {
                     return try encode(["reminder": reminder])
                 }),
         ]
+        return tools.map { tool in
+            var tool = tool
+            tool.access = access
+            return tool
+        }
     }
 
     private static func objectSchema(

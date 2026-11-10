@@ -396,6 +396,9 @@ struct NativeToolEditor: View {
                         Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
                 }
+                if config.nativeSettings.enabledToolIDs.contains(tool.id), let access = store.toolAccess(tool.id) {
+                    NativeToolAccessRow(access: access)
+                }
             }
             if !unavailable.isEmpty {
                 Text("Unavailable").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
@@ -1184,5 +1187,35 @@ private struct SaveSection: View {
             rules: config.nativeSettings.rules,
             capabilityDeclarations: config.capabilityTools.declarations)
         status = "Saved"
+    }
+}
+
+struct NativeToolAccessRow: View {
+    let access: NativeToolAccess
+    @State private var refresh = 0
+
+    var body: some View {
+        let state = access.state()
+        if let status = access.status(state) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                Text(status.line).font(.system(size: 12))
+                Spacer()
+                Button(status.action) {
+                    if state == .notAsked {
+                        Task {
+                            _ = await access.request()
+                            refresh += 1
+                        }
+                    } else if let pane = access.settingsPane {
+                        NSWorkspace.shared.open(pane)
+                    }
+                }
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+            .id(refresh)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh += 1 }
+        }
     }
 }

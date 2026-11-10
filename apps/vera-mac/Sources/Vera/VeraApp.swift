@@ -85,6 +85,7 @@ struct VeraApp: App {
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
         storeInstance.followSavedCompanionName(of: configInstance)
+        storeInstance.asksForSystemAccess = fixture == nil
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name
@@ -128,6 +129,7 @@ struct VeraApp: App {
                 .task { if NativePiNativeContext.candidate == nil { presence.start(); companionPresence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
                 .task { if NativePiNativeContext.candidate == nil { companion.start() } }
+                .task { if NativePiNativeContext.candidate == nil { store.requestSystemAccess() } }
         }
         .defaultSize(width: 1180, height: 760)
         .windowStyle(.hiddenTitleBar)
