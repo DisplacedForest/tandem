@@ -414,31 +414,52 @@ enum NativeFolderTools {
                               footprint: Set<String>? = nil) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { return .object(["path": .string(location.path), "created": .bool(false)]) }
-        var directory = try NativeFolderIO.openRoot(location.root)
-        var planned = location.root.path
-        for component in location.components {
-            planned += "/" + component
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: planned, isDirectory: &isDirectory) {
-                guard isDirectory.boolValue else { throw NativeFolderAccessError.notADirectory(planned) }
-            } else if let footprint {
-                guard let value = NativeRuleTarget.folder(planned)?.value, footprint.contains(value) else {
-                    throw NativeToolError.failed("Nothing was created because \(planned) changed after this request was checked. Ask again if it is still needed.")
-                }
-            }
+        let declared: (String) -> Bool = { display in
+            guard let footprint else { return true }
+            return NativeRuleTarget.folder(display).map { footprint.contains($0.value) } ?? false
         }
+        _ = try creationWalk(location, declared: declared, creating: false, ledger: ledger)
         try commit()
+        afterCommit?()
+        let created = try creationWalk(location, declared: declared, creating: true, ledger: ledger)
+        return .object(["path": .string(location.path), "created": .bool(created)])
+    }
+
+    @TaskLocal static var afterCommit: (@Sendable () -> Void)?
+
+    static func footprintChanged(_ display: String) -> NativeToolError {
+        NativeToolError.failed("Nothing was created because \(display) changed after this request was checked. Ask again if it is still needed.")
+    }
+
+    static func creationWalk(_ location: NativeFolderLocation, declared: (String) -> Bool, creating: Bool, ledger: NativeFileChangeLedger) throws -> Bool {
+        var directory = try NativeFolderIO.openRoot(location.root)
         var display = location.root.path
+        var missing = false
         var created = false
         for component in location.components {
             display += "/" + component
-            if try NativeFolderIO.makeDirectory(directory, component, display: display) {
+            let allowed = declared(display)
+            if !missing, let info = NativeFolderIO.status(directory, component) {
+                switch NativeFolderIO.kind(info) {
+                case "folder": break
+                case "link": throw NativeFolderAccessError.symlink(display)
+                default: throw NativeFolderAccessError.notADirectory(display)
+                }
+                directory = try NativeFolderIO.openDirectory(directory, component, display: display)
+                continue
+            }
+            guard allowed else { throw footprintChanged(display) }
+            missing = true
+            guard creating else { continue }
+            if mkdirat(directory.raw, component, 0o755) == 0 {
                 created = true
                 ledger.record(NativeFileChange(path: display, kind: .directory))
+            } else if Darwin.errno != EEXIST {
+                throw NativeFolderIO.errno("Couldn't create \(display)")
             }
             directory = try NativeFolderIO.openDirectory(directory, component, display: display)
         }
-        return .object(["path": .string(location.path), "created": .bool(created)])
+        return created
     }
 
     static func requireWritable(_ location: NativeFolderLocation) throws {

@@ -43,6 +43,7 @@ enum NativeRuleRecordsSelftest {
         try await lateConfirmation(require)
         try await caseAndForm(require)
         try await boundFootprint(require)
+        try await creationRace(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -1027,5 +1028,39 @@ enum NativeRuleRecordsSelftest {
         try require(onto.contains("already exists") && (try records.record(id: once.id))?.remainingUses == 1
                     && (try? String(contentsOfFile: open + "/taken.txt", encoding: .utf8)) == "y",
                     "A move onto an existing destination fails before the use is spent")
+    }
+
+    private static func creationRace(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-outside-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: fixture.directory)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let open = fixture.root + "/open"
+        let keep = open + "/keep"
+        try FileManager.default.createDirectory(atPath: keep, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: open + "/link", withDestinationPath: outside.path)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        let raced = try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(open), uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let mkdir = chatFolders(source, store: records, grant: fixture.grant)[NativeFolderTools.mkdirName]!
+        let outcome = await NativeFolderTools.$afterCommit.withValue({ try? FileManager.default.removeItem(atPath: keep) }) {
+            await run(mkdir, ["path": .string(keep + "/leaf")])
+        }
+        try require(outcome.contains("changed after this request was checked") && !FileManager.default.fileExists(atPath: keep),
+                    "A parent removed after confirmation is never recreated by the creation walk")
+        try require(try records.record(id: raced.id)?.remainingUses == 0, "A use confirmed before the race is spent, because admission happened")
+        let fresh = try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(open), uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let linked = await run(mkdir, ["path": .string(open + "/link/sub")])
+        let outsideEntries = (try? FileManager.default.contentsOfDirectory(atPath: outside.path)) ?? ["?"]
+        try require(linked != "ran" && outsideEntries.isEmpty && (try records.record(id: fresh.id))?.remainingUses == 1,
+                    "Creating beneath a symlink to a folder outside the grant refuses before the use is spent")
     }
 }

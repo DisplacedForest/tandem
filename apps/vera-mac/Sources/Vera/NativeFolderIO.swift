@@ -232,15 +232,6 @@ enum NativeFolderIO {
         }
     }
 
-    static func makeDirectory(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws -> Bool {
-        if let existing = status(directory, name) {
-            guard (existing.st_mode & S_IFMT) == S_IFDIR else { throw NativeFolderAccessError.exists(display) }
-            return false
-        }
-        guard mkdirat(directory.raw, name, 0o755) == 0 else { throw errno("Couldn't create \(display)") }
-        return true
-    }
-
     static func rename(from: NativeFolderDescriptor, _ fromName: String, to: NativeFolderDescriptor, _ toName: String, display: String) throws {
         guard renameatx_np(from.raw, fromName, to.raw, toName, UInt32(RENAME_EXCL)) == 0 else {
             switch Darwin.errno {
