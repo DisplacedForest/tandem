@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 private struct MemorySourceActionKey: EnvironmentKey {
     static let defaultValue: (@MainActor (String) -> Void)? = nil
@@ -35,23 +36,41 @@ func extractRefs(_ text: String) -> (String, [Int]) {
 }
 
 func sourceIsLinked(_ url: String) -> Bool {
-    url.hasPrefix("http://") || url.hasPrefix("https://")
+    let scheme = url.prefix(8).lowercased()
+    return scheme.hasPrefix("http://") || scheme.hasPrefix("https://")
 }
 
-/// A tappable per-paragraph source pill (favicon + host) that opens the cited page.
 struct CitationChip: View {
     @Environment(\.inspectMemorySource) private var inspectMemory
     let source: PulseSource
+
+    private var spokenName: String {
+        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? sourceHost(source.url) : title
+    }
+
     var body: some View {
         if sourceIsLinked(source.url) {
-            label(sourceHost(source.url), favicon: true)
-                .contentShape(Capsule())
-                .onTapGesture { openExternal(source.url) }
+            if let destination = NativeResearchReportSafety.destination(source.url) {
+                Button { NSWorkspace.shared.open(destination) } label: {
+                    label(sourceHost(source.url), favicon: true)
+                }
+                .buttonStyle(.plain)
                 .pointerCursor()
+                .accessibilityLabel(spokenName)
+                .help(spokenName)
+            } else {
+                label(sourceHost(source.url), favicon: true)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(spokenName)
+                    .help(spokenName)
+            }
         } else if NativeMemoryCitation.recordID(source.url) != nil, let inspectMemory {
             Button { inspectMemory(source.url) } label: {
                 label(source.title, favicon: false)
-            }.buttonStyle(.plain)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(spokenName)
         } else {
             label(source.title.isEmpty ? source.url : source.title, favicon: false)
         }
@@ -66,53 +85,57 @@ struct CitationChip: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Theme.surface).clipShape(Capsule())
         .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+        .contentShape(Capsule())
     }
 }
 
-/// Bottom Sources row — favicons collapsed, tap to expand into numbered linked titles.
+private struct SourcesListExpandedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var sourcesListExpanded: Bool {
+        get { self[SourcesListExpandedKey.self] }
+        set { self[SourcesListExpandedKey.self] = newValue }
+    }
+}
+
 struct SourcesRow: View {
+    @Environment(\.sourcesListExpanded) private var startsExpanded
     let sources: [PulseSource]
-    @State private var expanded = false
+    var initiallyExpanded: Bool? = nil
+    var numbered = true
+    @State private var toggled = false
+
+    private var expanded: Bool { (initiallyExpanded ?? startsExpanded) != toggled }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(Theme.hairline).frame(height: 1)
-            HStack(spacing: 8) {
-                HStack(spacing: -6) {
-                    ForEach(sources.filter { sourceIsLinked($0.url) }.prefix(5)) { Favicon(urlString: $0.url) }
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { toggled.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    HStack(spacing: -6) {
+                        ForEach(sources.filter { sourceIsLinked($0.url) }.prefix(5)) { Favicon(urlString: $0.url) }
+                    }
+                    Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 }
-                Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
-                Spacer()
-                Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } }
+            .buttonStyle(.plain)
             .pointerCursor()
+            .accessibilityLabel("Sources, \(sources.count)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(sources) { s in
-                        let linked = sourceIsLinked(s.url)
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("\(s.n)").font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.textSecondary).frame(width: 18, alignment: .trailing)
-                            if linked { Favicon(urlString: s.url) }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(s.title.isEmpty ? (linked ? sourceHost(s.url) : s.url) : s.title)
-                                    .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
-                                    .lineLimit(2).multilineTextAlignment(.leading)
-                                if linked {
-                                    Text(sourceHost(s.url)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                                }
-                            }
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                        .modifier(SourceRowTap(url: linked || NativeMemoryCitation.recordID(s.url) != nil ? s.url : nil))
-                    }
+                    ForEach(sources) { SourceListRow(source: $0, numbered: numbered) }
                 }
                 .padding(.bottom, 12)
             }
@@ -120,17 +143,179 @@ struct SourcesRow: View {
     }
 }
 
-struct SourceRowTap: ViewModifier {
+private struct SourceListRow: View {
     @Environment(\.inspectMemorySource) private var inspectMemory
-    let url: String?
+    let source: PulseSource
+    let numbered: Bool
 
-    func body(content: Content) -> some View {
-        if let url, NativeMemoryCitation.recordID(url) != nil, let inspectMemory {
-            Button { inspectMemory(url) } label: { content }.buttonStyle(.plain)
-        } else if let url {
-            content.onTapGesture { openExternal(url) }.pointerCursor()
+    private var linked: Bool { sourceIsLinked(source.url) }
+
+    private var name: String {
+        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        return linked ? sourceHost(source.url) : source.url
+    }
+
+    var body: some View {
+        if linked, let destination = NativeResearchReportSafety.destination(source.url) {
+            Button { NSWorkspace.shared.open(destination) } label: { content }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .accessibilityLabel(name)
+                .help(name)
+        } else if NativeMemoryCitation.recordID(source.url) != nil, let inspectMemory {
+            Button { inspectMemory(source.url) } label: { content }
+                .buttonStyle(.plain)
+                .accessibilityLabel(name)
         } else {
             content
+        }
+    }
+
+    private var content: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if numbered {
+                Text("\(source.n)").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary).frame(width: 18, alignment: .trailing)
+            }
+            if linked { Favicon(urlString: source.url) }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                if linked {
+                    Text(sourceHost(source.url)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+enum CitationStyle {
+    case chat, document
+}
+
+struct CitedText: View {
+    @Environment(\.renderSafe) private var renderSafe
+    let resolved: ResolvedCitations
+    let style: CitationStyle
+
+    init(text: String, sources: [PulseSource], style: CitationStyle = .chat, allowRecovery: Bool = true) {
+        resolved = CitationResolver.resolve(text: text, sources: sources, allowRecovery: allowRecovery)
+        self.style = style
+    }
+
+    init(resolved: ResolvedCitations, style: CitationStyle) {
+        self.resolved = resolved
+        self.style = style
+    }
+
+    var body: some View {
+        if resolved.sources.isEmpty {
+            markdown(resolved.blocks.map(\.text).joined(separator: "\n\n"))
+        } else {
+            VStack(alignment: .leading, spacing: style == .chat ? 10 : 14) {
+                ForEach(Array(resolved.blocks.enumerated()), id: \.offset) { index, block in
+                    Group {
+                        if block.isCode, renderSafe {
+                            staticCode(block.text)
+                        } else if block.isCode || block.refs.isEmpty {
+                            markdown(block.text)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                markdown(block.text)
+                                CitationChipRow(refs: block.refs, sources: resolved.sources)
+                            }
+                        }
+                    }
+                    .padding(.top, style == .document && index > 0 && !block.isCode && block.text.hasPrefix("#") ? 10 : 0)
+                }
+            }
+        }
+    }
+
+    private func staticCode(_ text: String) -> some View {
+        var lines = text.components(separatedBy: "\n")
+        if !lines.isEmpty { lines.removeFirst() }
+        if let last = lines.last, last.trimmingCharacters(in: .whitespaces).allSatisfy({ $0 == "`" || $0 == "~" }), !last.isEmpty {
+            lines.removeLast()
+        }
+        return Text(lines.joined(separator: "\n"))
+            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.cardFill)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func markdown(_ text: String) -> some View {
+        switch style {
+        case .chat: ProseMarkdown(text: text)
+        case .document: NativeArtifactMarkdown(text: text).equatable()
+        }
+    }
+}
+
+struct CitationChipRow: View {
+    let refs: [Int]
+    let sources: [PulseSource]
+
+    var body: some View {
+        let chips = refs.compactMap { n in sources.first { $0.n == n } }
+        if !chips.isEmpty {
+            WrappingLayout(spacing: 6) {
+                ForEach(chips) { CitationChip(source: $0) }
+            }
+        }
+    }
+}
+
+struct WrappingLayout: Layout {
+    var spacing: CGFloat
+
+    private func fitted(_ subview: LayoutSubview, within width: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        guard ideal.width > width else { return ideal }
+        return CGSize(width: width, height: subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var line: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = fitted(subview, within: width)
+            if x > 0, x + size.width > width {
+                y += line + spacing
+                x = 0
+                line = 0
+            }
+            x += size.width + spacing
+            line = max(line, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + line)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var line: CGFloat = 0
+        for subview in subviews {
+            let size = fitted(subview, within: bounds.width)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                y += line + spacing
+                x = bounds.minX
+                line = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            line = max(line, size.height)
         }
     }
 }

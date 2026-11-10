@@ -437,6 +437,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: artifact library selection \(error)"); exit(1) }
         do { try ArtifactExportSelftest.run() }
         catch { print("SELFTEST ERROR: artifact export \(error)"); exit(1) }
+        do { try CitationResolverSelftest.run() }
+        catch { print("SELFTEST ERROR: citation resolver \(error)"); exit(1) }
         do { try await ArtifactProducerSelftest.run() }
         catch { print("SELFTEST ERROR: artifact producers \(error)"); exit(1) }
         do { try await ProjectStoreSelftest.run() }
