@@ -42,6 +42,19 @@ extension SelfTest {
             persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
             timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName))
         try require(namedContext.prompt.contains("Your name is Ada."), "The companion's own conversation is still told its name")
+        final class FlakyDisk: @unchecked Sendable { var contents: [String: Any] = [:]; var failing = true }
+        let disk = FlakyDisk()
+        let flaky = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents },
+                                nativeMCP: NativeMCPManager(servers: []),
+                                writeConfiguration: { if disk.failing { throw NativeToolError.failed("disk full") }; disk.contents = $0 })
+        let renaming = ChatStore()
+        renaming.followSavedCompanionName(of: flaky)
+        try require(DotProfileCopy.saveName("Wren", config: flaky, store: renaming) != nil && flaky["assistant_name"].isEmpty && renaming.companionName == nil,
+                    "A failed name save reports the failure and leaves no unsaved name behind")
+        disk.failing = false
+        try require(DotProfileCopy.saveName("Wren", config: flaky, store: renaming) == nil && renaming.companionName == "Wren"
+                        && disk.contents["assistant_name"] as? String == "Wren",
+                    "Saving the same name again after a failure really saves it")
         let unnamed = CompanionSubject(nil), named = CompanionSubject(" Ada ")
         try require(unnamed.thread == "your companion's thread" && named.thread == "the Ada thread"
                         && CompanionSentence.plain("Results go to " + unnamed.threadTemplate + ".", name: nil) == "Results go to your companion's thread."

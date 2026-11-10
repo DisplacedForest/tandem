@@ -96,6 +96,10 @@ extension SelfTest {
                     "After Not now the opening tells the model not to ask for a name again")
         func settled() -> Bool { store.selected?.messages.last?.state == .complete && !store.conversationTurns.contains { $0.conversationID == id && ($0.state == .pending || $0.state == .running) } }
         try await NativeSessionFixture.eventually("Opening completes", settled)
+        guard let openingTurn = store.conversationTurns.first(where: { $0.conversationID == id }) else { throw NativeTaskFixture.Failure.assertion("The opening turn exists") }
+        let followUp = store.companionProfileInstruction(for: openingTurn)
+        try require(followUp.contains("do not ask for a name") && !followUp.contains("one question at a time: name,"),
+                    "After Not now, later setup turns are also told not to ask for a name")
         try require(store.selected?.messages.count == 1 && store.selected?.messages.first?.role == .assistant, "Opening contains only a real assistant response")
         try require(transport.histories.first?.contains(where: { $0.role == "user" }) == false, "Opening sends no fabricated user message")
         for _ in 0..<3 { store.prepareCompanionOpening() }
