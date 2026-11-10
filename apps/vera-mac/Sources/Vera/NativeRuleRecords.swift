@@ -71,9 +71,9 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         case .commandPrefix:
             return NativeCommandPrefix.normalize(trimmed)
         case .folder:
-            guard trimmed.hasPrefix("/") else { return "" }
+            guard value.hasPrefix("/") else { return "" }
             var parts: [Substring] = []
-            for part in trimmed.split(separator: "/") {
+            for part in value.split(separator: "/") {
                 if part == "." { continue }
                 if part == ".." { if !parts.isEmpty { parts.removeLast() }; continue }
                 parts.append(part)
@@ -105,8 +105,7 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
     }
 
     static func realFolder(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("/"), let real = NativeCommandClassifier.resolved(trimmed, working: nil), real.hasPrefix("/") else { return nil }
+        guard value.hasPrefix("/"), let real = NativeCommandClassifier.resolved(value, working: nil), real.hasPrefix("/") else { return nil }
         return real
     }
 

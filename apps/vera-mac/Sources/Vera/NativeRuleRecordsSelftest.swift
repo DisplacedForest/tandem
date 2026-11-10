@@ -44,6 +44,7 @@ enum NativeRuleRecordsSelftest {
         try await caseAndForm(require)
         try await boundFootprint(require)
         try await creationRace(require)
+        try await significantWhitespace(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -1062,5 +1063,59 @@ enum NativeRuleRecordsSelftest {
         let outsideEntries = (try? FileManager.default.contentsOfDirectory(atPath: outside.path)) ?? ["?"]
         try require(linked != "ran" && outsideEntries.isEmpty && (try records.record(id: fresh.id))?.remainingUses == 1,
                     "Creating beneath a symlink to a folder outside the grant refuses before the use is spent")
+    }
+
+    private static func significantWhitespace(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let spaced = fixture.root + "/open/private "
+        let protected = spaced + "/protected"
+        try FileManager.default.createDirectory(atPath: protected, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: fixture.root + "/open ", withIntermediateDirectories: true)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let editForbid = try records.add(record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, protected)))
+        let trashForbid = try records.add(record(.forbid, .trash, target: NativeRuleTarget.make(.folder, protected)))
+        try require(editForbid.target?.value.hasSuffix("/private /protected") == true, "A folder target keeps its trailing space through the store")
+        let source = NativeRuleSource()
+        source.setGlobal(NativeRules(choices: [.fileEdits: .act, .trash: .act]))
+        source.setRecords([editForbid, trashForbid])
+        let tools = chatFolders(source, store: nil, grant: fixture.grant)
+        let resolver = source.resolver(for: "c1", requestText: "")
+        let move: [String: NativeJSONValue] = ["from": .string(spaced), "to": .string(fixture.root + "/locked/moved")]
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.moveName]!, move, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                    "Moving a trailing-space parent that holds a restricted descendant is blocked")
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.trashName]!, ["path": .string(spaced)], resolver: resolver,
+                                                       honoringLimitedUse: true).decision == .handOff,
+                    "Trashing a trailing-space parent that holds a restricted descendant is blocked")
+        let moved = await run(tools[NativeFolderTools.moveName]!, move)
+        try require(moved == NativeRuleResolver.handOffMessage(.fileEdits) && FileManager.default.fileExists(atPath: protected),
+                    "The trailing-space move is refused in chat and nothing moves")
+
+        let allowing = NativeRuleSource()
+        allowing.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        allowing.setRecords([try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(fixture.root + "/open")))])
+        let write = tools[NativeFolderTools.writeName]!
+        let sibling = NativeCompanionWorker.ruleDecision(write, ["path": .string(fixture.root + "/open /a.txt"), "content": .string("x")],
+                                                         resolver: allowing.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
+        let inside = NativeCompanionWorker.ruleDecision(write, ["path": .string(fixture.root + "/open/a.txt"), "content": .string("x")],
+                                                        resolver: allowing.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
+        let bare = NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.trashName]!, ["path": .string(fixture.root + "/open ")],
+                                                      resolver: allowing.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
+        try require(sibling.decision == .ask && inside.decision == .act(.grant) && bare.decision != .act(.grant),
+                    "An allow on a folder does not match its trailing-space sibling")
+
+        for name in [" lead", "two  spaces", "tab\tend"] {
+            let path = fixture.root + "/open/" + name
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            let saved = try records.add(record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, path)))
+            let reread = try records.record(id: saved.id)
+            let expected = NativeRuleTarget.realFolder(path)
+            let child = NativeRuleTarget.folder(path + "/child.txt")!
+            try require(reread?.target?.value == expected && expected?.hasSuffix("/" + name) == true
+                        && reread?.target?.isSatisfied(by: NativeRuleTarget.folder(path)!, restricting: true) == true
+                        && reread?.target?.isSatisfied(by: child, restricting: true) == true,
+                        "A folder named \(name.debugDescription) round-trips through the store unchanged and matches itself")
+        }
     }
 }
