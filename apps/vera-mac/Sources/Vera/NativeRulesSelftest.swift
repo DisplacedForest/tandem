@@ -415,7 +415,8 @@ extension SelfTest {
                        "${unset_name:-rm} /Volumes/Other/victim", "$'rm\\0ignored' /Volumes/Other/victim", "/bin/rm* /Volumes/Other/victim",
                        "IFS=:; c='rm:-f:/Volumes/Other/victim'; $c", "x=(rm -rf); \"${x[@]}\" /Volumes/Other/victim", "/bin/rm@ /Volumes/Other/victim",
                        "IFS=_; c=\"rm_-f_/Volumes/Other/victim\"; $c", "IFS=+; c=\"rm+-f+/Volumes/Other/victim\"; $c", "IFS=.; c=rm.-f./Volumes/Other/victim; $c",
-                       "IFS=x; c=rmx-fx/Volumes/Other/victim; $c", "c=rm-rf; ${c%-rf} /Volumes/Other/victim"] {
+                       "IFS=x; c=rmx-fx/Volumes/Other/victim; $c", "c=rm-rf; ${c%-rf} /Volumes/Other/victim",
+                       "c=rm\u{215A}; ${c%\u{215A}} -rf /Volumes/Other/victim", "c=rm\u{00E9}; ${c%\u{00E9}} -rf /Volumes/Other/victim", "c=rm\u{0663}; ${c%\u{0663}} -rf /Volumes/Other/victim"] {
             let found = NativeCommandClassifier.classify(hidden, grants: sample)
             try require(found == .permanentDeletion, "A destructive program hidden by shell expansion stays on the floor: \(hidden) classified as \(found.rawValue)")
         }

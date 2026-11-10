@@ -550,8 +550,8 @@ enum NativeCommandClassifier {
         let joined = command.replacingOccurrences(of: "\\\r\n", with: "").replacingOccurrences(of: "\\\n", with: "")
             .filter { $0 != "\"" && $0 != "'" }
         return [joined.filter { $0 != "\\" }, joined.replacingOccurrences(of: "\\", with: " ")].contains { text in
-            let words = text.split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
-            let flagged = text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "-") }).map(String.init)
+            let words = text.split(whereSeparator: { !($0.isASCII && ($0.isLetter || $0.isNumber)) }).map(String.init)
+            let flagged = text.split(whereSeparator: { !($0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-")) }).map(String.init)
             if words.contains("IFS") { return true }
             if words.contains(where: { destructive.contains($0) }) { return true }
             if flagged.contains(where: { findEffects.contains($0) }) { return true }
