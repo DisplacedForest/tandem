@@ -145,12 +145,16 @@ struct ArtifactsView: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.renderSafe) private var renderSafe
     @State private var state: ArtifactLibrarySelection
+    @State private var exportNotice: ArtifactExportNotice?
+    @State private var noticeDismissal: Task<Void, Never>?
 
     init(initialSelection: String? = nil, conversationFilter: String? = nil,
-         initialFilter: ArtifactKindFilter = .all, initialSearch: String = "") {
+         initialFilter: ArtifactKindFilter = .all, initialSearch: String = "",
+         initialExportNotice: ArtifactExportNotice? = nil) {
         _state = State(initialValue: ArtifactLibrarySelection(
             selectedID: initialSelection, search: initialSearch, filter: initialFilter,
             conversationFilter: conversationFilter))
+        _exportNotice = State(initialValue: initialExportNotice)
     }
 
     private var conversationFilterTitle: String? {
@@ -268,13 +272,123 @@ struct ArtifactsView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
     }
 
-    @ViewBuilder
     private var detailColumn: some View {
-        if let selected {
-            ArtifactDetail(record: selected).id(selected.id)
+        VStack(spacing: 0) {
+            if let exportNotice {
+                ArtifactExportStrip(
+                    notice: exportNotice, renderSafe: renderSafe,
+                    chooseAnother: { chooseAnotherLocation() }, dismiss: { dismissNotice() })
+            }
+            if let selected {
+                ArtifactDetail(record: selected, onSaveAs: beginExport).id(selected.id)
+            } else {
+                Text("Nothing matches your search or filters.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private var exportFlow: ArtifactExportFlow {
+        let store = store
+        return ArtifactExportFlow(
+            exporter: ArtifactExporter(read: { store.artifactSource($0) }),
+            choose: { fileName, directory in Self.chooseDestination(fileName: fileName, directory: directory) })
+    }
+
+    private static func chooseDestination(fileName: String, directory: URL?) -> URL? {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = fileName
+        panel.canCreateDirectories = true
+        if let directory { panel.directoryURL = directory }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    private func beginExport(_ record: ArtifactRecord, _ version: ArtifactVersion, _ fileName: String) {
+        guard let notice = exportFlow.begin(record, version: version, fileName: fileName) else { return }
+        show(notice)
+    }
+
+    private func chooseAnotherLocation() {
+        guard let attempt = exportNotice?.attempt,
+              let notice = exportFlow.chooseAnother(attempt) else { return }
+        show(notice)
+    }
+
+    private func dismissNotice() {
+        noticeDismissal?.cancel()
+        noticeDismissal = nil
+        exportNotice = nil
+    }
+
+    private func show(_ notice: ArtifactExportNotice) {
+        noticeDismissal?.cancel()
+        noticeDismissal = nil
+        exportNotice = notice
+        guard !renderSafe else { return }
+        NSAccessibility.post(
+            element: NSApp as Any, notification: .announcementRequested,
+            userInfo: [.announcement: notice.message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        guard notice.isSaved else { return }
+        noticeDismissal = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, exportNotice == notice else { return }
+            exportNotice = nil
+            noticeDismissal = nil
+        }
+    }
+}
+
+private struct ArtifactExportStrip: View {
+    let notice: ArtifactExportNotice
+    let renderSafe: Bool
+    let chooseAnother: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: notice.isSaved ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(notice.isSaved ? Theme.accent : Color.orange)
+                    .accessibilityHidden(true)
+                Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !notice.isSaved { controls.fixedSize() }
+            }
+            .padding(.horizontal, 24).padding(.vertical, 9)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+        }
+        .background(Theme.surface)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 14) {
+            if notice.canChooseLocation { control("Save somewhere else…", action: chooseAnother) }
+            if renderSafe {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            } else {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.textSecondary)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func control(_ title: String, action: @escaping () -> Void) -> some View {
+        if renderSafe {
+            Text(title).font(.system(size: 12)).foregroundStyle(Theme.accent)
         } else {
-            Text("Nothing matches your search or filters.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Button(title, action: action)
+                .buttonStyle(.borderless).font(.system(size: 12))
+                .accessibilityLabel(title)
         }
     }
 }
@@ -328,6 +442,7 @@ private struct ArtifactDetail: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.renderSafe) private var renderSafe
     let record: ArtifactRecord
+    let onSaveAs: (ArtifactRecord, ArtifactVersion, String) -> Void
     @State private var chosenVersionID: String?
     @State private var revising = false
 
@@ -421,7 +536,7 @@ private struct ArtifactDetail: View {
         }
         let contentKept = record.kind != .fileChange || version.details.contentAvailable
         if contentKept {
-            items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { saveAs(version) })
+            items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { onSaveAs(record, version, suggestedName(version)) })
         }
         if let reveal = revealURL(version) {
             items.append(ActionItem(id: "Reveal in Finder", symbol: "folder") {
@@ -488,15 +603,6 @@ private struct ArtifactDetail: View {
         let base = String(cleaned.prefix(120)).trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         let stem = base.isEmpty ? record.kind.label : base
         return ext.isEmpty ? stem : "\(stem).\(ext)"
-    }
-
-    private func saveAs(_ version: ArtifactVersion) {
-        guard let data = store.artifactData(version) else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = suggestedName(version)
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url, options: .atomic)
     }
 
     private func copy(_ version: ArtifactVersion) {

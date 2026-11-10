@@ -22,6 +22,7 @@ struct ShotView: View {
     var artifactSelection: String? = nil
     var artifactFilter: ArtifactKindFilter = .all
     var artifactSearch = ""
+    var artifactNotice: ArtifactExportNotice? = nil
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
     var workColumn = false
@@ -59,7 +60,7 @@ struct ShotView: View {
                 case .scheduled: ScheduledView(renderSafe: true)
                 case .artifacts:
                     ArtifactsView(initialSelection: artifactSelection, initialFilter: artifactFilter,
-                                  initialSearch: artifactSearch)
+                                  initialSearch: artifactSearch, initialExportNotice: artifactNotice)
                 case .projects: ProjectsView(initialSelection: projectSelection)
                 case .integrations:
                     IntegrationsView(initialTab: integrationsSeed?.tab ?? .personal,
