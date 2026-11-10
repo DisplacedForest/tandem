@@ -36,6 +36,8 @@ enum NativeRuleRecordsSelftest {
         try commandRestrictions(require)
         try await commandToolID(require)
         try await typedTargets(require)
+        try await realFolderTargets(require)
+        try await commandFolderScope(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -620,7 +622,7 @@ enum NativeRuleRecordsSelftest {
         let locked = fixture.root + "/locked"
         let source = NativeRuleSource()
         source.setGlobal(NativeRules(choices: [.fileEdits: .act]))
-        source.setRecords([record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, locked))])
+        source.setRecords([record(.forbid, .fileEdits, target: NativeRuleTarget.folder(locked))])
         let chat = NativeFolderTools.definitions(grants: { [fixture.grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
                                                  liveTargets: { action, targets in
             ChatStore.folderDecision(source, conversationID: "c1", requestText: "", action: action, targets: targets)
@@ -645,7 +647,7 @@ enum NativeRuleRecordsSelftest {
                     "The sibling write still acts in the worker")
         try require(NativeCompanionWorker.ruleDecision(move, intoLocked, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
                     "The move into the forbidden folder is blocked in the worker")
-        try require(write.ruleTargets?(inside) == [NativeRuleTarget.make(.folder, locked + "/a.txt")!]
+        try require(write.ruleTargets?(inside) == [NativeRuleTarget.folder(locked + "/a.txt")!]
                     && move.ruleTargets?(intoLocked).count == 2, "File tools declare a folder target for every affected path")
 
         var send = NativeToolDefinition(id: "mail", name: "send_mail", title: "Send mail", description: "Send mail",
@@ -687,5 +689,71 @@ enum NativeRuleRecordsSelftest {
         let matcher = resolver([spent], global: NativeRules(choices: [.trash: .act]))
         try require(matcher.decision(for: .trash) == .handOff && matcher.resolve(NativeRuleQuery(action: .trash), honoringLimitedUse: true).decision == .handOff,
                     "A restriction is never dropped because of a use count")
+    }
+
+    private static func realFolderTargets(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        let link = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-link-" + UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.directory)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let spelled = NativeRuleTarget.make(.folder, link.path + "/locked")
+        let saved = try records.add(record(.forbid, .fileEdits, target: spelled))
+        let real = NativeRuleTarget.realFolder(fixture.root + "/locked")
+        try require(saved.target?.value == real && saved.target?.value != spelled?.value && real?.hasPrefix("/") == true,
+                    "A folder target saved through a symlink is stored as its real path")
+        let dotted = try records.add(record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, fixture.root + "/open/../locked/./")))
+        try require(dotted.target?.value == real, "A dot-dot folder target is normalized before it is stored")
+        try require(NativeRuleTarget.make(.folder, "relative/locked") == nil && NativeRuleTarget.realFolder("relative/locked") == nil
+                    && NativeRuleTarget.folder("../locked") == nil, "A folder target that is not an absolute path can never be built")
+        var updated = false
+        do {
+            let moved = try records.update(id: dotted.id) { $0.target = NativeRuleTarget.make(.folder, link.path + "/open") }
+            updated = moved.target?.value == NativeRuleTarget.realFolder(fixture.root + "/open")
+        } catch {}
+        try require(updated, "An update normalizes a folder target the same way")
+        try records.revoke(id: dotted.id)
+        let source = NativeRuleSource()
+        source.setGlobal(NativeRules(choices: [.fileEdits: .act]))
+        source.setRecords(try records.active())
+        let chat = NativeFolderTools.definitions(grants: { [fixture.grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
+                                                 liveTargets: { action, targets in
+            ChatStore.folderDecision(source, conversationID: "c1", requestText: "", action: action, targets: targets)
+        })
+        let write = chat.first { $0.name == NativeFolderTools.writeName }!
+        let handed = NativeRuleResolver.handOffMessage(.fileEdits)
+        for path in [fixture.root + "/locked/a.txt", link.path + "/locked/b.txt"] {
+            var message = ""
+            do { _ = try await write.execute(["path": .string(path), "content": .string("x")]) } catch { message = error.localizedDescription }
+            try require(message == handed && !FileManager.default.fileExists(atPath: fixture.root + "/locked/" + URL(fileURLWithPath: path).lastPathComponent),
+                        "The symlink-spelled forbid blocks a write addressed as \(path == fixture.root + "/locked/a.txt" ? "the real path" : "the symlink")")
+        }
+        var sibling = ""
+        do { _ = try await write.execute(["path": .string(fixture.root + "/open/c.txt"), "content": .string("x")]); sibling = "ran" } catch { sibling = error.localizedDescription }
+        try require(sibling == "ran", "The sibling folder still acts")
+    }
+
+    private static func commandFolderScope(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let source = NativeRuleSource()
+        source.setGlobal(NativeRules(choices: [.commands: .ask]))
+        source.setRecords([record(.forbid, .commands, target: NativeRuleTarget.folder(fixture.root + "/locked"))])
+        let run = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
+                                                 liveTargets: { command, action, targets in
+            ChatStore.commandDecision(source, conversationID: "c1", requestText: "", command: command, action: action, targets: targets)
+        })[0]
+        func message(_ directory: String) async -> String {
+            do { _ = try await run.execute(["command": .string("swift build"), "directory": .string(directory)]); return "ran" }
+            catch { return error.localizedDescription }
+        }
+        try require(await message(fixture.root + "/locked") == NativeRuleResolver.handOffMessage(.commands),
+                    "A folder-scoped commands forbid hands off a command whose working folder is inside it")
+        try require(await message(fixture.root + "/open") == NativeRuleResolver.changedMessage,
+                    "A command in a sibling folder follows the ordinary rules")
     }
 }

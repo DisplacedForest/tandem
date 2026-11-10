@@ -72,9 +72,13 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
             return NativeCommandPrefix.normalize(trimmed)
         case .folder:
             guard trimmed.hasPrefix("/") else { return "" }
-            var path = URL(fileURLWithPath: trimmed).standardizedFileURL.path
-            while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-            return path
+            var parts: [Substring] = []
+            for part in trimmed.split(separator: "/") {
+                if part == "." { continue }
+                if part == ".." { if !parts.isEmpty { parts.removeLast() }; continue }
+                parts.append(part)
+            }
+            return "/" + parts.joined(separator: "/")
         }
     }
 
@@ -82,6 +86,16 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         let normalized = normalize(value, kind: kind)
         guard !normalized.isEmpty else { return nil }
         return NativeRuleTarget(kind: kind, value: normalized)
+    }
+
+    static func realFolder(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), let real = NativeCommandClassifier.resolved(trimmed, working: nil), real.hasPrefix("/") else { return nil }
+        return real
+    }
+
+    static func folder(_ value: String) -> NativeRuleTarget? {
+        realFolder(value).flatMap { make(.folder, $0) }
     }
 
     static func candidate(_ kind: NativeRuleTargetKind, _ value: String) -> NativeRuleTarget? {
@@ -245,7 +259,8 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
         if let toolID = clean.toolID, toolID.isEmpty { clean.toolID = nil }
         if clean.action == nil && (clean.toolID != nil || clean.target != nil) { throw NativeRuleRecordError.missingAction }
         if let target = clean.target {
-            guard let normalized = NativeRuleTarget.make(target.kind, target.value) else { throw NativeRuleRecordError.emptyTarget }
+            let value = target.kind == .folder ? NativeRuleTarget.realFolder(target.value) : target.value
+            guard let value, let normalized = NativeRuleTarget.make(target.kind, value) else { throw NativeRuleRecordError.emptyTarget }
             clean.target = normalized
         }
         if let uses = clean.remainingUses {

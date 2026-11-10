@@ -71,7 +71,7 @@ enum NativeCommandTools {
         if let directory { location = try? access.locate(directory) } else if access.roots.count == 1 {
             location = NativeFolderLocation(root: access.roots[0], components: [])
         } else { location = nil }
-        if let location, let folder = NativeRuleTarget.make(.folder, location.path) { targets.append(folder) }
+        if let location, let folder = NativeRuleTarget.folder(location.path) { targets.append(folder) }
         return targets
     }
     static let timeout = NativeCommandLimits.maximumTimeout + .seconds(5)

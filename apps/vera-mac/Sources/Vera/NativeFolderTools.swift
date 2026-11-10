@@ -194,8 +194,9 @@ enum NativeFolderTools {
 
     static func ruleTargets(_ arguments: [String: NativeJSONValue], keys: [String], access: NativeFolderAccess) -> [NativeRuleTarget] {
         keys.compactMap { key -> NativeRuleTarget? in
-            guard case .string(let raw)? = arguments[key], let location = try? access.locate(raw) else { return nil }
-            return NativeRuleTarget.make(.folder, location.path)
+            guard case .string(let raw)? = arguments[key] else { return nil }
+            if let location = try? access.locate(raw) { return NativeRuleTarget.folder(location.path) }
+            return NativeRuleTarget.folder(raw)
         }
     }
 
