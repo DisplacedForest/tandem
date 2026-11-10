@@ -945,17 +945,11 @@ struct NativeToolConfirmationBar: View {
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
         if let prompt = NativeCompanionProfileTools.prompt(request) { return prompt }
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
-            return NativeScheduleTools.prompt(for: draft)
-        }
         return nil
     }
 
     static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
-            return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
-        }
-        return nil
+        nil
     }
 
     static func sentence(for request: NativeToolConfirmationRequest, actor: String) -> String {
@@ -967,8 +961,16 @@ struct NativeToolConfirmationBar: View {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+            return NativeScheduleTools.literal(for: draft)
+        }
         let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines
+    }
+
+    static func closing(for request: NativeToolConfirmationRequest) -> String? {
+        guard request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) else { return nil }
+        return NativeScheduleTools.destination(for: draft)
     }
 
     private var answers: CardAnswers {
@@ -997,10 +999,15 @@ struct NativeToolConfirmationBar: View {
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                     if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
-                            Text(block)
-                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(block)
+                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                if prompt == nil, let closing = Self.closing(for: request) {
+                                    CompanionNamedText(template: closing)
+                                }
+                            }
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: renderSafe ? nil : 180)
                         .fixedSize(horizontal: false, vertical: true)

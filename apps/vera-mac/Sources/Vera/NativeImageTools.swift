@@ -171,6 +171,12 @@ enum NativeImageTools {
                         "seed": .number(Double(seed)),
                         "shown": .string("The image is displayed to the user on this turn."),
                     ])
+                },
+                preflight: { arguments in
+                    guard arguments.imageString("prompt") != nil else { throw NativeToolError.invalidArguments("A prompt is required") }
+                    _ = try NativeImageSize.parse(arguments.imageString("size"))
+                    _ = try arguments.imageSeed("seed")
+                    guard base() != nil else { throw NativeToolError.unavailable }
                 }),
         ]
     }

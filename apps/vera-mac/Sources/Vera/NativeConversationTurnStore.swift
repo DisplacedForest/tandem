@@ -548,8 +548,8 @@ extension ChatStore {
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
-                                 governed: definition.id == NativeCommandTools.toolID || definition.id == NativeFolderTools.toolID,
-                                 typedText: typedText)
+                                 governed: definition.governed,
+                                 typedText: typedText, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
     }
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil) async -> Bool {

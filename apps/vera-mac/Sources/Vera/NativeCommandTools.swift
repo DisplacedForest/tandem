@@ -197,6 +197,7 @@ enum NativeCommandTools {
             let (action, current, _) = planned(command, arguments.folderString("directory"))
             return current.requiresConfirmation
         }
+        definition.governed = true
         return [definition]
     }
 

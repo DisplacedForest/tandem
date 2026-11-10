@@ -254,6 +254,7 @@ extension SelfTest {
         try await companionSavedAllows()
         try await companionActWrite()
         try await companionOneUseGrant()
+        try await companionToolOwnChecks()
         try await companionAdmittedFolderWrites()
         try await companionAskApproveAndDecline()
         try await companionCardChoices()
@@ -570,6 +571,64 @@ extension SelfTest {
         let done = try await harness.runUntilSettled()
         try require(done.state == .completed && harness.service.count("water_bed") == 2 && (try records.record(id: grant.id))?.remainingUses == 0,
                     "Approving the second call runs it without touching the spent grant")
+    }
+
+    private static func companionToolOwnChecks() async throws {
+        let require = NativeTaskFixture.require
+        let posted = NativeChatRulesCounter()
+        func post() -> NativeToolDefinition {
+            var definition = NativeToolDefinition(
+                id: "fixture-post", name: "post_line", title: "Post a line", description: "Fixture",
+                parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write, action: .networkSends,
+                isAvailable: { true }, execute: { _ in posted.hit(); return .object(["ok": .bool(true)]) })
+            definition.preflight = { arguments in
+                guard arguments["line"] != nil else { throw NativeToolError.invalidArguments("A line is required") }
+            }
+            return definition
+        }
+        var harness = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+            let results = NativeCompanionScriptedModel.toolResults(messages)
+            if results.isEmpty { return NativeCompanionScriptedModel.call("post_line", "{}") }
+            if results.count == 1 { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Beans\"}", id: "call-2") }
+            return NativeCompanionScriptedModel.text("Posted the line.")
+        }
+        let thread = harness.thread
+        let plain = [post()]
+        harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: plain) }
+        let records = harness.records
+        let grant = try harness.saveRecords([NativeRuleRecord(action: .networkSends, toolID: "fixture-post", effect: .allow,
+                                                              statement: "Post a line once without asking", origin: .confirmCard, remainingUses: 1)])[0]
+        let id = try harness.create("Post the line")
+        let done = try await harness.runUntilSettled()
+        let effects = try harness.effects(id)
+        try require(done.state == .completed && posted.count == 1 && effects.count == 1 && effects[0].state == .completed,
+                    "A call that fails the tool's own checks proposes nothing, and the next valid call runs")
+        try require(try records.record(id: grant.id)?.remainingUses == 0,
+                    "The one-use allow was still there for the valid call and is spent by it alone")
+
+        posted.reset()
+        let closed = NativeChatRulesCounter()
+        var gated = post()
+        gated.preflight = { _ in
+            if closed.count > 0 { throw NativeToolError.invalidArguments("The line can no longer be posted") }
+        }
+        var waiting = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+            if NativeCompanionScriptedModel.toolResults(messages).isEmpty { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Beans\"}") }
+            return NativeCompanionScriptedModel.text("Could not post the line.")
+        }
+        let waitingThread = waiting.thread
+        let gatedTools = [gated]
+        waiting.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: waitingThread.current, tools: gatedTools) }
+        let waitingRecords = waiting.records
+        let waitingID = try waiting.create("Post the line")
+        let asked = try await waiting.runUntilSettled()
+        try require(asked.state == .needsDecision && posted.count == 0, "The post waits for an answer under an ask rule")
+        closed.hit()
+        try waiting.reply(asked, "allow_always", digest: try waiting.decision(asked)["digest"] as? String)
+        let after = try await waiting.runUntilSettled()
+        try require(after.state == .completed && posted.count == 0, "An approved card whose call now fails the tool's own checks does not run")
+        try require(try waitingRecords.all().isEmpty && (try waiting.effects(waitingID)).allSatisfy { $0.state == .proposed || $0.state == .expired },
+                    "It saves no standing allow and admits nothing")
     }
 
     private static func companionAdmittedFolderWrites() async throws {

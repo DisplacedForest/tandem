@@ -433,7 +433,7 @@ enum NativeSessionSafetyFixture {
         }
         let gate = NativeSessionGate()
         let hold = NativeToolDefinition(id: "hold", name: "hold", title: "Check reference", description: "Read a fixture",
-            parameters: .object(["type": .string("object")]), confirmation: .none, isAvailable: { true },
+            parameters: .object(["type": .string("object")]), confirmation: .none, effect: .read, isAvailable: { true },
             execute: { _ in await gate.wait(); return .object(["ready": .bool(true)]) })
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "http://127.0.0.1:1")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
