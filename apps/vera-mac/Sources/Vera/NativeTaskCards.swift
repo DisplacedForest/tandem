@@ -49,7 +49,7 @@ struct NativeTaskCardView: View {
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
-                .accessibilityLabel("Action details")
+                .accessibilityLabel("Action details: " + details)
             }
             if let note = card.connectionNote {
                 Text(note)

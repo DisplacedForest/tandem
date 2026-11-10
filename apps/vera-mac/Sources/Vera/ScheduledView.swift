@@ -281,7 +281,7 @@ private struct ScheduleRunRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.bg))
-                        .accessibilityLabel("Action details")
+                        .accessibilityLabel("Action details: " + literal)
                 }
                 if isApproval {
                     CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true),
