@@ -265,8 +265,7 @@ enum NativeContextAssembler {
     private static func toolsSection(_ tools: [NativeToolDefinition]) -> String {
         var lines = [toolsHeading, toolGuidance, toolNamingRule]
         for tool in tools {
-            let title = plainTitle(tool.title)
-            var line = title.isEmpty ? "- \(tool.name): \(tool.description)" : "- \(tool.name) (\"\(title)\"): \(tool.description)"
+            var line = "- \(tool.name) (\"\(plainName(for: tool))\"): \(tool.description)"
             if tool.confirmation == .required {
                 line += " Requires in-app confirmation before it runs."
             }
@@ -276,7 +275,17 @@ enum NativeContextAssembler {
     }
 
     static func plainTitle(_ title: String) -> String {
-        title.filter { $0 != "\"" }.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        let kept = String(String.UnicodeScalarView(title.unicodeScalars.filter { !quoteScalars.contains($0) && !$0.properties.isDefaultIgnorableCodePoint }))
+        return kept.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+    }
+
+    static let quoteScalars: Set<Unicode.Scalar> = ["\"", "\u{201C}", "\u{201D}", "\u{201E}", "\u{201F}", "\u{2033}", "\u{2036}", "\u{FF02}"]
+
+    static func plainName(for tool: NativeToolDefinition) -> String {
+        let title = plainTitle(tool.title)
+        if !title.isEmpty { return title }
+        let words = plainTitle(tool.name.map { $0.isLetter || $0.isNumber ? String($0) : " " }.joined())
+        return words.isEmpty ? "this tool" : words.prefix(1).uppercased() + words.dropFirst()
     }
 
     private static func bounded(_ content: String, cap: Int) -> (String, Bool) {

@@ -95,8 +95,8 @@ enum NativePromptValidation {
     static let importByteLimit = 65_536
 
     private static let policyMarkers = [
-        #"(?im)^\s*APP POLICY\s*$"#,
-        #"(?im)^\s*Ground\s+rules\s+for\s+this\s+app\s*$"#,
+        #"(?im)^[\s\p{P}]*APP\s+POLICY[\s\p{P}]*$"#,
+        #"(?im)^[\s\p{P}]*Ground\s+rules\s+for\s+this\s+app[\s\p{P}]*$"#,
         #"(?i)\bscope\s*[:=]\s*policy\b"#,
         #"(?i)these rules take precedence over every later section"#,
     ]

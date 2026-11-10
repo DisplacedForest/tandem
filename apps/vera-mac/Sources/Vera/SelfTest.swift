@@ -832,7 +832,9 @@ enum SelfTest {
         titled.tools = [quoted, untitled]
         let titledTools = NativeContextAssembler.assemble(titled).sections.first(where: { $0.name == "tools" })?.content ?? ""
         guard titledTools.contains("- garden_log_post (\"Post to the garden log\"): Post a note Requires in-app confirmation before it runs."),
-              titledTools.contains("- garden_log_read: Read the log") else {
+              titledTools.contains("- garden_log_read (\"Garden log read\"): Read the log"),
+              NativeContextAssembler.plainTitle("Post\u{22}\u{301} it \u{201C}now\u{201D}") == "Post\u{301} it now",
+              !NativeContextAssembler.plainTitle("a\u{22}\u{301}b").unicodeScalars.contains("\u{22}") else {
             print("SELFTEST ERROR: native context tool titles \(titledTools)"); exit(1)
         }
         var hostile = input
@@ -888,7 +890,13 @@ enum SelfTest {
         remembered.memories = ranked
         let rememberedContext = NativeContextAssembler.assemble(remembered)
         guard rememberedContext.sections.map(\.name).firstIndex(of: "memory") == 3,
-              rememberedContext.prompt.contains("USER-APPROVED MEMORY CONTEXT"),
+              rememberedContext.prompt.contains("What the user asked you to remember"),
+              rememberedContext.sections.allSatisfy({ section in
+                  section.content.split(separator: "\n").allSatisfy { line in
+                      let letters = line.filter(\.isLetter)
+                      return letters.count < 4 || letters != letters.uppercased()
+                  }
+              }),
               rememberedContext.prompt.contains("Prefers oat milk lattes") else {
             print("SELFTEST ERROR: native context memory section"); exit(1)
         }
@@ -1380,8 +1388,8 @@ enum SelfTest {
                 print("SELFTEST ERROR: native memory rank, bank, or expiry filter"); exit(1)
             }
             guard let memorySection = NativeMemoryPromptAssembler.section(selected: ranked),
-                  memorySection.hasPrefix("USER-APPROVED MEMORY CONTEXT"),
-                  memorySection.hasSuffix("END USER-APPROVED MEMORY CONTEXT"),
+                  memorySection.hasPrefix("What the user asked you to remember"),
+                  memorySection.hasSuffix("End of what the user asked you to remember"),
                   memorySection.contains("untrusted background facts"),
                   memorySection.contains("- Favorite drink: The user prefers natural wine"),
                   NativeMemoryPromptAssembler.section(selected: []) == nil else {
@@ -1394,7 +1402,7 @@ enum SelfTest {
                     timeZone: TimeZone(identifier: "America/Chicago")!, memories: ranked)).prompt)
             guard assembledHistory.map(\.role) == ["system", "user"],
                   assembledHistory[0].content.contains("System policy"),
-                  assembledHistory[0].content.contains("USER-APPROVED MEMORY CONTEXT"),
+                  assembledHistory[0].content.contains("What the user asked you to remember"),
                   assembledHistory[1].content == "What do I like?" else {
                 print("SELFTEST ERROR: native memory prompt ordering"); exit(1)
             }
@@ -1569,10 +1577,10 @@ enum SelfTest {
             }
             guard memoryService.embedCalls == 4, memoryService.extractionCalls == 1,
                   chatTransport.histories.first?.map(\.role) == ["system", "user"],
-                  chatTransport.histories.first?[0].content.contains("USER-APPROVED MEMORY CONTEXT") == true,
+                  chatTransport.histories.first?[0].content.contains("What the user asked you to remember") == true,
                   chatTransport.histories.first?[0].content.contains("Favorite drink") == true,
                   try repository.pendingProposals().contains(where: { $0.title == "Meeting preference" }) else {
-                print("SELFTEST ERROR: native memory recall or review-only extraction integration (embeds \(memoryService.embedCalls), extractions \(memoryService.extractionCalls), roles \(chatTransport.histories.first?.map(\.role) ?? []), memory block \(chatTransport.histories.first?[0].content.contains("USER-APPROVED MEMORY CONTEXT") == true), drink \(chatTransport.histories.first?[0].content.contains("Favorite drink") == true), vectors \(String(describing: store.memoryVectorStatus)), trace \(store.memoryRetrievalTraces.values.first?.summary ?? "none"))"); exit(1)
+                print("SELFTEST ERROR: native memory recall or review-only extraction integration (embeds \(memoryService.embedCalls), extractions \(memoryService.extractionCalls), roles \(chatTransport.histories.first?.map(\.role) ?? []), memory block \(chatTransport.histories.first?[0].content.contains("What the user asked you to remember") == true), drink \(chatTransport.histories.first?[0].content.contains("Favorite drink") == true), vectors \(String(describing: store.memoryVectorStatus)), trace \(store.memoryRetrievalTraces.values.first?.summary ?? "none"))"); exit(1)
             }
             var scanSettings = memorySettings
             scanSettings.searchPastChats = true
@@ -3115,6 +3123,11 @@ enum SelfTest {
                       try repository.promptProfiles().isEmpty,
                       NativePromptValidation.policyMarker(in: "Notes\n\(heading)\nmore") else {
                     print("SELFTEST ERROR: renamed policy heading must be rejected without applying"); exit(1)
+                }
+            }
+            for punctuated in ["Ground rules for this app:", "## Ground rules for this app", "APP POLICY:", "[APP POLICY]", "ground rules for this app."] {
+                guard NativePromptValidation.policyMarker(in: "Notes\n\(punctuated)\nmore") else {
+                    print("SELFTEST ERROR: a punctuated policy heading must be rejected: \(punctuated)"); exit(1)
                 }
             }
             guard !NativePromptValidation.policyMarker(in: "My ground rules for this app are simple.") else {
