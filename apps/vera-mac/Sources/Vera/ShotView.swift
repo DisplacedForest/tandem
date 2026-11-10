@@ -623,7 +623,7 @@ struct ShotView: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ready").font(.system(size: 12, weight: .semibold))
-                    Text("Only approved, relevant, unexpired items can be added to native chat requests.")
+                    Text("Tandem only uses memories you approved.")
                         .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

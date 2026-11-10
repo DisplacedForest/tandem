@@ -163,13 +163,13 @@ struct MemoryView: View {
 
     private var statusDetail: String {
         switch store.memoryServiceState {
-        case .off: "Nothing is retrieved, generated, maintained, or added to chat while Memory is off."
-        case .setupRequired: "Choose an extraction model to suggest changes. Approved memory can be searched locally without one."
-        case .ready: "Only approved, relevant, unexpired items can be added to native chat requests."
-        case .indexing: "Tandem is preparing approved memory."
-        case .pendingReview: "Nothing in the queue changes approved memory until you accept it."
-        case .maintenanceNeeded: "Review capacity, expiry, or consolidation suggestions. Only expired episodic items are removed automatically."
-        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Ordinary chat continues without memory context."
+        case .off: "Tandem doesn't use or save memories while Memory is off."
+        case .setupRequired: "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it."
+        case .ready: "Tandem only uses memories you approved."
+        case .indexing: "Tandem is getting your approved memories ready."
+        case .pendingReview: "Nothing changes until you accept it."
+        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. Only memories past their end date are removed without asking."
+        case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Chat still works, without your memories."
         case .notice: ""
         }
     }
@@ -1032,10 +1032,10 @@ struct NativeMemoryShotSurface: View {
 
     private var stateCard: some View {
         let state: (String, String, String, Color) = switch variant {
-        case "memory-off": ("Memory is off", "Nothing is retrieved, generated, maintained, or added to chat.", "pause.circle.fill", Theme.accent)
-        case "memory-setup": ("Set up embeddings to use memory in chat", "Ordinary chat still works without memory context.", "gearshape.fill", Theme.accent)
-        case "memory-unavailable": ("Memory recall is unavailable", "The embeddings endpoint could not be reached. Ordinary chat continues.", "exclamationmark.triangle.fill", .red)
-        default: ("Ready", "Only approved, relevant, unexpired items can be added to native chat requests.", "checkmark.circle.fill", .green)
+        case "memory-off": ("Memory is off", "Tandem doesn't use or save memories while Memory is off.", "pause.circle.fill", Theme.accent)
+        case "memory-setup": ("Set up memory suggestions", "Choose a model in Memory settings so Tandem can suggest memories. The ones you approved work without it.", "gearshape.fill", Theme.accent)
+        case "memory-unavailable": ("Memory recall is unavailable", "The memory endpoint could not be reached. Chat still works, without your memories.", "exclamationmark.triangle.fill", .red)
+        default: ("Ready", "Tandem only uses memories you approved.", "checkmark.circle.fill", .green)
         }
         return HStack(spacing: 10) {
             Image(systemName: state.2).foregroundStyle(state.3)

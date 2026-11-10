@@ -494,7 +494,10 @@ enum Shot {
             case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
-            case "companion-connection": section = .vera
+            case "companion-connection":
+                section = .vera
+                store.ensureVeraThread()
+                store.openVeraThread()
             default: section = .chat
             }
             store.section = section
