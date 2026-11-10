@@ -124,8 +124,11 @@ enum NativeScheduleTools {
         let cadence = draft.cadence.summary(timeZone: timeZone)
         var instruction = draft.instruction.replacingOccurrences(of: "\n", with: " ")
         if instruction.count > 180 { instruction = String(instruction.prefix(177)).trimmingCharacters(in: .whitespaces) + "..." }
-        let destination = draft.owner == .dot ? "Results go to your companion's thread." : "Results go to its own chat."
-        return [draft.title + ", " + cadence.prefix(1).lowercased() + cadence.dropFirst(), instruction, destination].joined(separator: "\n")
+        return [draft.title + ", " + cadence.prefix(1).lowercased() + cadence.dropFirst(), instruction].joined(separator: "\n")
+    }
+
+    static func destination(for draft: NativeScheduleDraft) -> String {
+        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)'s thread." : "Results go to its own chat."
     }
 
     private static func minute(_ value: NativeJSONValue?) throws -> Int {

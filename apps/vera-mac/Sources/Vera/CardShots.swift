@@ -29,7 +29,7 @@ enum CardShot {
         var size = CGSize(width: 1180, height: 760)
         let content: AnyView
         switch variant {
-        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-send-companion":
+        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-send-companion":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
         case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus":
@@ -150,11 +150,11 @@ enum CardShot {
             let create = NativeRemindersTools.definitions(service: SelfTestRemindersService()).first { $0.name == "apple_reminders_create" }!
             (activity, subject) = ruledActivity(create, rules: rules, id: "card-reminder",
                                                 request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", ask: ask, conversationID: conversationID)
-        case "card-schedule":
+        case "card-schedule", "card-schedule-companion":
             ask = "Every weekday at 7, check the frost forecast for the greenhouse."
             let schedule = NativeScheduleTools.definition(assistantName: { "" }, save: { _ in throw NativeToolError.unavailable })
             (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
-                                                request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                                                request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
                                                 ask: ask, conversationID: conversationID)
         case "card-folder-edit":
             ask = "Add the afternoon vent check to the plan."

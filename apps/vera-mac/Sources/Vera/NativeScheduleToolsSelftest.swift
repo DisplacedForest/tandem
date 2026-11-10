@@ -71,7 +71,7 @@ extension SelfTest {
         guard let parsed = NativeScheduleTools.draft(inRequest: fixture, now: now, timeZone: zone) else {
             throw NativeTaskFixture.Failure.assertion("The confirmation request parses")
         }
-        let literal = NativeScheduleTools.literal(for: parsed, timeZone: zone).components(separatedBy: "\n")
+        let literal = NativeScheduleTools.literal(for: parsed, timeZone: zone).components(separatedBy: "\n") + [NativeScheduleTools.destination(for: parsed)]
         try require(literal.count == 3 && literal[0].hasPrefix("Morning policy check, weekdays at")
                     && literal[1] == "Summarize overnight developments in semiconductor export policy with sources."
                     && literal[2] == "Results go to its own chat.",
@@ -80,8 +80,10 @@ extension SelfTest {
                     "The card carries no worker label and no reassurance line")
         var threaded = parsed
         threaded.owner = .dot
-        try require(NativeScheduleTools.literal(for: threaded, timeZone: zone).hasSuffix("Results go to your companion's thread."),
-                    "A schedule that reports to the companion says so without a name")
+        let toCompanion = NativeScheduleTools.destination(for: threaded)
+        try require(CompanionSentence.plain(toCompanion, name: nil) == "Results go to your companion's thread."
+                    && CompanionSentence.plain(toCompanion, name: "Sol") == "Results go to Sol's thread.",
+                    "A schedule that reports to the companion names it when it has a name")
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 
         let research = NativeWebTools.researchToolID

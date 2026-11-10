@@ -968,6 +968,11 @@ struct NativeToolConfirmationBar: View {
         return lines.isEmpty ? nil : lines
     }
 
+    static func closing(for request: NativeToolConfirmationRequest) -> String? {
+        guard request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) else { return nil }
+        return NativeScheduleTools.destination(for: draft)
+    }
+
     private var answers: CardAnswers {
         var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
         if request.subject == nil { built.allowTitle = "Approve" }
@@ -994,10 +999,15 @@ struct NativeToolConfirmationBar: View {
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                     if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
-                            Text(block)
-                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(block)
+                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                if prompt == nil, let closing = Self.closing(for: request) {
+                                    CompanionNamedText(template: closing)
+                                }
+                            }
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: renderSafe ? nil : 180)
                         .fixedSize(horizontal: false, vertical: true)
