@@ -550,12 +550,13 @@ enum NativeCommandClassifier {
         let joined = command.replacingOccurrences(of: "\\\r\n", with: "").replacingOccurrences(of: "\\\n", with: "")
             .filter { $0 != "\"" && $0 != "'" }
         return [joined.filter { $0 != "\\" }, joined.replacingOccurrences(of: "\\", with: " ")].contains { text in
-            let words = text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." || $0 == "+") }).map(String.init)
-            let git = words.contains("git")
-            return words.contains { word in
-                let bare = String(word.drop(while: { $0 == "-" }))
-                return destructive.contains(bare) || findEffects.contains(word) || (git && destructiveGit.contains(bare))
-            }
+            let words = text.split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
+            let flagged = text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "-") }).map(String.init)
+            if words.contains("IFS") { return true }
+            if words.contains(where: { destructive.contains($0) }) { return true }
+            if flagged.contains(where: { findEffects.contains($0) }) { return true }
+            guard words.contains("git") else { return false }
+            return words.contains(where: { destructiveGit.contains($0) }) || flagged.contains(where: { destructiveGit.contains($0) })
         }
     }
 
