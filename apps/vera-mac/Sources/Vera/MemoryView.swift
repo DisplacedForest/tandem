@@ -168,7 +168,7 @@ struct MemoryView: View {
         case .ready: "Tandem only uses memories you approved."
         case .indexing: "Tandem is getting your approved memories ready."
         case .pendingReview: "Nothing changes until you accept it."
-        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. Only memories past their end date are removed without asking."
+        case .maintenanceNeeded: "Tandem has suggestions for tidying your memories. Memories you gave an end date are removed when that date passes."
         case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Chat still works, without your memories."
         case .notice: ""
         }
