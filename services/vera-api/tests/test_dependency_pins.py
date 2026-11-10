@@ -44,7 +44,7 @@ def parse_compiled(text: str) -> tuple[Pins, list[str]]:
             problems.append(f"unparseable line: {line} ({error})")
             continue
         specifiers = list(requirement.specifier)
-        if len(specifiers) != 1 or specifiers[0].operator != "==":
+        if len(specifiers) != 1 or specifiers[0].operator != "==" or "*" in specifiers[0].version:
             problems.append(f"not pinned to one exact version: {line}")
             continue
         pins[canonicalize_name(requirement.name)] = requirement
@@ -160,6 +160,13 @@ def test_unpinned_line_is_reported() -> None:
 def test_range_with_exact_pin_is_reported() -> None:
     _, problems = parse_compiled("httpx==0.28.1,<1\n")
     assert len(problems) == 1
+
+
+def test_wildcard_pin_is_reported() -> None:
+    pins, problems = parse_compiled("colorama==0.4.* ; sys_platform == 'win32'\n")
+    assert pins == {}
+    assert len(problems) == 1
+    assert "colorama==0.4.*" in problems[0]
 
 
 def test_option_line_is_reported() -> None:

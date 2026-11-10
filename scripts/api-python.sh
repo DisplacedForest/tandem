@@ -47,7 +47,6 @@ key=$({ cat "$runtime_lock" "$dev_lock"; printf '%s\n' "$base_version" copies; }
 venv_root="${TANDEM_API_VENV_ROOT:-$primary_root/.venv}"
 env_dir="$venv_root/api-$key"
 marker="$env_dir/.ready"
-lock_dir="$env_dir.lock"
 
 if [ -f "$marker" ]; then
   exec "$env_dir/bin/python" "$@"
@@ -55,58 +54,42 @@ fi
 
 mkdir -p "$venv_root"
 
-waited=0
-ownerless=0
-timeout=600
-while ! mkdir "$lock_dir" 2>/dev/null; do
-  if [ -f "$marker" ]; then
-    exec "$env_dir/bin/python" "$@"
-  fi
-  holder=$(cat "$lock_dir/pid" 2>/dev/null || true)
-  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-    echo "api-python: removing stale lock left by process $holder" >&2
-    rm -rf "$lock_dir"
-    continue
-  fi
-  if [ -z "$holder" ]; then
-    ownerless=$((ownerless + 1))
-  else
-    ownerless=0
-  fi
-  if [ "$ownerless" -ge 5 ]; then
-    echo "api-python: removing lock with no owner" >&2
-    rm -rf "$lock_dir"
-    ownerless=0
-    continue
-  fi
-  if [ "$waited" -ge "$timeout" ]; then
-    echo "api-python: gave up after ${timeout}s waiting for another process to build $env_dir" >&2
-    exit 1
-  fi
-  if [ "$waited" -eq 0 ]; then
-    echo "api-python: waiting for another process to build $env_dir" >&2
-  fi
-  sleep 1
-  waited=$((waited + 1))
-done
+"$base" - "$env_dir" "$runtime_lock" "$dev_lock" >&2 <<'PY'
+import fcntl
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
 
-echo "$$" > "$lock_dir/pid"
-trap 'rm -rf "$lock_dir"' EXIT
-trap 'rm -rf "$lock_dir"; exit 130' INT
-trap 'rm -rf "$lock_dir"; exit 143' TERM
+env_dir = Path(sys.argv[1])
+locks = sys.argv[2:]
+marker = env_dir / ".ready"
+deadline = time.monotonic() + 600
+announced = False
 
-if [ ! -f "$marker" ]; then
-  if [ -d "$env_dir" ]; then
-    rm -rf "$env_dir"
-  fi
-  echo "api-python: building $env_dir with $base ($base_version)" >&2
-  "$base" -m venv --copies "$env_dir" >&2
-  "$env_dir/bin/python" -m pip install --quiet --disable-pip-version-check \
-    -r "$runtime_lock" -r "$dev_lock" >&2
-  : > "$marker"
-fi
-
-rm -rf "$lock_dir"
-trap - EXIT INT TERM
+with open(f"{env_dir}.lock", "w") as handle:
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                sys.exit(f"api-python: gave up waiting for another process to build {env_dir}")
+            if not announced:
+                print(f"api-python: waiting for another process to build {env_dir}", flush=True)
+                announced = True
+            time.sleep(1)
+    if not marker.exists():
+        if env_dir.exists():
+            shutil.rmtree(env_dir)
+        print(f"api-python: building {env_dir}", flush=True)
+        subprocess.run([sys.executable, "-m", "venv", "--copies", str(env_dir)], check=True, pass_fds=[handle.fileno()])
+        install = [str(env_dir / "bin" / "python"), "-m", "pip", "install", "--quiet", "--disable-pip-version-check"]
+        for lock in locks:
+            install += ["-r", lock]
+        subprocess.run(install, check=True, pass_fds=[handle.fileno()])
+        marker.touch()
+PY
 
 exec "$env_dir/bin/python" "$@"
