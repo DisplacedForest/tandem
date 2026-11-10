@@ -102,7 +102,7 @@ struct ConversationRulesButton: View {
     @EnvironmentObject private var store: ChatStore
     @State private var open = false
 
-    private var tightened: Bool { !store.selectedConversationRules.isEmpty }
+    private var tightened: Bool { !store.selectedConversationRules.isEmpty || !store.approvedCommandRecords(for: store.selectedID).isEmpty }
 
     var body: some View {
         Button {
@@ -130,21 +130,25 @@ struct ConversationRulesEditor: View {
     var embedded = false
     var draft: Binding<[NativeActionClass: NativeRuleChoice]>? = nil
     var revokedPrefixes: Binding<Set<String>>? = nil
+    @State private var revision = 0
 
     private var rules: NativeConversationRules {
         conversationID.map { store.conversationRules(for: $0) } ?? store.selectedConversationRules
     }
 
-    private var shownPrefixes: [String] {
-        guard let revokedPrefixes else { return rules.approvedCommandPrefixes }
-        return rules.approvedCommandPrefixes.filter { !revokedPrefixes.wrappedValue.contains($0) }
+    private var shownPrefixes: [NativeRuleRecord] {
+        _ = revision
+        let approved = store.approvedCommandRecords(for: conversationID ?? store.selectedID)
+        guard let revokedPrefixes else { return approved }
+        return approved.filter { !revokedPrefixes.wrappedValue.contains($0.id) }
     }
 
-    private func revoke(_ prefix: String) {
+    private func revoke(_ record: NativeRuleRecord) {
         if let revokedPrefixes {
-            revokedPrefixes.wrappedValue.insert(prefix)
+            revokedPrefixes.wrappedValue.insert(record.id)
         } else {
-            store.revokeCommandPrefix(prefix, conversationID: conversationID)
+            store.revokeRuleRecord(id: record.id)
+            revision += 1
         }
     }
 
@@ -176,31 +180,50 @@ struct ConversationRulesEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
                 Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can only ask more than your defaults in Settings, Rules, never less.")
+                Text("A chat can be stricter than your settings, never looser.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
-                Picker(action.title, selection: binding(for: action)) {
-                    ForEach(choices(for: action), id: \.self) { choice in
-                        Text(choice.title).tag(choice)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(action.title).font(.system(size: 12))
+                    Menu {
+                        ForEach(choices(for: action), id: \.self) { choice in
+                            Button(choice.title) { binding(for: action).wrappedValue = choice }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(binding(for: action).wrappedValue.title).font(.system(size: 12))
+                            Spacer(minLength: 6)
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.surface))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+                        .contentShape(Rectangle())
                     }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel(action.title)
+                    .accessibilityValue(binding(for: action).wrappedValue.title)
                 }
-                .font(.system(size: 12))
             }
             if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                Text("Commands approved for this chat").font(.system(size: 12, weight: .medium))
-                ForEach(shownPrefixes, id: \.self) { prefix in
+                Text("Commands allowed in this chat").font(.system(size: 12, weight: .medium))
+                ForEach(shownPrefixes, id: \.id) { record in
+                    let prefix = record.target?.value ?? ""
                     HStack(spacing: 8) {
                         Text(prefix).font(.system(size: 11, design: .monospaced))
                         Spacer(minLength: 8)
                         Button {
-                            revoke(prefix)
+                            revoke(record)
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                         }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                        .help("Ask again before commands starting with \(prefix)")
+                        .help("Ask again before commands that start with \(prefix)")
+                        .accessibilityLabel("Stop allowing \(prefix)")
                     }
                 }
             }

@@ -22,7 +22,7 @@ struct NativeTaskCardView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             if !card.milestone.isEmpty {
-                Text(card.milestone)
+                CompanionNamedText(template: card.milestone)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -33,7 +33,7 @@ struct NativeTaskCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if let details = card.details, card.status == .needsInput {
+            if let details = card.details, !details.isEmpty, card.status == .needsInput {
                 let block = Text(details)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary)
@@ -49,7 +49,7 @@ struct NativeTaskCardView: View {
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
-                .accessibilityLabel("Action details")
+                .accessibilityLabel("Action details: " + details)
             }
             if let note = card.connectionNote {
                 Text(note)
@@ -65,7 +65,13 @@ struct NativeTaskCardView: View {
                     .font(.system(size: 12))
                     .accessibilityLabel("Save as document, \(card.title)")
             }
-            if card.canCancel || !card.offeredChoices.isEmpty {
+            if isApproval {
+                CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle),
+                              allowApprove: onDecide != nil, allowDecline: onDecide != nil,
+                              onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
+                              onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
+                              onItem: { answer($0) })
+            } else if card.canCancel || !card.offeredChoices.isEmpty {
                 HStack(spacing: 12) {
                     ForEach(card.offeredChoices, id: \.self) { choice in
                         if let title = NativeTaskCardPresentation.choiceTitle(choice) {
@@ -87,6 +93,11 @@ struct NativeTaskCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
         .animation(.easeOut(duration: 0.3), value: highlighted)
+    }
+
+    private var isApproval: Bool {
+        card.status == .needsInput && card.offeredChoices.contains(NativeCardChoiceKind.allowOnce.rawValue)
+            && card.offeredChoices.contains(NativeCardChoiceKind.decline.rawValue)
     }
 
     private func canAnswer(_ choice: String) -> Bool {

@@ -54,7 +54,11 @@ extension ChatStore {
 
     func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
         guard let reference = run.taskReferenceID else { return }
-        if choice == "retry" { retryNativeTask(reference) } else { cancelNativeTask(reference) }
+        switch NativeScheduleAnswer.route(choice) {
+        case .retry: retryNativeTask(reference)
+        case .stop: cancelNativeTask(reference)
+        case .answer: answerNativeTask(reference, choice: choice)
+        }
     }
 
     func postScheduleCheckIns() {
@@ -71,7 +75,7 @@ extension ChatStore {
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(decision.prompt)",
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSentence.plain(decision.prompt, name: savedCompanionName))",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
@@ -355,5 +359,19 @@ extension ChatStore {
             try? store.save(saved)
         }
         return conversation.id
+    }
+}
+
+enum NativeScheduleAnswer: Equatable {
+    case retry
+    case stop
+    case answer
+
+    static func route(_ choice: String) -> NativeScheduleAnswer {
+        switch choice.lowercased() {
+        case "retry": return .retry
+        case "stop", "cancel": return .stop
+        default: return .answer
+        }
     }
 }

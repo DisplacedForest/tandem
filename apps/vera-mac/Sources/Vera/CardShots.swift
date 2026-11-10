@@ -1,0 +1,213 @@
+import AppKit
+import SwiftUI
+
+struct CardShotChat {
+    let messages: [Message]
+    let confirmation: NativeToolConfirmationRequest
+}
+
+@MainActor
+enum CardShot {
+    static let folder = "/Volumes/Notes/Greenhouse"
+    static let engineURL = URL(string: "https://engine.test/api")!
+
+    static func render(view: String, to path: String, appearance: String) {
+        let named = view.hasSuffix("-ada")
+        let variant = named ? String(view.dropLast("-ada".count))
+            : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
+        let scheme: ColorScheme = appearance == "light" ? .light : .dark
+        NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
+        let store = ChatStore()
+        let companion = named ? CompanionAppearance(shape: .fold, color: .periwinkle) : CompanionAppearance.default
+        store.adoptAssistantName(named ? NativeDotShotFixture.name : "")
+        store.ensureVeraThread()
+        let settings: [String: String] = named
+            ? ["assistant_name": NativeDotShotFixture.name, ConfigStore.companionShapeKey: companion.shape.rawValue,
+               ConfigStore.companionColorKey: companion.color.rawValue]
+            : [:]
+        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { settings }, writeConfiguration: { _ in })
+        var size = CGSize(width: 1180, height: 760)
+        let content: AnyView
+        switch variant {
+        case "card-command", "card-folder-edit", "card-once-only":
+            let chat = self.chat(variant, store: store)
+            content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
+        case "card-command-menus", "card-folder-edit-menus":
+            size = CGSize(width: 640, height: 420)
+            let request = self.chat(String(variant.dropLast("-menus".count)), store: store).confirmation
+            let answers = CardAnswers.chat(request)
+            content = AnyView(VStack(alignment: .trailing, spacing: 14) {
+                NativeToolConfirmationBar(request: request, actor: "Tandem", onDecision: { _ in }, onChoice: { _ in })
+                HStack(alignment: .top, spacing: 12) {
+                    CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
+                    CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
+                }
+            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
+        case "card-task", "card-task-command":
+            size = CGSize(width: 1180, height: 1040)
+            seedTask(command: variant == "card-task-command", store: store)
+            let model = CompanionOverviewModel.build(name: store.assistantName, profile: store.dotProfile,
+                                                     services: "Can reach every service that is turned on.",
+                                                     rules: store.companionRulesSummary, activity: [], results: [])
+            content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
+        case "card-rules-popover":
+            size = CGSize(width: 420, height: 760)
+            let id = seedRules(store)
+            content = AnyView(ConversationRulesEditor(conversationID: id).background(Theme.bg)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 20))
+        case "card-scheduled-answer":
+            store.section = .scheduled
+            seedSchedule(store)
+            content = AnyView(ShotView(store: store, section: .scheduled, width: size.width))
+        default:
+            FileHandle.standardError.write(Data("Unknown card view\n".utf8))
+            exit(1)
+        }
+        let hosting = NSHostingView(rootView: content
+            .environment(\.renderSafe, true)
+            .environment(\.companionAppearance, companion)
+            .environment(\.companionName, named ? NativeDotShotFixture.name : nil)
+            .environmentObject(store)
+            .environmentObject(config)
+            .frame(width: size.width, height: size.height)
+            .background(Theme.bg)
+            .environment(\.colorScheme, scheme))
+        hosting.frame = NSRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSApplication.shared.appearance
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        hosting.layoutSubtreeIfNeeded()
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            FileHandle.standardError.write(Data("Card render failed\n".utf8))
+            exit(1)
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            FileHandle.standardError.write(Data("Card render failed\n".utf8))
+            exit(1)
+        }
+        do {
+            try png.write(to: URL(fileURLWithPath: path))
+            print("wrote \(path)")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Card image couldn't be saved\n".utf8))
+            exit(1)
+        }
+    }
+
+    static func chat(_ variant: String, store: ChatStore) -> CardShotChat {
+        let conversation = Conversation(id: "card-chat", title: "Greenhouse notes", messages: [], updatedAt: Date())
+        store.conversations.insert(conversation, at: 0)
+        store.selectedID = conversation.id
+        store.section = .chat
+        let place = NativeCardPlace.chat(conversationID: conversation.id)
+        let activity: NativeToolActivity
+        let subject: NativeCardSubject
+        let ask: String
+        switch variant {
+        case "card-folder-edit":
+            ask = "Add the afternoon vent check to the plan."
+            activity = NativeToolActivity(id: "card-edit", toolID: NativeFolderTools.toolID, name: NativeFolderTools.editName, title: "Edit a file", round: 1,
+                                          request: "{\"path\":\"\(folder)/plan.md\"}", result: nil, state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Edit a file",
+                                        targets: [NativeRuleTarget.make(.folder, "\(folder)/plan.md")].compactMap { $0 })
+        case "card-once-only":
+            ask = "Note that I watered the tomato bed twice today."
+            activity = NativeToolActivity(id: "card-garden", toolID: "garden-log", name: "garden_log_post", title: "Post to the garden log", round: 1,
+                                          request: "{\"entry\":\"Watered the tomato bed twice.\"}", result: nil, state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .networkSends, toolID: "garden-log", toolTitle: "Post to the garden log", governed: false)
+        default:
+            ask = "Now rebuild the PDF."
+            activity = NativeToolActivity(id: "card-command", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                          request: "{\"command\":\"make pdf\",\"directory\":\"\(folder)\"}", result: nil, state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "make pdf")
+        }
+        var request = NativeToolConfirmationRequest(activity: activity)
+        request.subject = subject
+        request.choices = NativeCardChoices.offered(subject, place: place)
+        request.covers = NativeCardChoices.covers(subject)
+        return CardShotChat(messages: [
+            Message(role: .user, text: ask),
+            Message(role: .assistant, text: "", toolActivities: [activity]),
+        ], confirmation: request)
+    }
+
+    static func seedTask(command: Bool, store: ChatStore) {
+        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+        store.openVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
+        let toolTitle = command ? "Run a command" : "Send a booking request"
+        let arguments = command
+            ? "{\"command\":\"make pdf\",\"directory\":\"\(folder)\"}"
+            : "{\"message\":\"Please book the workshop inspection for Tuesday morning and confirm by email.\",\"to\":\"inspections@example.com\"}"
+        let subject = command
+            ? NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: toolTitle, command: "make pdf")
+            : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle)
+        let place = NativeCardPlace.task(taskID: "card-task", conversationID: threadID, scheduleID: nil)
+        let offered = NativeCardChoices.offered(subject, place: place)
+        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
+        let never = offered.first(where: { $0.kind == .never })?.title ?? ""
+        let covers = NativeCardChoices.scope(subject) ?? ""
+        let decision: [String: Any] = [
+            "id": "card-decision", "prompt": NativeCardChoices.sentence(actor: CompanionSentence.placeholder, subject: subject, title: toolTitle), "covers": covers, "never": never,
+            "choices": offered.map { NativeCardChoices.wire($0, subject: subject) }, "details": details,
+        ]
+        let title = command ? "Rebuild the greenhouse PDF" : "Book the workshop inspection"
+        guard let reference = try? OngoingWorkFixture.reference(conversationID: threadID, title: title, workerType: "companion",
+                                                                state: "needs_decision", decision: decision),
+              var display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
+        display.card.choices = reference.snapshot?.decision?.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil }
+        store.nativeTaskEngine.set(engineURL)
+        store.nativeTaskReferences = [reference]
+        var message = Message(role: .assistant, text: command ? "I'll rebuild the PDF in the background." : "I'll send the booking request in the background.")
+        message.displayBlocks = [.taskCard(display.card)]
+        store.conversations[index].messages = [
+            Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
+            message,
+        ]
+    }
+
+    static func seedRules(_ store: ChatStore) -> String {
+        let conversation = Conversation(id: "card-rules", title: "Greenhouse notes", messages: [], updatedAt: Date())
+        store.conversations.insert(conversation, at: 0)
+        store.selectedID = conversation.id
+        store.prepareRuleRecords()
+        let place = NativeCardPlace.chat(conversationID: conversation.id)
+        for command in ["make pdf", "git status"] {
+            let subject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: command)
+            for record in NativeCardChoices.records(.allowHere, subject: subject, place: place, originMessageID: nil) {
+                store.addRuleRecord(record)
+            }
+        }
+        store.tightenConversationRule(.ask, for: .reminders, conversationID: conversation.id)
+        return conversation.id
+    }
+
+    static func seedSchedule(_ store: ChatStore) {
+        guard let repository = store.repository as? LocalChatRepository,
+              let origin = try? NativeTaskFixture.origin(repository),
+              let request = try? NativeResearchTaskRequest(objective: "Check current lumber futures and note any move over two percent.",
+                                                           deliverables: ["A short summary"]),
+              let engine = try? NativeTaskEngineIdentity(engineURL),
+              let reference = try? repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil) else {
+            NativeScheduleShotFixture.populate(store)
+            return
+        }
+        let prompt = "\(CompanionSentence.placeholder) wants to send a price alert."
+        let remote = UUID().uuidString
+        if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
+           let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [
+               "id": "card-schedule", "prompt": prompt, "choices": ["decline", "never", "allow_always", "allow_here", "approve"],
+               "details": "Message: Lumber is up 2.4 percent since yesterday.\nTo: workshop@example.com",
+               "covers": "This action every time", "never": "Never allow this",
+           ]) {
+            _ = try? repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
+            _ = try? repository.projectTask(id: reference.id, snapshot: waiting)
+        }
+        NativeScheduleShotFixture.populate(store, waiting: (reference.id.uuidString, prompt))
+    }
+}

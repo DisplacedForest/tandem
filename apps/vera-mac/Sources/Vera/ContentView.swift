@@ -688,7 +688,7 @@ struct MessageRow: View {
     var onOpenArtifact: ((Artifact) -> Void)? = nil
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
-    var onToolDecision: ((NativeToolDecision) -> Void)? = nil
+    var onToolDecision: ((NativeCardChoiceKind) -> Void)? = nil
     var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -715,9 +715,10 @@ struct MessageRow: View {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
-                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: store.assistantName),
-                                onDecision: { onToolDecision?($0 ? .approve : .decline) },
-                                onApproveSimilar: NativeToolConfirmationBar.similarPrefix(for: pendingConfirmation).map { _ in { onToolDecision?(.approveSimilar) } })
+                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
+                                actor: companionThread ? CompanionSentence.placeholder : "Tandem",
+                                onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
+                                onChoice: { onToolDecision?($0) })
                         }
                     }
                     AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
@@ -860,7 +861,7 @@ struct NativeToolActivityChip: View {
     private var status: String {
         if declined { return "Declined" }
         switch activity.state {
-        case .pending: return activity.progress?.label ?? "Working"
+        case .pending: return awaitingDecision ? "Waiting for you" : (activity.progress?.label ?? "Working")
         case .succeeded: return "Done"
         case .failed: return "Failed"
         case .canceled: return "Canceled"
@@ -896,11 +897,6 @@ struct NativeToolActivityChip: View {
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
-                if showsConfirmationTag {
-                    Text("Confirmation required")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.orange)
-                }
                 if activity.state == .pending, let progress = activity.progress {
                     ProgressView(value: progress.fraction)
                         .progressViewStyle(.linear)
@@ -939,29 +935,16 @@ struct NativeToolConfirmationBar: View {
     let request: NativeToolConfirmationRequest
     var prompt: String? = nil
     var detail: String? = nil
+    var actor = "Tandem"
     var defaultApproval = true
     var allowApprove = true
     var allowDecline = true
     var onDecision: (Bool) -> Void
-    var onApproveSimilar: (() -> Void)? = nil
+    var onChoice: ((NativeCardChoiceKind) -> Void)? = nil
     @Environment(\.renderSafe) private var renderSafe
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
         if let prompt = NativeCompanionProfileTools.prompt(request) { return prompt }
-        if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
-            return "Run this command?\n" + command
-        }
-        if request.toolID == NativeFolderTools.toolID {
-            let path = NativeFolderTools.pathArgument(inRequest: request.request)
-            switch request.name {
-            case NativeFolderTools.trashName: return path.map { "Move \($0) to the Trash?" }
-            case NativeFolderTools.writeName: return path.map { "Write \($0)?" }
-            case NativeFolderTools.editName: return path.map { "Edit \($0)?" }
-            case NativeFolderTools.mkdirName: return path.map { "Create the folder \($0)?" }
-            case NativeFolderTools.moveName: return path.map { "Move \($0)?" }
-            default: return nil
-            }
-        }
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.prompt(for: draft)
         }
@@ -969,25 +952,38 @@ struct NativeToolConfirmationBar: View {
     }
 
     static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
-        if request.toolID == NativeCommandTools.toolID {
-            let directory = NativeCommandTools.directory(inRequest: request.request)
-            return directory.map { "In \($0). Your rules ask before commands run." } ?? "Your rules ask before commands run."
-        }
-        if request.toolID == NativeFolderTools.toolID { return "Your rules ask before this kind of change." }
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
         }
         return nil
     }
 
-    static func similarPrefix(for request: NativeToolConfirmationRequest) -> String? {
-        guard request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
-              let command = NativeCommandTools.command(inRequest: request.request) else { return nil }
-        let prefix = NativeCommandPrefix.prefix(of: command)
-        return prefix.isEmpty ? nil : prefix
+    static func sentence(for request: NativeToolConfirmationRequest, actor: String) -> String {
+        NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
-    private var lines: [String] { (prompt ?? "Run \(request.title)?").components(separatedBy: "\n") }
+    static func literal(for request: NativeToolConfirmationRequest) -> String? {
+        if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
+            return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
+        }
+        if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
+        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
+        return lines.isEmpty ? nil : lines
+    }
+
+    private var answers: CardAnswers {
+        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
+        if request.subject == nil { built.allowTitle = "Approve" }
+        return built
+    }
+
+    private var block: String? {
+        if let prompt {
+            let rest = prompt.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+            return rest.isEmpty ? nil : rest
+        }
+        return Self.literal(for: request)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -997,12 +993,11 @@ struct NativeToolConfirmationBar: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(lines[0])
+                    CompanionNamedText(template: prompt?.components(separatedBy: "\n").first ?? Self.sentence(for: request, actor: actor))
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if lines.count > 1 {
+                    if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
-                            Text(lines.dropFirst().joined(separator: "\n"))
+                            Text(block)
                                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1012,33 +1007,16 @@ struct NativeToolConfirmationBar: View {
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.conversationBackground))
                     }
-                    Text(detail ?? "This tool runs only after your decision.")
-                        .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        CompanionNamedText(template: detail)
+                            .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                Button("Decline") { onDecision(false) }
-                    .buttonStyle(ConversationButtonStyle(kind: .secondary))
-                    .disabled(!allowDecline)
-                if let onApproveSimilar, let prefix = Self.similarPrefix(for: request) {
-                    Button("Approve similar") { onApproveSimilar() }
-                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
-                        .disabled(!allowApprove)
-                        .help("Also run later commands in this chat that start with \"\(prefix)\" without asking")
-                }
-                if defaultApproval {
-                    Button("Approve") { onDecision(true) }
-                        .buttonStyle(ConversationButtonStyle(kind: .primary))
-                        .keyboardShortcut(.defaultAction).disabled(!allowApprove)
-                } else {
-                    Button("Approve") { onDecision(true) }
-                        .buttonStyle(ConversationButtonStyle(kind: .primary))
-                        .disabled(!allowApprove)
-                }
-            }
+            CardAnswerRow(answers: answers, defaultApproval: defaultApproval, allowApprove: allowApprove, allowDecline: allowDecline,
+                          onAllow: { onDecision(true) }, onDecline: { onDecision(false) },
+                          onItem: { id in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind) } })
         }
         .padding(14)
         .frame(maxWidth: 560, alignment: .leading)

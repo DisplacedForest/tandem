@@ -8,6 +8,7 @@ enum ArtifactShotFixture {
         let selection: String?
         var filter: ArtifactKindFilter = .all
         var search = ""
+        var notice: ArtifactExportNotice? = nil
     }
 
     static func store(variant: String) -> Seeded {
@@ -78,6 +79,16 @@ enum ArtifactShotFixture {
         switch variant {
         case "artifacts-filter-images": return Seeded(store: store, selection: selection, filter: .image)
         case "artifacts-no-results": return Seeded(store: store, selection: selection, search: "zucchini trellis")
+        case "artifacts-saved":
+            return Seeded(store: store, selection: selection,
+                          notice: .saved(id: UUID(), title: "Greenhouse heating options", fileName: "Greenhouse heating options.md"))
+        case "artifacts-save-failed", "artifacts-save-missing":
+            guard let document else { return Seeded(store: store, selection: selection) }
+            let attempt = ArtifactExportAttempt(
+                id: UUID(), artifactID: document.artifactID, title: "Greenhouse heating options", version: document,
+                destination: directory.appendingPathComponent("Greenhouse heating options.md"))
+            let problem: ArtifactExportProblem = variant == "artifacts-save-missing" ? .sourceMissing : .notAllowed
+            return Seeded(store: store, selection: selection, notice: .failed(attempt, problem))
         default: return Seeded(store: store, selection: selection)
         }
     }

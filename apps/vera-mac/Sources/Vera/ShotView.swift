@@ -22,12 +22,14 @@ struct ShotView: View {
     var artifactSelection: String? = nil
     var artifactFilter: ArtifactKindFilter = .all
     var artifactSearch = ""
+    var artifactNotice: ArtifactExportNotice? = nil
     var projectSelection: String? = nil
     var integrationsSeed: IntegrationsShotFixture.Seeded? = nil
     var workColumn = false
     var workCollapsed = false
     var voiceAvailability = ComposerVoiceAvailability(dictation: false, voiceChat: false)
     var dictating = false
+    var cardChat: CardShotChat? = nil
     var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
@@ -59,7 +61,7 @@ struct ShotView: View {
                 case .scheduled: ScheduledView(renderSafe: true)
                 case .artifacts:
                     ArtifactsView(initialSelection: artifactSelection, initialFilter: artifactFilter,
-                                  initialSearch: artifactSearch)
+                                  initialSearch: artifactSearch, initialExportNotice: artifactNotice)
                 case .projects: ProjectsView(initialSelection: projectSelection)
                 case .integrations:
                     IntegrationsView(initialTab: integrationsSeed?.tab ?? .personal,
@@ -330,6 +332,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if let cardChat { return cardChat.messages }
         if dotHeader || companionPanel != nil { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
@@ -405,8 +408,13 @@ struct ShotView: View {
     }
 
     private var shotConfirmation: NativeToolConfirmationRequest {
-        NativeToolConfirmationRequest(activity: NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
-                                                                   request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true))
+        var request = NativeToolConfirmationRequest(activity: NativeToolActivity(id: "c2", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
+                                                                                 request: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}", result: nil, state: .pending, confirmationRequired: true))
+        let subject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "make pdf")
+        request.subject = subject
+        request.choices = NativeCardChoices.offered(subject, place: .chat(conversationID: store.selectedID ?? "shot"))
+        request.covers = NativeCardChoices.covers(subject)
+        return request
     }
 
     private var folderMessages: [Message] {
@@ -502,7 +510,7 @@ struct ShotView: View {
 
     private var shotStatusLine: String {
         if streaming { return "Working on your answer" }
-        if command || schedule { return "Waiting for your approval" }
+        if command || schedule || cardChat != nil { return "Waiting for your approval" }
         return "Ready"
     }
 
@@ -549,8 +557,10 @@ struct ShotView: View {
             }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
-                    MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
-                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil, companionThread: store.isVeraThread(store.selectedID))
+                    MessageRow(message: message, pendingConfirmation: cardChat.flatMap { card in message.toolActivities.contains { $0.id == card.confirmation.id } ? card.confirmation : nil }
+                        ?? (schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil),
+                        onToolDecision: command || cardChat != nil ? { _ in } : nil, companionThread: store.isVeraThread(store.selectedID))
                     if let marker = shotMarker(for: message) {
                         TranscriptMarkerRow(marker: marker)
                     }
@@ -561,7 +571,7 @@ struct ShotView: View {
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
-                if folder || command {
+                if folder || command || cardChat != nil {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })
                 }
                 if mentions {

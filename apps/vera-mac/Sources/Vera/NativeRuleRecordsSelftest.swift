@@ -28,6 +28,7 @@ enum NativeRuleRecordsSelftest {
         try floorAndText(require)
         try floorResolution(require)
         try actionMigration(require)
+        try prefixMigration(require)
         try limitedUse(require)
         try await consumeOnce(require)
         try sourceRevisions(require)
@@ -75,6 +76,10 @@ enum NativeRuleRecordsSelftest {
     }
 
     static func recipient(_ value: String) -> NativeRuleTarget { NativeRuleTarget.make(.recipient, value)! }
+
+    static func commandSubject(_ command: String, action: NativeActionClass = .commands) -> NativeCardSubject {
+        NativeCardSubject(action: action, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: command)
+    }
 
     private static func roundTrip(_ require: (Bool, String) throws -> Void) throws {
         let repository = try LocalChatRepository(inMemory: true)
@@ -248,9 +253,11 @@ enum NativeRuleRecordsSelftest {
                     "A command prefix record lets matching simple commands run")
         try require(prefix.decision(forCommand: "swift build; rm -rf x") == .ask && prefix.decision(forCommand: "swift test") == .ask,
                     "A compound or different command falls back to the class default")
-        let chatPrefix = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(approvedCommandPrefixes: ["make check"]),
-                                            requestText: "", records: [], context: NativeRuleContext(conversationID: "c1"))
-        try require(chatPrefix.decision(forCommand: "make check") == .act(.conversationPrefix), "Without records the chat prefix logic is unchanged")
+        let chatAllow = NativeCardChoices.records(.allowHere, subject: commandSubject("make check"), place: .chat(conversationID: "c1"), originMessageID: nil)
+        try require(resolver(chatAllow).tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "make check") == .act(.grant)
+                    && resolver(chatAllow, context: NativeRuleContext(conversationID: "c2")).tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "make check") == .ask
+                    && NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(forCommand: "make check") == .ask,
+                    "A chat's saved prefix allow runs only in that chat and nothing runs without a record")
     }
 
     private static func scopes(_ require: (Bool, String) throws -> Void) throws {
@@ -319,6 +326,89 @@ enum NativeRuleRecordsSelftest {
         }
     }
 
+    private static func prefixMigration(_ require: (Bool, String) throws -> Void) throws {
+        func prepared() throws -> DatabaseQueue {
+            let queue = try DatabaseQueue()
+            try queue.write { db in
+                try db.execute(sql: "CREATE TABLE conversations (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, rules_json TEXT)")
+                try NativeRuleRecordStore.migrate(db)
+                try NativeRuleRecordStore.migrateActions(db)
+                try NativeRuleRecordStore.migrateCards(db)
+            }
+            return queue
+        }
+        func version(_ queue: DatabaseQueue) throws -> Int { try queue.read { try NativeRuleRecordStore.version($0) } }
+        func stored(_ queue: DatabaseQueue, _ id: String) throws -> String? {
+            try queue.read { try String.fetchOne($0, sql: "SELECT rules_json FROM conversations WHERE id = ?", arguments: [id]) }
+        }
+        let queue = try prepared()
+        let malformed = "{\"choices\": {\"commands\": \"hand_off\"}, \"approved_command_prefixes\": [\"git status\""
+        let rows: [(String, String?)] = [
+            ("two", "{\"choices\":{\"trash\":\"hand_off\"},\"approved_command_prefixes\":[\"swift build\",\"make check\"]}"),
+            ("messy", "{\"choices\":{},\"approved_command_prefixes\":[\"npm test\",\"\",\"npm   test\",\"git log --oneline\"]}"),
+            ("choices", "{\"choices\":{\"commands\":\"hand_off\"}}"),
+            ("empty", nil),
+            ("broken", malformed),
+        ]
+        try queue.write { db in
+            for (id, rules) in rows {
+                try db.execute(sql: "INSERT INTO conversations(id, title, rules_json) VALUES(?, ?, ?)", arguments: [id, "Chat " + id, rules])
+            }
+        }
+        let before = try version(queue)
+        try queue.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        let records = try NativeRuleRecordStore(database: queue).all()
+        let origins = try queue.read { try String.fetchAll($0, sql: "SELECT origin FROM native_rule_records") }
+        func values(_ chat: String) -> Set<String> { Set(records.filter { $0.scope == .conversation(chat) }.compactMap(\.target?.value)) }
+        try require(records.count == 4 && values("two") == ["swift build", "make check"] && values("messy") == ["npm test", "git log"],
+                    "Each distinct saved prefix becomes one record in its chat, normalized to two words")
+        try require(records.allSatisfy { $0.action == .commands && $0.toolID == NativeCommandTools.toolID && $0.effect == .allow && $0.origin == .migration
+                        && $0.target?.kind == .commandPrefix && $0.originMessageID == nil && $0.status == .active
+                        && $0.originConversationID == $0.scope.scopeID && $0.statement.hasPrefix("In this chat, allow commands that start with ") }
+                    && Set(origins) == ["migration"], "Migrated prefixes are active chat-scoped command allows from the migration")
+        try require(values("choices").isEmpty && values("empty").isEmpty && values("broken").isEmpty, "Chats without prefixes get no records")
+        try require(NativeConversationRules.decode(try stored(queue, "two")).choices == [.trash: .handOff]
+                    && NativeConversationRules.decode(try stored(queue, "choices")).choices == [.commands: .handOff]
+                    && (try stored(queue, "messy")) == nil && (try stored(queue, "empty")) == nil,
+                    "Chat rules keep their choices and an emptied rule set stores nothing")
+        try require(try ["two", "choices"].allSatisfy { try stored(queue, $0)?.contains("approved_command_prefixes") == false },
+                    "No prefix list is left in the stored chat rules")
+        try require((try stored(queue, "broken")) == malformed, "Malformed chat rules are left untouched")
+        try require(try version(queue) == before + 1, "The rules version advances exactly once")
+        try queue.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        try require(try version(queue) == before + 1 && (try NativeRuleRecordStore(database: queue).all()).count == 4,
+                    "Running again without prefixes leaves the records and the version alone")
+        let quiet = try prepared()
+        try quiet.write { db in
+            try db.execute(sql: "INSERT INTO conversations(id, title, rules_json) VALUES(?, ?, ?)", arguments: ["plain", "Plain", "{\"choices\":{}}"])
+        }
+        let quietBefore = try version(quiet)
+        try quiet.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        try require(try version(quiet) == quietBefore, "A database with no prefixes keeps its version")
+        let empty = try prepared()
+        try empty.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        try require(try NativeRuleRecordStore(database: empty).all().isEmpty, "An empty conversation table migrates cleanly")
+        let lengthy = try prepared()
+        let longWord = String(repeating: "a", count: 280)
+        try lengthy.write { db in
+            try db.execute(sql: "INSERT INTO conversations(id, title, rules_json) VALUES(?, ?, ?)",
+                           arguments: ["long", "Long", "{\"choices\":{},\"approved_command_prefixes\":[\"echo \(longWord)\",\"git status\"]}"])
+        }
+        try lengthy.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        let carried = try NativeRuleRecordStore(database: lengthy).all()
+        try require(carried.count == 2 && carried.contains { $0.target?.value == "echo " + longWord && $0.statement == "In this chat, allow a command you approved earlier" }
+                    && carried.allSatisfy { $0.statement.count <= NativeRuleRecord.maximumStatementCharacters },
+                    "A very long approved prefix is carried over with a short sentence, never dropped")
+        let longRules = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: carried,
+                                           context: NativeRuleContext(conversationID: "long")).tool(NativeCommandTools.toolID, targets: [])
+        try require(longRules.decision(forCommand: "echo " + longWord) == .act(.grant), "The long approval still runs without asking")
+        func decision(_ chat: String) -> NativeRuleDecision {
+            NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: records,
+                               context: NativeRuleContext(conversationID: chat)).tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "swift build -c release")
+        }
+        try require(decision("two") == .act(.grant) && decision("messy") == .ask, "A migrated chat still runs its approved prefix and another chat asks")
+    }
+
     private static func actionMigration(_ require: (Bool, String) throws -> Void) throws {
         try require(Set(NativeRuleRecordStore.storedActions) == Set(NativeActionClass.allCases.map(\.rawValue)), "Every action class can be stored")
         let insert = """
@@ -379,6 +469,76 @@ enum NativeRuleRecordsSelftest {
         try require(rejects(queue, row("folder-commands", action: "commands", targetKind: "folder", targetValue: "/Volumes/Notes", effect: "forbid")),
                     "A folder target on commands is rejected")
         try require(rejects(queue, row("duplicate-message", action: "trash", effect: "ask", message: "m1")), "A duplicate origin message is rejected")
+
+        let beforeCards = try queue.read { db in (try snapshot(db), try version(db)) }
+        try queue.write { try NativeRuleRecordStore.migrateCards($0) }
+        let afterCards = try queue.read { db in
+            (try snapshot(db), try version(db),
+             Set(try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'native_rule_records' AND sql IS NOT NULL")))
+        }
+        var trimmed = afterCards.0
+        for key in trimmed.keys { trimmed[key]?.removeValue(forKey: "origin_tool_call_id") }
+        try require(trimmed == beforeCards.0 && afterCards.0.values.allSatisfy { $0["origin_tool_call_id"] == .some(.null) },
+                    "The card rebuild keeps every row byte for byte and adds an empty tool call column")
+        try require(afterCards.1 == beforeCards.1, "The card rebuild leaves the rules version alone")
+        try require(afterCards.2 == ["native_rule_records_status_action", "native_rule_records_origin_message"], "Both indexes exist after the card rebuild")
+        let cardInsert = """
+            INSERT INTO native_rule_records(id, scope_kind, scope_id, action, tool_id, target_kind, target_value, effect, statement, origin,
+                origin_conversation_id, origin_message_id, origin_tool_call_id, status, created_at, updated_at)
+            VALUES(?, ?, ?, ?, ?, NULL, NULL, ?, 'Rule', 'confirm_card', 'c', ?, ?, 'active', 1, 1)
+            """
+        func cardRejects(_ id: String, scope: String = "conversation", scopeID: String? = "c", action: String?, tool: String?, effect: String,
+                         message: String?, call: String?) -> Bool {
+            do { try queue.write { try $0.execute(sql: cardInsert, arguments: [id, scope, scopeID, action, tool, effect, message, call]) }; return false }
+            catch { return true }
+        }
+        try require(rejects(queue, row("uses-ask-two", action: "trash", effect: "ask", uses: 2))
+                    && rejects(queue, row("prefix-forbid-two", action: "commands", targetKind: "command_prefix", targetValue: "rm", effect: "forbid"))
+                    && rejects(queue, row("folder-commands-two", action: "commands", targetKind: "folder", targetValue: "/Volumes/Notes", effect: "forbid"))
+                    && rejects(queue, row("old-four", action: "sensitive", effect: "allow"))
+                    && rejects(queue, row("duplicate-message-two", action: "trash", effect: "ask", message: "m1")),
+                    "Every earlier constraint still holds after the card rebuild")
+        try require(!cardRejects("card-one", action: "commands", tool: "folder-commands", effect: "allow", message: "m9", call: "call-1")
+                    && !cardRejects("card-two", action: "commands", tool: "folder-commands", effect: "allow", message: "m9", call: "call-2"),
+                    "Two cards on one message each keep their rule")
+        try require(cardRejects("card-three", action: "commands", tool: "folder-commands", effect: "allow", message: "m9", call: "call-1"),
+                    "The same card on the same message is stored once")
+        try require(cardRejects("card-four", action: "trash", tool: nil, effect: "ask", message: "m1", call: nil)
+                    && !cardRejects("card-five", action: "trash", tool: nil, effect: "ask", message: "m1", call: "call-1"),
+                    "A captured rule still owns its message, and a card on that message is separate")
+        try require(cardRejects("card-six", action: "trash", tool: nil, effect: "ask", message: nil, call: "call-1"), "A tool call without a message is rejected")
+        try require(!cardRejects("wide-never", action: nil, tool: "folder-commands", effect: "forbid", message: nil, call: nil)
+                    && !cardRejects("wide-ask", action: nil, tool: "folder-commands", effect: "ask", message: nil, call: nil)
+                    && !cardRejects("wide-hand", action: nil, tool: "folder-commands", effect: "hand_off", message: nil, call: nil),
+                    "A tool-wide rule with no kind can ask, hand off or forbid")
+        try require(cardRejects("wide-allow", action: nil, tool: "folder-commands", effect: "allow", message: nil, call: nil),
+                    "The database rejects a tool-wide allow with no kind")
+        let wideAllow = NativeRuleRecord(action: nil, toolID: NativeCommandTools.toolID, effect: .allow, statement: "Allow the tool")
+        try require((try? NativeRuleRecord.validated(wideAllow, creating: true)) == nil
+                    && (try? NativeRuleRecord.validated(NativeRuleRecord(action: nil, toolID: NativeCommandTools.toolID, effect: .forbid, statement: "Never"), creating: true)) != nil
+                    && (try? NativeRuleRecord.validated(NativeRuleRecord(action: nil, target: NativeRuleTarget.make(.commandPrefix, "git status"), effect: .forbid, statement: "Never"), creating: true)) == nil,
+                    "Validation rejects a tool-wide allow with no kind and a target with no kind, and accepts a tool-wide never")
+        var liftedRules = NativeRules.defaults
+        for action in NativeActionClass.configurable { liftedRules.set(.act, for: action) }
+        for item in NativeFloorItem.allCases { liftedRules.lift(item, choice: .act) }
+        let wideNever = NativeRuleRecord(scope: .conversation("c"), action: nil, toolID: NativeCommandTools.toolID, effect: .forbid, statement: "Never run commands in this chat")
+        let prefixAllow = NativeRuleRecord(action: .commands, toolID: NativeCommandTools.toolID, target: NativeRuleTarget.make(.commandPrefix, "git status"), effect: .allow, statement: "Always allow git status")
+        let kindAllow = NativeRuleRecord(action: .riskyCommands, toolID: NativeCommandTools.toolID, effect: .allow, statement: "Allow risky commands")
+        func decided(_ records: [NativeRuleRecord], _ action: NativeActionClass, conversation: String = "c", tool: String = NativeCommandTools.toolID, command: String? = nil) -> NativeRuleDecision {
+            let base = NativeRuleResolver(global: liftedRules, conversation: NativeConversationRules(), requestText: "", records: records,
+                                          context: NativeRuleContext(conversationID: conversation))
+            let scoped = base.tool(tool, subjects: command.map { NativeCommandTools.ruleSubjects(command: $0) } ?? [])
+            return command != nil && action == .commands ? scoped.decision(forCommand: command!) : scoped.decision(for: action)
+        }
+        for action in [NativeActionClass.commands, .riskyCommands, .networkSends, .permanentDeletion] {
+            try require(decided([wideNever], action) == .handOff, "A tool-wide never stops \(action.rawValue) from the command tool, a lifted floor kind included")
+            try require(decided([wideNever], action, conversation: "other") != .handOff, "A tool-wide never in one chat leaves \(action.rawValue) alone in another")
+        }
+        try require(decided([wideNever], .fileEdits, tool: NativeFolderTools.toolID) != .handOff, "A tool-wide never on one tool leaves other tools alone")
+        try require(decided([wideNever, kindAllow], .riskyCommands) == .handOff, "At tool level a never beats an allow that names a kind")
+        try require(decided([wideNever, prefixAllow], .commands, command: "git status -s") == .act(.grant)
+                    && decided([wideNever, prefixAllow], .commands, command: "git push") == .handOff,
+                    "A narrower allow beats a tool-wide never for its own prefix only")
 
         let clean = try DatabaseQueue()
         try clean.write { db in
@@ -1222,25 +1382,38 @@ enum NativeRuleRecordsSelftest {
     }
 
     private static func prefixApprovalShortcut(_ require: (Bool, String) throws -> Void) throws {
-        func source() -> NativeRuleSource {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let saved = NativeCardChoices.records(.allowHere, subject: commandSubject("echo hello"), place: .chat(conversationID: "c1"), originMessageID: nil)
+        func source(_ extra: [NativeRuleRecord] = []) -> NativeRuleSource {
             let source = NativeRuleSource()
             source.setGlobal(NativeRules(choices: [.commands: .ask]))
-            source.set(NativeConversationRules(approvedCommandPrefixes: ["echo hello"]), for: "c1")
+            source.setRecords(saved + extra)
             return source
         }
+        func asks(_ source: NativeRuleSource, _ command: String, conversation: String = "c1") -> Bool {
+            let closures = ChatStore.commandLive(source, store: nil, conversationID: conversation, requestText: "")
+            let tool = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .ask, reason: { _ in nil }, record: { _ in },
+                                                      live: closures.live, liveTargets: closures.liveTargets)[0]
+            return tool.confirmationFor?(["command": .string(command)]) ?? true
+        }
         let plain = source()
-        try require(ChatStore.prefixApprovalAnswers(plain, conversationID: "c1", requestText: "", command: "echo hello"),
-                    "With zero records a prefix approved earlier in the chat still answers the confirmation without a card")
-        try require(!ChatStore.prefixApprovalAnswers(plain, conversationID: "c1", requestText: "", command: "echo goodbye"),
-                    "A command outside the approved prefix still presents a confirmation")
-        let asking = source()
-        asking.setRecords([record(.ask, .commands, statement: "Always ask before any command")])
-        try require(!ChatStore.prefixApprovalAnswers(asking, conversationID: "c1", requestText: "", command: "echo hello"),
-                    "A prefix approved earlier plus a saved ask record presents a confirmation")
+        try require(saved.count == 1 && !asks(plain, "echo hello"), "A plain command under a prefix saved in this chat needs no card")
+        try require(asks(plain, "echo goodbye"), "A command outside the saved prefix still presents a confirmation")
+        try require(asks(plain, "echo hello", conversation: "c2"), "A prefix saved in one chat still presents a confirmation in another")
+        try require(asks(plain, "echo hello | cat") && asks(plain, "FOO=1 echo hello") && asks(plain, "echo hello \"x\""),
+                    "A non-plain command is never answered by a saved prefix")
+        let asking = source([record(.ask, .commands, statement: "Always ask before any command")])
+        try require(!asks(asking, "echo hello") && asks(asking, "echo goodbye") && asks(asking, "echo hello", conversation: "c2"),
+                    "A saved prefix outranks a broader ask record, which still asks for everything the prefix does not cover")
+        let pinned = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "",
+                                        records: saved + [record(.ask, .commands, statement: "Always ask before any command")],
+                                        context: NativeRuleContext(conversationID: "c1")).tool(NativeCommandTools.toolID, targets: [])
+        try require(pinned.decision(forCommand: "echo hello") == .act(.grant) && pinned.decision(forCommand: "echo goodbye") == .ask,
+                    "A chat-scoped prefix allow beats an everywhere class-level ask for that prefix only")
         let broken = source()
         broken.fail()
-        try require(!ChatStore.prefixApprovalAnswers(broken, conversationID: "c1", requestText: "", command: "echo hello"),
-                    "A prefix approved earlier in failed mode presents a confirmation")
+        try require(asks(broken, "echo hello"), "A saved prefix allow in failed mode presents a confirmation")
         let preapproved = NativeRuleSource()
         preapproved.setGlobal(NativeRules(choices: [.commands: .actIfPreapproved]))
         preapproved.setRecords([record(.ask, .commands)])
@@ -1278,10 +1451,11 @@ enum NativeRuleRecordsSelftest {
     private static func rememberedApprovals(_ require: (Bool, String) throws -> Void) async throws {
         let fixture = try folderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let saved = NativeCardChoices.records(.allowHere, subject: commandSubject("echo hello"), place: .chat(conversationID: "c1"), originMessageID: nil)
         func source() -> NativeRuleSource {
             let source = NativeRuleSource()
             source.setGlobal(NativeRules(choices: [.commands: .ask]))
-            source.set(NativeConversationRules(approvedCommandPrefixes: ["echo hello"]), for: "c1")
+            source.setRecords(saved)
             return source
         }
         func tool(_ source: NativeRuleSource, reason: NativeRuleReason?) -> NativeToolDefinition {
@@ -1290,7 +1464,7 @@ enum NativeRuleRecordsSelftest {
                                                   live: closures.live, liveTargets: closures.liveTargets)[0]
         }
         func answers(_ source: NativeRuleSource, _ command: String) -> Bool {
-            ChatStore.prefixApprovalAnswers(source, conversationID: "c1", requestText: "", command: command, grants: [fixture.grant])
+            tool(source, reason: nil).confirmationFor?(["command": .string(command)]) == false
         }
         let plain: [String: NativeJSONValue] = ["command": .string("echo hello")]
         let nonPlain: [String: NativeJSONValue] = ["command": .string("echo hello time")]
@@ -1300,23 +1474,23 @@ enum NativeRuleRecordsSelftest {
         let silent = tool(healthy, reason: nil)
         let silentRun = await run(silent, plain)
         try require(answers(healthy, "echo hello") && silent.confirmationFor?(plain) == false && silentRun == "ran",
-                    "A plain command matching an approved prefix still runs without a card, as before")
-        let remembered = await run(tool(healthy, reason: .conversationPrefix), nonPlain)
+                    "A plain command matching a saved prefix allow runs without a card")
+        let remembered = await run(tool(healthy, reason: .rule), nonPlain)
         try require(!answers(healthy, "echo hello time") && silent.confirmationFor?(nonPlain) == true && remembered == changed,
-                    "A non-plain command is never answered by a remembered prefix")
+                    "A non-plain command is never answered by a saved prefix")
 
         let failing = source()
         let answeredBeforeFailure = answers(failing, "echo hello")
         failing.fail()
-        let afterFailure = await run(tool(failing, reason: .conversationPrefix), plain)
+        let afterFailure = await run(tool(failing, reason: .rule), plain)
         try require(answeredBeforeFailure && afterFailure == changed,
-                    "A remembered prefix answered before failed mode is refused at execution and nothing runs")
+                    "A saved prefix answered before failed mode is refused at execution and nothing runs")
         let asking = source()
         let answeredBeforeRecord = answers(asking, "echo hello")
         asking.setRecords([record(.ask, .commands, statement: "Always ask before any command")])
-        let afterRecord = await run(tool(asking, reason: .conversationPrefix), plain)
+        let afterRecord = await run(tool(asking, reason: .rule), plain)
         try require(answeredBeforeRecord && afterRecord == changed,
-                    "A remembered prefix answered before a saved ask record is refused at execution")
+                    "A saved prefix answered before it was replaced by an ask record is refused at execution")
         let approvedUnderAsk = await run(tool(asking, reason: .userApproved), plain)
         let approvedFailed = await run(tool(failing, reason: .userApproved), plain)
         try require(approvedUnderAsk == "ran" && approvedFailed == "ran", "A real approval in this turn still runs under a saved ask and in failed mode")

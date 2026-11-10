@@ -90,7 +90,7 @@ def test_guard_covers_the_engine_and_the_scripts():
     assert "services/vera-api/routers/health.py" in covered
     assert "services/vera-api/main.py" in covered
     assert "scripts/rag-sync.py" in covered
-    assert "scripts/vera-backup.sh" in covered
+    assert "scripts/vera-rag-sync.sh" in covered
     assert MIGRATION_TOOL in covered
 
 
