@@ -6,7 +6,6 @@
 3 apps/vera-mac/Sources/Vera/IntegrationsView.swift
 2 apps/vera-mac/Sources/Vera/KnowledgeView.swift
 2 apps/vera-mac/Sources/Vera/LocalChatRepository.swift
-8 apps/vera-mac/Sources/Vera/MemoryView.swift
 1 apps/vera-mac/Sources/Vera/ModelParameters.swift
 1 apps/vera-mac/Sources/Vera/NativeAttachments.swift
 1 apps/vera-mac/Sources/Vera/NativeChatSettings.swift
@@ -16,7 +15,6 @@
 1 apps/vera-mac/Sources/Vera/NativeInferenceAdmission.swift
 1 apps/vera-mac/Sources/Vera/NativeMCPToolsEditor.swift
 2 apps/vera-mac/Sources/Vera/NativeMCPTransport.swift
-2 apps/vera-mac/Sources/Vera/NativeMemory.swift
 1 apps/vera-mac/Sources/Vera/NativeMemoryEvidenceSelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeMemoryGate.swift
 3 apps/vera-mac/Sources/Vera/NativeMemoryService.swift
@@ -39,7 +37,7 @@
 24 apps/vera-mac/Sources/Vera/SelfTest.swift
 7 apps/vera-mac/Sources/Vera/SettingsView.swift
 4 apps/vera-mac/Sources/Vera/Shot.swift
-5 apps/vera-mac/Sources/Vera/ShotView.swift
+4 apps/vera-mac/Sources/Vera/ShotView.swift
 7 apps/vera-mac/Sources/Vera/Store.swift
 2 apps/vera-mac/Sources/Vera/StoreRuleRecords.swift
 4 apps/vera-mac/Sources/Vera/VeinBuilderView.swift
