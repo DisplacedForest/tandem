@@ -33,7 +33,7 @@ final class CompanionPanelController: ObservableObject {
     func show() {
         let panel = panel ?? makePanel()
         position(panel)
-        store.prepareCompanionThread()
+        store.prepareCompanionThread(askForName: false)
         store.markCompanionSeen()
         panel.makeKeyAndOrderFront(nil)
         isVisible = true

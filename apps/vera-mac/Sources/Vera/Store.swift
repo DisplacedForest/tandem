@@ -156,6 +156,7 @@ final class ChatStore: ObservableObject {
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
     var companionNameWriter: ((String) throws -> Void)?
+    var companionNameResolver: (() -> String?)?
     @Published var companionNameAsk: CompanionNameAsk?
     var asksForCompanionName = false
     var companionHasSavedName: Bool { companionName != nil }
@@ -1960,15 +1961,15 @@ final class ChatStore: ObservableObject {
         return conversationTurns.contains { $0.conversationID == veraThreadID && turnConfirmations[$0.assistantMessageID] != nil }
     }
 
-    func prepareCompanionThread() {
+    func prepareCompanionThread(askForName: Bool = true) {
         ensureVeraThread()
         if let veraThreadID { loadMessagesIfNeeded(veraThreadID) }
-        prepareCompanionOpening(askForName: false)
+        prepareCompanionOpening(askForName: askForName)
     }
 
     @discardableResult
     func sendCompanion() -> Bool {
-        prepareCompanionThread()
+        prepareCompanionThread(askForName: false)
         guard let veraThreadID else {
             companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
             return false
@@ -2428,7 +2429,7 @@ final class ChatStore: ObservableObject {
         let scopes = ResolvedPromptScopes(persona: turn.persona, userScope: turn.userScope, instructions: turn.instructions)
         let persona = scopes.persona
         let ownerName = nativeOwnerName
-        let assistantName = companionName
+        let assistantName = isVeraThread(id) ? companionName : nil
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
         let accessNotes = turnRegistry.accessNotes(enabledIDs: enabledToolIDs)
         let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])

@@ -25,7 +25,7 @@
 1 apps/vera-mac/Sources/Vera/NativeTaskTransportTiming.swift
 1 apps/vera-mac/Sources/Vera/OnboardingView.swift
 1 apps/vera-mac/Sources/Vera/PluginsView.swift
-6 apps/vera-mac/Sources/Vera/PromptLibraryView.swift
+4 apps/vera-mac/Sources/Vera/PromptLibraryView.swift
 4 apps/vera-mac/Sources/Vera/PulseModels.swift
 1 apps/vera-mac/Sources/Vera/SafeAppReplacement.swift
 23 apps/vera-mac/Sources/Vera/SelfTest.swift

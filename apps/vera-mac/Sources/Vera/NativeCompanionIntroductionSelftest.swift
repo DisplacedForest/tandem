@@ -85,8 +85,15 @@ extension SelfTest {
         guard let id = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("Companion exists") }
         try require(store.companionNameAsk == .firstOpen && (try repository.messages(conversationID: id)).isEmpty && transport.histories.isEmpty,
                     "Opening an unnamed companion asks for a name before anything is sent to the model")
+        store.prepareCompanionThread()
+        try require(store.companionNameAsk == .firstOpen && (try repository.messages(conversationID: id)).isEmpty && transport.histories.isEmpty,
+                    "The main conversation view refreshing does not send the opening while the name question is up")
         store.finishCompanionNameAsk(named: false)
         try require(store.companionNameAsk == nil && store.companionName == nil, "Not now continues unnamed")
+        let declined = try repository.conversationTurns().first { $0.companionEvent?.isOpening == true }?.companionEvent
+        try require(declined?.kind == .introduction && declined?.observation == NativeCompanionEvent.nameDeclined
+                        && declined?.instruction.contains("do not ask for one") == true && declined?.instruction.contains("would like to call you") == false,
+                    "After Not now the opening tells the model not to ask for a name again")
         func settled() -> Bool { store.selected?.messages.last?.state == .complete && !store.conversationTurns.contains { $0.conversationID == id && ($0.state == .pending || $0.state == .running) } }
         try await NativeSessionFixture.eventually("Opening completes", settled)
         try require(store.selected?.messages.count == 1 && store.selected?.messages.first?.role == .assistant, "Opening contains only a real assistant response")

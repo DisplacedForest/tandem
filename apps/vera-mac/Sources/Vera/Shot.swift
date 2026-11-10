@@ -46,6 +46,7 @@ enum Shot {
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
         let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
         let workSeed = view == "conversation-work" || view == "conversation-narrow" ? OngoingWorkFixture.store() : nil
+        unsetenv("VERA_ASSISTANT_NAME")
         if CompanionNameShot.views.contains(view) {
             CompanionNameShot.render(to: path, appearance: appearance)
             return

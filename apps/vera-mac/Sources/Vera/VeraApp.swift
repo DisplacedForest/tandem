@@ -87,6 +87,7 @@ struct VeraApp: App {
         storeInstance.followSavedCompanionName(of: configInstance)
         storeInstance.asksForCompanionName = fixture == nil
         storeInstance.asksForSystemAccess = fixture == nil
+        storeInstance.companionNameResolver = { configInstance.suppliedAssistantName }
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name

@@ -31,7 +31,7 @@ struct CompanionAppearanceDraft: Equatable {
             try? store.save(previousAppearance)
             throw error
         }
-        if nameChanged { chat?.adoptAssistantName(trimmedName) }
+        if nameChanged { chat?.refreshCompanionName(from: config) }
     }
 }
 

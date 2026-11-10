@@ -21,7 +21,8 @@ extension ChatStore {
             }
             let configured = !dotProfile.needsIntroduction && (dotProfile.setupCompleted || dotProfile.hasGoal || dotProfile.connectedToolIDs != nil
                 || companionHasSavedName)
-            let event = NativeCompanionEvent(kind: configured ? .welcome : .introduction, key: "opening")
+            var event = NativeCompanionEvent(kind: configured ? .welcome : .introduction, key: "opening")
+            if !configured, companionName == nil, asksForCompanionName, companionNamePromptDismissed { event.observation = NativeCompanionEvent.nameDeclined }
             try enqueueCompanionEvent(event, conversationIndex: index)
         } catch {
             chatConfigurationError = "The conversation couldn't open: \(error.localizedDescription)"

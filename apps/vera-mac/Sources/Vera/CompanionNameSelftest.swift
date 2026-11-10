@@ -27,6 +27,21 @@ extension SelfTest {
                             "An unnamed companion's question to the person starts with Your companion: \(question.prefix(80))")
             }
         }
+        let ordinaryTransport = NativeSessionFixtureTransport()
+        let ordinary = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ordinaryTransport,
+                                 repository: try LocalChatRepository(inMemory: true), nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
+        ordinary.newConversation()
+        try require(ordinary.sendText("What's a good name for a boat?"), "The ordinary chat accepts a message")
+        try await NativeSessionFixture.eventually("The ordinary chat replies") {
+            ordinary.selected?.messages.last?.role == .assistant && ordinary.selected?.messages.last?.state == .complete
+        }
+        let ordinaryPrompt = ordinaryTransport.histories.last?.first { $0.role == "system" }?.content ?? ""
+        try require(!ordinaryPrompt.isEmpty && !ordinaryPrompt.contains("Your name is") && !ordinaryPrompt.contains("Ada"),
+                    "An ordinary chat's prompt never carries the companion's name")
+        let namedContext = NativeContextAssembler.assemble(NativeContextInput(
+            persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+            timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName))
+        try require(namedContext.prompt.contains("Your name is Ada."), "The companion's own conversation is still told its name")
         let unnamed = CompanionSubject(nil), named = CompanionSubject(" Ada ")
         try require(unnamed.thread == "your companion's thread" && named.thread == "the Ada thread"
                         && CompanionSentence.plain("Results go to " + unnamed.threadTemplate + ".", name: nil) == "Results go to your companion's thread."
