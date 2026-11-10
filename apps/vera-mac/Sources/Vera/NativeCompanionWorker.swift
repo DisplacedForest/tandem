@@ -258,6 +258,7 @@ enum NativeCompanionWorker {
             let fallback = scoped.decide(forCommand: command)
             return (action, fallback.decision, fallback.authorizedBy, footprint)
         }
+        if case .act = resolved.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
         return (action, resolved.decision, resolved.authorizedBy, footprint)
     }
 
@@ -428,7 +429,8 @@ private struct NativeCompanionRun {
         var command: String?
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
-                                 targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command)
+                                 targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
+                                 alwaysAsks: definition.demandsConfirmation)
     }
 
     func cardPlace(_ authority: NativeCompanionWorkerAuthority) -> NativeCardPlace {
