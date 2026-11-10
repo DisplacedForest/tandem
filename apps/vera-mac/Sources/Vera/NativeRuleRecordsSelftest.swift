@@ -41,6 +41,8 @@ enum NativeRuleRecordsSelftest {
         try targetKinds(require)
         try await footprints(require)
         try await lateConfirmation(require)
+        try await caseAndForm(require)
+        try await boundFootprint(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -930,5 +932,100 @@ enum NativeRuleRecordsSelftest {
                     "A read-only destination leaves a one-use allow unspent")
         let done = await run(tools[NativeFolderTools.editName]!, ["path": .string(open + "/note.txt"), "old_text": .string("hello"), "new_text": .string("bye")])
         try require(done == "ran" && (try records.record(id: once.id))?.remainingUses == 0, "The use is spent only by the edit that happens")
+    }
+
+    private static func caseAndForm(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let open = fixture.root + "/open"
+        let insensitive = NativeFolderCase.sensitivity(near: open) == false
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let forbid = try records.add(record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, open + "/Locked")))
+        let deep = try records.add(record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, open + "/Vault/deep")))
+        let source = NativeRuleSource()
+        source.setGlobal(NativeRules(choices: [.fileEdits: .act]))
+        source.setRecords([forbid, deep])
+        let tools = chatFolders(source, store: nil, grant: fixture.grant)
+        let mkdir = tools[NativeFolderTools.mkdirName]!
+        let resolver = source.resolver(for: "c1", requestText: "")
+        if insensitive {
+            try require(NativeCompanionWorker.ruleDecision(mkdir, ["path": .string(open + "/locked/inner")], resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                        "A differently cased path inside a forbidden folder is blocked on a case-insensitive volume")
+            try require(NativeCompanionWorker.ruleDecision(mkdir, ["path": .string(open + "/vault")], resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                        "A differently cased folder holding a forbidden descendant is blocked on a case-insensitive volume")
+            let made = await run(mkdir, ["path": .string(open + "/locked")])
+            try require(made == NativeRuleResolver.handOffMessage(.fileEdits) && !FileManager.default.fileExists(atPath: open + "/locked"),
+                        "Creating the differently cased folder in chat is refused and nothing is created")
+        }
+        let restrict = NativeRuleTarget.make(.folder, "/volume/Locked")!
+        let allowTarget = NativeRuleTarget.make(.folder, "/volume/Open")!
+        let lower = NativeRuleTarget.make(.folder, "/volume/locked/a")!
+        let lowerOpen = NativeRuleTarget.make(.folder, "/volume/open/a")!
+        let parent = NativeRuleTarget.make(.folder, "/volume")!
+        let sensitiveRestricts = NativeFolderCase.$probe.withValue({ _ in true }) { restrict.isSatisfied(by: lower, restricting: true) }
+        let insensitiveRestricts = NativeFolderCase.$probe.withValue({ _ in false }) { restrict.isSatisfied(by: lower, restricting: true) }
+        let insensitiveReverse = NativeFolderCase.$probe.withValue({ _ in false }) {
+            NativeRuleTarget.make(.folder, "/volume/Locked/deep")!.isSatisfied(by: NativeRuleTarget.make(.folder, "/volume/locked")!, restricting: true)
+        }
+        try require(!sensitiveRestricts && insensitiveRestricts && insensitiveReverse,
+                    "An injected case-sensitive volume keeps cases distinct, an insensitive one folds them in both directions")
+        let unknownRestricts = NativeFolderCase.$probe.withValue({ _ in nil }) { restrict.isSatisfied(by: lower, restricting: true) }
+        let unknownAllows = NativeFolderCase.$probe.withValue({ _ in nil }) { allowTarget.isSatisfied(by: lowerOpen, restricting: false) }
+        let unknownExact = NativeFolderCase.$probe.withValue({ _ in nil }) { allowTarget.isSatisfied(by: NativeRuleTarget.make(.folder, "/volume/Open/a")!) }
+        try require(unknownRestricts && !unknownAllows && unknownExact,
+                    "With unknown sensitivity a restriction folds case while an allow never widens across case")
+        let boundary = NativeFolderCase.$probe.withValue({ _ in false }) {
+            restrict.isSatisfied(by: NativeRuleTarget.make(.folder, "/volume/lockedness")!, restricting: true)
+                || restrict.isSatisfied(by: parent, restricting: false)
+        }
+        try require(!boundary, "Case folding keeps component boundaries")
+        let composed = NativeRuleTarget.make(.folder, "/volume/Caf\u{e9}")!
+        let decomposed = NativeRuleTarget.make(.folder, "/volume/Cafe\u{301}/menu")!
+        let unicode = NativeFolderCase.$probe.withValue({ _ in true }) { composed.isSatisfied(by: decomposed, restricting: true) }
+        try require(unicode, "A precomposed folder name matches its decomposed spelling")
+    }
+
+    private static func boundFootprint(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let open = fixture.root + "/open"
+        try FileManager.default.createDirectory(atPath: open + "/keep", withIntermediateDirectories: true)
+        try "x".write(toFile: open + "/file.txt", atomically: true, encoding: .utf8)
+        try "x".write(toFile: open + "/from.txt", atomically: true, encoding: .utf8)
+        try "y".write(toFile: open + "/taken.txt", atomically: true, encoding: .utf8)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        let once = try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(open), uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let tools = chatFolders(source, store: records, grant: fixture.grant)
+        let mkdir = tools[NativeFolderTools.mkdirName]!
+        let keep = open + "/keep"
+        let removed = await NativeFolderTools.$afterDeclaring.withValue({ try? FileManager.default.removeItem(atPath: keep) }) {
+            await run(mkdir, ["path": .string(keep + "/leaf")])
+        }
+        try require(removed.contains("changed after this request was checked") && !FileManager.default.fileExists(atPath: keep)
+                    && (try records.record(id: once.id))?.remainingUses == 1,
+                    "A parent removed after the footprint was declared is not recreated and the use is not spent")
+        let declared = mkdir.ruleSubjects?(["path": .string(keep + "/leaf")]).flatMap { $0.map(\.value) } ?? []
+        try FileManager.default.createDirectory(atPath: keep, withIntermediateDirectories: true)
+        let admittedDeclared = mkdir.ruleSubjects?(["path": .string(keep + "/leaf")]).flatMap { $0.map(\.value) } ?? []
+        try FileManager.default.removeItem(atPath: keep)
+        let workerRun = await NativeRuleAdmission.$footprint.withValue(admittedDeclared) {
+            await NativeRuleAdmission.$admitted.withValue(true) { await run(mkdir, ["path": .string(keep + "/leaf")]) }
+        }
+        try require(declared.count == 2 && admittedDeclared.count == 1 && workerRun.contains("changed after this request was checked")
+                    && !FileManager.default.fileExists(atPath: keep),
+                    "An admitted worker call creates only the components it declared as missing")
+        let intoFile = await run(mkdir, ["path": .string(open + "/file.txt/sub")])
+        try require(intoFile != "ran" && (try records.record(id: once.id))?.remainingUses == 1,
+                    "Creating a folder under an existing regular file fails before the use is spent")
+        let onto = await run(tools[NativeFolderTools.moveName]!, ["from": .string(open + "/from.txt"), "to": .string(open + "/taken.txt")])
+        try require(onto.contains("already exists") && (try records.record(id: once.id))?.remainingUses == 1
+                    && (try? String(contentsOfFile: open + "/taken.txt", encoding: .utf8)) == "y",
+                    "A move onto an existing destination fails before the use is spent")
     }
 }

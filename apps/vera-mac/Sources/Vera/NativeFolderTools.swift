@@ -47,6 +47,15 @@ enum NativeFolderTools {
         let subjects: @Sendable ([String: NativeJSONValue], [String]) -> [[NativeRuleTarget]] = { arguments, keys in
             ruleTargets(arguments, keys: keys, access: access()).map { [$0] }
         }
+        let gateSubjects: @Sendable (NativeActionClass, [[NativeRuleTarget]], NativeRuleDecision) throws -> () throws -> Void = { action, declared, planned in
+            if NativeRuleAdmission.admitted { return {} }
+            if let liveTargets {
+                return try NativeRuleResolver.gate(liveTargets(action, declared), fallback: nil, planned: planned, action: action,
+                                                   approved: planned.requiresConfirmation)
+            }
+            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+            return {}
+        }
         let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> () throws -> Void = { action, arguments, keys, planned in
             if NativeRuleAdmission.admitted { return {} }
             if let liveTargets {
@@ -169,9 +178,12 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    let commit = try editGate(arguments, [creatingKey])
+                    let declared = subjects(arguments, [creatingKey])
+                    let footprint = NativeRuleAdmission.admitted ? NativeRuleAdmission.footprint : declared.flatMap { $0.map(\.value) }
+                    afterDeclaring?()
+                    let commit = try gateSubjects(.fileEdits, declared, edits)
                     let location = try access().locate(try requiredString(arguments, "path"))
-                    return try makeDirectory(location, ledger: ledger, commit: commit)
+                    return try makeDirectory(location, ledger: ledger, commit: commit, footprint: footprint.map(Set.init))
                 }),
             NativeToolDefinition(
                 id: toolID, name: trashName, title: "Move to the Trash",
@@ -198,6 +210,7 @@ enum NativeFolderTools {
     }
 
     static let creatingKey = "path+"
+    @TaskLocal static var afterDeclaring: (@Sendable () -> Void)?
 
     static func ruleTargets(_ arguments: [String: NativeJSONValue], keys: [String], access: NativeFolderAccess) -> [NativeRuleTarget] {
         keys.flatMap { key -> [NativeRuleTarget] in
@@ -389,6 +402,7 @@ enum NativeFolderTools {
         guard let info = NativeFolderIO.status(fromDirectory, from.name) else { throw NativeFolderAccessError.notFound(from.path) }
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(from.path) }
         let toDirectory = try NativeFolderIO.parent(of: to)
+        guard NativeFolderIO.status(toDirectory, to.name) == nil else { throw NativeFolderAccessError.exists(to.path) }
         let text = NativeFolderIO.kind(info) == "file" ? NativeFolderIO.readTextIfSmall(fromDirectory, from.name, display: from.path, limit: NativeFileChange.contentCap) : nil
         try commit()
         try NativeFolderIO.rename(from: fromDirectory, from.name, to: toDirectory, to.name, display: to.path)
@@ -396,10 +410,23 @@ enum NativeFolderTools {
         return .object(["from": .string(from.path), "to": .string(to.path)])
     }
 
-    static func makeDirectory(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
+    static func makeDirectory(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {},
+                              footprint: Set<String>? = nil) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { return .object(["path": .string(location.path), "created": .bool(false)]) }
         var directory = try NativeFolderIO.openRoot(location.root)
+        var planned = location.root.path
+        for component in location.components {
+            planned += "/" + component
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: planned, isDirectory: &isDirectory) {
+                guard isDirectory.boolValue else { throw NativeFolderAccessError.notADirectory(planned) }
+            } else if let footprint {
+                guard let value = NativeRuleTarget.folder(planned)?.value, footprint.contains(value) else {
+                    throw NativeToolError.failed("Nothing was created because \(planned) changed after this request was checked. Ask again if it is still needed.")
+                }
+            }
+        }
         try commit()
         var display = location.root.path
         var created = false

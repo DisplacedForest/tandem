@@ -736,6 +736,7 @@ final class NativeRuleSource: @unchecked Sendable {
 
 enum NativeRuleAdmission {
     @TaskLocal static var admitted = false
+    @TaskLocal static var footprint: [String]?
 }
 
 struct NativeRuleVerdict: Sendable {

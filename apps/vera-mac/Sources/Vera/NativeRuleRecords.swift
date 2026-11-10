@@ -88,9 +88,12 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         return NativeRuleTarget(kind: kind, value: normalized)
     }
 
-    static func folder(_ root: String, contains path: String) -> Bool {
-        if path == root { return true }
-        return path.hasPrefix(root == "/" ? "/" : root + "/")
+    static func folder(_ root: String, contains path: String, restricting: Bool = false) -> Bool {
+        let detected = NativeFolderCase.probe.map { $0(path) } ?? NativeFolderCase.sensitivity(near: path)
+        let sensitive = detected ?? !restricting
+        let rootParts = NativeFolderCase.components(root, sensitive: sensitive)
+        let pathParts = NativeFolderCase.components(path, sensitive: sensitive)
+        return pathParts.count >= rootParts.count && Array(pathParts.prefix(rootParts.count)) == rootParts
     }
 
     static func allowed(_ kind: NativeRuleTargetKind, action: NativeActionClass, effect: NativeRuleEffect) -> Bool {
@@ -126,8 +129,8 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         case .commandPrefix:
             return NativeCommandPrefix.isSimple(candidate.value) && NativeCommandPrefix.matches(command: candidate.value, prefix: value)
         case .folder:
-            if Self.folder(value, contains: candidate.value) { return true }
-            return restricting && Self.folder(candidate.value, contains: value)
+            if Self.folder(value, contains: candidate.value, restricting: restricting) { return true }
+            return restricting && Self.folder(candidate.value, contains: value, restricting: true)
         }
     }
 
@@ -139,6 +142,29 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .value, in: container, debugDescription: "empty target")
         }
         self = made
+    }
+}
+
+enum NativeFolderCase {
+    @TaskLocal static var probe: (@Sendable (String) -> Bool?)?
+
+    static func components(_ path: String, sensitive: Bool) -> [String] {
+        path.split(separator: "/").map { part -> String in
+            let canonical = String(part).precomposedStringWithCanonicalMapping
+            return sensitive ? canonical : canonical.folding(options: [.caseInsensitive], locale: nil)
+        }
+    }
+
+    static func sensitivity(near path: String) -> Bool? {
+        var url = URL(fileURLWithPath: path)
+        while true {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?.volumeSupportsCaseSensitiveNames
+            }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path { return nil }
+            url = parent
+        }
     }
 }
 

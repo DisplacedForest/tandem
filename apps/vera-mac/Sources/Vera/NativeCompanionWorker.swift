@@ -238,21 +238,22 @@ enum NativeCompanionWorker {
     }
 
     static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver: NativeRuleResolver,
-                             honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String]) {
+                             honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
         let action = definition.actionClass(for: arguments) ?? .sensitive
         let query = ruleQuery(definition, arguments, action: action)
+        let footprint = query.targets.filter { $0.kind == .folder }.map(\.value)
         let scoped = resolver.tool(definition.id, subjects: query.subjects)
         if let decide = definition.ruleDecision {
             let decision = decide(arguments, scoped)
-            guard case .act = decision else { return (action, decision, []) }
-            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy)
+            guard case .act = decision else { return (action, decision, [], footprint) }
+            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint)
         }
         let resolved = resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
         if resolved.resolution == nil, action == .commands, case .string(let command)? = arguments["command"] {
             let fallback = scoped.decide(forCommand: command)
-            return (action, fallback.decision, fallback.authorizedBy)
+            return (action, fallback.decision, fallback.authorizedBy, footprint)
         }
-        return (action, resolved.decision, resolved.authorizedBy)
+        return (action, resolved.decision, resolved.authorizedBy, footprint)
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
@@ -411,7 +412,7 @@ private struct NativeCompanionRun {
     }
 
     func recordDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority,
-                        honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String]) {
+                        honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
         NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse)
     }
 
@@ -645,7 +646,7 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision, authorizedBy) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
+        let (action, decision, authorizedBy, footprint) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
         if decision == .handOff { return try handOff(&checkpoint, title: title) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
@@ -664,11 +665,12 @@ private struct NativeCompanionRun {
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
                                                      live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy)
         if !authorizedBy.isEmpty, case .admitted = admission { environment.recordsChanged() }
-        return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title, &checkpoint)
+        return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title,
+                                  footprint: footprint, &checkpoint)
     }
 
     func dispatch(_ admission: NativeEffectAdmission, call: NativeTaskGenerationToolCall, definition: NativeToolDefinition,
-                  arguments: [String: NativeJSONValue], key: String, title: String,
+                  arguments: [String: NativeJSONValue], key: String, title: String, footprint: [String]? = nil,
                   _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
         guard case .admitted(let record) = admission else {
             if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, &checkpoint) }
@@ -679,9 +681,11 @@ private struct NativeCompanionRun {
         let seconds = definition.timeout.map { Double($0.components.seconds) } ?? environment.defaultToolSeconds
         do {
             let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) {
-                try await NativeRuleAdmission.$admitted.withValue(true) {
-                    if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
-                    return try await definition.execute(arguments)
+                try await NativeRuleAdmission.$footprint.withValue(footprint) {
+                    try await NativeRuleAdmission.$admitted.withValue(true) {
+                        if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
+                        return try await definition.execute(arguments)
+                    }
                 }
             }
             let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
@@ -861,14 +865,14 @@ private struct NativeCompanionRun {
                 return nil
             }
             let authority = authority()
-            let live = recordDecision(definition, arguments, authority, honoringLimitedUse: false).decision
-            if live == .handOff { return try handOff(&checkpoint, title: title) }
+            let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
+            if approved.decision == .handOff { return try handOff(&checkpoint, title: title) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
                                                          live: liveRevisions, rulesDurable: authority.resolver.durable)
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
-                                      key: record.proposal.idempotencyKey, title: title, &checkpoint)
+                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, &checkpoint)
         case "reconcile":
             guard let digest = pending.digest, let call = call(pending.callID, checkpoint) else { return nil }
             let title = pending.title ?? "an earlier step"
