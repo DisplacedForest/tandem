@@ -123,7 +123,7 @@ struct OnboardingSheet: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
-            assistantName: config.assistantName,
+            companion: CompanionSubject(config.suppliedAssistantName),
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
@@ -186,7 +186,7 @@ struct IdentityOnboardingEditor: View {
             Text("Tandem is the app. The assistant inside it is yours to name.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             LabeledContent("Assistant's name") {
-                TextField(ConfigStore.defaultAssistantName, text: config.binding("assistant_name"))
+                TextField("Name", text: config.binding("assistant_name"))
                     .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
             }
             LabeledContent("Your name") {

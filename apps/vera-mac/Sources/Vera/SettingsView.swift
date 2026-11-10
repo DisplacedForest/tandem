@@ -80,7 +80,7 @@ private struct PersonaTab: View {
 private struct NativeToolsTab: View {
     var body: some View {
         Form {
-            Section("Tools available to the model") { NativeToolEditor() }
+            Section("Tools") { NativeToolEditor() }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -395,6 +395,9 @@ struct NativeToolEditor: View {
                         Text(tool.name)
                         Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
+                }
+                if config.nativeSettings.enabledToolIDs.contains(tool.id), let access = store.toolAccess(tool.id) {
+                    NativeToolAccessRow(access: access)
                 }
             }
             if !unavailable.isEmpty {
@@ -858,7 +861,7 @@ private struct IdentityTab: View {
     var body: some View {
         Form {
             Section("Identity") {
-                ConfigField(label: "Assistant's name", key: "assistant_name", placeholder: ConfigStore.defaultAssistantName,
+                ConfigField(label: "Assistant's name", key: "assistant_name", placeholder: "Name",
                             tip: "How your assistant is named across chat and background work. Tandem is the app; this is the assistant.")
                 ConfigField(label: "Your name", key: "owner_name", placeholder: "how your assistant greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
@@ -1175,7 +1178,7 @@ private struct SaveSection: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
-            assistantName: config.assistantName,
+            companion: CompanionSubject(config.suppliedAssistantName),
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
@@ -1184,5 +1187,37 @@ private struct SaveSection: View {
             rules: config.nativeSettings.rules,
             capabilityDeclarations: config.capabilityTools.declarations)
         status = "Saved"
+    }
+}
+
+struct NativeToolAccessRow: View {
+    let access: NativeToolAccess
+    @State private var refresh = 0
+
+    var body: some View {
+        let state = access.state()
+        Group {
+            if let status = access.status(state) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                    Text(status.line).font(.system(size: 12))
+                    Spacer()
+                    Button(status.action) {
+                        if state == .notAsked {
+                            Task {
+                                _ = await access.request()
+                                refresh += 1
+                            }
+                        } else if let pane = access.settingsPane {
+                            NSWorkspace.shared.open(pane)
+                        }
+                    }
+                }
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .id(refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh += 1 }
     }
 }

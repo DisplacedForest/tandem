@@ -11,7 +11,7 @@ struct PreferencesSettingsView: View {
     var body: some View {
         if let preferences = store.nativePreferenceStore {
             VStack(alignment: .leading, spacing: 8) {
-                Text("\(store.assistantName) follows these everywhere. You can also just say one in chat.")
+                Text("\(store.companion.leading) follows these everywhere. You can also just say one in chat.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 ForEach(rows) { row in
                     if editingID == row.id {

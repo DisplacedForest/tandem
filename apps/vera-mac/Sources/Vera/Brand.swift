@@ -94,6 +94,20 @@ extension EnvironmentValues {
     }
 }
 
+struct CompanionSubject: Equatable, Sendable {
+    let name: String?
+
+    init(_ name: String?) {
+        self.name = CompanionSentence.savedName(name)
+    }
+
+    var inline: String { name ?? CompanionSentence.unnamedSubject }
+    var leading: String { CompanionSentence.subject(name: name, after: "") }
+    var threadTitle: String { leading }
+    var menuBarTitle: String { name ?? "Tandem" }
+    var thread: String { "\(inline)'s thread" }
+}
+
 enum CompanionSentence {
     static let placeholder = "{name}"
     static let unnamedSubject = "your companion"

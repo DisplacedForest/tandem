@@ -204,6 +204,7 @@ enum NativeFolderTools {
         return definitions.map { definition in
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
+            targeted.governed = true
             targeted.ruleSubjects = declared(paths)
             if let liveTargets, let action = definition.action {
                 let fallback = definition.confirmation == .required

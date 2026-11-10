@@ -179,7 +179,7 @@ struct VeraSidebar: View {
             if collapsed {
                 railButton("New chat", icon: "square.and.pencil") { store.newConversation() }
                 railButton("Search chats", icon: "magnifyingglass") { collapsed = false; openSearch() }
-                railButton(store.assistantName, icon: "bubble.left") { onSelect(.vera) }
+                railButton(store.companion.leading, icon: "bubble.left") { onSelect(.vera) }
                 if !renderSafe { CompactUpdateBadge { collapsed = false } }
             }
             collapseToggle
@@ -324,11 +324,11 @@ struct VeraSidebar: View {
     private var companionRow: some View {
         let selected = store.section == .vera
         return Button { onSelect(.vera) } label: {
-            SidebarRowLabel(icon: CompanionAvatar(size: 20), title: store.assistantName, selected: selected,
+            SidebarRowLabel(icon: CompanionAvatar(size: 20), title: store.companion.leading, selected: selected,
                             tintsIcon: false, rowHeight: 34)
         }
         .buttonStyle(SidebarRowStyle(selected: selected))
-        .help(store.assistantName).accessibilityLabel(store.assistantName)
+        .help(store.companion.leading).accessibilityLabel(store.companion.leading)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .contextMenu {
             Button(store.isDotPaused ? "Resume" : "Pause") { store.setDotState(store.isDotPaused ? .active : .paused) }

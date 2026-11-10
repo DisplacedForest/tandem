@@ -145,7 +145,7 @@ extension ChatStore {
 
     func artifactOriginLabel(_ record: ArtifactRecord) -> String {
         if let id = record.conversationID, isVeraThread(id) {
-            return ArtifactLibrarySelection.companionOriginLabel(name: savedCompanionName)
+            return ArtifactLibrarySelection.companionOriginLabel(name: companionName)
         }
         return ArtifactDateLabel.origin(record)
     }
@@ -170,7 +170,7 @@ struct ArtifactsView: View {
     private var conversationFilterTitle: String? {
         guard let conversationFilter = state.conversationFilter else { return nil }
         if store.isVeraThread(conversationFilter) {
-            return ArtifactLibrarySelection.companionFilterTitle(name: store.savedCompanionName)
+            return ArtifactLibrarySelection.companionFilterTitle(name: store.companionName)
         }
         return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
     }

@@ -574,7 +574,7 @@ struct PromptLibraryShotView: View {
             Spacer()
             if variant == "prompt-preview" {
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
-                    persona: "You are Vera. Answer plainly, admit uncertainty, and keep household matters private.",
+                    persona: "Answer plainly, admit uncertainty, and keep household matters private.",
                     userScope: "I prefer metric units and 24 hour time.",
                     conversationInstructions: "Keep answers under three paragraphs in this conversation.",
                     timestamp: Self.fixtureDate,
@@ -626,7 +626,7 @@ struct PromptLibraryShotView: View {
                     Spacer()
                     chip("Persona")
                 }
-                Text("You are Vera. Answer in as few words as accuracy allows.")
+                Text("Answer in as few words as accuracy allows.")
                     .font(.system(size: 13))
                     .padding(10).frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
                     .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))

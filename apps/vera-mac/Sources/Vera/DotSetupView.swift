@@ -40,14 +40,16 @@ enum DotProfileCopy {
     @MainActor
     static func saveName(_ name: String, config: ConfigStore, store: ChatStore) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != config["assistant_name"].trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        let previous = config["assistant_name"]
+        guard trimmed != previous.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         config["assistant_name"] = trimmed
         do {
             try config.save()
         } catch {
+            config["assistant_name"] = previous
             return "The name couldn't be saved: \(error.localizedDescription)"
         }
-        store.adoptAssistantName(config.assistantName)
+        store.adoptAssistantName(config.suppliedAssistantName)
         return nil
     }
 }
@@ -67,7 +69,7 @@ struct DotProfileForm: View {
 
     var body: some View {
         Form {
-            TextField("Name", text: $name, prompt: Text(ConfigStore.defaultAssistantName))
+            TextField("Name", text: $name, prompt: Text("Name"))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Goal")
                 TextEditor(text: goalBinding)

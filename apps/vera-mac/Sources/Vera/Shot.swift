@@ -14,6 +14,10 @@ enum Shot {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if NativeToolAccessShot.views[view] != nil {
+            NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view == "rules" || view == "rules-dark" || view == "rules-info" || view == "rules-unnamed" {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
@@ -42,7 +46,13 @@ enum Shot {
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
         let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
         let workSeed = view == "conversation-work" || view == "conversation-narrow" ? OngoingWorkFixture.store() : nil
+        unsetenv("VERA_ASSISTANT_NAME")
+        if CompanionNameShot.views.contains(view) {
+            CompanionNameShot.render(to: path, appearance: appearance)
+            return
+        }
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
+        CompanionNameShot.apply(to: store)
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -108,6 +118,7 @@ enum Shot {
             )
         } else if view == "companion" {
             let seeded = CompanionShotFixture.store()
+            CompanionNameShot.apply(to: seeded)
             content = AnyView(
                 CompanionPanelView(renderSafe: true)
                     .environment(\.renderSafe, true)
@@ -396,7 +407,7 @@ enum Shot {
             )
         } else if view == "companion-picker" {
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
-                                     readConfiguration: { ["assistant_name": "Sol"] },
+                                     readConfiguration: { CompanionNameShot.name(environment: ProcessInfo.processInfo.environment).map { ["assistant_name": $0] } ?? [:] },
                                      writeConfiguration: { _ in })
             let fixture = CompanionAppearanceFixtureStore()
             fixture.stored = CompanionAppearance(shape: .fold, color: .periwinkle)
@@ -432,7 +443,7 @@ enum Shot {
             let display = try! NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
             let item = CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: nil,
                                                        hasArtifact: true, date: Date())
-            let model = CompanionOverviewModel(name: "Ada", goal: "", services: "", rules: "", paused: false,
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, goal: "", services: "", rules: "", paused: false,
                                                activity: [item], outputs: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
@@ -455,8 +466,8 @@ enum Shot {
                     : "Would it help if I focused the weekly greenhouse note on what needs your attention?")]
                 if introduction { store.dotProfile = NativeDotProfile() }
             }
-            let model = populated && !introduction && !refinement ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
-                : CompanionOverviewModel.build(name: NativeDotShotFixture.name, profile: store.dotProfile, services: "Can reach every service that is turned on.",
+            let model = populated && !introduction && !refinement ? CompanionOverviewFixture.model(name: store.companion.leading)
+                : CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile, services: "Can reach every service that is turned on.",
                                                rules: store.companionRulesSummary, activity: [], results: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
@@ -1140,7 +1151,7 @@ struct NativeSettingsShotView: View {
             }
         } else if tab == "Tools" {
             VStack(alignment: .leading, spacing: 12) {
-                Text("TOOLS AVAILABLE TO THE MODEL").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                Text("TOOLS").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
                 Text("Only enabled tools that native chat can actually run are shared with the model.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -1148,7 +1159,7 @@ struct NativeSettingsShotView: View {
                     Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Apple Reminders").font(.system(size: 12, weight: .medium))
-                        Text("Reads and updates reminder lists after you grant access.")
+                        Text("Reads and updates your reminder lists.")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
@@ -1359,8 +1370,8 @@ struct OnboardingShotView: View {
                 HStack(spacing: 12) {
                     VeraMark(size: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Set up Vera").font(.system(size: 20, weight: .semibold))
-                        Text("Connect a model, choose how Vera responds, and review available tools.")
+                        Text("Set up Tandem").font(.system(size: 20, weight: .semibold))
+                        Text("Connect a model. Memory and Pulse are optional and can be set up later in Settings.")
                             .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                 }

@@ -48,7 +48,7 @@ enum NativeSessionFixture {
                       gate: NativeSessionGate, confirmation: Bool = false) -> ChatStore {
         let definition = NativeToolDefinition(id: "hold", name: "hold", title: "Check the reference",
             description: "Read the synthetic reference", parameters: .object(["type": .string("object")]),
-            confirmation: confirmation ? .required : .none, timeout: .seconds(10), isAvailable: { true },
+            confirmation: confirmation ? .required : .none, timeout: .seconds(10), effect: .read, isAvailable: { true },
             execute: { _ in await gate.wait(); return .object(["finding": .string("The reference is ready")]) })
         let store = ChatStore(nativeConfig: config, nativeTransport: transport, repository: repository,
             nativeEnabledToolIDs: ["hold", NativeWebTools.searchToolID, NativeWebTools.researchToolID],
