@@ -399,6 +399,23 @@ extension SelfTest {
                                                        honoringLimitedUse: true)
         try require(demanding.demandsConfirmation && asked.decision == .ask && asked.authorizedBy.isEmpty,
                     "A tool that demands confirmation asks in background work even when its kind acts")
+        var runner = NativeToolDefinition(id: "fixture-runner", name: "fixture_runner", title: "Fixture", description: "Fixture",
+                                          parameters: .object(["type": .string("object")]), confirmation: .required,
+                                          isAvailable: { true }, execute: { _ in .null })
+        runner.action = .commands
+        var commandsAct = NativeRules.defaults
+        commandsAct.set(.act, for: .commands)
+        let listing: [String: NativeJSONValue] = ["command": .string("ls")]
+        let ran = NativeCompanionWorker.ruleDecision(runner, listing, resolver: NativeRuleResolver(global: commandsAct, conversation: NativeConversationRules(), requestText: ""),
+                                                     honoringLimitedUse: true)
+        try require(runner.demandsConfirmation && ran.action == .commands && ran.decision == .ask && ran.authorizedBy.isEmpty,
+                    "A command tool that demands confirmation asks in background work even when commands act")
+        let relaxedRunner = NativeToolDefinition(id: "fixture-runner", name: "fixture_runner", title: "Fixture", description: "Fixture",
+                                                 parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write, action: .commands,
+                                                 isAvailable: { true }, execute: { _ in .null })
+        try require(NativeCompanionWorker.ruleDecision(relaxedRunner, listing, resolver: NativeRuleResolver(global: commandsAct, conversation: NativeConversationRules(), requestText: ""),
+                                                       honoringLimitedUse: true).decision.requiresConfirmation == false,
+                    "The same command tool without the demand still acts")
         var governedTool = demanding
         governedTool.governed = true
         try require(!governedTool.demandsConfirmation && !undeclared.demandsConfirmation, "Only an ungoverned tool with a fixed required flag demands confirmation")

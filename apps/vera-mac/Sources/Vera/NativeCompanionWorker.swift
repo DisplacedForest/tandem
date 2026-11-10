@@ -257,6 +257,7 @@ enum NativeCompanionWorker {
         let resolved = resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
         if resolved.resolution == nil, action == .commands, case .string(let command)? = arguments["command"] {
             let fallback = scoped.decide(forCommand: command)
+            if case .act = fallback.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
             return (action, fallback.decision, fallback.authorizedBy, footprint)
         }
         if case .act = resolved.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
