@@ -6,7 +6,7 @@ enum CompanionNameShot {
     static let views: Set<String> = ["companion-name-prompt"]
 
     static let variable = "TANDEM_SHOT_COMPANION"
-    static let sampleName = "Ada"
+    static let sampleName = NativeDotShotFixture.name
 
     static func name(environment: [String: String]) -> String? {
         guard let value = environment[variable] else { return sampleName }

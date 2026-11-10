@@ -400,7 +400,7 @@ enum Shot {
             )
         } else if view == "companion-picker" {
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
-                                     readConfiguration: { ["assistant_name": "Sol"] },
+                                     readConfiguration: { CompanionNameShot.name(environment: ProcessInfo.processInfo.environment).map { ["assistant_name": $0] } ?? [:] },
                                      writeConfiguration: { _ in })
             let fixture = CompanionAppearanceFixtureStore()
             fixture.stored = CompanionAppearance(shape: .fold, color: .periwinkle)
@@ -436,7 +436,7 @@ enum Shot {
             let display = try! NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
             let item = CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: nil,
                                                        hasArtifact: true, date: Date())
-            let model = CompanionOverviewModel(name: "Ada", goal: "", services: "", rules: "", paused: false,
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, goal: "", services: "", rules: "", paused: false,
                                                activity: [item], outputs: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
@@ -459,8 +459,8 @@ enum Shot {
                     : "Would it help if I focused the weekly greenhouse note on what needs your attention?")]
                 if introduction { store.dotProfile = NativeDotProfile() }
             }
-            let model = populated && !introduction && !refinement ? CompanionOverviewFixture.model(name: NativeDotShotFixture.name)
-                : CompanionOverviewModel.build(name: NativeDotShotFixture.name, profile: store.dotProfile, services: "Can reach every service that is turned on.",
+            let model = populated && !introduction && !refinement ? CompanionOverviewFixture.model(name: store.companion.leading)
+                : CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile, services: "Can reach every service that is turned on.",
                                                rules: store.companionRulesSummary, activity: [], results: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(

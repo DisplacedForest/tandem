@@ -14,6 +14,7 @@ struct CompanionAppearanceDraft: Equatable {
     var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var displayName: String { trimmedName.isEmpty ? originalName : trimmedName }
+    var subject: CompanionSubject { CompanionSubject(displayName) }
 
     var nameChanged: Bool { !trimmedName.isEmpty && trimmedName != originalName }
 
@@ -88,7 +89,7 @@ struct CompanionAppearancePicker: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Customize \(draft.displayName)")
+            Text("Customize \(draft.subject.inline)")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             VStack(alignment: .leading, spacing: 8) {
@@ -127,9 +128,9 @@ struct CompanionAppearancePicker: View {
     private var preview: some View {
         VStack(spacing: 18) {
             Spacer(minLength: 0)
-            CompanionAvatarView(appearance: draft.appearance, state: .ready, size: 160, name: draft.displayName,
+            CompanionAvatarView(appearance: draft.appearance, state: .ready, size: 160, name: draft.subject.name,
                                 renderSafe: renderSafe)
-            Text(draft.displayName)
+            Text(draft.subject.leading)
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)

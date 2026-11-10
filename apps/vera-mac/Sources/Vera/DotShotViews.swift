@@ -21,7 +21,7 @@ struct DotSheetShot: View {
                     .padding(.top, 4)
             }
             VStack(alignment: .leading, spacing: 12) {
-                row("Name") { box(Text(store.companion.leading).font(.system(size: 13)), height: nil) }
+                row("Name") { box(Text(store.companionName ?? "Name").font(.system(size: 13)).foregroundStyle(store.companionName == nil ? Theme.textSecondary : Theme.textPrimary), height: nil) }
                 row("Goal") { box(Text(goal).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true), height: settings ? 54 : 74) }
                 row("Connected services") {
                     VStack(alignment: .leading, spacing: 5) {
