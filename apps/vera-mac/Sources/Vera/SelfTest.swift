@@ -383,6 +383,7 @@ enum SelfTest {
         await runNativeWebTools()
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try runSettingsSections() } catch { print("SELFTEST ERROR: settings sections \(error)"); exit(1) }
+        do { try runTranscriptFollow() } catch { print("SELFTEST ERROR: transcript follow \(error)"); exit(1) }
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
         do { try runCompanionAttention() } catch { print("SELFTEST ERROR: companion attention \(error)"); exit(1) }
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
@@ -2606,9 +2607,9 @@ enum SelfTest {
             }
             let catalog = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
             let names = catalog.declarations.map(\.name)
-            guard names.prefix(4) == [
-                "actions_registry", "propose_action", "author_skill", "recurring_watch",
-            ], names.dropFirst(4) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
+            guard names.prefix(3) == [
+                "actions_registry", "propose_action", "author_skill",
+            ], names.dropFirst(3) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
                 print("SELFTEST ERROR: capability tool declaration order \(names)"); exit(1)
             }
             let failures = Dictionary(
@@ -2628,8 +2629,9 @@ enum SelfTest {
 
             let bundled = NativeCapabilityTools.bundled
             let propose = bundled.first { $0.name == "propose_action" }
-            let watch = bundled.first { $0.name == "recurring_watch" }
-            guard bundled.count == 4,
+            guard bundled.count == 3,
+                  !bundled.contains(where: { $0.name == "recurring_watch" }),
+                  !bundled.contains(where: { $0.endpoint.contains("/pulse/veins/author") }),
                   bundled.first(where: { $0.name == "actions_registry" })?.method == .get,
                   bundled.first(where: { $0.name == "actions_registry" })?.properties.isEmpty == true,
                   propose?.method == .post,
@@ -2637,12 +2639,6 @@ enum SelfTest {
                   propose?.jsonFields == ["args_json": "args"],
                   propose?.required == ["body", "title", "verb"],
                   bundled.first(where: { $0.name == "author_skill" })?.confirmation == .required,
-                  watch?.method == .post,
-                  watch?.confirmation == NativeToolConfirmation.none,
-                  watch?.jsonFields == ["draft_json": "draft"],
-                  watch?.required == ["mode"],
-                  watch?.timeoutSeconds == 60,
-                  watch?.endpoint == "/pulse/veins/author",
                   bundled.allSatisfy(\.needsAPIBase) else {
                 print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
             }
@@ -2657,6 +2653,35 @@ enum SelfTest {
                 print("SELFTEST ERROR: capability definitions from declarations"); exit(1)
             }
             let byName = Dictionary(uniqueKeysWithValues: definitions.map { ($0.name, $0) })
+
+            let retiredID = NativeCapabilityTools.identifier(name: "recurring_watch")
+            let savedSettings = try JSONDecoder().decode(
+                NativeChatSettings.self,
+                from: Data("{\"enabledToolIDs\":[\"\(retiredID)\",\"\(NativeCapabilityTools.identifier(name: "inventory_lookup"))\"]}".utf8))
+            let activeNames = NativeToolRegistry(definitions: definitions)
+                .active(enabledIDs: savedSettings.enabledToolIDs).map(\.name)
+            guard savedSettings.enabledToolIDs.contains(retiredID), activeNames == ["inventory_lookup"] else {
+                print("SELFTEST ERROR: saved enabled ids naming the retired watch tool \(activeNames)"); exit(1)
+            }
+
+            let ownRoot = root.appendingPathComponent("own-watch", isDirectory: true)
+            try FileManager.default.createDirectory(at: ownRoot, withIntermediateDirectories: true)
+            try Data("""
+            {
+              "name": "recurring_watch",
+              "title": "Own watch",
+              "description": "A person's own declaration.",
+              "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+              "endpoint": "https://example.test/watch",
+              "method": "GET",
+              "confirmation": "none"
+            }
+            """.utf8).write(to: ownRoot.appendingPathComponent("watch.json"))
+            let ownCatalog = NativeCapabilityTools.catalog(directory: ownRoot, reservedNames: reserved)
+            guard ownCatalog.failures.isEmpty,
+                  ownCatalog.declarations.map(\.name).suffix(1) == ["recurring_watch"] else {
+                print("SELFTEST ERROR: a declared tool named recurring_watch \(ownCatalog.failures)"); exit(1)
+            }
 
             client.respond("/inventory/lookup", status: 200, body: "{\"items\":[\"widget\"]}")
             guard let lookup = byName["inventory_lookup"] else {

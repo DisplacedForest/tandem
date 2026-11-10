@@ -15,6 +15,7 @@ struct ShotView: View {
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
+    var jumpToLatest: Bool = false
     var dotHeader: Bool = false
     var companionPanel: CompanionOverviewModel? = nil
     var companionSelection: String? = nil
@@ -348,10 +349,9 @@ struct ShotView: View {
 
         With those back you could do a quick `Bolognese`. Want me to add them to the list?
         """))
-        m.append(Message(role: .user, text: "Keep an eye on lumber prices for me"))
+        m.append(Message(role: .user, text: "What moves lumber prices the most?"))
         m.append(Message(role: .assistant, text: """
-        <details type="tool_calls" done="true" name="recurring_watch"><summary>Tool Executed</summary>"drafted: Lumber prices"</details>
-        Here's the watch I'd set up: 'Lumber prices' will run http fetch then trip band every 30 minutes and post a card to your Pulse when something is worth saying. Should I save it?
+        Three things do most of the work: housing starts, mill curtailments and the futures curve. Want a short read on each?
         """))
         m.append(Message(role: .assistant, text: "Happy to line up the next batch. Which direction?", ask: VeraAsk.mock()))
         m.append(Message(role: .assistant, text: "Sketched the label mark. Open it in the Canvas to tweak.", artifacts: [Artifact.mock()]))
@@ -570,6 +570,9 @@ struct ShotView: View {
             .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()
+            .overlay(alignment: .bottom) {
+                if jumpToLatest { JumpToLatestButton(action: {}).padding(.bottom, 8) }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })
