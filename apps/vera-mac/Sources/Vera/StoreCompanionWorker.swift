@@ -49,6 +49,10 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
 }
 
 extension ChatStore {
+    nonisolated static func companionCommandDefinitions(grants: @escaping @Sendable () -> [FolderGrant]) -> [NativeToolDefinition] {
+        NativeCommandTools.definitions(grants: grants, decision: .ask, reason: { _ in .rule }, record: { _ in })
+    }
+
     func companionWorkerContext(connectedToolIDs: [String]?) -> NativeCompanionWorkerContext? {
         guard let threadID = veraThreadID else { return nil }
         var definitions = nativeSharedToolDefinitions
@@ -60,8 +64,7 @@ extension ChatStore {
                                                                      edits: .ask, trash: .ask, live: { action in
             rules.resolver(for: threadID, requestText: "").decision(for: action)
         }))
-        definitions.append(contentsOf: NativeCommandTools.definitions(grants: { source.grants(for: threadID) }, decision: .ask,
-                                                                      reason: { _ in .rule }, record: { _ in }))
+        definitions.append(contentsOf: Self.companionCommandDefinitions(grants: { source.grants(for: threadID) }))
         var enabled = enabledNativeToolIDs
         for server in nativeMCP?.servers ?? [] {
             for tool in server.tools where nativeMCP?.authority.access.allowed(tool, scope: "worker") == true { enabled.insert(tool.id) }

@@ -261,6 +261,7 @@ extension SelfTest {
         try await companionReadRetries()
         try await companionCapsAndFences()
         try companionCommandRules()
+        try await companionProductionCommands()
         try await companionBlockedResumes()
         try await companionAssignmentEntry()
         try companionShape()
@@ -937,6 +938,50 @@ extension SelfTest {
         try require(decide(["command": .string("swift build $(cat token)")], acting) != .act(.rule),
                     "A command that is not plain asks at least, as it does in chat")
         try require(decide(["command": .string("rm -rf ../Other")], acting) == .handOff, "A sensitive command is always handed to the person")
+    }
+
+    private static func companionProductionCommands() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-commands-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        for approving in [false, true] {
+            var harness = try NativeCompanionHarness(rules: [.commands: approving ? .ask : .act]) { messages in
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeCommandTools.runName, "{\"command\":\"echo admitted\"}")
+                }
+                return NativeCompanionScriptedModel.text("Ran the check.")
+            }
+            let tools = ChatStore.companionCommandDefinitions(grants: { [grant] })
+            let thread = harness.thread
+            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            let id = try harness.create("Run the check")
+            var settled = try await harness.runUntilSettled()
+            if approving {
+                try require(settled.state == .needsDecision, "A command under an ask rule waits for the person")
+                try harness.reply(settled, "approve", digest: try harness.decision(settled)["digest"] as? String)
+                settled = try await harness.runUntilSettled()
+            }
+            let effects = try harness.effects(id)
+            var stdout = ""
+            if case .object(let fields)? = effects.first?.receipt, case .string(let text)? = fields["stdout"] { stdout = text }
+            try require(settled.state == .completed && effects.count == 1 && effects[0].state == .completed && stdout.contains("admitted"),
+                        approving ? "The production command tool runs a command the person approved in the worker"
+                                  : "The production command tool runs a command the ledger admitted automatically")
+        }
+        try require(!NativeRuleAdmission.admitted, "The admitted marker never leaks out of worker dispatch")
+        let foregroundCommand = NativeCommandTools.definitions(grants: { [grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
+                                                               live: { _, _ in .ask })[0]
+        var commandMessage = ""
+        do { _ = try await foregroundCommand.execute(["command": .string("echo leaked")]) } catch { commandMessage = error.localizedDescription }
+        try require(commandMessage == NativeRuleResolver.changedMessage, "A foreground command after worker runs still goes through its approval gate")
+        let foregroundWrite = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
+                                                            live: { _ in .ask }).first { $0.name == NativeFolderTools.writeName }!
+        var writeMessage = ""
+        do { _ = try await foregroundWrite.execute(["path": .string(grant.path + "/leak.txt"), "content": .string("x")]) } catch { writeMessage = error.localizedDescription }
+        try require(writeMessage == NativeRuleResolver.changedMessage && !FileManager.default.fileExists(atPath: grant.path + "/leak.txt"),
+                    "A foreground file write after worker runs still goes through its approval gate")
     }
 
     private static func companionCapsAndFences() async throws {

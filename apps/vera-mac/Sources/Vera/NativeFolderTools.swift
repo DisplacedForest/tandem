@@ -358,7 +358,7 @@ enum NativeFolderTools {
             default: throw NativeFolderAccessError.notADirectory(location.path)
             }
         case .failed(let code): throw NativeFolderIO.failure(code, "Couldn't check \(location.path)")
-        case .absent: try NativeFolderIO.requireNewName(directory, location.name, display: location.path)
+        case .absent: break
         }
         let change = NativeFileChange(path: location.path, kind: existed ? .edited : .created, before: before, after: content)
         try commit()
@@ -408,7 +408,7 @@ enum NativeFolderTools {
         switch NativeFolderIO.lookup(toDirectory, to.name) {
         case .present: throw NativeFolderAccessError.exists(to.path)
         case .failed(let code): throw NativeFolderIO.failure(code, "Couldn't check \(to.path)")
-        case .absent: try NativeFolderIO.requireNewName(toDirectory, to.name, display: to.path)
+        case .absent: break
         }
         let text = NativeFolderIO.kind(info) == "file" ? NativeFolderIO.readTextIfSmall(fromDirectory, from.name, display: from.path, limit: NativeFileChange.contentCap) : nil
         try commit()
@@ -461,7 +461,7 @@ enum NativeFolderTools {
                 }
             }
             guard allowed else { throw footprintChanged(display) }
-            try NativeFolderIO.requireNewName(directory, component, display: display)
+            try NativeFolderIO.requireLookup(directory, component, display: display)
             missing = true
             guard creating else { continue }
             if mkdirat(directory.raw, component, 0o755) == 0 {

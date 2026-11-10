@@ -1249,5 +1249,15 @@ enum NativeRuleRecordsSelftest {
         let moved = await run(tools[NativeFolderTools.moveName]!, ["from": .string(open + "/from.txt"), "to": .string(open + "/" + long)])
         try require(moved != "ran" && (try records.record(id: once.id))?.remainingUses == 1 && FileManager.default.fileExists(atPath: open + "/from.txt"),
                     "A move destination name longer than the volume allows is refused before the use is spent")
+        let wide = String(repeating: "\u{4e2d}", count: 100)
+        let plain = chatFolders(NativeRuleSource(), store: nil, grant: fixture.grant)
+        let madeWide = await run(plain[NativeFolderTools.mkdirName]!, ["path": .string(open + "/" + wide)])
+        let nestedWide = await run(plain[NativeFolderTools.mkdirName]!, ["path": .string(open + "/fresh/" + wide)])
+        let wroteWide = await run(plain[NativeFolderTools.writeName]!, ["path": .string(open + "/" + wide + ".txt"), "content": .string("x")])
+        let movedWide = await run(plain[NativeFolderTools.moveName]!, ["from": .string(open + "/from.txt"), "to": .string(open + "/moved-" + wide)])
+        try require(madeWide == "ran" && FileManager.default.fileExists(atPath: open + "/" + wide), "A long multibyte folder name the volume accepts is created")
+        try require(nestedWide == "ran" && FileManager.default.fileExists(atPath: open + "/fresh/" + wide), "A long multibyte name is accepted as a nested new component")
+        try require(wroteWide == "ran" && FileManager.default.fileExists(atPath: open + "/" + wide + ".txt"), "A long multibyte file name the volume accepts is written")
+        try require(movedWide == "ran" && FileManager.default.fileExists(atPath: open + "/moved-" + wide), "A long multibyte move destination the volume accepts is used")
     }
 }

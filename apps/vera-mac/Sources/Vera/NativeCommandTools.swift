@@ -138,10 +138,13 @@ enum NativeCommandTools {
                 let requested = arguments.folderString("directory")
                 let (action, current, confirm) = planned(command, requested)
                 if action == .sensitive { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.sensitive)) }
-                if approvedNow == nil, remembered != nil {
-                    guard case .act = current else { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+                let admitted = NativeRuleAdmission.admitted
+                if !admitted {
+                    if approvedNow == nil, remembered != nil {
+                        guard case .act = current else { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+                    }
+                    try NativeRuleResolver.gate(live: current, planned: approvedNow == nil ? .act(.rule) : .ask, action: action, approved: approvedNow != nil)
                 }
-                try NativeRuleResolver.gate(live: current, planned: approvedNow == nil ? .act(.rule) : .ask, action: action, approved: approvedNow != nil)
                 let currentGrants = grants()
                 guard !currentGrants.isEmpty else {
                     let intended = requested ?? (grantedAtStart.count == 1 ? grantedAtStart[0].path : "the working directory")
@@ -163,12 +166,12 @@ enum NativeCommandTools {
                 let directory = try NativeFolderIO.walk(location, components: location.components)
                 let requestedTimeout = arguments.folderInt("timeout_seconds").map { Duration.seconds(max(1, $0)) } ?? NativeCommandLimits.defaultTimeout
                 let limit = min(requestedTimeout, NativeCommandLimits.maximumTimeout)
-                if let confirm, !confirm() { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+                if !admitted, let confirm, !confirm() { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
                 let outcome = try await NativeCommandRunner.run(command: command, directory: directory, timeout: limit, environment: environment())
                 let run = NativeCommandRun(
                     id: activityID, command: command, directory: location.path,
                     outcome: outcome.timedOut ? .timedOut : (outcome.canceled ? .canceled : .ran),
-                    reason: approvedNow ?? { if case .act(let value) = current { value } else { staticReason } }(),
+                    reason: approvedNow ?? (admitted ? remembered : nil) ?? { if case .act(let value) = current { value } else { staticReason } }(),
                     exitCode: outcome.exitCode.map(Int.init), signal: outcome.signal.map(Int.init),
                     stdout: outcome.stdout, stderr: outcome.stderr,
                     stdoutTruncated: outcome.stdoutTruncated, stderrTruncated: outcome.stderrTruncated,
@@ -186,16 +189,10 @@ enum NativeCommandTools {
         }
         definition.ruleDecision = { arguments, resolver in
             guard case .string(let command)? = arguments["command"] else { return .handOff }
-            let directory = arguments.folderString("directory")
-            let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
-            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
-            let current: NativeRuleDecision
-            switch action {
-            case .sensitive: return .handOff
-            case .commands: current = resolver.decision(forCommand: command)
-            default: current = resolver.decision(for: action)
-            }
-            return plain ? current : current.atLeastAsk
+            let (_, current, _) = evaluate(command: command, directory: arguments.folderString("directory"), grants: grants(), fallback: .handOff,
+                                           live: { command, action in action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action) },
+                                           liveTargets: nil)
+            return current
         }
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }

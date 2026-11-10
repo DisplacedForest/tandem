@@ -59,11 +59,8 @@ enum NativeFolderIO {
         NativeToolError.failed("\(context): \(String(cString: strerror(code)))")
     }
 
-    static func requireNewName(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws {
-        let limit = fpathconf(directory.raw, _PC_NAME_MAX)
-        if limit > 0, name.utf8.count > limit {
-            throw NativeToolError.invalidArguments("The name of \(display) is longer than this volume allows")
-        }
+    static func requireLookup(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws {
+        if case .failed(let code) = lookup(directory, name) { throw failure(code, "Couldn't use \(display)") }
     }
 
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
