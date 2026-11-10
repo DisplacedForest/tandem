@@ -71,7 +71,7 @@ extension SelfTest {
                                                                             assistantProfile: dotContext)).prompt
         let focusedPrompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                                assistantProfile: store.dotContext(for: focused.id, requestText: "hi"))).prompt
-        try require(veraPrompt.contains("STANDING ASSISTANT") && veraPrompt.contains(goal) && !focusedPrompt.contains("STANDING ASSISTANT"),
+        try require(veraPrompt.contains("Your standing role") && veraPrompt.contains(goal) && !focusedPrompt.contains("Your standing role"),
                     "Only the Vera thread's prompt has the standing assistant section")
         let long = NativeDotContext.render(name: "Ada", goal: String(repeating: "word ", count: 600), resolver: resolver)
         try require(long.count <= NativeDotContext.limit && long.contains("...") && long.contains(NativeDotContext.coordinatorNote), "A long goal is shortened to keep the block small")
@@ -265,7 +265,7 @@ extension SelfTest {
         let replayed = store.turnDotContext(legacy)
         let prompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                         assistantProfile: replayed)).prompt
-        try require(prompt.contains("STANDING ASSISTANT") && prompt.contains(goal), "An older Vera turn without a stored block still assembles with it")
+        try require(prompt.contains("Your standing role") && prompt.contains(goal), "An older Vera turn without a stored block still assembles with it")
         try require(store.turnDotContext(turn(store, conversationID: focusedID, text: "hi")) == nil, "An older focused turn stays without the block")
         var stored = legacy
         stored.dotContext = "Stored block"

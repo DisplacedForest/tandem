@@ -54,7 +54,7 @@ final class PiProviderFixtureState: @unchecked Sendable {
         let messages = body.pi("messages").piArray!, last = body.pi("messages").piArray!.last!
         let worker = names.contains("write_file")
         let prompt = messages.first?.pi("content").piString ?? ""
-        memoryChecks.append((worker, prompt.contains("USER-APPROVED MEMORY CONTEXT")))
+        memoryChecks.append((worker, prompt.contains("What the user asked you to remember")))
         try piCheck(!prompt.contains("Other-bank-only evidence"))
         let count = messages.filter { $0.pi("role").piString == "tool" }.count
         var name: String?, args: PiValue = .object([:])
