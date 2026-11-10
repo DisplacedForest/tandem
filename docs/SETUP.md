@@ -583,9 +583,9 @@ to everyone.
 **If you run the Vera Mac app, native chat does not need this service.** Open Settings,
 Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
 OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
-Reminders switch in Settings, Plugins controls the optional vera-api bridge wiring and
-does not expose the native chat schema. This path does not need vera-api and runs only for
-an explicit chat ask.
+Reminders entry in Settings, Plugins points vera-api at the standalone bridge below and
+takes its URL. It does not expose the native chat schema. This path does not need vera-api
+and runs only for an explicit chat ask.
 
 `services/vera-reminders` remains the headless reference for deployments with no Mac
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
@@ -606,13 +606,15 @@ vera-api runs all recurring work itself, with no external cron. Defaults:
 | Pulse briefing | daily 5:00 | Nothing (core, needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Knowledge grooming | daily 4:00 | `KNOWLEDGE_GROOM_ENABLED` |
+| Ranking weight fit from feedback | Sundays 4:30 | Nothing |
+| Conversation extraction into the Profile Graph | daily 4:45 | Nothing |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
 Pipeline veins register their jobs dynamically (one per definition, appearing and disappearing with the definition file), and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).
 
 With home-modeling consent on, the capture stream also tees every numeric `sensor.*` reading into a dedicated series store (`SERIES_DB_PATH`, default `/data/series.db`) retained for `SERIES_RETAIN_DAYS` (default 365). This is the substrate household forecasting reads. Inspect it at `GET /home/series` (entities + counts) and `GET /home/series/{entity_id}` (raw points); on first init it backfills from the existing event log. With capture off it stays empty and both endpoints return empty cleanly.
 
-A gated job never fires while its gate is closed: on a fresh install, nothing is monitored until its vein is enabled or its feature is consented to. The app's **Workflows** view, in the sidebar's **More** menu, renders all of this as a canvas: every flow as a node connected to the surface it feeds (the Pulse feed, the veins, memory, actions), with live status and running-state. The topology comes from `GET /agentic/graph`, a server-declared manifest, so a new capability appears on the canvas without an app update. Schedules can be pinned with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
+A gated job never fires while its gate is closed: on a fresh install, no vein runs until it is enabled and the home modeling jobs do nothing until that feature is consented to. The ungated jobs in the table run on their schedule from the first start. The app's **Workflows** view, in the sidebar's **More** menu, renders all of this as a canvas: every flow as a node connected to the surface it feeds (the Pulse feed, the veins, memory, actions), with live status and running-state. The topology comes from `GET /agentic/graph`, a server-declared manifest, so a new capability appears on the canvas without an app update. Schedules can be pinned with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
 
 Clicking any flow opens it in the workflow editor, and the sidebar switches to the node library served by the API's workflow catalog. Every flow is served as a workflow definition with a Schedule trigger at the head reflecting its real schedule: scheduled code-backed flows project their steps, veins project one step per pipeline block, and Pulse serves its stored graph. In an editable flow like Pulse, drag nodes into the main workflow canvas (dropping one onto a wire splices it into the path), drag from a node's output port to another's input port to connect them, hover a wire for an insert shortcut, and pan or zoom the canvas to work with larger graphs. Select a node to configure it through fields rendered from its served schema, and use an explicit draft promotion when the graph is ready. Code-backed flows carry a locked profile: the graph reads and inspects like any other, structural editing is absent and rejected server-side, and the settings each node's schema declares (starting with the trigger's schedule) still round-trip through the same draft and promote path. Promotion applies a changed schedule to the built-in scheduler, which stays the thing that actually fires runs. The server validates every save and promotion and its message appears in the editor when a graph is rejected. Editing a draft never changes a published workflow.
 
