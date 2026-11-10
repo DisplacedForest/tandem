@@ -33,12 +33,7 @@ struct NativeTaskCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if let applies = card.details.flatMap({ NativeCardChoices.split(details: $0).applies }), card.status == .needsInput {
-                Text(applies)
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let details = card.details.flatMap({ NativeCardChoices.split(details: $0).literal }), card.status == .needsInput {
+            if let details = card.details, !details.isEmpty, card.status == .needsInput {
                 let block = Text(details)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary)
@@ -70,15 +65,23 @@ struct NativeTaskCardView: View {
                     .font(.system(size: 12))
                     .accessibilityLabel("Save as document, \(card.title)")
             }
-            if card.canCancel || !card.offeredChoices.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !savingChoices.isEmpty {
-                        ChoiceFlow(spacing: 12, lineSpacing: 8) { ForEach(savingChoices, id: \.self) { choice in choiceButton(choice) } }
+            if isApproval {
+                CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle),
+                              allowApprove: onDecide != nil, allowDecline: onDecide != nil,
+                              onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
+                              onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
+                              onItem: { answer($0) })
+            } else if card.canCancel || !card.offeredChoices.isEmpty {
+                HStack(spacing: 12) {
+                    ForEach(card.offeredChoices, id: \.self) { choice in
+                        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
+                            Button(title) { answer(choice) }
+                                .buttonStyle(.bordered)
+                                .disabled(!canAnswer(choice))
+                                .accessibilityLabel("\(title), answer for \(card.title)")
+                        }
                     }
-                    HStack(spacing: 12) {
-                        ForEach(card.offeredChoices.filter { !savingChoices.contains($0) }, id: \.self) { choice in choiceButton(choice) }
-                        if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).fixedSize() }
-                    }
+                    if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
                 }
                 .font(.system(size: 12))
             }
@@ -92,20 +95,9 @@ struct NativeTaskCardView: View {
         .animation(.easeOut(duration: 0.3), value: highlighted)
     }
 
-    private var savingChoices: [String] {
-        card.offeredChoices.filter { NativeCardChoices.kind(wire: $0)?.saves == true }
-    }
-
-    @ViewBuilder
-    private func choiceButton(_ choice: String) -> some View {
-        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-            Button(title) { answer(choice) }
-                .buttonStyle(TaskChoiceStyle(prominent: choice == NativeCardChoiceKind.allowOnce.rawValue))
-                .disabled(!canAnswer(choice))
-                .fixedSize()
-                .help(choice == NativeCardChoices.commandNever ? NativeCardChoices.neverHelp : "")
-                .accessibilityLabel("\(title), answer for \(card.title)")
-        }
+    private var isApproval: Bool {
+        card.status == .needsInput && card.offeredChoices.contains(NativeCardChoiceKind.allowOnce.rawValue)
+            && card.offeredChoices.contains(NativeCardChoiceKind.decline.rawValue)
     }
 
     private func canAnswer(_ choice: String) -> Bool {
@@ -246,59 +238,5 @@ struct NativeArtifactMarkdown: View, Equatable {
         Markdown(content)
             .markdownTheme(Self.theme)
             .textSelection(.enabled)
-    }
-}
-
-struct TaskChoiceStyle: PrimitiveButtonStyle {
-    let prominent: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        if prominent {
-            Button(role: configuration.role, action: configuration.trigger) { configuration.label }.buttonStyle(.borderedProminent)
-        } else {
-            Button(role: configuration.role, action: configuration.trigger) { configuration.label }.buttonStyle(.bordered)
-        }
-    }
-}
-
-struct ChoiceFlow: Layout {
-    var spacing: CGFloat = 8
-    var lineSpacing: CGFloat = 6
-
-    private func rows(_ subviews: Subviews, width: CGFloat) -> [[(index: Int, size: CGSize)]] {
-        var rows: [[(index: Int, size: CGSize)]] = [[]]
-        var used: CGFloat = 0
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let needed = (rows[rows.count - 1].isEmpty ? 0 : spacing) + size.width
-            if !rows[rows.count - 1].isEmpty, used + needed > width {
-                rows.append([])
-                used = 0
-            }
-            used += (rows[rows.count - 1].isEmpty ? 0 : spacing) + size.width
-            rows[rows.count - 1].append((index, size))
-        }
-        return rows.filter { !$0.isEmpty }
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .greatestFiniteMagnitude
-        let laid = rows(subviews, width: width)
-        let widest = laid.map { $0.reduce(CGFloat(0)) { $0 + $1.size.width } + spacing * CGFloat(max(0, $0.count - 1)) }.max() ?? 0
-        let height = laid.map { $0.map(\.size.height).max() ?? 0 }.reduce(0, +) + lineSpacing * CGFloat(max(0, laid.count - 1))
-        return CGSize(width: proposal.width.map { min($0, widest) } ?? widest, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(subviews, width: bounds.width) {
-            var x = bounds.minX
-            let height = row.map(\.size.height).max() ?? 0
-            for item in row {
-                subviews[item.index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
-                x += item.size.width + spacing
-            }
-            y += height + lineSpacing
-        }
     }
 }

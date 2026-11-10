@@ -757,15 +757,18 @@ extension SelfTest {
         }
         _ = try moving.create("Make the folder")
         let shown = try await moving.runUntilSettled()
-        try require(shown.state == .needsDecision && ((try moving.decision(shown)["details"] as? String) ?? "").contains("file edits in b"),
+        try require(shown.state == .needsDecision && (try moving.decision(shown)["covers"] as? String) == "Edits in b"
+                    && (try moving.decision(shown)["never"] as? String) == "Never edit in b"
+                    && (try moving.decision(shown)["prompt"] as? String) == "{name} wants to create a folder in b."
+                    && !((try moving.decision(shown)["details"] as? String) ?? "").contains("Edits in"),
                     "The card says the saved choice covers the one folder")
         try FileManager.default.removeItem(at: folder.appendingPathComponent("a/b"))
         try moving.reply(shown, "allow_always", digest: try moving.decision(shown)["digest"] as? String)
         let reasked = try await moving.runUntilSettled()
         try require(reasked.state == .needsDecision && (try movingRecords.all()).isEmpty && !FileManager.default.fileExists(atPath: made),
                     "When what a saved choice would cover changed after the card was shown, nothing is saved or run and the card is shown again")
-        let secondDetails = (try moving.decision(reasked)["details"] as? String) ?? ""
-        try require(secondDetails.contains("Applies to file edits in") && secondDetails.contains("a") && secondDetails != ((try moving.decision(shown)["details"] as? String) ?? ""),
+        let secondCovers = (try moving.decision(reasked)["covers"] as? String) ?? ""
+        try require(secondCovers.hasPrefix("Edits in ") && secondCovers.contains("a") && secondCovers.contains("b") && secondCovers != "Edits in b",
                     "The card shown again says what a saved choice now applies to")
         try moving.reply(reasked, "allow_always", digest: try moving.decision(reasked)["digest"] as? String)
         let widened = try await moving.runUntilSettled()

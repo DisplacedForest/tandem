@@ -17,8 +17,8 @@ extension SelfTest {
             (try? NativeRuleRecord.validated(record, creating: true)) != nil
         }
 
-        for (place, here, never, words) in [(chat, NativeRuleScope.conversation("c1"), "Never run commands in this chat", "Allow in this chat"),
-                                           (task, NativeRuleScope.task("t1"), "Never run commands in this task", "Allow for this task")] {
+        for (place, here, never, words) in [(chat, NativeRuleScope.conversation("c1"), "Never run commands in this chat", "Always allow in this chat"),
+                                           (task, NativeRuleScope.task("t1"), "Never run commands in this task", "Always allow in this task")] {
             try require(kinds(command, place) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A simple command card offers every choice: \(place)")
             try require(title(command, place, .never) == never && title(command, place, .allowHere) == words, "The command card names its place: \(place)")
             try require(NativeCardChoices.covers(command) == "commands that start with git status", "A command card covers its two-word prefix")

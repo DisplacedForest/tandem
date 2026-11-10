@@ -21,7 +21,7 @@ enum NativeCardPlace: Equatable, Sendable {
     var hereWords: String {
         switch self {
         case .chat: return "in this chat"
-        case .task: return "for this task"
+        case .task: return "in this task"
         }
     }
 
@@ -70,6 +70,7 @@ struct NativeCardSubject: Equatable, Hashable, Sendable {
     var governed = true
     var typedText = ""
     var scheduleInstructed = false
+    var phrase: String? = nil
 }
 
 enum NativeCardCoverage: Equatable, Sendable {
@@ -92,12 +93,14 @@ enum NativeCardChoices {
         wire == commandNever ? .never : NativeCardChoiceKind(rawValue: wire)
     }
 
+    static let declineMenu = true
+
     static func wireTitle(_ wire: String) -> String? {
         switch wire {
         case NativeCardChoiceKind.allowOnce.rawValue: return "Allow once"
-        case NativeCardChoiceKind.allowHere.rawValue: return "Allow for this task"
-        case NativeCardChoiceKind.allowSchedule.rawValue: return "Allow for this schedule"
-        case NativeCardChoiceKind.allowAlways.rawValue: return "Allow everywhere"
+        case NativeCardChoiceKind.allowHere.rawValue: return "Always allow in this task"
+        case NativeCardChoiceKind.allowSchedule.rawValue: return "Always allow for this schedule"
+        case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow everywhere"
         case NativeCardChoiceKind.never.rawValue: return "Never allow this"
         case commandNever: return "Never run commands in this task"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
@@ -105,14 +108,29 @@ enum NativeCardChoices {
         }
     }
 
-    static let appliesLead = "Applies to "
+    static func scope(_ subject: NativeCardSubject) -> String? {
+        switch coverage(subject) {
+        case .none, .commandsOnly: return nil
+        case .commandPrefix(let prefix): return "Commands that start with \(prefix.value)"
+        case .folders(let folders):
+            let names = list(folders.map { name($0.value) })
+            return subject.action == .trash ? "Moving things in \(names) to the Trash" : "Edits in \(names)"
+        case .sendTargets(let targets, _): return "Messages to " + list(targets.map(\.value))
+        case .wholeTool: return "This action every time"
+        }
+    }
 
-    static func split(details: String) -> (applies: String?, literal: String?) {
-        var lines = details.components(separatedBy: "\n")
-        var applies: String?
-        if let last = lines.last, last.hasPrefix(appliesLead) { applies = last; lines.removeLast() }
-        let literal = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return (applies, literal.isEmpty ? nil : literal)
+    static func sentence(actor: String, subject: NativeCardSubject?, title: String) -> String {
+        let plain = subject?.phrase ?? (title.prefix(1).lowercased() + title.dropFirst())
+        return actor + " wants to " + (subject.map { wants($0, phrase: plain) } ?? plain) + "."
+    }
+
+    static func wants(_ subject: NativeCardSubject, phrase: String) -> String {
+        switch coverage(subject) {
+        case .folders(let folders): return phrase + " in " + list(folders.map { name($0.value) })
+        case .sendTargets(let targets, _): return phrase + " to " + list(targets.map(\.value))
+        case .commandPrefix, .commandsOnly, .wholeTool, .none: return phrase
+        }
     }
 
     static let neverHelp = "Commands you allowed everywhere still run."
@@ -163,7 +181,7 @@ enum NativeCardChoices {
         let decline = NativeCardChoice(kind: .decline, title: "Decline")
         let covered = coverage(subject)
         var standing = true
-        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered))
+        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered, action: subject.action))
         switch covered {
         case .none: return [decline, once]
         case .commandPrefix:
@@ -179,19 +197,21 @@ enum NativeCardChoices {
         var choices = [decline]
         if let never { choices.append(never) }
         if standing {
-            choices.append(NativeCardChoice(kind: .allowAlways, title: "Allow everywhere"))
+            choices.append(NativeCardChoice(kind: .allowAlways, title: "Always allow everywhere"))
             if case .task(_, _, let scheduleID) = place, scheduleID != nil, subject.scheduleInstructed {
-                choices.append(NativeCardChoice(kind: .allowSchedule, title: "Allow for this schedule"))
+                choices.append(NativeCardChoice(kind: .allowSchedule, title: "Always allow for this schedule"))
             }
-            choices.append(NativeCardChoice(kind: .allowHere, title: "Allow \(place.hereWords)"))
+            choices.append(NativeCardChoice(kind: .allowHere, title: "Always allow \(place.hereWords)"))
         }
         choices.append(once)
         return choices
     }
 
-    static func neverTitle(_ covered: NativeCardCoverage) -> String {
+    static func neverTitle(_ covered: NativeCardCoverage, action: NativeActionClass) -> String {
         switch covered {
-        case .folders(let folders): return "Never in " + list(folders.map { name($0.value) })
+        case .folders(let folders):
+            let names = list(folders.map { name($0.value) })
+            return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
         case .sendTargets(let targets, _): return "Never send to " + list(targets.map(\.value))
         case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this"
         }

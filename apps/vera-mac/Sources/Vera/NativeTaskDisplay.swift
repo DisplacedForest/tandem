@@ -177,6 +177,8 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var workerType: String? = nil
     var choices: [String]? = nil
     var details: String? = nil
+    var covers: String? = nil
+    var neverTitle: String? = nil
     var answer: String? = nil
 
     var isDocument: Bool { workerType == "document" }

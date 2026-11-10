@@ -186,6 +186,9 @@ struct NativeToolDefinition: Sendable {
     var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
+    var wants: String? = nil
+
+    var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)

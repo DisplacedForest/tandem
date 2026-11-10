@@ -716,6 +716,7 @@ struct MessageRow: View {
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
                                 detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
+                                actor: companionThread ? CompanionSentence.placeholder : "Tandem",
                                 onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
                                 onChoice: { onToolDecision?($0) })
                         }
@@ -934,6 +935,7 @@ struct NativeToolConfirmationBar: View {
     let request: NativeToolConfirmationRequest
     var prompt: String? = nil
     var detail: String? = nil
+    var actor = "Tandem"
     var defaultApproval = true
     var allowApprove = true
     var allowDecline = true
@@ -943,20 +945,6 @@ struct NativeToolConfirmationBar: View {
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
         if let prompt = NativeCompanionProfileTools.prompt(request) { return prompt }
-        if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
-            return "Run this command?\n" + command
-        }
-        if request.toolID == NativeFolderTools.toolID {
-            let path = NativeFolderTools.pathArgument(inRequest: request.request)
-            switch request.name {
-            case NativeFolderTools.trashName: return path.map { "Move \($0) to the Trash?" }
-            case NativeFolderTools.writeName: return path.map { "Write \($0)?" }
-            case NativeFolderTools.editName: return path.map { "Edit \($0)?" }
-            case NativeFolderTools.mkdirName: return path.map { "Create the folder \($0)?" }
-            case NativeFolderTools.moveName: return path.map { "Move \($0)?" }
-            default: return nil
-            }
-        }
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.prompt(for: draft)
         }
@@ -964,27 +952,38 @@ struct NativeToolConfirmationBar: View {
     }
 
     static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
-        if request.toolID == NativeCommandTools.toolID {
-            let directory = NativeCommandTools.directory(inRequest: request.request)
-            return directory.map { "In \($0). Your rules ask before commands run." } ?? "Your rules ask before commands run."
-        }
-        if request.toolID == NativeFolderTools.toolID { return "Your rules ask before this kind of change." }
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
         }
         return nil
     }
 
-    private var saving: [NativeCardChoice] {
-        guard onChoice != nil else { return [] }
-        return request.choices.filter { $0.kind.saves }
+    static func sentence(for request: NativeToolConfirmationRequest, actor: String) -> String {
+        NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
-    private var approveTitle: String {
-        request.choices.first(where: { $0.kind == .allowOnce })?.title ?? "Approve"
+    static func literal(for request: NativeToolConfirmationRequest) -> String? {
+        if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
+            return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
+        }
+        if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
+        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
+        return lines.isEmpty ? nil : lines
     }
 
-    private var lines: [String] { (prompt ?? "\(request.title)?").components(separatedBy: "\n") }
+    private var answers: CardAnswers {
+        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
+        if request.subject == nil { built.allowTitle = "Approve" }
+        return built
+    }
+
+    private var block: String? {
+        if let prompt {
+            let rest = prompt.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+            return rest.isEmpty ? nil : rest
+        }
+        return Self.literal(for: request)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -994,12 +993,11 @@ struct NativeToolConfirmationBar: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(lines[0])
+                    CompanionNamedText(template: prompt?.components(separatedBy: "\n").first ?? Self.sentence(for: request, actor: actor))
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if lines.count > 1 {
+                    if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
-                            Text(lines.dropFirst().joined(separator: "\n"))
+                            Text(block)
                                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1009,46 +1007,16 @@ struct NativeToolConfirmationBar: View {
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.conversationBackground))
                     }
-                    CompanionNamedText(template: detail ?? "This runs only if you allow it.")
-                        .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        CompanionNamedText(template: detail)
+                            .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !saving.isEmpty {
-                VStack(alignment: .trailing, spacing: 6) {
-                    if let covers = request.covers, saving.contains(where: { $0.kind.approves }) {
-                        Text("Applies to \(covers).")
-                            .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    HStack(spacing: 8) {
-                        Spacer(minLength: 0)
-                        ForEach(saving, id: \.self) { choice in
-                            Button(choice.title) { onChoice?(choice.kind) }
-                                .buttonStyle(ConversationButtonStyle(kind: .secondary))
-                                .disabled(choice.kind.approves ? !allowApprove : !allowDecline)
-                                .help(choice.kind == .never && request.toolID == NativeCommandTools.toolID ? NativeCardChoices.neverHelp : "")
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                Button("Decline") { onDecision(false) }
-                    .buttonStyle(ConversationButtonStyle(kind: .secondary))
-                    .disabled(!allowDecline)
-                if defaultApproval {
-                    Button(approveTitle) { onDecision(true) }
-                        .buttonStyle(ConversationButtonStyle(kind: .primary))
-                        .keyboardShortcut(.defaultAction).disabled(!allowApprove)
-                } else {
-                    Button(approveTitle) { onDecision(true) }
-                        .buttonStyle(ConversationButtonStyle(kind: .primary))
-                        .disabled(!allowApprove)
-                }
-            }
+            CardAnswerRow(answers: answers, defaultApproval: defaultApproval, allowApprove: allowApprove, allowDecline: allowDecline,
+                          onAllow: { onDecision(true) }, onDecline: { onDecision(false) },
+                          onItem: { id in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind) } })
         }
         .padding(14)
         .frame(maxWidth: 560, alignment: .leading)
@@ -1056,6 +1024,31 @@ struct NativeToolConfirmationBar: View {
         .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius, style: .continuous)
             .stroke(Theme.cardStroke, lineWidth: 1))
+    }
+}
+
+struct ConversationCaretStyle: ButtonStyle {
+    var kind: ConversationButtonStyle.Kind
+
+    func makeBody(configuration: Configuration) -> some View {
+        ConversationCaretBody(kind: kind, label: configuration.label, pressed: configuration.isPressed)
+    }
+}
+
+private struct ConversationCaretBody: View {
+    let kind: ConversationButtonStyle.Kind
+    let label: ButtonStyleConfiguration.Label
+    let pressed: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label
+            .foregroundStyle(kind == .primary ? Theme.onSage : Theme.warmTextPrimary)
+            .frame(width: 28, height: 28)
+            .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
+            .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
     }
 }
 

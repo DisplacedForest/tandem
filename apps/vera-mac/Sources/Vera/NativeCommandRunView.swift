@@ -186,19 +186,31 @@ struct ConversationRulesEditor: View {
             ForEach(NativeActionClass.configurable, id: \.self) { action in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(action.title).font(.system(size: 12))
-                    Picker(action.title, selection: binding(for: action)) {
+                    Menu {
                         ForEach(choices(for: action), id: \.self) { choice in
-                            Text(choice.title).tag(choice)
+                            Button(choice.title) { binding(for: action).wrappedValue = choice }
                         }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(binding(for: action).wrappedValue.title).font(.system(size: 12))
+                            Spacer(minLength: 6)
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.surface))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+                        .contentShape(Rectangle())
                     }
-                    .labelsHidden()
-                    .font(.system(size: 12))
-                    .fixedSize()
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel(action.title)
+                    .accessibilityValue(binding(for: action).wrappedValue.title)
                 }
             }
             if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                Text("Commands approved for this chat").font(.system(size: 12, weight: .medium))
+                Text("Commands allowed in this chat").font(.system(size: 12, weight: .medium))
                 ForEach(shownPrefixes, id: \.id) { record in
                     let prefix = record.target?.value ?? ""
                     HStack(spacing: 8) {
@@ -211,6 +223,7 @@ struct ConversationRulesEditor: View {
                         }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
                         .help("Ask again before commands that start with \(prefix)")
+                        .accessibilityLabel("Stop allowing \(prefix)")
                     }
                 }
             }

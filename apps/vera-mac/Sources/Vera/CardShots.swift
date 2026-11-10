@@ -32,6 +32,17 @@ enum CardShot {
         case "card-command", "card-folder-edit", "card-once-only":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
+        case "card-command-menus", "card-folder-edit-menus":
+            size = CGSize(width: 640, height: 420)
+            let request = self.chat(String(variant.dropLast("-menus".count)), store: store).confirmation
+            let answers = CardAnswers.chat(request)
+            content = AnyView(VStack(alignment: .trailing, spacing: 14) {
+                NativeToolConfirmationBar(request: request, actor: "Tandem", onDecision: { _ in }, onChoice: { _ in })
+                HStack(alignment: .top, spacing: 12) {
+                    CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
+                    CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
+                }
+            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
         case "card-task", "card-task-command":
             size = CGSize(width: 1180, height: 1040)
             seedTask(command: variant == "card-task-command", store: store)
@@ -138,12 +149,11 @@ enum CardShot {
             : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle)
         let place = NativeCardPlace.task(taskID: "card-task", conversationID: threadID, scheduleID: nil)
         let offered = NativeCardChoices.offered(subject, place: place)
-        var details = NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
-        if offered.contains(where: { $0.kind.saves && $0.kind.approves }), let covers = NativeCardChoices.covers(subject) {
-            details += "\nApplies to \(covers)."
-        }
+        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
+        let never = offered.first(where: { $0.kind == .never })?.title ?? ""
+        let covers = NativeCardChoices.scope(subject) ?? ""
         let decision: [String: Any] = [
-            "id": "card-decision", "prompt": "\(CompanionSentence.placeholder) wants to do this: \(toolTitle).",
+            "id": "card-decision", "prompt": NativeCardChoices.sentence(actor: CompanionSentence.placeholder, subject: subject, title: toolTitle), "covers": covers, "never": never,
             "choices": offered.map { NativeCardChoices.wire($0, subject: subject) }, "details": details,
         ]
         let title = command ? "Rebuild the greenhouse PDF" : "Book the workshop inspection"
@@ -187,7 +197,7 @@ enum CardShot {
             NativeScheduleShotFixture.populate(store)
             return
         }
-        let prompt = "\(CompanionSentence.placeholder) wants to do this: Send a price alert."
+        let prompt = "\(CompanionSentence.placeholder) wants to send a price alert."
         let remote = UUID().uuidString
         if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [

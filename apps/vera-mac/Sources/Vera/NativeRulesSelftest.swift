@@ -448,10 +448,26 @@ extension SelfTest {
         request.subject = cardSubject
         request.choices = NativeCardChoices.offered(cardSubject, place: .chat(conversationID: "c1"))
         request.covers = NativeCardChoices.covers(cardSubject)
-        try require(NativeToolConfirmationBar.prompt(for: request) == "Run this command?\nswift test --filter x"
+        let cardAnswers = CardAnswers.chat(request)
+        try require(NativeToolConfirmationBar.sentence(for: request, actor: "Tandem") == "Tandem wants to run a command."
+                    && NativeToolConfirmationBar.sentence(for: request, actor: CompanionSentence.placeholder) == "{name} wants to run a command."
+                    && NativeToolConfirmationBar.literal(for: request) == "swift test --filter x\nin " + root
+                    && NativeToolConfirmationBar.prompt(for: request) == nil && NativeToolConfirmationBar.detail(for: request) == nil
                     && request.choices.map(\.kind) == [.decline, .never, .allowAlways, .allowHere, .allowOnce]
-                    && request.covers == "commands that start with swift test"
-                    && NativeToolConfirmationBar.detail(for: request)?.contains(root) == true, "The ask card shows the exact command and offers the prefix")
+                    && request.covers == "commands that start with swift test",
+                    "The ask card is one sentence and the exact command and where it runs")
+        try require(cardAnswers.allowTitle == "Allow" && cardAnswers.declineTitle == "Decline"
+                    && cardAnswers.allowMenu.map(\.id) == ["allow_here", "allow_always"]
+                    && cardAnswers.allowMenu.map(\.title) == ["Always allow in this chat", "Always allow everywhere"]
+                    && cardAnswers.allowMenu.allSatisfy { $0.note == "Commands that start with swift test" }
+                    && cardAnswers.declineMenu.map(\.id) == ["never"] && cardAnswers.declineMenu[0].title == "Never run commands in this chat"
+                    && cardAnswers.declineMenu[0].note == NativeCardChoices.neverHelp
+                    && !(cardAnswers.allowMenu + cardAnswers.declineMenu).contains { $0.id == "approve" || $0.id == "decline" },
+                    "The chat card shows two answers, and each caret holds only the standing choices with what they cover")
+        var loose = request
+        loose.subject?.governed = false
+        loose.choices = NativeCardChoices.offered(loose.subject!, place: .chat(conversationID: "c1"))
+        try require(CardAnswers.chat(loose).allowMenu.isEmpty && CardAnswers.chat(loose).declineMenu.isEmpty, "A card with nothing to save has no carets")
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")

@@ -209,6 +209,7 @@ private struct ScheduleDetail: View {
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
+                                       covers: store.scheduleRunDecision(run)?.covers, neverTitle: store.scheduleRunDecision(run)?.never,
                                        onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
                 }
@@ -245,7 +246,13 @@ private struct ScheduleRunRow: View {
     let onOpen: (() -> Void)?
     let onStop: (() -> Void)?
     let choices: [String]
+    var covers: String? = nil
+    var neverTitle: String? = nil
     let onChoose: ((String) -> Void)?
+
+    private var isApproval: Bool {
+        choices.contains(NativeCardChoiceKind.allowOnce.rawValue) && choices.contains(NativeCardChoiceKind.decline.rawValue)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -264,8 +271,14 @@ private struct ScheduleRunRow: View {
                     if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                     if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                 }
-                if !choices.isEmpty {
-                    ChoiceFlow(spacing: 8, lineSpacing: 6) { choiceButtons }
+                if isApproval {
+                    CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true),
+                                  defaultApproval: false, allowApprove: onChoose != nil, allowDecline: onChoose != nil,
+                                  onAllow: { onChoose?(NativeCardChoiceKind.allowOnce.rawValue) },
+                                  onDecline: { onChoose?(NativeCardChoiceKind.decline.rawValue) },
+                                  onItem: { onChoose?($0) })
+                } else if !choices.isEmpty {
+                    HStack(spacing: 8) { choiceButtons }
                 }
             }
         }
@@ -287,8 +300,6 @@ private struct ScheduleRunRow: View {
         switch choice.lowercased() {
         case "retry": return "Retry"
         case "stop", "cancel": return "Stop"
-        case NativeCardChoiceKind.allowHere.rawValue: return "Allow for this run"
-        case NativeCardChoices.commandNever: return "Never run commands in this run"
         default: return NativeTaskCardPresentation.choiceTitle(choice) ?? (choice.prefix(1).uppercased() + choice.dropFirst())
         }
     }

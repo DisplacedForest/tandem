@@ -438,11 +438,23 @@ private struct NativeCompanionRun {
         NativeCardChoices.offered(subject, place: cardPlace(authority)).map { NativeCardChoices.wire($0, subject: subject) }
     }
 
-    func approvalDetails(_ subject: NativeCardSubject, title: String, authority: NativeCompanionWorkerAuthority, argumentsJSON: String) -> String {
-        let details = NativeCompanionWorker.details(title, argumentsJSON: argumentsJSON)
-        let saving = NativeCardChoices.offered(subject, place: cardPlace(authority)).contains { $0.kind.saves && $0.kind.approves }
-        guard saving, let covers = NativeCardChoices.covers(subject) else { return details }
-        return (details.isEmpty ? "" : details + "\n") + NativeCardChoices.appliesLead + covers + "."
+    func approvalExtra(_ subject: NativeCardSubject, title: String, digest: String, authority: NativeCompanionWorkerAuthority,
+                       argumentsJSON: String) -> [String: Any] {
+        var literal = NativeCompanionWorker.details(title, argumentsJSON: argumentsJSON)
+        if let command = subject.command, let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any] {
+            literal = (object["directory"] as? String).map { command + "\nin " + $0 } ?? command
+        }
+        var extra: [String: Any] = ["digest": digest, "details": literal]
+        let offered = NativeCardChoices.offered(subject, place: cardPlace(authority))
+        if offered.contains(where: { $0.kind.saves && $0.kind.approves }), let scope = NativeCardChoices.scope(subject) { extra["covers"] = scope }
+        if let never = offered.first(where: { $0.kind == .never }) { extra["never"] = never.title }
+        return extra
+    }
+
+    func approvalPrompt(_ subject: NativeCardSubject?, definition: NativeToolDefinition?, title: String) -> String {
+        guard var subject, let definition else { return "\(CompanionSentence.placeholder) wants to do this: \(title)." }
+        subject.phrase = definition.wantsPhrase
+        return NativeCardChoices.sentence(actor: CompanionSentence.placeholder, subject: subject, title: definition.title)
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
@@ -718,11 +730,10 @@ private struct NativeCompanionRun {
             let subject = cardSubject(definition, arguments, action: action)
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
                                                         coverage: NativeCardChoices.signature(subject))
-            return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSentence.placeholder) wants to do this: \(title).",
+            return try NativeCompanionWorker.decide(checkpoint, approvalPrompt(subject, definition: definition, title: title),
                                               approvalChoices(subject, authority: authority),
-                                              extra: ["digest": record.digest,
-                                                      "details": approvalDetails(subject, title: definition.title, authority: authority,
-                                                                                 argumentsJSON: record.proposal.argumentsJSON)])
+                                              extra: approvalExtra(subject, title: definition.title, digest: record.digest, authority: authority,
+                                                                   argumentsJSON: record.proposal.argumentsJSON))
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
@@ -950,12 +961,11 @@ private struct NativeCompanionRun {
                 var again = pending
                 again.coverage = shown.map { NativeCardChoices.signature($0) }
                 checkpoint.pending = again
-                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSentence.placeholder) wants to do this: \(title).", offered,
-                                                  extra: ["digest": digest,
-                                                          "details": shown.map { approvalDetails($0, title: asked?.title ?? record.proposal.function, authority: standing,
-                                                                                                 argumentsJSON: record.proposal.argumentsJSON) }
-                                                              ?? NativeCompanionWorker.details(asked?.title ?? record.proposal.function,
-                                                                                               argumentsJSON: record.proposal.argumentsJSON)])
+                return try NativeCompanionWorker.decide(checkpoint, approvalPrompt(shown, definition: asked, title: title), offered,
+                                                  extra: shown.map { approvalExtra($0, title: asked?.title ?? record.proposal.function, digest: digest,
+                                                                                   authority: standing, argumentsJSON: record.proposal.argumentsJSON) }
+                                                      ?? ["digest": digest, "details": NativeCompanionWorker.details(asked?.title ?? record.proposal.function,
+                                                                                                                     argumentsJSON: record.proposal.argumentsJSON)])
             }
             guard let definition = definition(named: call.name), let arguments = try? definition.validatedArguments(call.arguments),
                   NativeEffectProposal.canonicalArguments(.object(arguments)) == record.proposal.argumentsJSON, definition.id == record.proposal.toolID else {
