@@ -52,7 +52,7 @@ enum NativeCompanionLive {
         var rules = config.nativeSettings.rules
         rules.choices[.networkSends] = .ask
         let store = ChatStore(nativeConfig: native, nativeTransport: NativeChatClient.foreground(config: native), repository: repository,
-                              nativeAssistantName: config.assistantName, nativeEnabledToolIDs: config.nativeSettings.enabledToolIDs,
+                              nativeAssistantName: config.suppliedAssistantName, nativeEnabledToolIDs: config.nativeSettings.enabledToolIDs,
                               nativeRules: rules,
                               nativeTaskConfiguration: NativeTaskConfiguration(settings: { config.nativeSettings },
                                                                                savedTemplate: { config["chat_template_kwargs"] }))

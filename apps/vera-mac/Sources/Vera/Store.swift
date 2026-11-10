@@ -99,7 +99,9 @@ final class ChatStore: ObservableObject {
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
-    @Published private(set) var assistantName: String = ConfigStore.defaultAssistantName
+    @Published private(set) var companionName: String?
+    var companion: CompanionSubject { CompanionSubject(companionName) }
+    var assistantName: String { companion.leading }
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?
@@ -153,9 +155,10 @@ final class ChatStore: ObservableObject {
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
     var companionNameWriter: ((String) throws -> Void)?
-    @Published private(set) var savedCompanionName: String?
-    var companionHasSavedName: Bool { savedCompanionName != nil }
-    var companionDisplayName: String? { savedCompanionName }
+    @Published var companionNameAsk: CompanionNameAsk?
+    var asksForCompanionName = false
+    var companionHasSavedName: Bool { companionName != nil }
+    var companionDisplayName: String? { companionName }
     var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
@@ -192,7 +195,7 @@ final class ChatStore: ObservableObject {
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativePersonaID: String? = nil,
          nativeOwnerName: String? = nil,
-         nativeAssistantName: String = ConfigStore.defaultAssistantName,
+         nativeAssistantName: String? = nil,
          nativeEnabledToolIDs: Set<String> = [],
          nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
          visionBridgeConfig: VisionBridgeConfig? = nil,
@@ -218,7 +221,7 @@ final class ChatStore: ObservableObject {
         let companionRelay = NativeCompanionWorkerRelay()
         companionWorkerRelay = companionRelay
         let identity = NativeWorkerIdentitySource()
-        identity.update(assistantName: nativeAssistantName, ownerName: nativeOwnerName)
+        identity.update(assistantName: CompanionSubject(nativeAssistantName).name, ownerName: nativeOwnerName)
         nativeWorkerIdentity = identity
         if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
             localEngine = NativeTaskLocalEngine.workers(database: local.database,
@@ -260,7 +263,7 @@ final class ChatStore: ObservableObject {
         self.nativeSystemPrompt = nativeSystemPrompt
         self.nativePersonaID = nativePersonaID
         self.nativeOwnerName = nativeOwnerName
-        self.assistantName = nativeAssistantName
+        self.companionName = CompanionSubject(nativeAssistantName).name
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
         self.nativeCapabilityOverrides = nativeCapabilityOverrides
         self.visionBridgeConfig = visionBridgeConfig
@@ -349,7 +352,7 @@ final class ChatStore: ObservableObject {
             nativeTransport: native.map { NativeChatClient.foreground(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
             nativeOwnerName: configStore.ownerName,
-            nativeAssistantName: configStore.assistantName,
+            nativeAssistantName: configStore.suppliedAssistantName,
             nativeMemorySettings: .fresh)
     }
 
@@ -409,7 +412,7 @@ final class ChatStore: ObservableObject {
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
         activePersonaID: String? = nil,
         ownerName: String? = nil,
-        assistantName: String? = nil,
+        companion: CompanionSubject? = nil,
         enabledToolIDs: Set<String>? = nil,
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
         visionBridge: VisionBridgeConfig? = nil,
@@ -423,7 +426,7 @@ final class ChatStore: ObservableObject {
         nativeSystemPrompt = systemPrompt
         nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
-        if let assistantName { adoptAssistantName(assistantName) }
+        if let companion { adoptAssistantName(companion.name) }
         if let enabledToolIDs { updateNativeToolConsent(enabledToolIDs) }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
         visionBridgeConfig = visionBridge
@@ -690,20 +693,20 @@ final class ChatStore: ObservableObject {
     }
 
     func refreshCompanionName(from config: ConfigStore) {
-        savedCompanionName = config.suppliedAssistantName
+        adoptAssistantName(config.suppliedAssistantName)
     }
 
-    func adoptAssistantName(_ name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        assistantName = trimmed.isEmpty ? ConfigStore.defaultAssistantName : trimmed
-        nativeWorkerIdentity.update(assistantName: assistantName, ownerName: nativeOwnerName)
+    func adoptAssistantName(_ name: String?) {
+        let next = CompanionSubject(name).name
+        if companionName != next { companionName = next }
+        nativeWorkerIdentity.update(assistantName: next, ownerName: nativeOwnerName)
         retitleVeraThread()
     }
 
     private func retitleVeraThread() {
         guard let veraThreadID, let index = conversations.firstIndex(where: { $0.id == veraThreadID }),
-              conversations[index].title != assistantName else { return }
-        conversations[index].title = assistantName
+              conversations[index].title != companion.threadTitle else { return }
+        conversations[index].title = companion.threadTitle
         try? repository?.saveConversation(conversations[index])
     }
 
@@ -714,7 +717,7 @@ final class ChatStore: ObservableObject {
             return
         }
         guard let repository else { veraThreadID = nil; return }
-        var thread = Conversation(id: UUID().uuidString, title: assistantName, messages: [], updatedAt: Date(),
+        var thread = Conversation(id: UUID().uuidString, title: companion.threadTitle, messages: [], updatedAt: Date(),
                                   originType: Self.veraThreadOriginType, originID: Self.veraThreadOriginID)
         do {
             try repository.saveConversation(thread)
@@ -1959,7 +1962,7 @@ final class ChatStore: ObservableObject {
     func prepareCompanionThread() {
         ensureVeraThread()
         if let veraThreadID { loadMessagesIfNeeded(veraThreadID) }
-        prepareCompanionOpening()
+        prepareCompanionOpening(askForName: false)
     }
 
     @discardableResult
@@ -2409,7 +2412,7 @@ final class ChatStore: ObservableObject {
         let scopes = ResolvedPromptScopes(persona: turn.persona, userScope: turn.userScope, instructions: turn.instructions)
         let persona = scopes.persona
         let ownerName = nativeOwnerName
-        let assistantName = self.assistantName
+        let assistantName = companionName
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
         let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])
         let groundingCollections = turn.grounding.filter { allowedGrounding.contains($0) }

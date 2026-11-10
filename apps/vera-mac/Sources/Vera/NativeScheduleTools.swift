@@ -21,7 +21,7 @@ enum NativeScheduleTools {
         return base.union([toolID])
     }
 
-    static func definition(assistantName: @escaping @Sendable () -> String,
+    static func definition(companionThread: @escaping @Sendable () -> String,
                            searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
@@ -53,7 +53,7 @@ enum NativeScheduleTools {
                 }
                 let schedule: NativeSchedule
                 do { schedule = try await save(draft) } catch { throw NativeToolError.failed(error.localizedDescription) }
-                let destination = schedule.owner == .dot ? "the \(assistantName()) thread" : "its own chat"
+                let destination = schedule.owner == .dot ? companionThread() : "its own chat"
                 return .object([
                     "message": .string("Saved. \(schedule.cadenceSummary). It appears in Scheduled, and results go to \(destination)."),
                     "saved": .bool(true),
@@ -124,8 +124,12 @@ enum NativeScheduleTools {
     }
 
     static func detail(for draft: NativeScheduleDraft, assistantName: String) -> String {
+        detail(for: draft, companionThread: "the \(assistantName) thread")
+    }
+
+    static func detail(for draft: NativeScheduleDraft, companionThread: String) -> String {
         let work = draft.workerType == "document" ? "Write a document" : "Research"
-        let destination = draft.owner == .dot ? "the \(assistantName) thread" : "its own chat"
+        let destination = draft.owner == .dot ? companionThread : "its own chat"
         var instruction = draft.instruction.replacingOccurrences(of: "\n", with: " ")
         if instruction.count > 180 { instruction = String(instruction.prefix(177)).trimmingCharacters(in: .whitespaces) + "..." }
         return "\(work): \(instruction) Results go to \(destination). Nothing is saved until you approve."

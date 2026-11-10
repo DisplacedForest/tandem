@@ -4,7 +4,7 @@ extension ChatStore {
     static let companionRefinementInterval: TimeInterval = 86400
     static let companionGoalStaleInterval: TimeInterval = 30 * 86400
 
-    func prepareCompanionOpening() {
+    func prepareCompanionOpening(askForName: Bool = true) {
         guard dotProfileLoaded, let id = veraThreadID, let repository,
               let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         do {
@@ -15,8 +15,12 @@ extension ChatStore {
                 chatConfigurationError = "Choose a chat connection in Settings to start the conversation."
                 return
             }
+            if askForName, asksForCompanionName, CompanionNameAsk.onFirstOpen(name: companionName, dismissed: companionNamePromptDismissed) {
+                companionNameAsk = .firstOpen
+                return
+            }
             let configured = !dotProfile.needsIntroduction && (dotProfile.setupCompleted || dotProfile.hasGoal || dotProfile.connectedToolIDs != nil
-                || companionHasSavedName || assistantName != ConfigStore.defaultAssistantName)
+                || companionHasSavedName)
             let event = NativeCompanionEvent(kind: configured ? .welcome : .introduction, key: "opening")
             try enqueueCompanionEvent(event, conversationIndex: index)
         } catch {

@@ -56,7 +56,7 @@ struct CompanionAppearancePicker: View {
         self.chat = chat
         let resolved = store ?? ConfigCompanionAppearanceStore(config: config)
         self.store = resolved
-        _draft = State(initialValue: CompanionAppearanceDraft(name: config.assistantName, appearance: resolved.load()))
+        _draft = State(initialValue: CompanionAppearanceDraft(name: config.suppliedAssistantName ?? "", appearance: resolved.load()))
     }
 
     var body: some View {

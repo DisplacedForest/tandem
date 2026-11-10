@@ -17,7 +17,7 @@ struct VoiceView: View {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
                 HStack {
-                    (Text("\(store.assistantName) ").foregroundStyle(.white)
+                    (Text("\(store.companion.leading) ").foregroundStyle(.white)
                         + Text("Voice").foregroundStyle(Theme.textSecondary))
                         .font(.system(size: 17, weight: .semibold))
                     Spacer()
@@ -26,7 +26,7 @@ struct VoiceView: View {
 
                 Spacer()
                 CompanionAvatarView(appearance: appearance, state: Self.companionState(for: phase, playing: playing), size: 220,
-                                    name: store.assistantName, reduceMotion: reduceMotion)
+                                    name: store.companionName, reduceMotion: reduceMotion)
                 Text(caption)
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)

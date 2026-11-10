@@ -337,7 +337,7 @@ extension SelfTest {
             + NativeFolderTools.definitions(grants: { sample }, ledger: NativeFileChangeLedger())
             + commands
             + [NativeTaskTools.definition(service: service, origin: origin, profile: nil, didSave: { _ in })]
-            + [NativeScheduleTools.definition(assistantName: { "Ada" }, save: { _ in throw NativeToolError.unavailable })]
+            + [NativeScheduleTools.definition(companionThread: { CompanionSubject("Ada").thread }, save: { _ in throw NativeToolError.unavailable })]
         for definition in definitions {
             try require(definition.isDeclared, "\(definition.name) is either a read or a write with an action")
         }

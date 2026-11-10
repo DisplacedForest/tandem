@@ -49,7 +49,7 @@ struct CompanionThreadPanel: View {
             if let onClose {
                 HStack {
                     Spacer()
-                    Button("Done", action: onClose).keyboardShortcut(.cancelAction).accessibilityLabel("Close \(current.name)'s panel")
+                    Button("Done", action: onClose).keyboardShortcut(.cancelAction).accessibilityLabel("Close \(current.mention)'s panel")
                 }
                 .padding(.horizontal, 20).padding(.top, 16)
             }
@@ -126,10 +126,10 @@ struct CompanionThreadPanel: View {
                     }
                     .buttonStyle(.plain)
                     .help(DotProfileCopy.pausedNote)
-                    .accessibilityLabel(CompanionOverviewModel.pauseTitle(name: current.name, paused: current.paused))
+                    .accessibilityLabel(CompanionOverviewModel.pauseTitle(name: current.mention, paused: current.paused))
                     Button("Appearance") { editingAppearance = true }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.sage)
-                        .help("Change \(current.name)'s name, shape and color")
+                        .help("Change \(current.mention)'s name, shape and color")
                     Spacer(minLength: 0)
                     Button { editingProfile = true } label: {
                         Image(systemName: "gearshape").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
@@ -137,7 +137,7 @@ struct CompanionThreadPanel: View {
                     }
                     .buttonStyle(.plain)
                     .help("\(current.name)'s goal, services, rules and start over")
-                    .accessibilityLabel("Settings for \(current.name)")
+                    .accessibilityLabel("Settings for \(current.mention)")
                 }
                 if current.paused {
                     Text(DotProfileCopy.pausedNote).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)

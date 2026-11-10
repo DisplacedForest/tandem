@@ -181,8 +181,8 @@ extension ChatStore {
 
     func scheduleToolDefinition() -> NativeToolDefinition? {
         guard nativeScheduleStore != nil else { return nil }
-        let name = assistantName
-        return NativeScheduleTools.definition(assistantName: { name }, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
+        let thread = companion.thread
+        return NativeScheduleTools.definition(companionThread: { thread }, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
             guard let self else { throw NativeScheduleError.invalid("Tandem is closing.") }
             return try await self.scheduleFromChat(draft)
         })
@@ -274,9 +274,9 @@ extension ChatStore {
 
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(companion.leading) is paused.") }
         if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
-            return .skipped("Missed while \(assistantName) was paused.")
+            return .skipped("Missed while \(companion.inline) was paused.")
         }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
@@ -294,12 +294,12 @@ extension ChatStore {
         let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
         await bind(conversationID, reply.id.uuidString)
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(assistantName) is paused.") }
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(companion.leading) is paused.") }
         if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
-            return .skipped("Missed while \(assistantName) was paused.")
+            return .skipped("Missed while \(companion.inline) was paused.")
         }
         if schedule.owner == .dot && !isVeraThread(conversationID) {
-            return .skipped("\(assistantName) started over before this ran.")
+            return .skipped("\(companion.leading) started over before this ran.")
         }
         do {
             let ordinal = try repository.messages(conversationID: conversationID).count

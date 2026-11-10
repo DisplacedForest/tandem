@@ -13,22 +13,22 @@ struct CompanionAssignmentField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Give \(store.assistantName) work")
+            Text("Give \(store.companion.inline) work")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
             HStack(alignment: .center, spacing: 8) {
                 if Self.staticRendering {
-                    Text("What should \(store.assistantName) work on?")
+                    Text("What should \(store.companion.inline) work on?")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    TextField("What should \(store.assistantName) work on?", text: $draft)
+                    TextField("What should \(store.companion.inline) work on?", text: $draft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textPrimary)
                         .onSubmit(start)
-                        .accessibilityLabel("Assignment for \(store.assistantName)")
+                        .accessibilityLabel("Assignment for \(store.companion.inline)")
                 }
                 Button(action: start) {
                     Image(systemName: submitting ? "hourglass" : "arrow.up")
@@ -44,7 +44,7 @@ struct CompanionAssignmentField: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
             if store.dotProfile.isPaused {
-                Text("\(store.assistantName) is paused.")
+                Text("\(store.companion.leading) is paused.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             } else if let error {

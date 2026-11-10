@@ -38,7 +38,12 @@ enum Shot {
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
         let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
         let workSeed = view == "conversation-work" || view == "conversation-narrow" ? OngoingWorkFixture.store() : nil
+        if CompanionNameShot.views.contains(view) {
+            CompanionNameShot.render(to: path, appearance: appearance)
+            return
+        }
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
+        CompanionNameShot.apply(to: store)
         let size: CGSize
         if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -102,6 +107,7 @@ enum Shot {
             )
         } else if view == "companion" {
             let seeded = CompanionShotFixture.store()
+            CompanionNameShot.apply(to: seeded)
             content = AnyView(
                 CompanionPanelView(renderSafe: true)
                     .environment(\.renderSafe, true)

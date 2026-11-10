@@ -46,7 +46,7 @@ enum DotProfileCopy {
         } catch {
             return "The name couldn't be saved: \(error.localizedDescription)"
         }
-        store.adoptAssistantName(config.assistantName)
+        store.adoptAssistantName(config.suppliedAssistantName)
         return nil
     }
 }
@@ -66,7 +66,7 @@ struct DotProfileForm: View {
 
     var body: some View {
         Form {
-            TextField("Name", text: $name, prompt: Text(ConfigStore.defaultAssistantName))
+            TextField("Name", text: $name, prompt: Text("Name"))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Goal")
                 TextEditor(text: goalBinding)

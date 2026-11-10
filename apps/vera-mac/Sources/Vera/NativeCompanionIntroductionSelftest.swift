@@ -49,6 +49,13 @@ extension SelfTest {
         }
         let risky = try NativeCompanionProfileTools.change(["action": .string("rule"), "value": .string("ask"), "category": .string("risky_commands")])
         try require(risky.category == "risky_commands" && risky.value == "ask", "A profile rule change accepts risky commands")
+        let installed = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil, nativeAssistantName: "Installed")
+        CompanionNameShot.apply(to: installed, environment: [:])
+        try require(installed.companionName == CompanionNameShot.sampleName, "A shot never shows the installed companion name: it uses the sample name by default")
+        CompanionNameShot.apply(to: installed, environment: [CompanionNameShot.variable: "none"])
+        try require(installed.companionName == nil, "A shot can render an unnamed companion")
+        CompanionNameShot.apply(to: installed, environment: [CompanionNameShot.variable: "Wren"])
+        try require(installed.companionName == "Wren", "A shot can render a chosen sample name")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("companion-opening-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("history.sqlite")
@@ -58,9 +65,28 @@ extension SelfTest {
                               nativeEnabledToolIDs: ["apple-reminders"], artifactPersistenceEnabled: false)
         var persistedName = ""
         store.companionNameWriter = { persistedName = $0 }
+        let askSuite = "tandem-companion-name-ask-\(UUID().uuidString)"
+        guard let askDefaults = UserDefaults(suiteName: askSuite) else { throw NativeTaskFixture.Failure.assertion("Scratch defaults open") }
+        defer { askDefaults.removePersistentDomain(forName: askSuite) }
+        store.companionDefaults = askDefaults
+        store.asksForCompanionName = true
+        try require(CompanionNameAsk.atLaunch(name: nil, settingUp: false, dismissed: false) && !CompanionNameAsk.atLaunch(name: nil, settingUp: true, dismissed: false)
+                        && !CompanionNameAsk.atLaunch(name: nil, settingUp: false, dismissed: true) && !CompanionNameAsk.atLaunch(name: "Ada", settingUp: false, dismissed: false)
+                        && !CompanionNameAsk.atLaunch(name: "  ", settingUp: false, dismissed: true),
+                    "An unnamed install is asked at launch once, not during setup, not after dismissing and not when named")
         await store.connect()
+        store.askForCompanionNameAtLaunch(settingUp: false)
+        try require(store.companionNameAsk == .launch, "An unnamed install is asked for a name at launch")
+        store.finishCompanionNameAsk(named: false)
+        store.askForCompanionNameAtLaunch(settingUp: false)
+        try require(store.companionNameAsk == nil && store.companionNamePromptDismissed, "Not now is remembered and the launch question is not repeated")
+        askDefaults.removeObject(forKey: CompanionNameAsk.dismissedKey)
         store.openVeraThread()
         guard let id = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("Companion exists") }
+        try require(store.companionNameAsk == .firstOpen && (try repository.messages(conversationID: id)).isEmpty && transport.histories.isEmpty,
+                    "Opening an unnamed companion asks for a name before anything is sent to the model")
+        store.finishCompanionNameAsk(named: false)
+        try require(store.companionNameAsk == nil && store.companionName == nil, "Not now continues unnamed")
         func settled() -> Bool { store.selected?.messages.last?.state == .complete && !store.conversationTurns.contains { $0.conversationID == id && ($0.state == .pending || $0.state == .running) } }
         try await NativeSessionFixture.eventually("Opening completes", settled)
         try require(store.selected?.messages.count == 1 && store.selected?.messages.first?.role == .assistant, "Opening contains only a real assistant response")

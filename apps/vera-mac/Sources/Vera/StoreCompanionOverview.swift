@@ -25,7 +25,7 @@ extension ChatStore {
         let results = artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
         let options = dotServiceOptions()
         return CompanionOverviewModel.build(
-            name: assistantName, profile: dotProfile,
+            name: companion.leading, profile: dotProfile,
             services: CompanionOverviewModel.servicesLine(options: options, selected: dotSelectedServices(options)),
             rules: companionRulesSummary, activity: activity, results: results)
     }

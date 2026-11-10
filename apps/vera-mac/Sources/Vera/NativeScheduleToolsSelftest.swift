@@ -147,7 +147,7 @@ extension SelfTest {
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,
                                instruction: draft.instruction, cadence: draft.cadence, timeZone: zone)
         }
-        let definition = NativeScheduleTools.definition(assistantName: { "Sol" }, searchAvailable: { true },
+        let definition = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { true },
                                                         now: { now }, timeZone: { zone }, save: save)
         try require(definition.confirmation == .required, "Scheduling always asks first")
         try require(definition.name == "schedule_task", "The tool is named schedule_task")
@@ -163,7 +163,7 @@ extension SelfTest {
         }
         try require(threadMessage.contains("the Sol thread"), "The result names the assistant thread")
 
-        let offline = NativeScheduleTools.definition(assistantName: { "Sol" }, searchAvailable: { false },
+        let offline = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { false },
                                                      now: { now }, timeZone: { zone }, save: save)
         do {
             _ = try await offline.execute(weekdaysArguments)
@@ -175,7 +175,7 @@ extension SelfTest {
         guard case .object(let documentResult) = document else { throw NativeTaskFixture.Failure.assertion("A document schedule returns an object") }
         try require(documentResult["saved"] == .bool(true), "A document schedule saves without search")
 
-        let refusing = NativeScheduleTools.definition(assistantName: { "Sol" }, searchAvailable: { true }, now: { now }, timeZone: { zone },
+        let refusing = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { true }, now: { now }, timeZone: { zone },
                                                       save: { _ in throw NativeScheduleError.invalid("Pick a time that is still ahead.") })
         do {
             _ = try await refusing.execute(weekdaysArguments)
