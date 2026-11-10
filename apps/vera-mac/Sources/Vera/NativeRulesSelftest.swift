@@ -389,7 +389,9 @@ extension SelfTest {
         try require(!bare.isLifted(.payments) && !bare.isLifted(.credentialEntry) && !bare.isLifted(.permanentDeletion) && bare.holds(.payments), "A bare class name in settings never lifts a floor item")
         let marked = try JSONDecoder().decode(NativeRules.self, from: Data("{\"lifted.payments\":\"act\",\"lifted.rule_changes\":\"act\"}".utf8))
         try require(marked.isLifted(.payments) && marked.choice(for: .payments) == .act && !marked.isLifted(.credentialEntry) && !marked.isLifted(.ruleChanges), "Only the lift entry lifts, and only for an item that can be lifted")
-        for hidden in ["r\\\nm /Volumes/Other/victim", "r\\\r\nm /Volumes/Other/victim", "{rm,-f} /Volumes/Other/victim", "{/bin/rm,-rf} ../Other", "\\rm /Volumes/Other/victim", "/bin/rm\t-rf /Volumes/Other/victim"] {
+        for hidden in ["r\\\nm /Volumes/Other/victim", "r\\\r\nm /Volumes/Other/victim", "{rm,-f} /Volumes/Other/victim", "{/bin/rm,-rf} ../Other", "\\rm /Volumes/Other/victim", "/bin/rm\t-rf /Volumes/Other/victim",
+                       "${unset_name:-rm} /Volumes/Other/victim", "$'rm\\0ignored' /Volumes/Other/victim", "/bin/rm* /Volumes/Other/victim",
+                       "IFS=:; c='rm:-f:/Volumes/Other/victim'; $c", "x=(rm -rf); \"${x[@]}\" /Volumes/Other/victim", "/bin/rm@ /Volumes/Other/victim"] {
             let found = NativeCommandClassifier.classify(hidden, grants: sample)
             try require(found == .permanentDeletion, "A destructive program hidden by shell expansion stays on the floor: \(hidden) classified as \(found.rawValue)")
         }

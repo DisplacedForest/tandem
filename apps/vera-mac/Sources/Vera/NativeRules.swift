@@ -542,12 +542,16 @@ enum NativeCommandClassifier {
     }
 
     static func namesDestructiveProgram(_ command: String) -> Bool {
-        var spaced = command.replacingOccurrences(of: "\\\r\n", with: "").replacingOccurrences(of: "\\\n", with: "")
-            .filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
-        for separator in [";", "|", "&", "(", ")", "{", "}", ",", "<", ">", "=", "\n", "\r", "`", "$"] { spaced = spaced.replacingOccurrences(of: separator, with: " ") }
-        let names = spaced.split(whereSeparator: { $0.isWhitespace }).map { word in word.split(separator: "/").last.map(String.init) ?? String(word) }
-        let git = names.contains("git")
-        return names.contains { destructive.contains($0) || findEffects.contains($0) || (git && destructiveGit.contains($0)) }
+        let joined = command.replacingOccurrences(of: "\\\r\n", with: "").replacingOccurrences(of: "\\\n", with: "")
+            .filter { $0 != "\"" && $0 != "'" }
+        return [joined.filter { $0 != "\\" }, joined.replacingOccurrences(of: "\\", with: " ")].contains { text in
+            let words = text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." || $0 == "+") }).map(String.init)
+            let git = words.contains("git")
+            return words.contains { word in
+                let bare = String(word.drop(while: { $0 == "-" }))
+                return destructive.contains(bare) || findEffects.contains(word) || (git && destructiveGit.contains(bare))
+            }
+        }
     }
 
     static func classifyUnfloored(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
