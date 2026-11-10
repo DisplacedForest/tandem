@@ -540,18 +540,21 @@ extension ChatStore {
         (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
     }
 
-    func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn) async -> Bool {
+    nonisolated static func cardSubject(for activity: NativeToolActivity, definitions: [NativeToolDefinition], typedText: String) -> NativeCardSubject? {
+        guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }),
+              let data = activity.request.data(using: .utf8), let arguments = try? NativeJSONValue.piRead(data).piObject,
+              let action = definition.actionClass(for: arguments) else { return nil }
+        var command: String?
+        if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
+        return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
+                                 targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
+                                 governed: definition.id == NativeCommandTools.toolID || definition.id == NativeFolderTools.toolID,
+                                 typedText: typedText)
+    }
+
+    func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
         if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) { return false }
-        if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
-           let command = NativeCommandTools.command(inRequest: activity.request),
-           Self.prefixApprovalAnswers(nativeRuleSource, store: nativeRuleRecordStore, conversationID: turn.conversationID,
-                                      requestText: turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "", command: command,
-                                      directory: NativeCommandTools.directory(inRequest: activity.request), grants: grants(for: turn.conversationID)) {
-            guard turnOwned(turn) else { return false }
-            turnCommandReasonSource.set(.conversationPrefix, for: Self.scopedBlockID(activity.id, turn: turn))
-            return true
-        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard turnOwned(turn), execution.continuation == nil else {
@@ -560,7 +563,13 @@ extension ChatStore {
                 }
                 execution.continuation = continuation
                 turnConfirmationTokens[turn.assistantMessageID] = UUID()
-                turnConfirmations[turn.assistantMessageID] = NativeToolConfirmationRequest(activity: activity)
+                var request = NativeToolConfirmationRequest(activity: activity)
+                if let subject {
+                    request.subject = subject
+                    request.choices = NativeCardChoices.offered(subject, place: .chat(conversationID: turn.conversationID))
+                    request.covers = NativeCardChoices.covers(subject)
+                }
+                turnConfirmations[turn.assistantMessageID] = request
                 pendingToolConfirmation = turnConfirmations[turn.assistantMessageID]
                 setTurnStatus("Waiting for your approval", turn: turn)
             }
@@ -573,10 +582,10 @@ extension ChatStore {
     }
 
     func resolveTurnConfirmation(_ messageID: UUID, approved: Bool, requestID: String? = nil, token: UUID? = nil) {
-        resolveTurnConfirmation(messageID, decision: approved ? .approve : .decline, requestID: requestID, token: token)
+        resolveTurnConfirmation(messageID, decision: approved ? .allowOnce : .decline, requestID: requestID, token: token)
     }
 
-    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeToolDecision, requestID: String? = nil, token: UUID? = nil) {
+    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeCardChoiceKind, requestID: String? = nil, token: UUID? = nil) {
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               let execution = turnExecutions[turn.id],
               requestID == nil || turnConfirmations[messageID]?.id == requestID,
@@ -587,24 +596,41 @@ extension ChatStore {
         let request = turnConfirmations.removeValue(forKey: messageID)
         if pendingToolConfirmation?.id == request?.id { pendingToolConfirmation = nil }
         let owned = turnOwned(execution.record)
+        var decision = decision
+        if decision.saves {
+            let offered = request?.choices.contains(where: { $0.kind == decision }) ?? false
+            if !offered { decision = decision.approves ? .allowOnce : .decline }
+        }
+        if owned, decision.saves, let request, let subject = request.subject {
+            let drafts = NativeCardChoices.records(decision, subject: subject, place: .chat(conversationID: turn.conversationID), originMessageID: nil)
+            var saved = 0
+            for (index, draft) in drafts.enumerated() {
+                var record = draft
+                record.originMessageID = messageID.uuidString.lowercased()
+                record.originToolCallID = drafts.count == 1 ? request.id : request.id + ":" + String(index)
+                if addRuleRecord(record) != nil { saved += 1 }
+            }
+            if saved == 0 {
+                rulesNotice = "That choice couldn't be saved, so it applied to this one action only."
+                if decision == .never { decision = .decline }
+            } else if decision == .never, subject.toolID == NativeCommandTools.toolID {
+                for approval in approvedCommandRecords(for: turn.conversationID) { revokeRuleRecord(id: approval.id) }
+            }
+        }
         if let request, request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
            let command = NativeCommandTools.command(inRequest: request.request) {
-            switch decision {
-            case .approve:
+            if decision.approves {
                 turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
-            case .approveSimilar:
-                if owned { approveCommandPrefix(command, conversationID: turn.conversationID) }
-                turnCommandReasonSource.set(.userApproved, for: Self.scopedBlockID(request.id, turn: execution.record))
-            case .decline:
+            } else {
                 let turnGrants = grants(for: turn.conversationID)
                 let directory = NativeCommandTools.directory(inRequest: request.request) ?? (turnGrants.count == 1 ? turnGrants[0].path : "")
                 attachDisplayBlock(.commandRun(NativeCommandRun(id: Self.scopedBlockID(request.id, turn: execution.record), command: command, directory: directory, outcome: .declined)), turn: execution.record)
             }
         }
-        if let request, decision == .decline {
+        if let request, !decision.approves {
             turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
         }
-        continuation.resume(returning: decision.approved && owned)
+        continuation.resume(returning: decision.approves && owned)
     }
 }
 

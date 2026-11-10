@@ -397,6 +397,8 @@ enum SelfTest {
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
+        do { try runNativeCardChoices() } catch { print("SELFTEST ERROR: native card choices \(error)"); exit(1) }
+        do { try await runNativeCardChoiceStore() } catch { print("SELFTEST ERROR: native card choice store \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }

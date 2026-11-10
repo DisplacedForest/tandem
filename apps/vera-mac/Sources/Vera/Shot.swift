@@ -26,6 +26,10 @@ enum Shot {
             NativeSessionShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view.hasPrefix("card-") {
+            CardShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("task-card") {
             NativeTaskCardShot.render(view: view, to: path, appearance: appearance)
             return

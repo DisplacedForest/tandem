@@ -195,6 +195,7 @@ struct NativeFileChange: Codable, Equatable, Hashable, Identifiable, Sendable {
 enum NativeToolCallContext {
     @TaskLocal static var activityID: String?
     @TaskLocal static var request: String?
+    @TaskLocal static var confirmed: Bool?
 }
 
 enum NativeToolRequestKey {

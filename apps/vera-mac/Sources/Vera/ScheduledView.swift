@@ -209,6 +209,8 @@ private struct ScheduleDetail: View {
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
+                                       covers: store.scheduleRunDecision(run)?.covers, neverTitle: store.scheduleRunDecision(run)?.never,
+                                       literal: store.scheduleRunDecision(run)?.details,
                                        onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
                 }
@@ -245,25 +247,51 @@ private struct ScheduleRunRow: View {
     let onOpen: (() -> Void)?
     let onStop: (() -> Void)?
     let choices: [String]
+    var covers: String? = nil
+    var neverTitle: String? = nil
+    var literal: String? = nil
     let onChoose: ((String) -> Void)?
+
+    private var isApproval: Bool {
+        choices.contains(NativeCardChoiceKind.allowOnce.rawValue) && choices.contains(NativeCardChoiceKind.decline.rawValue)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: run.outcome.symbol).font(.system(size: 13)).foregroundStyle(Theme.textSecondary).frame(width: 18).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
-                    .font(.system(size: 13, weight: .medium))
-                if !run.detail.isEmpty {
-                    Text(run.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
+                            .font(.system(size: 13, weight: .medium))
+                        if !run.detail.isEmpty {
+                            CompanionNamedText(template: run.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
+                    if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                 }
-            }
-            Spacer(minLength: 8)
-            if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)) }
-            if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)) }
-            ForEach(choices, id: \.self) { choice in
-                Button(Self.title(for: choice)) { onChoose?(choice) }
-                    .buttonStyle(.bordered).controlSize(.small)
+                if isApproval, let literal, !literal.isEmpty, literal.unicodeScalars.count <= 20000 {
+                    Text(literal)
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled).lineLimit(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.bg))
+                        .accessibilityLabel("Action details: " + literal)
+                }
+                if isApproval {
+                    CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true),
+                                  defaultApproval: false, allowApprove: onChoose != nil, allowDecline: onChoose != nil,
+                                  onAllow: { onChoose?(NativeCardChoiceKind.allowOnce.rawValue) },
+                                  onDecline: { onChoose?(NativeCardChoiceKind.decline.rawValue) },
+                                  onItem: { onChoose?($0) })
+                } else if !choices.isEmpty {
+                    HStack(spacing: 8) { choiceButtons }
+                }
             }
         }
         .padding(10)
@@ -272,11 +300,19 @@ private struct ScheduleRunRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    private static func title(for choice: String) -> String {
+    @ViewBuilder
+    private var choiceButtons: some View {
+        ForEach(choices, id: \.self) { choice in
+            Button(Self.title(for: choice)) { onChoose?(choice) }
+                .buttonStyle(.bordered).controlSize(.small).fixedSize()
+        }
+    }
+
+    static func title(for choice: String) -> String {
         switch choice.lowercased() {
         case "retry": return "Retry"
         case "stop", "cancel": return "Stop"
-        default: return choice.prefix(1).uppercased() + choice.dropFirst()
+        default: return NativeTaskCardPresentation.choiceTitle(choice) ?? (choice.prefix(1).uppercased() + choice.dropFirst())
         }
     }
 }
