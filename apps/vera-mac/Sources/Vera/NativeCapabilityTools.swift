@@ -158,7 +158,7 @@ enum NativeCapabilityTools {
     }
 
     static let proposing: Set<String> = ["propose_action"]
-    static let drafting: [String: String] = ["recurring_watch": "draft"]
+    static let drafting: [String: String] = [:]
 
     static func definition(
         _ declaration: NativeToolDeclaration,
@@ -603,28 +603,6 @@ enum NativeCapabilityTools {
           "endpoint": "/authoring/skill",
           "method": "POST",
           "confirmation": "required"
-        }
-        """,
-        """
-        {
-          "name": "recurring_watch",
-          "title": "Set up a recurring watch",
-          "description": "Set up a recurring watch when the user explicitly asks in this conversation to keep an eye on something over time. Two steps. First call with mode \\"draft\\" and the user's request in plain language, then present the returned summary in your reply and ask whether to go ahead. Only after the user clearly agrees in this conversation, call again with mode \\"save\\" and draft_json set to the exact draft object the draft call returned. Never call save without that explicit yes, and never invent or edit the draft yourself.",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "mode": {"type": "string", "description": "\\"draft\\" to draft a watch from the request, \\"save\\" to save a draft the user agreed to"},
-              "request": {"type": "string", "description": "Plain-language description of what to watch, required for draft"},
-              "draft_json": {"type": "string", "description": "The draft object from the draft step as a JSON string, required for save"}
-            },
-            "required": ["mode"],
-            "additionalProperties": false
-          },
-          "json_fields": {"draft_json": "draft"},
-          "endpoint": "/pulse/veins/author",
-          "method": "POST",
-          "timeout_s": 60,
-          "confirmation": "none"
         }
         """,
     ]

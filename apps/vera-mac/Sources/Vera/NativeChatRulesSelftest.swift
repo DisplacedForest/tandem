@@ -190,28 +190,6 @@ extension SelfTest {
         try require(await run(spared, ["line": .string("Beans")], confirmed: false) == nil && preflightCount.count == 1,
                     "The next valid call uses the one-use allow")
 
-        let watch = try { () throws -> NativeToolDefinition in
-            guard let found = bundled.first(where: { $0.name == "recurring_watch" }) else { throw NativeTaskFixture.Failure.assertion("The watch tool ships") }
-            return NativeCapabilityTools.definition(found, base: { URL(string: "https://api.example") })
-        }()
-        let draft: [String: NativeJSONValue] = ["mode": .string("draft")]
-        let save: [String: NativeJSONValue] = ["mode": .string("save")]
-        try require(!watch.proposes && ChatStore.followsRules(watch) && watch.proposesFor?(draft) == true && watch.proposesFor?(save) == false
-                        && watch.proposesFor?([:]) == false,
-                    "The watch tool proposes only while drafting")
-        let watchAsk = ruled(watch, source())
-        try require(asks(watchAsk, draft) == false && asks(watchAsk, save) == true, "Drafting a watch shows no card and saving one asks under the default sends rule")
-        let watchOff = ruled(watch, source(rules(.handOff, for: .networkSends)))
-        try require(await run(watchOff, save, confirmed: true) == NativeRuleResolver.handOffMessage(.networkSends),
-                    "Saving a watch is refused when sends are handed off")
-        try require(await run(watchAsk, save, confirmed: false) == NativeRuleResolver.changedMessage, "Saving a watch never runs without an answer")
-        _ = try records.add(NativeRuleRecord(scope: .conversation(other), action: nil, toolID: watch.id, effect: .forbid,
-                                             statement: "Never allow this in this chat"))
-        ChatStore.reloadRules(durable, from: records)
-        let watchNever = ruled(watch, durable, conversation: other, store: records)
-        try require(await run(watchNever, save, confirmed: true) != nil, "A saved never refuses saving a watch")
-        try require(asks(watchNever, draft) == false, "A saved never still lets a watch be drafted")
-
         let lookup = try NativeCapabilityTools.parse(data: try JSONSerialization.data(withJSONObject: [
             "name": "garden_lookup", "title": "Look up the garden log", "description": "Read the garden log",
             "parameters": ["type": "object", "properties": [:] as [String: Any], "additionalProperties": false],
@@ -222,15 +200,14 @@ extension SelfTest {
                     "A lookup file that demands confirmation counts as another change")
         let guardedRuled = ruled(guarded, source(rules(.act, for: .otherChanges)))
         try require(guardedRuled.alwaysAsks && asks(guardedRuled) == true, "It always asks, whatever the rule says")
-        try require((try? watch.preflight?(["mode": .string("save"), "draft_json": .string("not json")])) == nil
-                        && (try? watch.preflight?(["mode": .string("save"), "draft_json": .string("{\"name\":\"Lumber\"}")])) != nil,
+        let proposal = try { () throws -> NativeToolDefinition in
+            guard let found = bundled.first(where: { $0.name == "propose_action" }) else { throw NativeTaskFixture.Failure.assertion("The action tool ships") }
+            return NativeCapabilityTools.definition(found, base: { URL(string: "https://api.example") })
+        }()
+        let proposed: [String: NativeJSONValue] = ["verb": .string("water"), "title": .string("Water the beds"), "body": .string("Twenty minutes")]
+        try require((try? proposal.preflight?(proposed.merging(["args_json": .string("not json")]) { $1 })) == nil
+                        && (try? proposal.preflight?(proposed.merging(["args_json": .string("{\"zone\":2}")]) { $1 })) != nil,
                     "A shipped tool's own checks catch a field that is not a JSON object before anything is sent")
-        let malformed = try records.add(NativeRuleRecord(scope: .conversation(chat), action: .networkSends, toolID: watch.id, effect: .allow,
-                                                         statement: "Allow saving a watch once", remainingUses: 1))
-        ChatStore.reloadRules(durable, from: records)
-        try require(await run(ruled(watch, durable, store: records), ["mode": .string("save"), "draft_json": .string("not json")], confirmed: false) != nil
-                        && (try records.all().first { $0.id == malformed.id })?.remainingUses == 1,
-                    "A watch save with a malformed draft leaves a one-use allow unspent")
         try require(shipped.filter { $0.effect == .read }.allSatisfy { $0.confirmation == .none && $0.confirmationFor == nil },
                     "No shipped lookup can show a card")
 
