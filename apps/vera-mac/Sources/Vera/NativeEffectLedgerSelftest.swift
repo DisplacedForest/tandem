@@ -412,54 +412,91 @@ extension SelfTest {
         let records = NativeRuleRecordStore(database: repository.database, now: { clock.now })
         try seedRunningTask(repository)
 
-        let source = NativeRuleSource()
-        let minted = source.revision
+        let bare = NativeRuleSource()
+        let minted = bare.revision
         let stale = try ledger.propose(effectProposal(clock, rules: minted, key: "record-stale"))
-        source.setRecords([try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my notes"))])
+        let blocker = try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my notes"))
+        bare.setRecords([blocker])
         try require(try ledger.admit(digest: stale.digest, generation: 1, rulesRevision: minted, grantsRevision: 0, decision: .act(.rule),
-                                     decisionID: nil, reply: nil, live: { (rules: source.revision, grants: 0) }) == .refused(.staleRules),
+                                     decisionID: nil, reply: nil, live: { (rules: bare.revision, grants: 0) }) == .refused(.staleRules),
                     "A record added after a proposal was minted refuses its admission as stale")
+        try records.revoke(id: blocker.id)
+
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        let live: @Sendable () -> (rules: Int, grants: Int) = { (rules: source.revision, grants: 0) }
+        try require(source.isDurable && source.revision == (try records.version()), "A prepared source serves the durable version")
 
         let grant = try records.add(NativeRuleRecord(action: .fileEdits, toolID: NativeFolderTools.toolID, effect: .allow,
                                                      statement: "Save the plan once", remainingUses: 1))
-        let first = try ledger.propose(effectProposal(clock, key: "record-first"))
-        guard case .admitted = try ledger.admit(digest: first.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
-                                                decisionID: nil, reply: nil, consuming: grant.id) else {
+        ChatStore.reloadRules(source, from: records)
+        let first = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-first"))
+        guard case .admitted = try ledger.admit(digest: first.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
+                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: grant.id) else {
             throw NativeTaskFixture.Failure.assertion("A one-use grant admits its first proposal")
         }
-        try require(try records.record(id: grant.id)?.remainingUses == 0, "The admission spent the use")
-        let second = try ledger.propose(effectProposal(clock, key: "record-second"))
-        try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, consuming: grant.id) == .refused(.grantSpent)
+        try require(try records.record(id: grant.id)?.remainingUses == 0 && (try records.version()) == first.proposal.rulesRevision + 1,
+                    "The admission spent the use and advanced the durable version in the same transaction")
+        ChatStore.reloadRules(source, from: records)
+        let second = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-second"))
+        try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: grant.id) == .refused(.grantSpent)
                     && (try ledger.record(digest: second.digest))?.state == .proposed,
-                    "A second proposal consuming the same grant is refused as spent and stays unadmitted")
+                    "A second proposal authorized by the same one-use grant is refused as spent and stays unadmitted")
+        try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: "missing") == .refused(.grantSpent),
+                    "A missing authorizing record is refused as spent")
 
         let spare = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Save once more", remainingUses: 1))
-        let fenced = try ledger.propose(effectProposal(clock, key: "record-fenced"))
-        try require(try ledger.admit(digest: fenced.digest, generation: 2, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, consuming: spare.id) == .refused(.staleGeneration)
+        ChatStore.reloadRules(source, from: records)
+        let fenced = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-fenced"))
+        try require(try ledger.admit(digest: fenced.digest, generation: 2, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: spare.id) == .refused(.staleGeneration)
                     && (try records.record(id: spare.id))?.remainingUses == 1,
                     "An admission refused for another reason leaves the use in place")
-        try require(try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: 1, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, consuming: spare.id) == .refused(.staleRules)
-                    && (try records.record(id: spare.id))?.remainingUses == 1,
-                    "A stale rules refusal leaves the use in place")
-        guard case .admitted = try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: 0, grantsRevision: 0, decision: .act(.grant),
-                                                decisionID: nil, reply: nil, consuming: spare.id) else {
+        guard case .admitted = try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
+                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: spare.id) else {
             throw NativeTaskFixture.Failure.assertion("The preserved use still admits")
         }
         try require(try records.record(id: spare.id)?.remainingUses == 0, "Admission and the decrement land together")
 
-        let earlier = NativeRuleSource()
-        earlier.setEpoch(1)
-        earlier.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
-        let launched = try ledger.propose(effectProposal(clock, rules: earlier.revision, key: "record-epoch"))
-        let relaunched = NativeRuleSource()
-        relaunched.setEpoch(2)
-        relaunched.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
-        try require(try ledger.admit(digest: launched.digest, generation: 1, rulesRevision: launched.proposal.rulesRevision, grantsRevision: 0,
-                                     decision: .act(.rule), decisionID: nil, reply: nil,
-                                     live: { (rules: relaunched.revision, grants: 0) }) == .refused(.staleRules),
-                    "A proposal minted under one epoch is refused after a relaunch with the same in-memory counter")
+        let standing = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Edit my notes"))
+        ChatStore.reloadRules(source, from: records)
+        let resolved = source.resolver(for: "conversation-1", requestText: "")
+        try require(resolved.decision(for: .fileEdits) == .act(.grant), "The standing allow decides before the revoke")
+        let raced = try ledger.propose(effectProposal(clock, rules: resolved.revision, key: "record-raced"))
+        try records.revoke(id: standing.id)
+        try require(source.revision == resolved.revision, "The in-memory source is deliberately not reloaded")
+        try require(try ledger.admit(digest: raced.digest, generation: 1, rulesRevision: resolved.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: standing.id) == .refused(.staleRules),
+                    "A revoke that commits after resolution but before admission refuses the admission")
+        try require(try ledger.admit(digest: raced.digest, generation: 1, rulesRevision: resolved.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: false, authorizedBy: standing.id) == .refused(.staleRules),
+                    "The authorizing record check alone also refuses a revoked allow")
+
+        let expiring = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Edit for ten seconds",
+                                                        expiresAt: clock.now.addingTimeInterval(10)))
+        ChatStore.reloadRules(source, from: records)
+        let timed = source.resolver(for: "conversation-1", requestText: "")
+        try require(timed.decision(for: .fileEdits) == .act(.grant), "The unlimited allow decides while it is live")
+        let lapsing = try ledger.propose(effectProposal(clock, rules: timed.revision, key: "record-lapsing"))
+        clock.advance(11)
+        try require(try ledger.admit(digest: lapsing.digest, generation: 1, rulesRevision: timed.revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: expiring.id) == .refused(.staleRules),
+                    "An unlimited allow that expires between resolution and admission is refused")
+
+        let broken = NativeRuleSource()
+        broken.setRecords([NativeRuleRecord(action: .trash, effect: .allow, statement: "Trash freely"),
+                           NativeRuleRecord(action: .trash, target: NativeRuleTarget.make(.folder, "/p"), effect: .forbid, statement: "Never trash photos")])
+        broken.attach(allocator: { throw NativeRuleRecordError.notFound })
+        broken.setGlobal(NativeRules(choices: [.trash: .act]))
+        let failedMint = broken.revision
+        try require(broken.hasFailed && broken.currentRecords.map(\.effect) == [.forbid] && broken.revision != failedMint
+                    && broken.resolver(for: "c", requestText: "").revision != broken.resolver(for: "c", requestText: "").revision,
+                    "A failed version advance drops saved allows and never repeats a revision")
+        let doomed = try ledger.propose(effectProposal(clock, rules: failedMint, key: "record-doomed"))
+        try require(try ledger.admit(digest: doomed.digest, generation: 1, rulesRevision: failedMint, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil, live: { (rules: broken.revision, grants: 0) }) == .refused(.staleRules),
+                    "Every admission under a failed version is stale")
     }
 }

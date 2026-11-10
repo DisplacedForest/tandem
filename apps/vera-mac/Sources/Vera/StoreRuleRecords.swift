@@ -8,13 +8,7 @@ extension ChatStore {
 
     func prepareRuleRecords() {
         guard let store = nativeRuleRecordStore else { return }
-        let launch = NativeRuleSource.launchEpoch(now: Date()) { try store.advanceEpoch() }
-        if launch.fellBack {
-            Logger(subsystem: "Vera", category: "rules").error("rules_epoch_fallback \(launch.epoch, privacy: .public)")
-        }
-        nativeRuleSource.setEpoch(launch.epoch)
-        _ = try? store.expireDue()
-        reloadRuleRecords()
+        Self.prepareRules(nativeRuleSource, from: store)
     }
 
     func reloadRuleRecords() {
@@ -22,12 +16,29 @@ extension ChatStore {
         Self.reloadRules(nativeRuleSource, from: store)
     }
 
-    nonisolated static func reloadRules(_ source: NativeRuleSource, from store: NativeRuleRecordStore) {
+    nonisolated static func prepareRules(_ source: NativeRuleSource, from store: NativeRuleRecordStore) {
+        source.attach(allocator: { try store.advanceVersion() })
         do {
-            source.setRecords(try store.active())
+            _ = try store.advanceVersion()
+            _ = try store.expireDue()
         } catch {
-            Logger(subsystem: "Vera", category: "rules").error("rules_reload_failed \(error.localizedDescription, privacy: .public)")
-            source.restrictRecords()
+            Logger(subsystem: "Vera", category: "rules").error("rules_launch_failed \(error.localizedDescription, privacy: .public)")
+            source.fail()
+            return
+        }
+        reloadRules(source, from: store)
+    }
+
+    nonisolated static func reloadRules(_ source: NativeRuleSource, from store: NativeRuleRecordStore) {
+        for _ in 0..<2 {
+            do {
+                let snapshot = try store.snapshot()
+                if source.publish(snapshot.records, version: snapshot.version) { return }
+            } catch {
+                Logger(subsystem: "Vera", category: "rules").error("rules_reload_failed \(error.localizedDescription, privacy: .public)")
+                source.fail()
+                return
+            }
         }
     }
 

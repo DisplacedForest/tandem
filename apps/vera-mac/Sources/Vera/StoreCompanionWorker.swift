@@ -59,6 +59,8 @@ extension ChatStore {
         definitions.append(contentsOf: NativeFolderTools.definitions(grants: { source.grants(for: threadID) }, ledger: NativeFileChangeLedger(),
                                                                      edits: .ask, trash: .ask, live: { action in
             rules.resolver(for: threadID, requestText: "").decision(for: action)
+        }, liveTargets: { action, targets in
+            ChatStore.folderDecision(rules, conversationID: threadID, requestText: "", action: action, targets: targets)
         }))
         definitions.append(contentsOf: NativeCommandTools.definitions(grants: { source.grants(for: threadID) }, decision: .ask,
                                                                       reason: { _ in .rule }, record: { _ in }))

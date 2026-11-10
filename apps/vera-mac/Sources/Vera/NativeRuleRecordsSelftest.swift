@@ -31,8 +31,12 @@ enum NativeRuleRecordsSelftest {
         try sourceRevisions(require)
         try restart(require)
         try targets(require)
-        try epochFallback(require)
         try unboundedCounter(require)
+        try durableVersions(require)
+        try commandRestrictions(require)
+        try await commandToolID(require)
+        try await typedTargets(require)
+        try useLimits(require)
         try strictReload(require)
         try projectMap(require)
         try await storeScenario(require)
@@ -69,7 +73,7 @@ enum NativeRuleRecordsSelftest {
                 saved.append(try first.add(NativeRuleRecord(scope: scope, action: .networkSends, toolID: "mail", target: recipient(" Alice@Example.com "),
                                                             effect: effect, statement: "  Send to Alice  ", origin: .chat,
                                                             originConversationID: "c1", quote: "you can email alice", reason: "asked in chat",
-                                                            remainingUses: 3, expiresAt: start.addingTimeInterval(3600))))
+                                                            remainingUses: effect == .allow ? 3 : nil, expiresAt: start.addingTimeInterval(3600))))
             }
         }
         let read = try second.all()
@@ -97,7 +101,7 @@ enum NativeRuleRecordsSelftest {
                                                      projectsDirectory: directory.appendingPathComponent("projects"))
             try repository.database.write { db in
                 try db.execute(sql: "DROP TABLE native_rule_records")
-                try db.execute(sql: "DROP TABLE native_rule_epoch")
+                try db.execute(sql: "DROP TABLE native_rule_version")
                 try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'nativeRuleRecordsV35'")
             }
             let state = try repository.database.read { db in
@@ -110,10 +114,10 @@ enum NativeRuleRecordsSelftest {
         let reopened = try LocalChatRepository(url: url, artifactDirectory: directory.appendingPathComponent("artifacts"),
                                                projectsDirectory: directory.appendingPathComponent("projects"))
         let migrated = try reopened.database.read { db in
-            (try db.tableExists("native_rule_records"), try Int.fetchOne(db, sql: "SELECT value FROM native_rule_epoch WHERE id = 1"),
+            (try db.tableExists("native_rule_records"), try Int.fetchOne(db, sql: "SELECT value FROM native_rule_version WHERE id = 1"),
              try db.columns(in: "native_rule_records").map(\.name))
         }
-        try require(migrated.0 && migrated.1 == 0, "V35 applies on top of a V34 database with the epoch at zero")
+        try require(migrated.0 && migrated.1 == 0, "V35 applies on top of a V34 database with the rules version at zero")
         try require(Set(migrated.2) == ["id", "scope_kind", "scope_id", "action", "tool_id", "target_kind", "target_value", "effect", "statement",
                                         "origin", "origin_conversation_id", "origin_message_id", "quote", "reason", "remaining_uses", "expires_at",
                                         "status", "created_at", "updated_at", "revoked_at"], "The rule record table has its columns")
@@ -319,7 +323,7 @@ enum NativeRuleRecordsSelftest {
     private static func sourceRevisions(_ require: (Bool, String) throws -> Void) throws {
         let fresh = NativeRuleSource()
         fresh.setRecords([])
-        try require(fresh.revision == 0, "With epoch zero and no records the revision starts at zero")
+        try require(fresh.revision == 0, "With no records the in-memory revision starts at zero")
         let repository = try LocalChatRepository(inMemory: true)
         let clock = NativeEffectTestClock(start)
         let records = store(repository, clock: clock)
@@ -369,21 +373,14 @@ enum NativeRuleRecordsSelftest {
     private static func restart(_ require: (Bool, String) throws -> Void) throws {
         let repository = try LocalChatRepository(inMemory: true)
         let records = store(repository, clock: NativeEffectTestClock(start))
-        let firstEpoch = try records.advanceEpoch()
-        let secondEpoch = try records.advanceEpoch()
-        try require(firstEpoch == 1 && secondEpoch == 2, "Advancing the epoch twice gives increasing values")
-        let before = NativeRuleSource()
-        before.setEpoch(firstEpoch)
-        for index in 0..<1000 {
-            before.setGlobal(NativeRules(choices: [.trash: index % 2 == 0 ? .act : .ask]))
-        }
-        let highest = before.revision
-        try require(highest == firstEpoch * NativeRuleSource.epochStride + 1000, "A thousand bumps under the first epoch are all counted")
-        let after = NativeRuleSource()
-        after.setEpoch(secondEpoch)
-        try require(after.revision > highest, "A source seeded with the next epoch starts above anything the previous launch reached")
-        after.setGlobal(NativeRules(choices: [.trash: .act]))
-        try require(after.revision == secondEpoch * NativeRuleSource.epochStride + 1, "The same in-memory counter under a new epoch is a different revision")
+        let first = NativeRuleSource()
+        ChatStore.prepareRules(first, from: records)
+        for index in 0..<10 { first.setGlobal(NativeRules(choices: [.trash: index % 2 == 0 ? .act : .ask])) }
+        let highest = first.revision
+        try require(highest == (try records.version()), "Every change on a launched source advances the durable version")
+        let second = NativeRuleSource()
+        ChatStore.prepareRules(second, from: records)
+        try require(second.revision > highest, "A second launch on the same database never shares a version with the first")
     }
 
     private static func targets(_ require: (Bool, String) throws -> Void) throws {
@@ -401,43 +398,20 @@ enum NativeRuleRecordsSelftest {
                     "A target only matches a candidate of the same kind")
     }
 
-    private static func epochFallback(_ require: (Bool, String) throws -> Void) throws {
-        struct Broken: Error {}
-        let failed = NativeRuleSource.launchEpoch(now: start) { throw Broken() }
-        try require(failed.fellBack && failed.epoch == 1_800_000_000, "A failed epoch advance falls back to wall-clock seconds")
-        let normal = NativeRuleSource.launchEpoch(now: start) { 7 }
-        try require(!normal.fellBack && normal.epoch == 7, "A working epoch advance is used as is")
-        try require(Int.bitWidth == 64, "Revisions are 64-bit")
-        let farFuture = 4_102_444_800
-        let product = farFuture.multipliedReportingOverflow(by: NativeRuleSource.epochStride)
-        let total = product.partialValue.addingReportingOverflow(10_000_000)
-        try require(!product.overflow && !total.overflow, "A wall-clock epoch times the stride plus a large counter fits in Int64")
-        let previous = NativeRuleSource()
-        previous.setEpoch(1000)
-        for index in 0..<1000 { previous.setGlobal(NativeRules(choices: [.trash: index % 2 == 0 ? .act : .ask])) }
-        let fallback = NativeRuleSource()
-        fallback.setEpoch(failed.epoch)
-        try require(fallback.revision > previous.revision, "A fallback epoch sits above anything a counter epoch reaches")
-        try require(NativeRuleSource.launchEpoch(now: start.addingTimeInterval(1)) { throw Broken() }.epoch > failed.epoch,
-                    "A later fallback launch gets a larger epoch")
-    }
+
 
     private static func unboundedCounter(_ require: (Bool, String) throws -> Void) throws {
-        let stride = NativeRuleSource.epochStride
-        try require(NativeRuleSource.revision(epoch: 3, counter: stride - 1) < NativeRuleSource.revision(epoch: 3, counter: stride)
-                    && NativeRuleSource.revision(epoch: 3, counter: stride) < NativeRuleSource.revision(epoch: 3, counter: stride + 1),
-                    "The revision keeps rising past the stride")
         let source = NativeRuleSource()
-        source.setEpoch(3)
+        let one = [record(.ask, .trash)]
         var last = source.revision
         var rising = true
-        for _ in 0..<1_000_001 {
-            source.restrictRecords()
+        for index in 0..<1_000_001 {
+            source.setRecords(index % 2 == 0 ? one : [])
             let next = source.revision
             if next <= last { rising = false; break }
             last = next
         }
-        try require(rising && last == NativeRuleSource.revision(epoch: 3, counter: 1_000_001), "1,000,001 bumps each change the revision")
+        try require(rising && last == 1_000_001, "1,000,001 changes each change the in-memory revision")
     }
 
     private static func strictReload(_ require: (Bool, String) throws -> Void) throws {
@@ -448,18 +422,23 @@ enum NativeRuleRecordsSelftest {
         let allow = try records.add(record(.allow, .trash))
         let forbid = try records.add(record(.forbid, .networkSends, target: recipient("alice")))
         let source = NativeRuleSource()
-        ChatStore.reloadRules(source, from: records)
+        ChatStore.prepareRules(source, from: records)
         try require(Set(source.currentRecords.map(\.id)) == [allow.id, forbid.id] && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .act(.grant),
                     "A working reload serves every active record")
         let before = source.revision
         try repository.database.write { db in try db.execute(sql: "DROP TABLE native_rule_records") }
         ChatStore.reloadRules(source, from: records)
-        try require(source.currentRecords == [forbid] && source.revision > before
+        let after = source.revision
+        try require(source.hasFailed && source.currentRecords == [forbid] && after != before && source.revision != after
                     && source.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask,
-                    "A failed reload stops serving saved allows, keeps the restrictions and bumps the revision")
-        let restricted = source.revision
-        source.restrictRecords()
-        try require(source.revision > restricted, "Restricting always bumps the revision even when nothing was removed")
+                    "A failed reload fails closed: allows are dropped, restrictions stay and no revision ever repeats")
+        let launchRepository = try LocalChatRepository(inMemory: true)
+        try launchRepository.database.write { db in try db.execute(sql: "DROP TABLE native_rule_version") }
+        let failedLaunch = NativeRuleSource()
+        failedLaunch.setRecords([record(.allow, .trash)])
+        ChatStore.prepareRules(failedLaunch, from: store(launchRepository, clock: NativeEffectTestClock(start)))
+        try require(failedLaunch.hasFailed && failedLaunch.currentRecords.isEmpty && failedLaunch.revision != failedLaunch.revision,
+                    "A launch that cannot advance the version fails closed")
     }
 
     private static func projectMap(_ require: (Bool, String) throws -> Void) throws {
@@ -494,7 +473,7 @@ enum NativeRuleRecordsSelftest {
         let first = ChatStore(nativeConfig: config, nativeTransport: SelfTestNativeTransport(), repository: repository,
                               attachmentStore: NativeAttachmentStore(directory: artifacts))
         let launched = first.nativeRuleSource.revision
-        try require(launched == NativeRuleSource.revision(epoch: 1, counter: 0), "Opening the store advances the epoch once")
+        try require(launched == 1 && first.nativeRuleSource.isDurable, "Opening the store advances the durable version once")
         try require(first.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .trash) == .ask, "Trash asks by default")
         guard let saved = first.addRuleRecord(record(.allow, .trash, statement: "Trash my old downloads")) else {
             throw NativeTaskFixture.Failure.assertion("The store saves a rule record")
@@ -514,5 +493,199 @@ enum NativeRuleRecordsSelftest {
         try require(second.nativeRuleSource.revision > reached && second.nativeRuleSource.currentRecords.map(\.id) == [kept?.id].compactMap { $0 }
                     && second.nativeRuleSource.resolver(for: "c1", requestText: "").decision(for: .fileEdits) == .ask,
                     "A relaunch on the same database starts above the last revision and loads the saved records")
+    }
+
+    private static func durableVersions(_ require: (Bool, String) throws -> Void) throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(start)
+        let records = store(repository, clock: clock)
+        var last = try records.version()
+        func moved(_ name: String, _ require: (Bool, String) throws -> Void) throws {
+            let next = try records.version()
+            try require(next == last + 1, name)
+            last = next
+        }
+        var tagged = record(.allow, .trash, uses: 2, expires: start.addingTimeInterval(30))
+        tagged.originMessageID = "message-9"
+        let saved = try records.add(tagged)
+        try moved("Adding a record advances the durable version", require)
+        _ = try records.add(tagged)
+        try require(try records.version() == last, "A replayed add does not advance the version")
+        try records.update(id: saved.id) { $0.statement = "Trash old downloads" }
+        try moved("Updating a record advances the durable version", require)
+        try records.disable(id: saved.id)
+        try moved("Disabling advances the durable version", require)
+        try records.disable(id: saved.id)
+        try require(try records.version() == last, "A no-op transition does not advance the version")
+        try records.enable(id: saved.id)
+        try moved("Enabling advances the durable version", require)
+        _ = try records.consume(id: saved.id)
+        try moved("Consuming a use advances the durable version", require)
+        try require(try records.expireDue() == 0 && (try records.version()) == last, "An expiry sweep that changes nothing leaves the version alone")
+        clock.advance(31)
+        try require(try records.expireDue() == 1, "The due record expires")
+        try moved("An expiry that changes a row advances the durable version", require)
+        let other = try records.add(record(.ask, .trash))
+        try moved("Adding another record advances the durable version", require)
+        try records.revoke(id: other.id)
+        try moved("Revoking advances the durable version", require)
+
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        try moved("A launch advances the durable version once", require)
+        try require(source.isDurable && source.revision == last, "A launched source's revision is the durable version")
+        source.setGlobal(NativeRules(choices: [.trash: .act]))
+        try moved("A global rules change advances the durable version through the allocator", require)
+        source.set(NativeConversationRules(choices: [.trash: .handOff]), for: "c1")
+        try moved("A conversation rules change advances the durable version", require)
+        source.setProject("p1", for: "c1")
+        try moved("A project move advances the durable version", require)
+        try require(source.revision == last, "The source revision follows every allocation")
+
+        let allow = try records.add(record(.allow, .fileEdits, statement: "Edit freely"))
+        let newer = try records.snapshot()
+        try require(source.publish(newer.records, version: newer.version) && source.revision == newer.version, "A newer snapshot is published")
+        try records.revoke(id: allow.id)
+        let newest = try records.snapshot()
+        try require(source.publish(newest.records, version: newest.version), "The snapshot without the allow is published")
+        try require(!source.publish(newer.records, version: newer.version) && source.revision == newest.version
+                    && source.resolver(for: "c2", requestText: "").decision(for: .fileEdits) == .act(.rule)
+                    && !source.currentRecords.contains(where: { $0.id == allow.id }),
+                    "An older snapshot published after a newer one never restores a revoked allow")
+    }
+
+    private static func commandRestrictions(_ require: (Bool, String) throws -> Void) throws {
+        let acting = NativeRules(choices: [.commands: .act])
+        let forbidden = resolver([record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))], global: acting)
+        let blocked = ["swift 'build'", "swift \"build\" --verbose", "make lint && swift build", "ls; swift build | tee log", "FOO=1 swift build",
+                       "env swift build", "nohup swift build", "command swift build", "(swift build)", "/usr/bin/swift build",
+                       "swift bu$(echo il)d", "sh -c 'swift build'", "sw\"if\"t build"]
+        for command in blocked {
+            try require(forbidden.decision(forCommand: command) == .handOff, "A forbid on swift build blocks: \(command)")
+        }
+        try require(forbidden.decision(forCommand: "swift test") == .act(.rule) && forbidden.decision(forCommand: "git status && swift test") == .act(.rule),
+                    "Commands without the restricted prefix still act")
+        let strictest = resolver([record(.ask, .commands, tool: NativeCommandTools.toolID, target: NativeRuleTarget.make(.commandPrefix, "npm test")),
+                                  record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))], global: acting)
+        try require(strictest.tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "echo $HOME") == .handOff,
+                    "A command the parser cannot see through takes the strictest applicable restriction")
+        let plain = resolver([], global: acting)
+        let main = NativeRuleResolver(global: acting, conversation: NativeConversationRules(), requestText: "")
+        for command in ["echo 'hello world'", "swift build", "echo $HOME"] {
+            try require(plain.decision(forCommand: command) == main.decision(forCommand: command), "With no restrictive records a command behaves as before: \(command)")
+        }
+        let allowed = resolver([record(.allow, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))])
+        try require(allowed.decision(forCommand: "swift build") == .act(.grant) && allowed.decision(forCommand: "swift 'build'") == .ask
+                    && allowed.decision(forCommand: "env swift build") == .ask, "An allow prefix still matches only a plain simple command")
+    }
+
+    static func folderFixture() throws -> (root: String, grant: FolderGrant, directory: URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-folder-" + UUID().uuidString)
+        for name in ["locked", "open"] {
+            try FileManager.default.createDirectory(at: directory.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        let grant = try FolderGrant.make(url: directory)
+        return (grant.path, grant, directory)
+    }
+
+    private static func commandToolID(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        for (tool, blocks) in [(NativeCommandTools.toolID, true), ("another-tool", false)] {
+            let source = NativeRuleSource()
+            source.setGlobal(NativeRules(choices: [.commands: .act]))
+            source.setRecords([record(.forbid, .commands, tool: tool)])
+            let run = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .ask, reason: { _ in nil }, record: { _ in })[0]
+            let arguments: [String: NativeJSONValue] = ["command": .string("swift build")]
+            let worker = NativeCompanionWorker.ruleDecision(run, arguments, resolver: source.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
+            try require(worker.decision == (blocks ? .handOff : .act(.rule)),
+                        blocks ? "A commands forbid on the command tool blocks swift build in the worker" : "A forbid for another tool does not block the command tool in the worker")
+            let asking = NativeRuleSource()
+            asking.setGlobal(NativeRules(choices: [.commands: .ask]))
+            asking.setRecords([record(.forbid, .commands, tool: tool)])
+            let foreground = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
+                                                            liveTargets: { command, action, targets in
+                ChatStore.commandDecision(asking, conversationID: "c1", requestText: "", command: command, action: action, targets: targets)
+            })[0]
+            var message = ""
+            do { _ = try await foreground.execute(arguments) } catch { message = error.localizedDescription }
+            try require(blocks ? message == NativeRuleResolver.handOffMessage(.commands) : message == NativeRuleResolver.changedMessage,
+                        blocks ? "The same forbid hands off swift build in foreground chat" : "A forbid for another tool leaves foreground chat on the ordinary rules")
+        }
+    }
+
+    private static func typedTargets(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let locked = fixture.root + "/locked"
+        let source = NativeRuleSource()
+        source.setGlobal(NativeRules(choices: [.fileEdits: .act]))
+        source.setRecords([record(.forbid, .fileEdits, target: NativeRuleTarget.make(.folder, locked))])
+        let chat = NativeFolderTools.definitions(grants: { [fixture.grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
+                                                 liveTargets: { action, targets in
+            ChatStore.folderDecision(source, conversationID: "c1", requestText: "", action: action, targets: targets)
+        })
+        let write = chat.first { $0.name == NativeFolderTools.writeName }!
+        let move = chat.first { $0.name == NativeFolderTools.moveName }!
+        func outcome(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) async -> String {
+            do { _ = try await definition.execute(arguments); return "ran" } catch { return error.localizedDescription }
+        }
+        let inside: [String: NativeJSONValue] = ["path": .string(locked + "/a.txt"), "content": .string("x")]
+        let sibling: [String: NativeJSONValue] = ["path": .string(fixture.root + "/open/a.txt"), "content": .string("x")]
+        let intoLocked: [String: NativeJSONValue] = ["from": .string(fixture.root + "/open/a.txt"), "to": .string(locked + "/b.txt")]
+        let handed = NativeRuleResolver.handOffMessage(.fileEdits)
+        try require(await outcome(write, inside) == handed, "A folder forbid blocks a write inside it in chat")
+        try require(await outcome(write, sibling) == "ran", "A sibling path still acts in chat")
+        try require(await outcome(move, intoLocked) == handed && FileManager.default.fileExists(atPath: fixture.root + "/open/a.txt"),
+                    "A move whose destination is inside the forbidden folder is blocked in chat")
+        let resolver = source.resolver(for: "c1", requestText: "")
+        try require(NativeCompanionWorker.ruleDecision(write, inside, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                    "The folder forbid blocks the same write in the worker")
+        try require(NativeCompanionWorker.ruleDecision(write, sibling, resolver: resolver, honoringLimitedUse: true).decision == .act(.rule),
+                    "The sibling write still acts in the worker")
+        try require(NativeCompanionWorker.ruleDecision(move, intoLocked, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                    "The move into the forbidden folder is blocked in the worker")
+        try require(write.ruleTargets?(inside) == [NativeRuleTarget.make(.folder, locked + "/a.txt")!]
+                    && move.ruleTargets?(intoLocked).count == 2, "File tools declare a folder target for every affected path")
+
+        var send = NativeToolDefinition(id: "mail", name: "send_mail", title: "Send mail", description: "Send mail",
+                                        parameters: .object(["type": .string("object")]), confirmation: .required,
+                                        isAvailable: { true }, execute: { _ in .null })
+        send.effect = .write
+        send.action = .networkSends
+        let spoof: [String: NativeJSONValue] = ["path": .string("alice@example.com"), "destination": .string("bob@example.com")]
+        let allowing = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "",
+                                          records: [record(.allow, target: recipient("alice@example.com"))], context: NativeRuleContext(conversationID: "c1"), now: start)
+        let spoofed = NativeCompanionWorker.ruleDecision(send, spoof, resolver: allowing, honoringLimitedUse: true)
+        try require(spoofed.decision == .handOff && spoofed.authorizedBy == nil && NativeCompanionWorker.ruleQuery(send, spoof, action: .networkSends).targets.isEmpty,
+                    "A path that looks like a recipient never satisfies a recipient allow")
+        let acting = NativeRules(choices: [.networkSends: .act])
+        let restricted = NativeRuleResolver(global: acting, conversation: NativeConversationRules(), requestText: "",
+                                            records: [record(.forbid, target: recipient("alice@example.com"))], context: NativeRuleContext(conversationID: "c1"), now: start)
+        try require(NativeCompanionWorker.ruleDecision(send, [:], resolver: restricted, honoringLimitedUse: true).decision == .ask,
+                    "A send tool with no declared targets asks when a recipient forbid exists")
+        let open = NativeRuleResolver(global: acting, conversation: NativeConversationRules(), requestText: "", records: [],
+                                      context: NativeRuleContext(conversationID: "c1"), now: start)
+        try require(NativeCompanionWorker.ruleDecision(send, [:], resolver: open, honoringLimitedUse: true).decision == .act(.rule),
+                    "With no recipient restriction the send tool behaves as before")
+    }
+
+    private static func useLimits(_ require: (Bool, String) throws -> Void) throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        for effect in [NativeRuleEffect.ask, .handOff, .forbid] {
+            var caught: NativeRuleRecordError?
+            do { try records.add(record(effect, .trash, uses: 2)) } catch let error as NativeRuleRecordError { caught = error }
+            try require(caught == .invalidUses, "A use limit on a \(effect.rawValue) record is rejected at add")
+        }
+        let forbid = try records.add(record(.forbid, .trash))
+        var updateCaught: NativeRuleRecordError?
+        do { try records.update(id: forbid.id) { $0.remainingUses = 3 } } catch let error as NativeRuleRecordError { updateCaught = error }
+        try require(updateCaught == .invalidUses && (try records.record(id: forbid.id))?.remainingUses == nil, "A use limit on a restriction is rejected at update")
+        var spent = record(.forbid, .trash)
+        spent.remainingUses = 0
+        let matcher = resolver([spent], global: NativeRules(choices: [.trash: .act]))
+        try require(matcher.decision(for: .trash) == .handOff && matcher.resolve(NativeRuleQuery(action: .trash), honoringLimitedUse: true).decision == .handOff,
+                    "A restriction is never dropped because of a use count")
     }
 }

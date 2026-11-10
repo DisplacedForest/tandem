@@ -39,14 +39,25 @@ enum NativeFolderTools {
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], ledger: NativeFileChangeLedger,
                             edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                             live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
+                            liveTargets: (@Sendable (NativeActionClass, [NativeRuleTarget]) -> NativeRuleDecision?)? = nil,
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
         let editConfirmation: NativeToolConfirmation = edits.requiresConfirmation ? .required : .none
-        let editGate: @Sendable () throws -> Void = {
-            try NativeRuleResolver.gate(live: live(.fileEdits) ?? edits, planned: edits, action: .fileEdits, approved: edits.requiresConfirmation)
+        let targets: @Sendable ([String: NativeJSONValue], [String]) -> [NativeRuleTarget] = { arguments, keys in
+            ruleTargets(arguments, keys: keys, access: access())
         }
-        return [
+        let current: @Sendable (NativeActionClass, [String: NativeJSONValue], [String]) -> NativeRuleDecision? = { action, arguments, keys in
+            if let liveTargets { return liveTargets(action, targets(arguments, keys)) }
+            return live(action)
+        }
+        let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> Void = { arguments, keys in
+            try NativeRuleResolver.gate(live: current(.fileEdits, arguments, keys) ?? edits, planned: edits, action: .fileEdits, approved: edits.requiresConfirmation)
+        }
+        let declared: @Sendable ([String]) -> @Sendable ([String: NativeJSONValue]) -> [NativeRuleTarget] = { keys in
+            { arguments in targets(arguments, keys) }
+        }
+        let definitions: [NativeToolDefinition] = [
             NativeToolDefinition(
                 id: toolID, name: listName, title: "List a folder",
                 description: "List the entries of a folder inside a granted folder: name, kind (file, folder, link), and size. Hidden entries are included only when requested. \(untrustedNote)",
@@ -106,7 +117,7 @@ enum NativeFolderTools {
                 ], required: ["path", "content"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate()
+                    try editGate(arguments, ["path"])
                     let location = try access().locate(try requiredString(arguments, "path"))
                     guard case .string(let content)? = arguments["content"] else { throw NativeToolError.invalidArguments("Content is required") }
                     guard content.utf8.count <= maximumWriteBytes else { throw NativeToolError.invalidArguments("Content exceeds the 1 MB write limit") }
@@ -123,7 +134,7 @@ enum NativeFolderTools {
                 ], required: ["path", "old_text", "new_text"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate()
+                    try editGate(arguments, ["path"])
                     let location = try access().locate(try requiredString(arguments, "path"))
                     guard case .string(let old)? = arguments["old_text"], !old.isEmpty else { throw NativeToolError.invalidArguments("old_text is required") }
                     guard case .string(let new)? = arguments["new_text"] else { throw NativeToolError.invalidArguments("new_text is required") }
@@ -138,7 +149,7 @@ enum NativeFolderTools {
                 ], required: ["from", "to"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate()
+                    try editGate(arguments, ["from", "to"])
                     let current = access()
                     let from = try current.locate(try requiredString(arguments, "from"))
                     let to = try current.locate(try requiredString(arguments, "to"))
@@ -153,7 +164,7 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate()
+                    try editGate(arguments, ["path"])
                     let location = try access().locate(try requiredString(arguments, "path"))
                     return try makeDirectory(location, ledger: ledger)
                 }),
@@ -165,13 +176,27 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, action: .trash, isAvailable: available,
                 execute: { arguments in
-                    try NativeRuleResolver.gate(live: live(.trash) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
+                    try NativeRuleResolver.gate(live: current(.trash, arguments, ["path"]) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
                     let current = access()
                     let location = try current.locate(try requiredString(arguments, "path"))
                     try current.requireNoReadOnlyRoot(under: location)
                     return try moveToTrash(location, ledger: ledger)
                 }),
         ]
+        let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: ["path"], trashName: ["path"]]
+        return definitions.map { definition in
+            guard let paths = keys[definition.name] else { return definition }
+            var targeted = definition
+            targeted.ruleTargets = declared(paths)
+            return targeted
+        }
+    }
+
+    static func ruleTargets(_ arguments: [String: NativeJSONValue], keys: [String], access: NativeFolderAccess) -> [NativeRuleTarget] {
+        keys.compactMap { key -> NativeRuleTarget? in
+            guard case .string(let raw)? = arguments[key], let location = try? access.locate(raw) else { return nil }
+            return NativeRuleTarget.make(.folder, location.path)
+        }
     }
 
     static func moveToTrash(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {

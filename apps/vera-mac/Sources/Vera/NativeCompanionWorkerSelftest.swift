@@ -409,9 +409,9 @@ extension SelfTest {
         let paused = try await harness.runUntilSettled()
         let effects = try harness.effects(id)
         try require(paused.state == .needsDecision && harness.service.count("water_bed") == 1 && effects.count == 2
-                    && effects[0].state == .completed && effects[1].state == .proposed,
+                    && effects.filter({ $0.state == .completed }).count == 1 && effects.filter({ $0.state == .proposed }).count == 1,
                     "A one-use grant runs the tool once without a card and the next identical call asks")
-        try require(try records.record(id: grant.id)?.remainingUses == 0 && effects[1].proposal.rulesRevision > effects[0].proposal.rulesRevision,
+        try require(try records.record(id: grant.id)?.remainingUses == 0 && (effects.first { $0.state == .proposed }?.proposal.rulesRevision ?? 0) > (effects.first { $0.state == .completed }?.proposal.rulesRevision ?? 0),
                     "The spent use is saved and the rules revision moved past the first proposal")
         let digest = try harness.decision(paused)["digest"] as? String
         try harness.reply(paused, "approve", digest: digest)

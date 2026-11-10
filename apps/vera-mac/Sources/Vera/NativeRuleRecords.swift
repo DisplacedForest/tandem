@@ -91,12 +91,13 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         return NativeRuleTarget(kind: kind, value: trimmed)
     }
 
-    func isSatisfied(by candidate: NativeRuleTarget) -> Bool {
+    func isSatisfied(by candidate: NativeRuleTarget, restricting: Bool = false) -> Bool {
         guard candidate.kind == kind else { return false }
         switch kind {
         case .recipient, .service:
             return candidate.value == value
         case .commandPrefix:
+            if restricting { return NativeCommandMatch.restricts(command: candidate.value, prefix: value) }
             return NativeCommandPrefix.isSimple(candidate.value) && NativeCommandPrefix.matches(command: candidate.value, prefix: value)
         case .folder:
             if candidate.value == value { return true }
@@ -116,11 +117,40 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+enum NativeCommandMatch {
+    static let opaqueCharacters: Set<Character> = ["`", "$", "\\"]
+
+    static func segments(_ command: String) -> [[String]]? {
+        if command.contains(where: { opaqueCharacters.contains($0) }) { return nil }
+        var parsed: [[String]] = []
+        for segment in NativeCommandClassifier.segments(of: command) {
+            let (name, arguments) = NativeCommandClassifier.executable(segment)
+            if name.isEmpty { continue }
+            if name == "?" || NativeCommandClassifier.hasInlineCode(name, arguments) { return nil }
+            let tokens = [name] + arguments
+            if tokens.contains(where: { $0.contains("\"") || $0.contains("'") }) { return nil }
+            parsed.append(tokens)
+        }
+        return parsed
+    }
+
+    static func isOpaque(_ command: String) -> Bool { segments(command) == nil }
+
+    static func restricts(command: String, prefix: String) -> Bool {
+        guard let parsed = segments(command) else { return true }
+        let wanted = NativeCommandPrefix.tokens(of: prefix)
+        guard !wanted.isEmpty else { return false }
+        return parsed.contains { $0.count >= wanted.count && Array($0.prefix(wanted.count)) == wanted }
+    }
+}
+
 enum NativeRuleEffect: String, Codable, CaseIterable, Hashable, Sendable {
     case allow
     case ask
     case handOff = "hand_off"
     case forbid
+
+    var restricts: Bool { self != .allow }
 
     var strictness: Int {
         switch self {
@@ -218,7 +248,9 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
             guard let normalized = NativeRuleTarget.make(target.kind, target.value) else { throw NativeRuleRecordError.emptyTarget }
             clean.target = normalized
         }
-        if let uses = clean.remainingUses, uses < (creating ? 1 : 0) { throw NativeRuleRecordError.invalidUses }
+        if let uses = clean.remainingUses {
+            guard clean.effect == .allow, uses >= (creating ? 1 : 0) else { throw NativeRuleRecordError.invalidUses }
+        }
         return clean
     }
 
@@ -238,14 +270,19 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
     func isLive(at now: Date) -> Bool {
         guard status == .active else { return false }
         if let expiresAt, expiresAt <= now { return false }
-        if let remainingUses, remainingUses <= 0 { return false }
+        if effect == .allow, let remainingUses, remainingUses <= 0 { return false }
+        return true
+    }
+
+    func applies(to query: NativeRuleQuery, at now: Date) -> Bool {
+        guard isLive(at: now), let action, action == query.action else { return false }
+        if let toolID, toolID != query.toolID { return false }
         return true
     }
 
     func matches(_ query: NativeRuleQuery, at now: Date) -> Bool {
-        guard isLive(at: now), let action, action == query.action else { return false }
-        if let toolID, toolID != query.toolID { return false }
-        if let target, !query.targets.contains(where: { target.isSatisfied(by: $0) }) { return false }
+        guard applies(to: query, at: now) else { return false }
+        if let target, !query.targets.contains(where: { target.isSatisfied(by: $0, restricting: effect.restricts) }) { return false }
         return true
     }
 }
@@ -292,12 +329,25 @@ enum NativeRuleMatcher {
     static func resolve(_ records: [NativeRuleRecord], query: NativeRuleQuery, context: NativeRuleContext?, at now: Date,
                         honoringLimitedUse: Bool) -> NativeRuleResolution? {
         let matching = records.filter { record in
-            if !honoringLimitedUse && record.remainingUses != nil { return false }
+            if !honoringLimitedUse && record.effect == .allow && record.remainingUses != nil { return false }
             return record.scope.applies(in: context) && record.matches(query, at: now)
         }
-        guard let winner = matching.sorted(by: precedes).first else { return nil }
+        let opaque = query.targets.contains { $0.kind == .commandPrefix && NativeCommandMatch.isOpaque($0.value) }
+        let restrictive = opaque ? matching.filter { $0.effect.restricts && $0.target?.kind == .commandPrefix } : []
+        let strictest = restrictive.sorted { lhs, rhs in
+            lhs.effect.strictness != rhs.effect.strictness ? lhs.effect.strictness > rhs.effect.strictness : precedes(lhs, rhs)
+        }.first
+        guard let winner = strictest ?? matching.sorted(by: precedes).first else { return nil }
         let overridden = matching.filter { $0.specificity < winner.specificity && $0.effect != winner.effect }.sorted(by: precedes)
         return NativeRuleResolution(decidedBy: winner, overridden: overridden)
+    }
+
+    static func restrictsUntargeted(_ records: [NativeRuleRecord], query: NativeRuleQuery, context: NativeRuleContext?, at now: Date) -> Bool {
+        records.contains { record in
+            guard record.effect.restricts, let target = record.target, record.scope.applies(in: context),
+                  record.applies(to: query, at: now) else { return false }
+            return !query.targets.contains { $0.kind == target.kind }
+        }
     }
 }
 
@@ -327,7 +377,7 @@ struct NativeRuleRecordStore: Sendable {
                 origin_message_id TEXT,
                 quote TEXT,
                 reason TEXT,
-                remaining_uses INTEGER CHECK(remaining_uses IS NULL OR remaining_uses >= 0),
+                remaining_uses INTEGER CHECK(remaining_uses IS NULL OR (remaining_uses >= 0 AND effect = 'allow')),
                 expires_at DOUBLE,
                 status TEXT NOT NULL CHECK(status IN ('active', 'disabled', 'revoked')),
                 created_at DOUBLE NOT NULL,
@@ -338,11 +388,11 @@ struct NativeRuleRecordStore: Sendable {
             );
             CREATE INDEX native_rule_records_status_action ON native_rule_records(status, action);
             CREATE UNIQUE INDEX native_rule_records_origin_message ON native_rule_records(origin_message_id) WHERE origin_message_id IS NOT NULL;
-            CREATE TABLE native_rule_epoch (
+            CREATE TABLE native_rule_version (
                 id INTEGER PRIMARY KEY CHECK(id = 1),
                 value INTEGER NOT NULL
             );
-            INSERT INTO native_rule_epoch(id, value) VALUES(1, 0);
+            INSERT INTO native_rule_version(id, value) VALUES(1, 0);
             """)
     }
 
@@ -424,6 +474,7 @@ struct NativeRuleRecordStore: Sendable {
         return try database.write { db in
             if let message = prepared.originMessageID, let existing = try Self.fetch(db, originMessageID: message) { return existing }
             try Self.write(db, prepared, inserting: true)
+            _ = try Self.advanceVersion(db)
             guard let stored = try Self.fetch(db, id: prepared.id) else { throw NativeRuleRecordError.notFound }
             return stored
         }
@@ -444,6 +495,7 @@ struct NativeRuleRecordStore: Sendable {
             next.updatedAt = stamp
             let clean = try NativeRuleRecord.validated(next, creating: false)
             try Self.write(db, clean, inserting: false)
+            _ = try Self.advanceVersion(db)
             guard let stored = try Self.fetch(db, id: id) else { throw NativeRuleRecordError.notFound }
             return stored
         }
@@ -457,7 +509,9 @@ struct NativeRuleRecordStore: Sendable {
         let sql: String = "UPDATE native_rule_records SET status = ?, updated_at = ?, revoked_at = COALESCE(?, revoked_at) WHERE id = ? AND status IN (\(placeholders))"
         return try database.write { db in
             try db.execute(sql: sql, arguments: arguments)
-            return db.changesCount == 1
+            guard db.changesCount == 1 else { return false }
+            _ = try Self.advanceVersion(db)
+            return true
         }
     }
 
@@ -476,7 +530,36 @@ struct NativeRuleRecordStore: Sendable {
             WHERE id = ? AND status = 'active' AND remaining_uses IS NOT NULL AND remaining_uses > 0
                 AND (expires_at IS NULL OR expires_at > ?)
             """, arguments: [id, date.timeIntervalSince1970])
-        return db.changesCount == 1
+        guard db.changesCount == 1 else { return false }
+        _ = try advanceVersion(db)
+        return true
+    }
+
+    enum Authorization: Equatable, Sendable {
+        case authorized
+        case spent
+        case stale
+    }
+
+    static func authorize(_ db: Database, id: String, at date: Date) throws -> Authorization {
+        guard let record = try fetch(db, id: id) else { return .spent }
+        guard record.status == .active, record.effect == .allow else { return .stale }
+        if let expires = record.expiresAt, expires <= date { return .stale }
+        guard let uses = record.remainingUses else { return .authorized }
+        guard uses > 0 else { return .spent }
+        return try consume(db, id: id, at: date) ? .authorized : .spent
+    }
+
+    static func version(_ db: Database) throws -> Int {
+        guard let value = try Int.fetchOne(db, sql: "SELECT value FROM native_rule_version WHERE id = 1") else {
+            throw NativeRuleRecordError.notFound
+        }
+        return value
+    }
+
+    static func advanceVersion(_ db: Database) throws -> Int {
+        try db.execute(sql: "INSERT INTO native_rule_version(id, value) VALUES(1, 1) ON CONFLICT(id) DO UPDATE SET value = value + 1")
+        return try version(db)
     }
 
     func consume(id: String) throws -> Bool {
@@ -492,7 +575,9 @@ struct NativeRuleRecordStore: Sendable {
                 UPDATE native_rule_records SET status = 'revoked', revoked_at = ?, updated_at = ?
                 WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?
                 """, arguments: [stamp, stamp, stamp])
-            return db.changesCount
+            let count = db.changesCount
+            if count > 0 { _ = try Self.advanceVersion(db) }
+            return count
         }
     }
 
@@ -517,10 +602,19 @@ struct NativeRuleRecordStore: Sendable {
         try database.read { db in try Self.fetch(db, originMessageID: originMessageID) }
     }
 
-    func advanceEpoch() throws -> Int {
-        try database.write { db in
-            try db.execute(sql: "INSERT INTO native_rule_epoch(id, value) VALUES(1, 1) ON CONFLICT(id) DO UPDATE SET value = value + 1")
-            return try Int.fetchOne(db, sql: "SELECT value FROM native_rule_epoch WHERE id = 1") ?? 0
+    func advanceVersion() throws -> Int {
+        try database.write { db in try Self.advanceVersion(db) }
+    }
+
+    func version() throws -> Int {
+        try database.read { db in try Self.version(db) }
+    }
+
+    func snapshot() throws -> (records: [NativeRuleRecord], version: Int) {
+        try database.read { db in
+            let records = try Row.fetchAll(db, sql: "SELECT \(Self.columns) FROM native_rule_records WHERE status = 'active' ORDER BY created_at, id")
+                .compactMap(Self.decode)
+            return (records, try Self.version(db))
         }
     }
 }

@@ -64,12 +64,23 @@ enum NativeCommandTools {
     static let toolID = "folder-commands"
     static let runName = "run_command"
     static let toolNames: Set<String> = [runName]
+
+    static func ruleTargets(command: String, directory: String?, access: NativeFolderAccess) -> [NativeRuleTarget] {
+        var targets = NativeRuleTarget.candidate(.commandPrefix, command).map { [$0] } ?? []
+        let location: NativeFolderLocation?
+        if let directory { location = try? access.locate(directory) } else if access.roots.count == 1 {
+            location = NativeFolderLocation(root: access.roots[0], components: [])
+        } else { location = nil }
+        if let location, let folder = NativeRuleTarget.make(.folder, location.path) { targets.append(folder) }
+        return targets
+    }
     static let timeout = NativeCommandLimits.maximumTimeout + .seconds(5)
 
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], decision: NativeRuleDecision,
                             reason: @escaping @Sendable (String) -> NativeRuleReason?,
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
                             live: @escaping @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { _, _ in nil },
+                            liveTargets: (@Sendable (String, NativeActionClass, [NativeRuleTarget]) -> NativeRuleDecision?)? = nil,
                             declined: @escaping @Sendable (String) -> Bool = { _ in false },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
@@ -81,13 +92,14 @@ enum NativeCommandTools {
         let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision) = { command, directory in
             let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
             let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
+            let targeted: NativeRuleDecision? = liveTargets.flatMap { $0(command, action, ruleTargets(command: command, directory: directory, access: access())) }
             switch action {
             case .sensitive: return (action, .handOff)
             case .commands:
-                let current = live(command, .commands) ?? decision
+                let current = targeted ?? live(command, .commands) ?? decision
                 return (action, plain ? current : current.atLeastAsk)
             default:
-                let current = live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
+                let current = targeted ?? live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
                 return (action, plain ? current : current.atLeastAsk)
             }
         }
@@ -151,6 +163,10 @@ enum NativeCommandTools {
         definition.classify = { arguments in
             guard case .string(let command)? = arguments["command"] else { return .commands }
             return NativeCommandClassifier.classify(command, grants: grants(), directory: arguments.folderString("directory"))
+        }
+        definition.ruleTargets = { arguments in
+            guard case .string(let command)? = arguments["command"] else { return [] }
+            return ruleTargets(command: command, directory: arguments.folderString("directory"), access: access())
         }
         definition.ruleDecision = { arguments, resolver in
             guard case .string(let command)? = arguments["command"] else { return .handOff }

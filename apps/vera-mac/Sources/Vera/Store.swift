@@ -2333,7 +2333,9 @@ final class ChatStore: ObservableObject {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
-                live: { rules.resolver(for: id, requestText: text).decision(for: $0) }, alwaysAvailable: true))
+                live: { rules.resolver(for: id, requestText: text).decision(for: $0) },
+                liveTargets: { ChatStore.folderDecision(rules, conversationID: id, requestText: text, action: $0, targets: $1) },
+                alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(

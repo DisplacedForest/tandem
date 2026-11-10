@@ -101,10 +101,11 @@ extension ChatStore {
     func folderToolDefinitions(for conversationID: String, ledger: NativeFileChangeLedger,
                                edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                                live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
+                               liveTargets: (@Sendable (NativeActionClass, [NativeRuleTarget]) -> NativeRuleDecision?)? = nil,
                                alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
         return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger,
-                                             edits: edits, trash: trash, live: live, alwaysAvailable: alwaysAvailable)
+                                             edits: edits, trash: trash, live: live, liveTargets: liveTargets, alwaysAvailable: alwaysAvailable)
     }
 
     func commandToolDefinitions(for turn: NativeConversationTurn, decision: NativeRuleDecision,
@@ -121,11 +122,26 @@ extension ChatStore {
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: scope + $0) }, record: record,
                                               live: { command, action in
-                                                  let resolver = rules.resolver(for: conversationID, requestText: text)
+                                                  let resolver = rules.resolver(for: conversationID, requestText: text).tool(NativeCommandTools.toolID, targets: [])
                                                   return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+                                              },
+                                              liveTargets: { command, action, targets in
+                                                  Self.commandDecision(rules, conversationID: conversationID, requestText: text, command: command,
+                                                                       action: action, targets: targets)
                                               },
                                               declined: { declines.contains($0, turn: turnID) },
                                               alwaysAvailable: alwaysAvailable)
+    }
+
+    nonisolated static func commandDecision(_ rules: NativeRuleSource, conversationID: String, requestText: String, command: String,
+                                            action: NativeActionClass, targets: [NativeRuleTarget]) -> NativeRuleDecision {
+        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, targets: targets)
+        return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+    }
+
+    nonisolated static func folderDecision(_ rules: NativeRuleSource, conversationID: String, requestText: String,
+                                           action: NativeActionClass, targets: [NativeRuleTarget]) -> NativeRuleDecision {
+        rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, targets: targets).decision(for: action)
     }
 
     func fileChangeLedger(for turn: NativeConversationTurn) -> NativeFileChangeLedger {

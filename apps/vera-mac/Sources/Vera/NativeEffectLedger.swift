@@ -162,7 +162,8 @@ struct NativeEffectLedgerStore: Sendable {
 
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
                decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
-               live: (@Sendable () -> (rules: Int, grants: Int))? = nil, consuming recordID: String? = nil) throws -> NativeEffectAdmission {
+               live: (@Sendable () -> (rules: Int, grants: Int))? = nil, rulesDurable: Bool = false,
+               authorizedBy recordID: String? = nil) throws -> NativeEffectAdmission {
         let current = now()
         return try database.write { db in
             let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
@@ -189,6 +190,7 @@ struct NativeEffectLedgerStore: Sendable {
             default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
             }
             if record.proposal.rulesRevision != rulesRevision || record.proposal.rulesRevision != revisions.rules { return .refused(.staleRules) }
+            if rulesDurable, (try? NativeRuleRecordStore.version(db)) != record.proposal.rulesRevision { return .refused(.staleRules) }
             if record.proposal.grantsRevision != grantsRevision || record.proposal.grantsRevision != revisions.grants { return .refused(.staleGrants) }
             switch decision {
             case .handOff: return .refused(.ruleHandsOff)
@@ -198,9 +200,16 @@ struct NativeEffectLedgerStore: Sendable {
             }
             var outcome = NativeEffectAdmission.refused(.alreadySettled)
             try db.inSavepoint {
-                if let recordID, try !NativeRuleRecordStore.consume(db, id: recordID, at: current) {
-                    outcome = .refused(.grantSpent)
-                    return .rollback
+                if let recordID {
+                    switch try NativeRuleRecordStore.authorize(db, id: recordID, at: current) {
+                    case .authorized: break
+                    case .spent:
+                        outcome = .refused(.grantSpent)
+                        return .rollback
+                    case .stale:
+                        outcome = .refused(.staleRules)
+                        return .rollback
+                    }
                 }
                 try db.execute(sql: """
                     UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
