@@ -2,13 +2,6 @@ import Foundation
 
 enum NativeScheduleOwner: String, Codable, Equatable, Hashable, Sendable, CaseIterable {
     case dot, conversation
-
-    var title: String {
-        switch self {
-        case .dot: return "Vera thread"
-        case .conversation: return "Its own chat"
-        }
-    }
 }
 
 enum NativeScheduleCadence: Codable, Equatable, Hashable, Sendable {
