@@ -84,7 +84,7 @@ struct VeraApp: App {
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
-        storeInstance.companionHasSavedName = !configInstance["assistant_name"].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        storeInstance.followSavedCompanionName(of: configInstance)
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name
@@ -118,7 +118,7 @@ struct VeraApp: App {
                 .environmentObject(updates)
                 .environmentObject(engine)
                 .environmentObject(presence)
-                .environment(\.companionName, store.assistantName)
+                .environment(\.companionName, store.companionDisplayName)
                 .environment(\.companionAppearance, config.companionAppearance)
                 .environment(\.companionLiveState, companionPresence.state)
                 .environmentObject(companion)
@@ -161,7 +161,7 @@ struct VeraApp: App {
                 .environmentObject(updates)
                 .environmentObject(engine)
                 .environmentObject(presence)
-                .environment(\.companionName, store.assistantName)
+                .environment(\.companionName, store.companionDisplayName)
                 .environment(\.companionAppearance, config.companionAppearance)
                 .environment(\.companionLiveState, companionPresence.state)
                 .environmentObject(companion)

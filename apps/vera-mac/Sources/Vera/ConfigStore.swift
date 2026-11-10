@@ -269,6 +269,8 @@ final class ConfigStore: ObservableObject {
         if id == blockedLegacyMigrationID { blockedLegacyMigrationID = nil }
     }
 
+    var onSaved: (() -> Void)?
+
     func save() throws {
         piCommitValid = false
         let piCredentialsChanged = Set(pendingCredentials.keys).union(legacyCredentials.keys)
@@ -321,6 +323,7 @@ final class ConfigStore: ObservableObject {
         piCommitValid = true
         raw = merged
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
+        onSaved?()
     }
 
     enum PiConnectionError: Error, Equatable {
@@ -873,11 +876,15 @@ final class ConfigStore: ObservableObject {
 
     static let defaultAssistantName = "Vera"
 
-    var assistantName: String {
+    var suppliedAssistantName: String? {
         let env = ProcessInfo.processInfo.environment["VERA_ASSISTANT_NAME"]
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["assistant_name"] as? String)
         let trimmed = v?.trimmingCharacters(in: .whitespaces) ?? ""
-        return trimmed.isEmpty ? Self.defaultAssistantName : trimmed
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var assistantName: String {
+        suppliedAssistantName ?? Self.defaultAssistantName
     }
 }
 
