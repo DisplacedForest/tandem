@@ -5,8 +5,9 @@ import SwiftUI
 enum RulesShot {
     static func render(view: String, to path: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" && view != "rules-dark" ? .light : .dark
-        let showsHelp = view == "rules-info"
-        let size = NSSize(width: showsHelp ? 1200 : 860, height: 980)
+        let showsHelp = view == "rules-info" || view == "rules-unnamed"
+        let companion: String? = view == "rules-unnamed" ? nil : "Ada"
+        let size = NSSize(width: showsHelp ? 1240 : 860, height: 980)
         let store = ChatStore()
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
@@ -20,7 +21,7 @@ enum RulesShot {
             }
         }
         .environmentObject(store).environmentObject(config)
-        .environment(\.companionName, "Ada")
+        .environment(\.companionName, companion)
         .environment(\.companionAppearance, CompanionAppearance(shape: .pebble, color: .apricot))
         .environment(\.colorScheme, scheme)
         .frame(width: size.width, height: size.height, alignment: .topLeading)

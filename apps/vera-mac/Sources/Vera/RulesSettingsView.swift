@@ -47,7 +47,7 @@ struct RulesChoiceHelp: View {
             }
         }
         .padding(14)
-        .frame(width: 300, alignment: .leading)
+        .frame(width: 340, alignment: .leading)
     }
 }
 

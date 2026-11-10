@@ -154,6 +154,7 @@ final class ChatStore: ObservableObject {
     var dotResetGeneration = 0
     var companionNameWriter: ((String) throws -> Void)?
     var companionHasSavedName = false
+    var companionDisplayName: String? { companionHasSavedName ? assistantName : nil }
     var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?

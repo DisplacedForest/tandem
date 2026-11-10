@@ -133,7 +133,7 @@ extension SelfTest {
                     && blink.pose(at: 4.8 * 0.47).sy > 0.9, "Ready blinks twice")
         try require(CompanionState.thinking.accessibilityLabel(name: "Juniper") == "Juniper is thinking"
                     && CompanionState.needsYou.accessibilityLabel(name: "Juniper") == "Juniper needs you"
-                    && CompanionState.resting.accessibilityLabel(name: nil) == "Resting", "Accessibility labels read naturally")
+                    && CompanionState.resting.accessibilityLabel(name: nil) == "Your companion is resting", "Accessibility labels read naturally")
 
         let pickerDisk = CompanionAppearanceFixtureDisk()
         let pickerConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { pickerDisk.contents },

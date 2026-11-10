@@ -442,21 +442,32 @@ extension SelfTest {
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")
         let forbidden = ["Ver" + "a", "declared table", "pre-approval is recognized", "working directory", "without saying what kind", " her ", " she "]
         for named in ["Ada", "  Ada  ", nil, "", "   "] {
-            let expected = (named?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "Tandem"
+            let saved = CompanionSentence.savedName(named)
             let strings = RulesCopy.screenStrings(name: named)
             for sentence in strings {
                 for word in forbidden {
                     try require(!sentence.contains(word), "Rules screen copy avoids \(word): \(sentence)")
                 }
+                if saved == nil {
+                    try require(!sentence.contains("Tandem") && !sentence.contains(CompanionSentence.placeholder), "Unnamed copy never names a default: \(sentence)")
+                }
             }
-            try require(strings[0].contains(expected) && !strings[0].contains(CompanionSentence.placeholder), "The header names the companion: \(strings[0])")
+            if let saved {
+                try require(strings[0].contains(saved), "The header names the companion: \(strings[0])")
+            } else {
+                try require(strings[0] == "These apply everywhere, including work your companion does without you. A chat can make them stricter, never looser.", "Unnamed header: \(strings[0])")
+            }
             for choice in NativeRuleChoice.allCases {
                 let line = CompanionSentence.plain(RulesCopy.explanationTemplate(choice), name: named)
-                try require(!line.contains(CompanionSentence.placeholder) && (choice == .ask || line.hasPrefix(expected)), "Explanation names the companion: \(line)")
+                try require(!line.contains(CompanionSentence.placeholder) && (choice == .ask || line.hasPrefix(saved ?? "Your companion ")), "Explanation starts with the subject: \(line)")
             }
         }
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: nil) == "Your companion does it and shows you what happened.", "Unnamed first line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.actIfPreapproved), name: nil) == "Your companion does it only when your message says to, like \"go ahead\". Otherwise you get asked.", "Unnamed second line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.handOff), name: nil) == "Your companion tells you the step and you do it yourself.", "Unnamed fourth line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: "Ada") == "Ada does it and shows you what happened.", "Named first line")
         try require(NativeRuleChoice.allCases.map(\.title) == ["Do it without asking", "Do it when I say go ahead", "Ask first", "Leave it to me"], "The four choices use plain titles")
-        try require(CompanionSentence.resolvedName(nil) == "Tandem" && CompanionSentence.resolvedName(" \n") == "Tandem" && CompanionSentence.resolvedName("Ada") == "Ada", "A blank name falls back to Tandem")
+        try require(CompanionSentence.savedName(nil) == nil && CompanionSentence.savedName(" \n") == nil && CompanionSentence.savedName(" Ada ") == "Ada", "A blank name counts as unnamed")
         for color in CompanionColor.allCases {
             let light = CompanionColor.contrast(color.textHex(dark: false), CompanionColor.lightBackgroundHex)
             let dark = CompanionColor.contrast(color.textHex(dark: true), CompanionColor.darkBackgroundHex)
