@@ -52,6 +52,12 @@ The API suite is hermetic (every store runs against a temp dir; no live endpoint
 `pytest.ini` sets the import path. `pytest` works from `services/vera-api` or as
 `pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
 
+The two `.txt` files are compiled output with every package pinned, and the direct
+dependencies live in `requirements.in` and `requirements-dev.in`. To add or bump one,
+edit the `.in` file, run `mise run api-deps-upgrade` (it needs [uv](https://docs.astral.sh/uv/)),
+then run the suite. `mise run api-test` builds its own Python 3.12 environment from the
+pinned files under `.venv`, so it doesn't depend on whatever your system Python has installed.
+
 `mise run native-memory-gate-test` runs the memory correction scenarios against synthetic fixtures, then runs them again with a deliberately broken retrieval to prove the gate catches it. It makes no model calls and is part of `mise run check`. `mise run memory-gate-live` runs the same scenarios against the chat profile and memory endpoint saved in the app, using a throwaway database, and writes a count-only report. It is not part of `check` and needs a configured chat profile and memory endpoint.
 
 `mise run domain-state-test` checks typed memory projections, source-backed review, SQLite migration/restoration, privacy and shared native/Pi retrieval using synthetic local data.

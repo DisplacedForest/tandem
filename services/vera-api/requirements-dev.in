@@ -1,0 +1,6 @@
+-c requirements.txt
+pytest
+pytest-asyncio
+httpx
+httpx2
+packaging
