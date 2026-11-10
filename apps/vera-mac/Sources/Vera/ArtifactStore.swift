@@ -183,7 +183,15 @@ extension LocalChatRepository: ArtifactRepository {
             var target: String?
             var ordinal = 1
             if let existing = try Self.fetchArtifactVersion(db, sourceKey: draft.sourceKey) {
-                if existing.contentHash == contentHash { return existing }
+                if existing.contentHash == contentHash {
+                    guard !draft.details.sources.isEmpty, draft.details.sources != existing.details.sources else { return existing }
+                    var updated = existing
+                    updated.details.sources = draft.details.sources
+                    try db.execute(
+                        sql: "UPDATE artifact_versions SET details_json = ? WHERE id = ?",
+                        arguments: [String(decoding: try nativeTaskEncoded(updated.details), as: UTF8.self), existing.id])
+                    return try Self.fetchArtifactVersion(db, sourceKey: draft.sourceKey) ?? updated
+                }
                 target = existing.artifactID
                 let last = try Int.fetchOne(
                     db, sql: "SELECT MAX(ordinal) FROM artifact_versions WHERE artifact_id = ?",

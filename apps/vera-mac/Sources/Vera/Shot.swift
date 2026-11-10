@@ -74,6 +74,8 @@ enum Shot {
             size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" {
             size = CompanionPanelController.size
+        } else if view.hasPrefix("artifacts"), view.hasSuffix("-narrow") {
+            size = CGSize(width: 900, height: 760)
         } else if view == "conversation-narrow" {
             size = CGSize(width: 1000, height: 760)
         } else {
@@ -511,7 +513,8 @@ enum Shot {
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
-                 "artifacts-save-missing": section = .artifacts
+                 "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
+                 "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
             case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
@@ -546,6 +549,7 @@ enum Shot {
                          dictating: view == "chats-dictating",
                          width: size.width)
                     .environment(\.renderSafe, true)
+                    .environment(\.sourcesListExpanded, view == "artifacts-sources-open")
                     .environmentObject(store)
                     .environmentObject(integrationsSeed?.config ?? ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in }))
                     .frame(width: size.width, height: size.height)
