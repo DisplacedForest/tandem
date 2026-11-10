@@ -71,16 +71,19 @@ extension SelfTest {
         guard let parsed = NativeScheduleTools.draft(inRequest: fixture, now: now, timeZone: zone) else {
             throw NativeTaskFixture.Failure.assertion("The confirmation request parses")
         }
-        let prompt = NativeScheduleTools.prompt(for: parsed, timeZone: zone)
-        try require(prompt.contains("Morning policy check") && prompt.contains("weekdays at") && prompt.hasSuffix("?"),
-                    "The confirmation prompt names the schedule and its cadence")
-        let detail = NativeScheduleTools.detail(for: parsed, companionThread: CompanionSubject("Sol").thread)
-        try require(detail.contains("Results go to its own chat") && detail.contains("Nothing is saved until you approve"),
-                    "The confirmation detail names the destination and that nothing is saved yet")
+        let literal = NativeScheduleTools.literal(for: parsed, timeZone: zone).components(separatedBy: "\n") + [NativeScheduleTools.destination(for: parsed)]
+        try require(literal.count == 3 && literal[0].hasPrefix("Morning policy check, weekdays at")
+                    && literal[1] == "Summarize overnight developments in semiconductor export policy with sources."
+                    && literal[2] == "Results go to its own chat.",
+                    "The card shows the schedule's name and cadence, what it will do and where results go, as three plain lines")
+        try require(!literal.joined().contains("Research") && !literal.joined().contains("Nothing is saved"),
+                    "The card carries no worker label and no reassurance line")
         var threaded = parsed
         threaded.owner = .dot
-        try require(NativeScheduleTools.detail(for: threaded, companionThread: CompanionSubject("Sol").thread).contains("the Sol thread"),
-                    "The confirmation detail names the assistant thread")
+        let toCompanion = NativeScheduleTools.destination(for: threaded)
+        try require(CompanionSentence.plain(toCompanion, name: nil) == "Results go to your companion's thread."
+                    && CompanionSentence.plain(toCompanion, name: "Sol") == "Results go to Sol's thread.",
+                    "A schedule that reports to the companion names it when it has a name")
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 
         let research = NativeWebTools.researchToolID
@@ -151,6 +154,8 @@ extension SelfTest {
                                                         now: { now }, timeZone: { zone }, save: save)
         try require(definition.confirmation == .required, "Scheduling always asks first")
         try require(definition.name == "schedule_task", "The tool is named schedule_task")
+        try require(definition.wantsPhrase == "schedule this" && definition.action == .otherChanges,
+                    "The scheduling tool asks to schedule this and counts as another change")
         let saved = try await definition.execute(weekdaysArguments)
         guard case .object(let result) = saved, case .string(let message)? = result["message"] else {
             throw NativeTaskFixture.Failure.assertion("The tool returns a message")
@@ -161,7 +166,7 @@ extension SelfTest {
         guard case .object(let threadResult) = toThread, case .string(let threadMessage)? = threadResult["message"] else {
             throw NativeTaskFixture.Failure.assertion("The tool returns a message for the assistant thread")
         }
-        try require(threadMessage.contains("the Sol thread"), "The result names the assistant thread")
+        try require(threadMessage.contains("Sol's thread"), "The result names the assistant thread")
 
         let offline = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { false },
                                                      now: { now }, timeZone: { zone }, save: save)
@@ -188,7 +193,7 @@ extension SelfTest {
         let hourlyArguments = try definition.validatedArguments(hourlyWire)
         try require(hourlyArguments["hours"] == .number(1), "A JSON 1 stays a number on the wire")
         try require(try draft(hourlyArguments).cadence == .everyHours(1), "Hourly projects through the real JSON path")
-        try require(NativeScheduleTools.prompt(for: NativeScheduleTools.draft(inRequest: hourlyWire, now: now, timeZone: zone)!, timeZone: zone).contains("every hour"),
+        try require(NativeScheduleTools.literal(for: NativeScheduleTools.draft(inRequest: hourlyWire, now: now, timeZone: zone)!, timeZone: zone).contains("every hour"),
                     "The confirmation card renders an hourly schedule")
         let hourlySaved = try await definition.execute(hourlyArguments)
         guard case .object(let hourlyResult) = hourlySaved else { throw NativeTaskFixture.Failure.assertion("An hourly schedule returns an object") }

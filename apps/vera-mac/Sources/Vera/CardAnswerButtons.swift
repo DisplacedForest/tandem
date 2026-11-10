@@ -51,7 +51,7 @@ struct CardAnswers: Equatable {
               let wire = choices.first(where: { NativeCardChoices.kind(wire: $0) == .never }) else { return answers }
         let commands = wire == NativeCardChoices.commandNever
         guard commands || shown(neverTitle) != nil, var title = commands ? NativeCardChoices.wireTitle(wire) : neverTitle else { return answers }
-        if run, commands { title = "Never run commands in this run" }
+        if run, title.hasSuffix("in this task") { title = String(title.dropLast(4)) + "run" }
         answers.declineMenu = [CardMenuItem(id: wire, title: title, note: commands ? NativeCardChoices.neverHelp : nil)]
         return answers
     }

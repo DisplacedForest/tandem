@@ -338,9 +338,17 @@ extension SelfTest {
             + commands
             + [NativeTaskTools.definition(service: service, origin: origin, profile: nil, didSave: { _ in })]
             + [NativeScheduleTools.definition(companionThread: { CompanionSubject("Ada").thread }, save: { _ in throw NativeToolError.unavailable })]
+            + NativeCapabilityTools.definitions(NativeCapabilityTools.bundled, base: { nil })
         for definition in definitions {
             try require(definition.isDeclared, "\(definition.name) is either a read or a write with an action")
         }
+        let undeclaredWrites: Set<String> = [NativeCompanionProfileTools.toolID, NativeScheduleTools.toolID]
+        for definition in definitions where definition.effect == .write && !undeclaredWrites.contains(definition.id) {
+            try require(definition.action != nil && definition.action != .otherChanges && definition.actionClass(for: [:]) != .otherChanges,
+                        "\(definition.name) declares its kind instead of falling back to other changes")
+        }
+        try require(Set(NativeCapabilityTools.bundled.map(\.name)).isSubset(of: Set(definitions.map(\.name))), "The shipped capability tools are audited")
+        try require(definitions.first { $0.name == NativeTaskTools.toolName }?.effect == .read, "Starting background work is declared a read")
         let effects = Dictionary(definitions.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         for name in ["apple_reminders_get_lists", "apple_reminders_list", NativeWebTools.searchToolName, NativeWebTools.fetchToolName,
                      NativeFolderTools.listName, NativeFolderTools.readName, NativeFolderTools.searchName, "garden_status"] {
@@ -349,7 +357,7 @@ extension SelfTest {
         for (name, action) in [("apple_reminders_create", NativeActionClass.reminders), ("apple_reminders_complete", .reminders),
                                (NativeFolderTools.writeName, .fileEdits), (NativeFolderTools.editName, .fileEdits), (NativeFolderTools.moveName, .fileEdits),
                                (NativeFolderTools.mkdirName, .fileEdits), (NativeFolderTools.trashName, .trash), (NativeCommandTools.runName, .commands),
-                               (NativeImageTools.toolName, .fileEdits), (NativeScheduleTools.toolName, .networkSends), ("garden_note", .networkSends)] {
+                               (NativeImageTools.toolName, .fileEdits), (NativeScheduleTools.toolName, .otherChanges), ("garden_note", .networkSends)] {
             try require(effects[name]?.effect == .write && effects[name]?.action == action, "\(name) is a write under \(action.rawValue)")
         }
         let run = commands[0]

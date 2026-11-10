@@ -56,10 +56,8 @@ extension SelfTest {
                         && disk.contents["assistant_name"] as? String == "Wren",
                     "Saving the same name again after a failure really saves it")
         let unnamed = CompanionSubject(nil), named = CompanionSubject(" Ada ")
-        try require(unnamed.thread == "your companion's thread" && named.thread == "the Ada thread"
-                        && CompanionSentence.plain("Results go to " + unnamed.threadTemplate + ".", name: nil) == "Results go to your companion's thread."
-                        && CompanionSentence.plain("Results go to " + named.threadTemplate + ".", name: "Ada") == "Results go to the Ada thread.",
-                    "The thread is named the Ada thread, or your companion's thread when there is no name")
+        try require(unnamed.thread == "your companion's thread" && named.thread == "Ada's thread",
+                    "The thread is Ada's thread, or your companion's thread when there is no name")
         try require(NativeCompanionWorker.handOffText(name: unnamed.leading, title: "Send it", action: nil).hasPrefix("Your companion stopped before this step"),
                     "The hand off line starts with Your companion when there is no name")
     }

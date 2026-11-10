@@ -70,6 +70,8 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
 
     var needsAPIBase: Bool { URL(string: endpoint)?.scheme == nil }
 
+    var reads: Bool { method == .get && confirmation != .required }
+
     var parameters: NativeJSONValue {
         var fields: [String: NativeJSONValue] = [:]
         for property in properties {
@@ -155,10 +157,27 @@ enum NativeCapabilityTools {
         declarations.filter(\.enabled).map { definition($0, base: base, client: client) }
     }
 
+    static let proposing: Set<String> = ["propose_action"]
+    static let drafting: [String: String] = ["recurring_watch": "draft"]
+
     static func definition(
         _ declaration: NativeToolDeclaration,
         base: @escaping @Sendable () -> URL?,
         client: NativeHTTPToolClient = .live
+    ) -> NativeToolDefinition {
+        var definition = plainDefinition(declaration, base: base, client: client)
+        guard declaration.source == bundledSource else { return definition }
+        definition.proposes = proposing.contains(declaration.name)
+        if let mode = drafting[declaration.name] {
+            definition.proposesFor = { $0["mode"] == .string(mode) }
+        }
+        return definition
+    }
+
+    static func plainDefinition(
+        _ declaration: NativeToolDeclaration,
+        base: @escaping @Sendable () -> URL?,
+        client: NativeHTTPToolClient
     ) -> NativeToolDefinition {
         NativeToolDefinition(
             id: declaration.id,
@@ -168,11 +187,14 @@ enum NativeCapabilityTools {
             parameters: declaration.parameters,
             confirmation: declaration.confirmation,
             timeout: .seconds(declaration.timeoutSeconds),
-            effect: declaration.method == .get ? .read : .write,
-            action: declaration.method == .get ? nil : .networkSends,
+            effect: declaration.reads ? .read : .write,
+            action: declaration.reads ? nil : declaration.method == .get ? .otherChanges : .networkSends,
             isAvailable: { resolve(declaration, base: base()) != nil },
             execute: { arguments in
                 try await call(declaration, arguments: arguments, base: base(), client: client)
+            },
+            preflight: { arguments in
+                _ = try prepared(declaration, arguments: arguments, base: base())
             })
     }
 
@@ -209,12 +231,11 @@ enum NativeCapabilityTools {
         return components.url ?? resolved
     }
 
-    private static func call(
+    static func prepared(
         _ declaration: NativeToolDeclaration,
         arguments: [String: NativeJSONValue],
-        base: URL?,
-        client: NativeHTTPToolClient
-    ) async throws -> NativeJSONValue {
+        base: URL?
+    ) throws -> (target: URL, body: Data?) {
         guard let endpoint = resolve(declaration, base: base) else {
             throw NativeToolError.unavailable
         }
@@ -257,6 +278,16 @@ enum NativeCapabilityTools {
             }
             body = encoded
         }
+        return (target, body)
+    }
+
+    private static func call(
+        _ declaration: NativeToolDeclaration,
+        arguments: [String: NativeJSONValue],
+        base: URL?,
+        client: NativeHTTPToolClient
+    ) async throws -> NativeJSONValue {
+        let (target, body) = try prepared(declaration, arguments: arguments, base: base)
         let requestTimeout = max(declaration.timeoutSeconds - 1, 1)
         let data: Data
         let status: Int
