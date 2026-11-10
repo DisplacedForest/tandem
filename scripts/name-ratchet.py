@@ -23,6 +23,43 @@ class Tokenizer:
     def newline_count(self, start, end):
         self.line += self.text.count("\n", start, end)
 
+    def skip(self, i):
+        text = self.text
+        if text.startswith("//", i):
+            end = text.find("\n", i)
+            return self.size if end < 0 else end
+        if text.startswith("/*", i):
+            return self.block_comment(i)
+        char = text[i]
+        if char == "#":
+            pounds = 0
+            while i + pounds < self.size and text[i + pounds] == "#":
+                pounds += 1
+            after = i + pounds
+            if after < self.size and text[after] == '"':
+                return self.string(after, pounds)
+            if after < self.size and text[after] == "/":
+                end = self.regex(i, pounds)
+                if end is not None:
+                    return end
+            return after
+        if char == '"':
+            return self.string(i, 0)
+        return None
+
+    def regex(self, i, pounds):
+        text = self.text
+        opening = i + pounds + 1
+        closing = "/" + "#" * pounds
+        end = text.find(closing, opening)
+        if end < 0:
+            return None
+        multiline = opening < self.size and text[opening] == "\n"
+        if not multiline and "\n" in text[opening:end]:
+            return None
+        self.line += text.count("\n", i, end)
+        return end + len(closing)
+
     def code(self, i, nested):
         text = self.text
         depth = 0
@@ -31,21 +68,10 @@ class Tokenizer:
             if char == "\n":
                 self.line += 1
                 i += 1
-            elif text.startswith("//", i):
-                end = text.find("\n", i)
-                i = self.size if end < 0 else end
-            elif text.startswith("/*", i):
-                i = self.block_comment(i)
-            elif char == "#":
-                pounds = 0
-                while i + pounds < self.size and text[i + pounds] == "#":
-                    pounds += 1
-                if i + pounds < self.size and text[i + pounds] == '"':
-                    i = self.string(i + pounds, pounds)
-                else:
-                    i += pounds
-            elif char == '"':
-                i = self.string(i, 0)
+                continue
+            end = self.skip(i)
+            if end is not None:
+                i = end
             elif char == "(":
                 depth += 1
                 i += 1
@@ -118,26 +144,75 @@ def string_literals(text):
     return tokenizer.literals
 
 
+def identifier_char(char):
+    return char.isalnum() or char == "_"
+
+
+def package_call(tokenizer, text, start):
+    paths = []
+    errors = []
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        end = tokenizer.skip(i)
+        if end is not None:
+            i = end
+            continue
+        char = text[i]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 1 and text.startswith("path:", i) and (i == 0 or not identifier_char(text[i - 1])):
+            k = i + 5
+            while k < len(text) and text[k] in " \t\r\n":
+                k += 1
+            before = len(tokenizer.literals)
+            end = tokenizer.skip(k) if k < len(text) and text[k] in '#"' else None
+            if end is not None and len(tokenizer.literals) > before and "\0" not in tokenizer.literals[-1][1]:
+                paths.append(tokenizer.literals[-1][1])
+                i = end
+                continue
+            errors.append(text.count("\n", 0, i) + 1)
+        i += 1
+    return i, paths, errors
+
+
 def local_package_roots(root):
     manifest = os.path.join(root, PACKAGE_MANIFEST)
     if not os.path.exists(manifest):
-        return []
+        return [], []
     with open(manifest, encoding="utf-8") as handle:
         text = handle.read()
     base = os.path.dirname(manifest)
+    tokenizer = Tokenizer(text)
+    declared = []
+    unreadable = []
+    i = 0
+    while i < len(text):
+        end = tokenizer.skip(i)
+        if end is not None:
+            i = end
+        elif text.startswith(".package(", i):
+            i, paths, errors = package_call(tokenizer, text, i + len(".package("))
+            declared.extend(paths)
+            unreadable.extend(errors)
+        else:
+            i += 1
     found = []
-    for declared in LOCAL_PACKAGE.findall(text):
-        resolved = os.path.normpath(os.path.join(base, declared))
+    for path in declared:
+        resolved = os.path.normpath(os.path.join(base, path))
         found.append(os.path.relpath(resolved, root).replace(os.sep, "/"))
-    return found
+    return found, unreadable
 
 
 def uncovered_packages(root):
+    packages, unreadable = local_package_roots(root)
     missing = []
-    for package in local_package_roots(root):
+    for package in packages:
         if not any(r == package or r.startswith(package + "/") for r in ROOTS):
             missing.append(package)
-    return missing
+    return missing, unreadable
 
 
 def scan(root):
@@ -183,18 +258,23 @@ def write_baseline(path, found):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Counts double-quoted Swift string literals that contain the word Vera and compares them with a baseline. "
+        "It does not catch a word assembled from pieces or split across a line continuation, or bare-slash regex literals."
+    )
     parser.add_argument("--root", default=os.path.dirname(here))
     parser.add_argument("--baseline")
     parser.add_argument("--update", action="store_true")
     args = parser.parse_args()
     root = os.path.abspath(args.root)
     baseline_path = args.baseline or os.path.join(root, "scripts", "name-ratchet-baseline.txt")
-    missing = uncovered_packages(root)
-    if missing:
+    missing, unreadable = uncovered_packages(root)
+    if missing or unreadable:
         for package in missing:
             print("%s is a local package the app links but the ratchet does not scan it" % package)
-        print("name-ratchet: add the package's source folder to ROOTS in scripts/name-ratchet.py.")
+        for number in unreadable:
+            print("%s:%d: a local package path that is not a plain string can't be checked" % (PACKAGE_MANIFEST, number))
+        print("name-ratchet: add the package's source folder to ROOTS in scripts/name-ratchet.py and spell its path as a string.")
         return 1
     found = scan(root)
     baseline = read_baseline(baseline_path)

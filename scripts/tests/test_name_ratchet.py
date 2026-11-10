@@ -140,6 +140,43 @@ class NameRatchetTests(unittest.TestCase):
         self.write("A.swift", ["let a = 1"])
         self.assertEqual(self.run_script("--update").returncode, 0)
 
+    def test_extended_regex_literal_hides_a_quote(self):
+        self.assertEqual(self.counts(['let regex = #/"/#; let label = "Vera"']), 1)
+
+    def test_extended_regex_literal_body_is_not_a_string(self):
+        self.assertEqual(self.counts(['let regex = #/"Vera"/#']), 0)
+
+    def test_multiline_extended_regex_literal(self):
+        self.assertEqual(self.counts(["let regex = ##/", '  "Vera" /# still', "/##", 'let label = "Vera"']), 1)
+
+    def manifest(self, line):
+        path = os.path.join(self.root, "apps", "vera-mac", "Package.swift")
+        with open(path, "w") as handle:
+            handle.write("dependencies: [\n" + line + "\n]\n")
+        self.write("A.swift", ["let a = 1"])
+
+    def test_raw_string_package_path_is_checked(self):
+        self.manifest('.package(path: #"../../prototypes/other"#),')
+        result = self.run_script("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("prototypes/other", result.stdout)
+
+    def test_package_path_after_another_argument_is_checked(self):
+        self.manifest('.package(name: "Other", path: "../../prototypes/other"),')
+        result = self.run_script("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("prototypes/other", result.stdout)
+
+    def test_unreadable_package_path_fails_with_its_line(self):
+        self.manifest(".package(path: otherPath),")
+        result = self.run_script("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Package.swift:2", result.stdout)
+
+    def test_covered_package_and_remote_package_pass(self):
+        self.manifest('.package(url: "https://example.com/path: x.git", from: "1.0.0"),\n.package(name: "UI", path: "../../prototypes/assistant-ui"),')
+        self.assertEqual(self.run_script("--update").returncode, 0)
+
     def test_other_words_do_not_count(self):
         self.write("A.swift", ['let a = "Veranda"', 'let b = Vera', 'let c = "vera"'])
         self.assertEqual(self.run_script("--update").returncode, 0)
