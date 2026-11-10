@@ -141,6 +141,7 @@ final class ChatStore: ObservableObject {
     @Published var nativeTaskReferences: [NativeTaskReference] = []
     @Published var highlightedTaskID: String?
     @Published var pendingTaskReveal: String?
+    @Published private(set) var composerSend = ComposerSend()
     var taskRevealGeneration = 0
     @Published var grantError: String?
     @Published var grantConsentTick = 0
@@ -2175,6 +2176,7 @@ final class ChatStore: ObservableObject {
                 conversationTurns.append(turn)
                 conversationTurns.sort { $0.createdAt < $1.createdAt }
             }
+            if fromComposer { composerSend = ComposerSend(conversationID: id, count: composerSend.count + 1) }
             generating = true
             chatConfigurationError = nil
         } catch {

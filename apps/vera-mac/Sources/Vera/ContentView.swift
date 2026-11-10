@@ -181,7 +181,8 @@ private struct ChatPane: View {
     @State private var revealTask: Task<Void, Never>?
     @State private var revealConversationID: String?
     @StateObject private var transcriptContinuity = CompanionTranscriptContinuity()
-    @State private var transcriptFollow = TranscriptFollow()
+    @State private var followBox = TranscriptFollowBox()
+    @State private var showsJump = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func cancelTaskReveal() {
@@ -189,6 +190,22 @@ private struct ChatPane: View {
         revealTask = nil
         revealConversationID = nil
         store.highlightedTaskID = nil
+    }
+
+    @discardableResult
+    private func follow(_ conversationID: String, _ change: (inout TranscriptFollow) -> Void = { _ in }) -> TranscriptFollow {
+        followBox.state.scope(conversationID, sends: store.composerSend.count)
+        change(&followBox.state)
+        if showsJump != followBox.state.showsJump { showsJump = followBox.state.showsJump }
+        return followBox.state
+    }
+
+    private func followSend(_ conversationID: String) {
+        follow(conversationID)
+        guard store.composerSend.conversationID == conversationID else { return }
+        var taken = false
+        follow(conversationID) { taken = $0.sent(store.composerSend.count) }
+        if taken, store.isVeraThread(conversationID) { transcriptContinuity.followLatest(conversationID: conversationID) }
     }
 
     private func revealPendingTask(_ proxy: ScrollViewProxy) {
@@ -315,13 +332,17 @@ private struct ChatPane: View {
                     }
                     .onScrollPhaseChange { _, phase in
                         transcriptContinuity.scrollPhaseChanged(phase)
-                        transcriptFollow.scrollPhase(reader: phase == .tracking || phase == .interacting || phase == .decelerating)
+                        follow(convo.id) { $0.scrollPhase(reader: phase == .tracking || phase == .interacting || phase == .decelerating) }
                     }
-                    .onScrollGeometryChange(for: Bool.self) { geometry in
-                        geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
-                    } action: { _, nearBottom in
-                        transcriptFollow.geometry(nearBottom: nearBottom)
-                        if store.isVeraThread(convo.id) { transcriptContinuity.observe(nearBottom: nearBottom, conversationID: convo.id) }
+                    .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+                        TranscriptGeometry(offset: geometry.contentOffset.y, contentHeight: geometry.contentSize.height,
+                                           containerHeight: geometry.containerSize.height)
+                    } action: { _, next in
+                        let before = follow(convo.id).atLatest
+                        let after = follow(convo.id) { $0.geometry(next) }.atLatest
+                        if after != before, store.isVeraThread(convo.id) {
+                            transcriptContinuity.observe(nearBottom: after, conversationID: convo.id)
+                        }
                     }
                     .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0) { visible in
                         if store.isVeraThread(convo.id) {
@@ -329,29 +350,34 @@ private struct ChatPane: View {
                         }
                     }
                     .onChange(of: convo.messages.last?.text ?? "") {
-                        if transcriptFollow.following { proxy.scrollTo("bottom", anchor: .bottom) }
+                        if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
-                    .onChange(of: convo.messages.count) { old, new in
-                        transcriptFollow.messagesAdded(fromReader: new > old && convo.messages.suffix(new - old).contains { $0.role == .user })
-                        guard transcriptFollow.following else { return }
+                    .onChange(of: convo.messages.count) {
+                        followSend(convo.id)
+                        guard follow(convo.id).following else { return }
                         if store.isVeraThread(convo.id) || reduceMotion {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         } else {
                             withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
                         }
                     }
+                    .onChange(of: store.composerSend) {
+                        followSend(convo.id)
+                        if store.composerSend.conversationID == convo.id { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
                     .onChange(of: store.pendingHighlightMessageID) {
-                        if store.pendingHighlightMessageID != nil { transcriptFollow.revealed() }
+                        if store.pendingHighlightMessageID != nil { follow(convo.id) { $0.hold() } }
                         revealPendingSource(proxy)
                     }
                     .onChange(of: store.pendingTaskReveal) {
-                        if store.pendingTaskReveal != nil { transcriptFollow.revealed() }
+                        if store.pendingTaskReveal != nil { follow(convo.id) { $0.hold() } }
                         revealPendingTask(proxy)
                     }
                     .overlay(alignment: .bottom) {
-                        if transcriptFollow.showsJump {
+                        if showsJump {
                             JumpToLatestButton {
-                                transcriptFollow.jumpToLatest()
+                                follow(convo.id) { $0.jumpToLatest() }
+                                if store.isVeraThread(convo.id) { transcriptContinuity.followLatest(conversationID: convo.id) }
                                 if reduceMotion { proxy.scrollTo("bottom", anchor: .bottom) }
                                 else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
                             }
@@ -359,17 +385,18 @@ private struct ChatPane: View {
                             .transition(reduceMotion ? .identity : .opacity)
                         }
                     }
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: transcriptFollow.showsJump)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsJump)
                     .task(id: convo.id) {
                         store.refreshPreferenceMarkers(conversationID: convo.id)
                         let companion = store.isVeraThread(convo.id)
                         let anchor = companion ? transcriptContinuity.begin(conversationID: convo.id, messages: convo.messages.map(\.id)) : nil
-                        transcriptFollow.begin(atLatest: anchor == nil)
-                        if store.pendingHighlightMessageID != nil || store.pendingTaskReveal != nil { transcriptFollow.revealed() }
+                        follow(convo.id) {
+                            if anchor != nil || store.pendingHighlightMessageID != nil || store.pendingTaskReveal != nil { $0.hold() }
+                        }
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         if let anchor { proxy.scrollTo(anchor, anchor: .top) }
-                        else { proxy.scrollTo("bottom", anchor: .bottom) }
+                        else if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
                         try? await Task.sleep(for: .milliseconds(100))
                         guard !Task.isCancelled else { return }
                         if companion { transcriptContinuity.finishRestoring(conversationID: convo.id) }

@@ -48,6 +48,12 @@ final class CompanionTranscriptContinuity: ObservableObject {
         save()
     }
 
+    func followLatest(conversationID: String) {
+        guard self.conversationID == conversationID else { return }
+        position.followsLatest = true
+        save()
+    }
+
     var shouldFollowLatest: Bool { !restoring && position.followsLatest }
 
     private func key(_ id: String) -> String { "companion.transcript.position." + id }
