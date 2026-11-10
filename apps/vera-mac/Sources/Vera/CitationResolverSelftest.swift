@@ -232,7 +232,23 @@ enum CitationResolverSelftest {
         let many = (1...10_000).map { PulseSource(n: $0, title: "Source \($0)", url: "https://example.org/\($0)") }
         let manyList = "Fact [1].\n\n## Sources\n" + many.map { "\($0.n). \($0.title)" }.joined(separator: "\n")
         try check(CitationResolver.withoutMatchingList(manyList, sources: many) == manyList, "An oversized list is left as written")
+        let five = (1...500).map { PulseSource(n: $0, title: "Source \($0)", url: "https://example.org/\($0)") }
+        let heavyBullets = "Fact [1].\n\n## Sources\n1. https://example.org/1\n"
+            + (0..<900).map { _ in "- " + String(repeating: "[", count: 3900) + " https://example.org/500" }.joined(separator: "\n")
+        try check(CitationResolver.withoutMatchingList(heavyBullets, sources: five) == "Fact [1].", "Heavy bullet entries are each read once")
+        let heavyLinks = "Fact [1].\n\n## Sources\n"
+            + (0..<900).map { _ in "1. " + String(repeating: "[a](x", count: 790) }.joined(separator: "\n")
+        try check(CitationResolver.recover(heavyLinks) == nil, "A flood of open links in entries is not recovered")
         try check(Date().timeIntervalSince(started) < 5, "Hostile bracket floods are scanned in linear time")
+
+        let fatTitle = "Fact [1].\n\n## Sources\n1. " + String(repeating: "a", count: 4001)
+        try check(CitationResolver.withoutMatchingList(fatTitle, sources: [PulseSource(n: 1, title: "a", url: "https://example.org/a")]) == fatTitle,
+                  "An oversized title entry keeps the list")
+        let longTitle = "Fact [1].\n\n## Sources\n1. " + String(repeating: "a", count: 301)
+        try check(CitationResolver.withoutMatchingList(longTitle, sources: [PulseSource(n: 1, title: "a", url: "https://example.org/a")]) == longTitle,
+                  "A very long title entry keeps the list")
+        let nestedLabel = CitationResolver.recover("Fact [1].\n\n## Sources\n1. [[1] Frost guide](https://example.org/frost)")
+        try check(nestedLabel?.sources.first?.url == "https://example.org/frost", "A label with its own brackets still gives its address")
 
         try unchanged("Use `arr[1]\\`.")
         try expect("Use \\`not code [1] here`.", becomes: "Use \\`not code here`.", refs: [1])

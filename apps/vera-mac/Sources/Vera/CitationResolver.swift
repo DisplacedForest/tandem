@@ -28,6 +28,12 @@ enum CitationResolver {
     private static let markerLimit = 64
     private static let entryLimit = 4000
     private static let listLimit = 500
+    private static let labelLimit = 300
+
+    private enum WrittenEntry {
+        case address(String)
+        case label(String)
+    }
 
     private struct Segment {
         var lines: [String]
@@ -35,7 +41,7 @@ enum CitationResolver {
     }
 
     private static let separators = CharacterSet(charactersIn: " \t-\u{2013}:()<>|")
-    private static let linkPattern = try? NSRegularExpression(pattern: "\\[([^\\]]*)\\]\\(\\s*<?([^)\\s>]+)>?\\s*\\)")
+    private static let linkPattern = try? NSRegularExpression(pattern: "\\[([^\\[\\]]*)\\]\\(\\s*<?([^)\\s>\\[\\]]+)>?\\s*\\)")
     private static let httpPattern = try? NSRegularExpression(pattern: "https?://", options: [.caseInsensitive])
 
     static func resolve(text: String, sources: [PulseSource], allowRecovery: Bool = true) -> ResolvedCitations {
@@ -89,17 +95,18 @@ enum CitationResolver {
         let lines = text.components(separatedBy: "\n")
         guard sources.count <= listLimit, let last = headingIndices(lines).last else { return text }
         let entries = lines[(last + 1)...].filter { !isBlank($0) }
-        guard entries.count <= listLimit * 2 else { return text }
+        guard entries.count <= listLimit * 2, entries.allSatisfy({ $0.utf16.count <= entryLimit }) else { return text }
         let byNumber = Dictionary(sources.map { ($0.n, $0) }, uniquingKeysWith: { first, _ in first })
         var numbered = 0
         for line in entries {
             if let prefix = entryPrefix(line) {
-                guard let source = byNumber[prefix.number], entry(prefix.rest, matches: source) else {
+                guard let source = byNumber[prefix.number], let written = writtenEntry(prefix.rest),
+                      entry(written, matches: source) else {
                     return text
                 }
                 numbered += 1
             } else if let rest = bulletRest(line) {
-                guard sources.contains(where: { entry(rest, matches: $0) }) else { return text }
+                guard let written = writtenEntry(rest), sources.contains(where: { entry(written, matches: $0) }) else { return text }
             } else {
                 return text
             }
@@ -606,15 +613,25 @@ enum CitationResolver {
         return (token, title)
     }
 
-    private static func entry(_ rest: String, matches source: PulseSource) -> Bool {
+    private static func writtenEntry(_ rest: String) -> WrittenEntry? {
         if httpCount(rest) > 0 {
-            guard let link = entryLink(rest) else { return false }
-            return normalized(link.url) == normalized(source.url)
+            guard let link = entryLink(rest) else { return nil }
+            return .address(normalized(link.url))
         }
         let label = rest.trimmingCharacters(in: separators).lowercased()
-        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !label.isEmpty, !title.isEmpty else { return false }
-        return label == title || label.contains(title) || title.contains(label)
+        guard !label.isEmpty, label.count <= labelLimit else { return nil }
+        return .label(label)
+    }
+
+    private static func entry(_ written: WrittenEntry, matches source: PulseSource) -> Bool {
+        switch written {
+        case .address(let url):
+            return url == normalized(source.url)
+        case .label(let label):
+            let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !title.isEmpty, title.count <= labelLimit else { return false }
+            return label == title || label.contains(title) || title.contains(label)
+        }
     }
 
     private static func normalized(_ url: String) -> String {
