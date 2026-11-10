@@ -122,7 +122,8 @@ enum NativeCardChoices {
                 guard parent.hasPrefix("/"), parent != "/", let folder = NativeRuleTarget.make(.folder, parent) else { continue }
                 if !folders.contains(folder) { folders.append(folder) }
             }
-            return folders.isEmpty ? .wholeTool : .folders(folders)
+            if folders.isEmpty { return subject.toolID == NativeFolderTools.toolID ? .none : .wholeTool }
+            return .folders(folders)
         case .networkSends:
             let named = subject.targets.filter { $0.kind == .recipient || $0.kind == .service }
             guard !named.isEmpty else { return .wholeTool }
@@ -130,6 +131,19 @@ enum NativeCardChoices {
             return .sendTargets(named, typed: named.allSatisfy { typed.contains(NativeRequestPreapproval.normalized($0.value)) })
         default:
             return .wholeTool
+        }
+    }
+
+    static func signature(_ subject: NativeCardSubject) -> String {
+        func joined(_ targets: [NativeRuleTarget]) -> String { targets.map { $0.kind.rawValue + "=" + $0.value }.joined(separator: "\n") }
+        let base = subject.action.rawValue + "\n" + subject.toolID + "\n"
+        switch coverage(subject) {
+        case .none: return base + "none"
+        case .commandsOnly: return base + "commands"
+        case .wholeTool: return base + "tool"
+        case .commandPrefix(let prefix): return base + "prefix\n" + joined([prefix])
+        case .folders(let folders): return base + "folders\n" + joined(folders)
+        case .sendTargets(let targets, let typed): return base + (typed ? "typed" : "untyped") + "\n" + joined(targets)
         }
     }
 

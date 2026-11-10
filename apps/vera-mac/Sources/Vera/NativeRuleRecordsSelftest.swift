@@ -388,6 +388,20 @@ enum NativeRuleRecordsSelftest {
         let empty = try prepared()
         try empty.write { try NativeRuleRecordStore.migratePrefixes($0) }
         try require(try NativeRuleRecordStore(database: empty).all().isEmpty, "An empty conversation table migrates cleanly")
+        let lengthy = try prepared()
+        let longWord = String(repeating: "a", count: 280)
+        try lengthy.write { db in
+            try db.execute(sql: "INSERT INTO conversations(id, title, rules_json) VALUES(?, ?, ?)",
+                           arguments: ["long", "Long", "{\"choices\":{},\"approved_command_prefixes\":[\"echo \(longWord)\",\"git status\"]}"])
+        }
+        try lengthy.write { try NativeRuleRecordStore.migratePrefixes($0) }
+        let carried = try NativeRuleRecordStore(database: lengthy).all()
+        try require(carried.count == 2 && carried.contains { $0.target?.value == "echo " + longWord && $0.statement == "In this chat, allow a command you approved earlier" }
+                    && carried.allSatisfy { $0.statement.count <= NativeRuleRecord.maximumStatementCharacters },
+                    "A very long approved prefix is carried over with a short sentence, never dropped")
+        let longRules = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: carried,
+                                           context: NativeRuleContext(conversationID: "long")).tool(NativeCommandTools.toolID, targets: [])
+        try require(longRules.decision(forCommand: "echo " + longWord) == .act(.grant), "The long approval still runs without asking")
         func decision(_ chat: String) -> NativeRuleDecision {
             NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: records,
                                context: NativeRuleContext(conversationID: chat)).tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "swift build -c release")

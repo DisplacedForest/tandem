@@ -500,20 +500,24 @@ struct NativeRuleRecordStore: Sendable {
                   let object = try? JSONSerialization.jsonObject(with: data), let json = object as? [String: Any],
                   let listed = json["approved_command_prefixes"] else { continue }
             var prefixes: [NativeRuleTarget] = []
+            var lost = false
             for value in (listed as? [Any]) ?? [] {
                 guard let text = value as? String, !text.isEmpty, let target = NativeRuleTarget.make(.commandPrefix, text),
                       !prefixes.contains(target) else { continue }
                 prefixes.append(target)
             }
             for prefix in prefixes {
+                let named = "In this chat, allow commands starting with \(prefix.value)"
                 let draft = NativeRuleRecord(scope: .conversation(conversationID), action: .commands, toolID: NativeCommandTools.toolID,
-                                             target: prefix, effect: .allow, statement: "In this chat, allow commands starting with \(prefix.value)",
+                                             target: prefix, effect: .allow,
+                                             statement: named.count <= NativeRuleRecord.maximumStatementCharacters ? named : "In this chat, allow a command you approved earlier",
                                              origin: .migration, originConversationID: conversationID,
                                              reason: "Carried over from an approval you gave in this chat.", createdAt: stamp)
-                guard let record = try? NativeRuleRecord.validated(draft, creating: true) else { continue }
+                guard let record = try? NativeRuleRecord.validated(draft, creating: true) else { lost = true; continue }
                 try write(db, record, inserting: true)
                 inserted += 1
             }
+            if lost { continue }
             let kept = NativeConversationRules.encode(NativeConversationRules.decode(raw))
             try db.execute(sql: "UPDATE conversations SET rules_json = ? WHERE id = ?", arguments: [kept, conversationID])
         }

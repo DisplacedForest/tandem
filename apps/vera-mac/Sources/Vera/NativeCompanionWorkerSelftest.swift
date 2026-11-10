@@ -577,6 +577,54 @@ extension SelfTest {
         try require(refused.state == .needsDecision && unbound.service.count("water_bed") == 0 && (try unboundRecords.all()).isEmpty,
                     "A choice the card did not offer runs nothing and saves nothing")
 
+        try unbound.reply(refused, "never", digest: "0000")
+        let wrongNever = try await unbound.runUntilSettled()
+        try require(wrongNever.state == .needsDecision && (try unboundRecords.all()).isEmpty,
+                    "A never bound to another proposal declines nothing and saves nothing")
+        try unbound.reply(wrongNever, "never_commands", digest: try unbound.decision(wrongNever)["digest"] as? String)
+        let foreignNever = try await unbound.runUntilSettled()
+        try require(foreignNever.state == .needsDecision && (try unboundRecords.all()).isEmpty && unbound.service.count("water_bed") == 0,
+                    "A never the card did not offer declines nothing and saves nothing")
+        try unbound.reply(foreignNever, "approve", digest: try unbound.decision(foreignNever)["digest"] as? String)
+        let stillRuns = try await unbound.runUntilSettled()
+        try require(stillRuns.state == .needsDecision && unbound.service.count("water_bed") == 1,
+                    "The work was still waiting after the refused answers, and an allow once runs it")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("worker-card-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let grant = try FolderGrant.make(url: folder)
+        let made = grant.path + "/a/b/c"
+        var moving = try NativeCompanionHarness(rules: [.fileEdits: .ask]) { messages in
+            if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                return NativeCompanionScriptedModel.call(NativeFolderTools.mkdirName, "{\"path\":\"\(made)\"}")
+            }
+            return NativeCompanionScriptedModel.text("Made it.")
+        }
+        let movingRules = moving.rules
+        let movingThread = moving.thread
+        let folderTools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
+            movingRules.resolver(for: movingThread.current, requestText: "").decision(for: action)
+        })
+        moving.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: movingThread.current, tools: folderTools) }
+        let movingClock = moving.clock
+        let movingRecords = NativeRuleRecordStore(database: moving.repository.database, now: { movingClock.now })
+        moving.environment.saveRules = { drafts in
+            var saved = true
+            for draft in drafts where (try? movingRecords.add(draft)) == nil { saved = false }
+            if let active = try? movingRecords.active() { movingRules.setRecords(active) }
+            return saved
+        }
+        _ = try moving.create("Make the folder")
+        let shown = try await moving.runUntilSettled()
+        try require(shown.state == .needsDecision && ((try moving.decision(shown)["details"] as? String) ?? "").contains("file edits in b"),
+                    "The card says the saved choice covers the one folder")
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("a/b"))
+        try moving.reply(shown, "allow_always", digest: try moving.decision(shown)["digest"] as? String)
+        let reasked = try await moving.runUntilSettled()
+        try require(reasked.state == .needsDecision && (try movingRecords.all()).isEmpty && !FileManager.default.fileExists(atPath: made),
+                    "When what a saved choice would cover changed after the card was shown, nothing is saved or run and the card is shown again")
+
         let (refusing, forbidden) = try prepared()
         let neverID = try refusing.create()
         let pending = try await refusing.runUntilSettled()

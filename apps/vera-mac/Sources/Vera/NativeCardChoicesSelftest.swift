@@ -101,6 +101,24 @@ extension SelfTest {
         var ungoverned = other
         ungoverned.governed = false
         try require(kinds(ungoverned, chat) == [.decline, .allowOnce], "A card outside the rules offers only once and decline")
+        for action in [NativeActionClass.fileEdits, .trash] {
+            let unresolved = NativeCardSubject(action: action, toolID: NativeFolderTools.toolID, toolTitle: "Write a file")
+            try require(kinds(unresolved, chat) == [.decline, .allowOnce] && kinds(unresolved, task) == [.decline, .allowOnce]
+                        && NativeCardChoices.records(.allowAlways, subject: unresolved, place: chat, originMessageID: nil).isEmpty
+                        && NativeCardChoices.records(.never, subject: unresolved, place: chat, originMessageID: nil).isEmpty
+                        && NativeCardChoices.covers(unresolved) == nil,
+                        "A file card whose path could not be placed in a folder offers no saved choice")
+        }
+        let rooted = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Write a file",
+                                       targets: [NativeRuleTarget.make(.folder, "/notes.txt")].compactMap { $0 })
+        try require(kinds(rooted, chat) == [.decline, .allowOnce], "A file at the top of the disk never yields a rule for the whole disk")
+        let one = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Create a folder",
+                                    targets: [NativeRuleTarget.make(.folder, "/Volumes/Notes/Greenhouse/a/b/c")].compactMap { $0 })
+        var two = one
+        two.targets += [NativeRuleTarget.make(.folder, "/Volumes/Notes/Greenhouse/a/b")].compactMap { $0 }
+        try require(NativeCardChoices.signature(one) == NativeCardChoices.signature(one) && NativeCardChoices.signature(one) != NativeCardChoices.signature(two)
+                    && NativeCardChoices.signature(one) != NativeCardChoices.signature(other),
+                    "What a saved choice would cover has a stable fingerprint that changes when the folders change")
 
         let scheduled = NativeCardPlace.task(taskID: "t1", conversationID: "c1", scheduleID: "s1")
         var instructed = command

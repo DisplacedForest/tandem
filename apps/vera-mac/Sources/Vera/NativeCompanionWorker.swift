@@ -45,6 +45,7 @@ struct NativeCompanionPending: Codable, Equatable, Hashable, Sendable {
     var callID: String?
     var digest: String?
     var title: String?
+    var coverage: String?
 }
 
 struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
@@ -688,7 +689,8 @@ private struct NativeCompanionRun {
             idempotencyKey: key)
         let record = try environment.ledger.propose(proposal)
         if decision == .ask {
-            checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title)
+            checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
+                                                        coverage: NativeCardChoices.signature(cardSubject(definition, arguments, action: action)))
             return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?",
                                               approvalChoices(definition, arguments, action: action, authority: authority),
                                               extra: ["digest": record.digest,
@@ -878,15 +880,21 @@ private struct NativeCompanionRun {
             let chosen = action.flatMap(NativeCardChoices.kind(wire:))
             let asked = definition(named: call.name)
             let askedArguments = asked.flatMap { try? $0.validatedArguments(call.arguments) }
-            let offered: [String] = {
-                guard let asked, let askedArguments else { return ["decline", "approve"] }
-                return approvalChoices(asked, askedArguments, action: record.proposal.action, authority: authority())
+            let standing = self.authority()
+            let shown: NativeCardSubject? = {
+                guard let asked, let askedArguments else { return nil }
+                return cardSubject(asked, askedArguments, action: record.proposal.action)
             }()
-            if action == "decline" || chosen == .never || record.state == .declined {
+            let offered = shown.map { subject in
+                NativeCardChoices.offered(subject, place: cardPlace(standing)).map { NativeCardChoices.wire($0, subject: subject) }
+            } ?? ["decline", "approve"]
+            let unchanged = shown.map { NativeCardChoices.signature($0) == pending.coverage } ?? false
+            let honored = bound && (action.map { offered.contains($0) } ?? false)
+            let refused = chosen == .never && honored && unchanged
+            if action == "decline" || refused || record.state == .declined {
                 if record.state == .proposed { try environment.ledger.decline(digest: digest, decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply) }
-                if chosen == .never, bound, let action, offered.contains(action), let asked, let askedArguments {
-                    let drafts = NativeCardChoices.records(.never, subject: cardSubject(asked, askedArguments, action: record.proposal.action),
-                                                           place: cardPlace(authority()), originMessageID: nil)
+                if refused, let shown {
+                    let drafts = NativeCardChoices.records(.never, subject: shown, place: cardPlace(standing), originMessageID: nil)
                     if !drafts.isEmpty { _ = environment.saveRules(drafts) }
                 }
                 checkpoint.note(title, "declined")
@@ -897,8 +905,10 @@ private struct NativeCompanionRun {
                 let text = "\(context.assistantName) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
                 return try await conclude(&checkpoint, text: text)
             }
-            guard let action, let chosen, chosen.approves, offered.contains(action), bound else {
-                checkpoint.pending = pending
+            guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
+                var again = pending
+                again.coverage = shown.map { NativeCardChoices.signature($0) }
+                checkpoint.pending = again
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", offered,
                                                   extra: ["digest": digest,
                                                           "details": NativeCompanionWorker.details(definition(named: call.name)?.title ?? record.proposal.function,
@@ -910,16 +920,15 @@ private struct NativeCompanionRun {
                 checkpoint.answer(call, NativeCompanionWorker.message("Not run: this action is no longer available as approved."))
                 return nil
             }
-            let authority = authority()
+            let authority = self.authority()
             let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
             if approved.decision == .handOff { return try handOff(&checkpoint, title: title, action: approved.action) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
                                                          live: liveRevisions, rulesDurable: authority.resolver.durable)
-            if chosen.saves, case .admitted = admission {
-                let drafts = NativeCardChoices.records(chosen, subject: cardSubject(definition, arguments, action: record.proposal.action),
-                                                       place: cardPlace(authority), originMessageID: nil)
+            if chosen.saves, case .admitted = admission, let shown {
+                let drafts = NativeCardChoices.records(chosen, subject: shown, place: cardPlace(authority), originMessageID: nil)
                 if !drafts.isEmpty { _ = environment.saveRules(drafts) }
             }
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
