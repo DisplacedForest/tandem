@@ -299,6 +299,10 @@ private struct ChatPane: View {
                                             .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
                                             .padding(-8))
                                     .id(msg.id)
+                                if msg.role == .user, let marker = store.preferenceMarker(for: msg, in: convo.id) {
+                                    TranscriptMarkerRow(marker: marker)
+                                        .id("\(msg.id.uuidString)-marker")
+                                }
                             }
                             Color.clear.frame(height: 1).id("bottom")
                         }
@@ -333,6 +337,7 @@ private struct ChatPane: View {
                     .onChange(of: store.pendingHighlightMessageID) { revealPendingSource(proxy) }
                     .onChange(of: store.pendingTaskReveal) { revealPendingTask(proxy) }
                     .task(id: convo.id) {
+                        store.refreshPreferenceMarkers(conversationID: convo.id)
                         let companion = store.isVeraThread(convo.id)
                         let anchor = companion ? transcriptContinuity.begin(conversationID: convo.id, messages: convo.messages.map(\.id)) : nil
                         await Task.yield()

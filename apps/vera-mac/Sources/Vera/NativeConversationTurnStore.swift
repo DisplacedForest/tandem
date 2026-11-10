@@ -190,6 +190,7 @@ extension ChatStore {
                     }
                     return value
                 }
+                refreshPreferenceMarkers(conversationID: id)
                 dirtyTurnConversations.remove(id)
             }
         } catch { chatConfigurationError = "Saved answers couldn't refresh. Your accepted messages are still saved." }
