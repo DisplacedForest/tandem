@@ -35,6 +35,7 @@ enum NativeEffectObservation: Equatable, Sendable {
 enum NativeEffectLedgerError: Error, Equatable {
     case notFound
     case invalidState(NativeEffectState)
+    case readOnlyRun
 }
 
 struct NativeEffectProposal: Codable, Equatable, Sendable {
@@ -146,6 +147,10 @@ struct NativeEffectLedgerStore: Sendable {
         let digest = proposal.digest
         let stamp = now().timeIntervalSince1970
         return try database.write { db in
+            let call = NativeRunCall(toolID: proposal.toolID, function: proposal.function, effect: .write)
+            guard NativeReadOnlyRun.refusal(run: try Self.origin(db, taskID: proposal.taskID), call: call) == nil else {
+                throw NativeEffectLedgerError.readOnlyRun
+            }
             if let existing = try Self.record(db, digest: digest) { return existing }
             try db.execute(sql: """
                 INSERT INTO native_effect_ledger(id, task_id, generation, tool_id, function, arguments_json, target, action,
@@ -158,6 +163,18 @@ struct NativeEffectLedgerStore: Sendable {
             guard let inserted = try Self.record(db, digest: digest) else { throw NativeEffectLedgerError.notFound }
             return inserted
         }
+    }
+
+    func origin(taskID: String) throws -> NativeRunOrigin {
+        try database.read { db in try Self.origin(db, taskID: taskID) }
+    }
+
+    private static func origin(_ db: Database, taskID: String) throws -> NativeRunOrigin {
+        guard try db.tableExists("native_engine_tasks"),
+              let payload = try String.fetchOne(db, sql: "SELECT payload FROM native_engine_tasks WHERE id = ?", arguments: [taskID]) else {
+            return .attended
+        }
+        return NativeRunOrigin(payload: Data(payload.utf8))
     }
 
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,

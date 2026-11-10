@@ -26,6 +26,7 @@ private final class NativeSchedulerClock: @unchecked Sendable {
 private final class NativeSchedulerFireLog: @unchecked Sendable {
     private let lock = NSLock()
     private(set) var fired: [(schedule: String, scheduledFor: Date)] = []
+    private(set) var origins: [NativeRunOrigin?] = []
     var result: NativeScheduleFireResult = .started(taskReferenceID: "reference-1")
     var status: NativeScheduleTaskStatus = .active
     var overrides: [String: NativeScheduleTaskStatus] = [:]
@@ -33,7 +34,15 @@ private final class NativeSchedulerFireLog: @unchecked Sendable {
     func record(_ schedule: NativeSchedule, _ run: NativeScheduleRun) -> NativeScheduleFireResult {
         lock.lock(); defer { lock.unlock() }
         fired.append((schedule.id, run.scheduledFor))
+        origins.append(Self.origin(schedule))
         return result
+    }
+
+    static func origin(_ schedule: NativeSchedule) -> NativeRunOrigin? {
+        guard let request = try? schedule.taskRequest(),
+              let payload = try? JSONEncoder().encode(NativeResearchTaskPayload(request: request)),
+              (try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: payload))?.scheduleID == schedule.id else { return nil }
+        return NativeRunOrigin(payload: payload)
     }
 
     func link(_ run: NativeScheduleRun) -> NativeScheduleTaskLink? {
@@ -176,6 +185,20 @@ extension SelfTest {
         let pausedRuns = try store.runs(scheduleID: schedule.id)
         try require(log.count == 2 && pausedRuns.count == 4, "A disabled schedule never fires and keeps its history")
         try require(await scheduler.runNow(schedule.id) != nil && log.count == 3, "Run now fires a paused schedule on request")
+        try require(log.origins.count == 3 && log.origins.allSatisfy { $0?.scheduleID == schedule.id && $0?.unattended == true },
+                    "A timed run and Run now both start work that carries the schedule and is held to read-only")
+        for worker in ["research", "document", "companion"] {
+            let kind = try NativeSchedule(owner: .conversation, workerType: worker, title: "Evening check",
+                                          instruction: "Look into the fictional moon", cadence: daily, timeZone: zone, createdAt: monday)
+            let origin = NativeSchedulerFireLog.origin(kind)
+            try require(origin?.scheduleID == kind.id && origin?.unattended == true
+                            && (worker != "companion" || origin?.mode == "scheduled"),
+                        "A scheduled \(worker) task carries its schedule in the task it starts")
+        }
+        let started = try NativeResearchTaskRequest(objective: "Look into the fictional moon", deliverables: ["A summary"])
+        let startedPayload = try JSONEncoder().encode(NativeResearchTaskPayload(request: started))
+        try require(NativeRunOrigin(payload: startedPayload) == .attended && !String(decoding: startedPayload, as: UTF8.self).contains("schedule_id"),
+                    "Work the person started carries no schedule")
         try require(await scheduler.runNow(schedule.id) == nil, "Run now refuses while a run is still going")
 
         log.result = .failed("No model is set up.")
@@ -253,7 +276,7 @@ extension SelfTest {
         try require(gone == nil && goneRuns.isEmpty, "Deleting a schedule removes its history")
         try await runWaitingRuns(zone: zone, start: monday, cadence: daily)
         try runOpenRunWindow(zone: zone, start: monday, cadence: daily)
-        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting, open runs outside the window, claim a check-in once)")
+        print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, schedule identity on fired and run now work, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting, open runs outside the window, claim a check-in once)")
     }
 
     private static func reachNextRun(_ store: NativeScheduleStore, _ clock: NativeSchedulerClock, _ scheduler: NativeScheduler, _ id: String) async throws {
