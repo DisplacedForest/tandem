@@ -624,6 +624,15 @@ extension SelfTest {
         let reasked = try await moving.runUntilSettled()
         try require(reasked.state == .needsDecision && (try movingRecords.all()).isEmpty && !FileManager.default.fileExists(atPath: made),
                     "When what a saved choice would cover changed after the card was shown, nothing is saved or run and the card is shown again")
+        let secondDetails = (try moving.decision(reasked)["details"] as? String) ?? ""
+        try require(secondDetails.contains("Applies to file edits in") && secondDetails.contains("a") && secondDetails != ((try moving.decision(shown)["details"] as? String) ?? ""),
+                    "The card shown again says what a saved choice now applies to")
+        try moving.reply(reasked, "allow_always", digest: try moving.decision(reasked)["digest"] as? String)
+        let widened = try await moving.runUntilSettled()
+        let widenedRules = try movingRecords.active()
+        try require(widened.state == .completed && FileManager.default.fileExists(atPath: made)
+                    && Set(widenedRules.compactMap { $0.target?.value.split(separator: "/").last.map(String.init) }) == ["a", "b"],
+                    "Answering the card shown again saves exactly the folders it named")
 
         let (refusing, forbidden) = try prepared()
         let neverID = try refusing.create()

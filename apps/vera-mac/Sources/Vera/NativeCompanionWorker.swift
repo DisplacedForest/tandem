@@ -414,16 +414,12 @@ private struct NativeCompanionRun {
         .task(taskID: task.id, conversationID: context.threadID, scheduleID: authority.resolver.context?.scheduleID)
     }
 
-    func approvalChoices(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass,
-                         authority: NativeCompanionWorkerAuthority) -> [String] {
-        let subject = cardSubject(definition, arguments, action: action)
-        return NativeCardChoices.offered(subject, place: cardPlace(authority)).map { NativeCardChoices.wire($0, subject: subject) }
+    func approvalChoices(_ subject: NativeCardSubject, authority: NativeCompanionWorkerAuthority) -> [String] {
+        NativeCardChoices.offered(subject, place: cardPlace(authority)).map { NativeCardChoices.wire($0, subject: subject) }
     }
 
-    func approvalDetails(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass,
-                         authority: NativeCompanionWorkerAuthority, argumentsJSON: String) -> String {
-        let details = NativeCompanionWorker.details(definition.title, argumentsJSON: argumentsJSON)
-        let subject = cardSubject(definition, arguments, action: action)
+    func approvalDetails(_ subject: NativeCardSubject, title: String, authority: NativeCompanionWorkerAuthority, argumentsJSON: String) -> String {
+        let details = NativeCompanionWorker.details(title, argumentsJSON: argumentsJSON)
         let saving = NativeCardChoices.offered(subject, place: cardPlace(authority)).contains { $0.kind.saves && $0.kind.approves }
         guard saving, let covers = NativeCardChoices.covers(subject) else { return details }
         return details + "\nApplies to \(covers)."
@@ -691,12 +687,13 @@ private struct NativeCompanionRun {
             idempotencyKey: key)
         let record = try environment.ledger.propose(proposal)
         if decision == .ask {
+            let subject = cardSubject(definition, arguments, action: action)
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
-                                                        coverage: NativeCardChoices.signature(cardSubject(definition, arguments, action: action)))
+                                                        coverage: NativeCardChoices.signature(subject))
             return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).",
-                                              approvalChoices(definition, arguments, action: action, authority: authority),
+                                              approvalChoices(subject, authority: authority),
                                               extra: ["digest": record.digest,
-                                                      "details": approvalDetails(definition, arguments, action: action, authority: authority,
+                                                      "details": approvalDetails(subject, title: definition.title, authority: authority,
                                                                                  argumentsJSON: record.proposal.argumentsJSON)])
         }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
@@ -887,9 +884,7 @@ private struct NativeCompanionRun {
                 guard let asked, let askedArguments else { return nil }
                 return cardSubject(asked, askedArguments, action: record.proposal.action)
             }()
-            let offered = shown.map { subject in
-                NativeCardChoices.offered(subject, place: cardPlace(standing)).map { NativeCardChoices.wire($0, subject: subject) }
-            } ?? ["decline", "approve"]
+            let offered = shown.map { approvalChoices($0, authority: standing) } ?? ["decline", "approve"]
             let unchanged = shown.map { NativeCardChoices.signature($0) == pending.coverage } ?? false
             let honored = bound && (action.map { offered.contains($0) } ?? false)
             let refused = chosen == .never && honored && unchanged
@@ -913,8 +908,10 @@ private struct NativeCompanionRun {
                 checkpoint.pending = again
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).", offered,
                                                   extra: ["digest": digest,
-                                                          "details": NativeCompanionWorker.details(definition(named: call.name)?.title ?? record.proposal.function,
-                                                                                                   argumentsJSON: record.proposal.argumentsJSON)])
+                                                          "details": shown.map { approvalDetails($0, title: asked?.title ?? record.proposal.function, authority: standing,
+                                                                                                 argumentsJSON: record.proposal.argumentsJSON) }
+                                                              ?? NativeCompanionWorker.details(asked?.title ?? record.proposal.function,
+                                                                                               argumentsJSON: record.proposal.argumentsJSON)])
             }
             guard let definition = definition(named: call.name), let arguments = try? definition.validatedArguments(call.arguments),
                   NativeEffectProposal.canonicalArguments(.object(arguments)) == record.proposal.argumentsJSON, definition.id == record.proposal.toolID else {

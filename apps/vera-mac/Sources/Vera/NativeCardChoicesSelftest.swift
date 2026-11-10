@@ -119,6 +119,14 @@ extension SelfTest {
         try require(NativeCardChoices.signature(one) == NativeCardChoices.signature(one) && NativeCardChoices.signature(one) != NativeCardChoices.signature(two)
                     && NativeCardChoices.signature(one) != NativeCardChoices.signature(other),
                     "What a saved choice would cover has a stable fingerprint that changes when the folders change")
+        let split = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Move",
+                                      targets: [NativeRuleTarget.make(.folder, "/a/x"), NativeRuleTarget.make(.folder, "/b/x")].compactMap { $0 })
+        let joined = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Move",
+                                       targets: [NativeRuleTarget.make(.folder, "/a\nfolder=/b/x")].compactMap { $0 })
+        try require(NativeCardChoices.signature(split) != NativeCardChoices.signature(joined)
+                    && NativeCardChoices.records(.allowAlways, subject: split, place: chat, originMessageID: nil).count
+                        != NativeCardChoices.records(.allowAlways, subject: joined, place: chat, originMessageID: nil).count,
+                    "Two folders and one folder with a line break in its name never share a fingerprint")
 
         let scheduled = NativeCardPlace.task(taskID: "t1", conversationID: "c1", scheduleID: "s1")
         var instructed = command

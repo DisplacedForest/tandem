@@ -135,16 +135,17 @@ enum NativeCardChoices {
     }
 
     static func signature(_ subject: NativeCardSubject) -> String {
-        func joined(_ targets: [NativeRuleTarget]) -> String { targets.map { $0.kind.rawValue + "=" + $0.value }.joined(separator: "\n") }
-        let base = subject.action.rawValue + "\n" + subject.toolID + "\n"
+        var parts = [subject.action.rawValue, subject.toolID]
         switch coverage(subject) {
-        case .none: return base + "none"
-        case .commandsOnly: return base + "commands"
-        case .wholeTool: return base + "tool"
-        case .commandPrefix(let prefix): return base + "prefix\n" + joined([prefix])
-        case .folders(let folders): return base + "folders\n" + joined(folders)
-        case .sendTargets(let targets, let typed): return base + (typed ? "typed" : "untyped") + "\n" + joined(targets)
+        case .none: parts.append("none")
+        case .commandsOnly: parts.append("commands")
+        case .wholeTool: parts.append("tool")
+        case .commandPrefix(let prefix): parts += ["prefix", prefix.kind.rawValue, prefix.value]
+        case .folders(let folders): parts += ["folders"] + folders.flatMap { [$0.kind.rawValue, $0.value] }
+        case .sendTargets(let targets, let typed): parts += [typed ? "typed" : "untyped"] + targets.flatMap { [$0.kind.rawValue, $0.value] }
         }
+        guard let data = try? JSONEncoder().encode(parts), let text = String(data: data, encoding: .utf8) else { return UUID().uuidString }
+        return text
     }
 
     static func offered(_ subject: NativeCardSubject, place: NativeCardPlace) -> [NativeCardChoice] {
