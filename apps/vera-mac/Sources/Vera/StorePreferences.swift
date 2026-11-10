@@ -93,15 +93,11 @@ extension ChatStore {
 
     func refreshPreferenceMarkers(conversationID: String) {
         guard let store = nativePreferenceStore, let current = try? store.captureMarkers(conversationID: conversationID) else { return }
-        var markers = preferenceMarkers
-        for message in conversations.first(where: { $0.id == conversationID })?.messages ?? [] {
-            markers.removeValue(forKey: message.id)
-        }
-        markers.merge(current) { _, new in new }
-        if markers != preferenceMarkers { preferenceMarkers = markers }
+        let next = current.isEmpty ? nil : current
+        if preferenceMarkers[conversationID] != next { preferenceMarkers[conversationID] = next }
     }
 
-    func preferenceMarker(for message: Message) -> TranscriptMarker? {
-        preferenceMarkers[message.id]
+    func preferenceMarker(for message: Message, in conversationID: String) -> TranscriptMarker? {
+        preferenceMarkers[conversationID]?[message.id]
     }
 }

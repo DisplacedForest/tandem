@@ -92,7 +92,7 @@ final class ChatStore: ObservableObject {
     var generatesConversationTitles = false
     var capturesPreferences = false
     @Published var preferencesRevision = 0
-    @Published var preferenceMarkers: [UUID: TranscriptMarker] = [:]
+    @Published var preferenceMarkers: [String: [UUID: TranscriptMarker]] = [:]
     var preferenceClassifier: (@Sendable (String) async -> String?)?
     var preferenceClassifierTimeout: Duration = .seconds(30)
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
