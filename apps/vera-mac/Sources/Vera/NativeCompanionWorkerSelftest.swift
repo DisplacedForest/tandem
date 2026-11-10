@@ -938,7 +938,7 @@ extension SelfTest {
         try require(decide(["command": .string("swift build")], acting) == .act(.rule), "A plain command follows an act rule")
         try require(decide(["command": .string("swift build $(cat token)")], acting) != .act(.rule),
                     "A command that is not plain asks at least, as it does in chat")
-        try require(decide(["command": .string("rm -rf ../Other")], acting) == .handOff, "A sensitive command is always handed to the person")
+        try require(decide(["command": .string("rm -rf ../Other")], acting) == .handOff, "A destructive command outside the grant is always handed to the person")
     }
 
     private static func companionProductionCommands() async throws {

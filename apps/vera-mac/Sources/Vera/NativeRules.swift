@@ -6,7 +6,13 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
     case commands
     case trash
     case networkSends = "network_sends"
-    case sensitive
+    case riskyCommands = "risky_commands"
+    case otherChanges = "other_changes"
+    case credentialEntry = "credential_entry"
+    case payments
+    case permanentDeletion = "permanent_deletion"
+
+    static let configurable: [NativeActionClass] = allCases.filter { $0.floorItem == nil }
 
     var title: String {
         switch self {
@@ -14,7 +20,11 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         case .commands: return "Run commands in granted folders"
         case .trash: return "Move files to the Trash"
         case .networkSends: return "Send on your behalf"
-        case .sensitive: return "Sensitive actions"
+        case .riskyCommands: return "Run risky commands"
+        case .otherChanges: return "Make other changes"
+        case .credentialEntry: return NativeFloorItem.credentialEntry.title
+        case .payments: return NativeFloorItem.payments.title
+        case .permanentDeletion: return NativeFloorItem.permanentDeletion.title
         }
     }
 
@@ -24,11 +34,58 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         case .commands: return "Running a shell command with a granted folder as its working directory."
         case .trash: return "Moving a file or folder inside a grant to the Trash. Nothing is ever deleted outright."
         case .networkSends: return "Connected services that send messages, posts or uploads for you."
-        case .sensitive: return "Credentials, payments and deleting anything outside the working tree. Always handed to you."
+        case .riskyCommands: return "Commands that use administrator rights, touch system or credential locations, or can't be read with confidence."
+        case .otherChanges: return "Tools that change something without saying what kind of change it is."
+        case .credentialEntry: return NativeFloorItem.credentialEntry.reason
+        case .payments: return NativeFloorItem.payments.reason
+        case .permanentDeletion: return NativeFloorItem.permanentDeletion.reason
         }
     }
 
-    var isFixed: Bool { self == .sensitive }
+    var floorItem: NativeFloorItem? {
+        switch self {
+        case .credentialEntry: return .credentialEntry
+        case .payments: return .payments
+        case .permanentDeletion: return .permanentDeletion
+        case .fileEdits, .commands, .trash, .networkSends, .riskyCommands, .otherChanges: return nil
+        }
+    }
+}
+
+enum NativeFloorItem: String, CaseIterable, Hashable, Sendable {
+    case credentialEntry = "credential_entry"
+    case payments
+    case permanentDeletion = "permanent_deletion"
+    case ruleChanges = "rule_changes"
+
+    var title: String {
+        switch self {
+        case .credentialEntry: return "Enter a credential, card number or one-time code"
+        case .payments: return "Pay or transfer money"
+        case .permanentDeletion: return "Delete permanently outside a granted folder, or empty the Trash"
+        case .ruleChanges: return "Change rules, permissions or this list from inside a conversation"
+        }
+    }
+
+    var reason: String {
+        switch self {
+        case .credentialEntry: return "A wrong fill leaks a secret that can't be taken back."
+        case .payments: return "Money that has left can't be called back."
+        case .permanentDeletion: return "There is no undo."
+        case .ruleChanges: return "Being asked is never enough to loosen what you allow."
+        }
+    }
+
+    var actionClass: NativeActionClass? {
+        switch self {
+        case .credentialEntry: return .credentialEntry
+        case .payments: return .payments
+        case .permanentDeletion: return .permanentDeletion
+        case .ruleChanges: return nil
+        }
+    }
+
+    var isLiftable: Bool { actionClass != nil }
 }
 
 enum NativeRuleChoice: String, Codable, CaseIterable, Hashable, Sendable {
@@ -67,9 +124,12 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
         .fileEdits: .act,
         .commands: .ask,
         .trash: .ask,
-        .networkSends: .handOff,
-        .sensitive: .handOff,
+        .networkSends: .ask,
+        .riskyCommands: .handOff,
+        .otherChanges: .ask,
     ])
+
+    static let liftedDefault = NativeRuleChoice.ask
 
     init(choices: [NativeActionClass: NativeRuleChoice]) {
         self.choices = choices
@@ -83,22 +143,47 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
             guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
             parsed[action] = choice
         }
+        if raw[Self.defaultsKey] == nil, parsed[.networkSends] == .handOff { parsed.removeValue(forKey: .networkSends) }
         choices = parsed
     }
 
+    static let defaultsKey = "defaults_revision"
+    static let defaultsRevision = "2"
+
     func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) }))
+        var raw = Dictionary(uniqueKeysWithValues: choices.map { ($0.key.rawValue, $0.value.rawValue) })
+        raw[Self.defaultsKey] = Self.defaultsRevision
+        try container.encode(raw)
     }
 
     func choice(for action: NativeActionClass) -> NativeRuleChoice {
-        if action.isFixed { return .handOff }
-        return choices[action] ?? Self.defaults.choices[action] ?? .handOff
+        choices[action] ?? Self.defaults.choices[action] ?? .handOff
+    }
+
+    func isLifted(_ item: NativeFloorItem) -> Bool {
+        guard let action = item.actionClass else { return false }
+        return choices[action] != nil
+    }
+
+    func holds(_ action: NativeActionClass) -> Bool {
+        guard let item = action.floorItem else { return false }
+        return !isLifted(item)
     }
 
     mutating func set(_ choice: NativeRuleChoice, for action: NativeActionClass) {
-        guard !action.isFixed else { return }
+        if action.floorItem != nil && choices[action] == nil { return }
         choices[action] = choice
+    }
+
+    mutating func lift(_ item: NativeFloorItem, choice: NativeRuleChoice = NativeRules.liftedDefault) {
+        guard let action = item.actionClass else { return }
+        choices[action] = choice
+    }
+
+    mutating func restore(_ item: NativeFloorItem) {
+        guard let action = item.actionClass else { return }
+        choices.removeValue(forKey: action)
     }
 }
 
@@ -151,7 +236,7 @@ struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
     }
 
     mutating func tighten(_ choice: NativeRuleChoice, for action: NativeActionClass, global: NativeRules) {
-        guard !action.isFixed else { return }
+        guard !global.holds(action) else { choices.removeValue(forKey: action); return }
         let base = global.choice(for: action)
         if choice.strictness <= base.strictness {
             choices.removeValue(forKey: action)
@@ -434,17 +519,31 @@ enum NativeCommandClassifier {
     }
 
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        let action = classifyUnfloored(command, grants: grants, directory: directory)
+        guard action == .riskyCommands, namesDestructiveProgram(command) else { return action }
+        return .permanentDeletion
+    }
+
+    static func namesDestructiveProgram(_ command: String) -> Bool {
+        var spaced = command.filter { $0 != "\"" && $0 != "'" && $0 != "\\" }
+        for separator in [";", "|", "&", "(", ")", "{", "}", "<", ">", "=", "\n", "`", "$"] { spaced = spaced.replacingOccurrences(of: separator, with: " ") }
+        let names = spaced.split(whereSeparator: { $0.isWhitespace }).map { word in word.split(separator: "/").last.map(String.init) ?? String(word) }
+        let git = names.contains("git")
+        return names.contains { destructive.contains($0) || findEffects.contains($0) || (git && destructiveGit.contains($0)) }
+    }
+
+    static func classifyUnfloored(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
         let plain = isPlain(command, grants: grants, directory: directory)
         let segmented = classifySegments(command, grants: grants, directory: directory)
-        if plain || segmented == .sensitive { return segmented }
+        if plain || segmented == .riskyCommands { return segmented }
         let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         var sends = segmented == .networkSends
         for token in shellTokens(command.replacingOccurrences(of: ";", with: " ").replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "&", with: " ")) {
             let inner = stripOuterQuotes(assignmentValue(token))
             let name = inner.split(separator: "/").last.map(String.init) ?? inner
-            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .sensitive }
-            if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .sensitive }
-            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .sensitive }
+            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .riskyCommands }
+            if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .riskyCommands }
+            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .riskyCommands }
             if senders.contains(name) || publishing.contains(name) { sends = true }
         }
         return sends ? .networkSends : .commands
@@ -453,15 +552,15 @@ enum NativeCommandClassifier {
     static func classifySegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
         var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
-        if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .sensitive }
-        if command.contains("`") || command.contains("$(") { return .sensitive }
+        if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .riskyCommands }
+        if command.contains("`") || command.contains("$(") { return .riskyCommands }
         let subshells = command.contains { "(){}".contains($0) }
         var network = false
         for segment in segments(of: command) {
             var (name, arguments) = executable(segment, grants: grants, working: working)
-            if name == "?" { return .sensitive }
-            if privileged.contains(name) { return .sensitive }
-            if hasInlineCode(name, arguments) { return .sensitive }
+            if name == "?" { return .riskyCommands }
+            if privileged.contains(name) { return .riskyCommands }
+            if hasInlineCode(name, arguments) { return .riskyCommands }
             var segmentWorking = working
             if name == "git" {
                 var index = 0
@@ -469,20 +568,20 @@ enum NativeCommandClassifier {
                     let token = arguments[index]
                     if token == "-C", index + 1 < arguments.count {
                         let target = arguments[index + 1]
-                        if pathLeavesGrants(target, grants: grants, working: segmentWorking) { return .sensitive }
+                        if pathLeavesGrants(target, grants: grants, working: segmentWorking) { return .riskyCommands }
                         segmentWorking = resolved(target, working: segmentWorking)
                         index += 2
                         continue
                     }
-                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .sensitive }
+                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .riskyCommands }
                     if token == "-c" || token == "--config-env" || token == "--namespace" || token == "--exec-path" || token == "--super-prefix" {
-                        guard index + 1 < arguments.count else { return .sensitive }
+                        guard index + 1 < arguments.count else { return .riskyCommands }
                         let operand = arguments[index + 1].lowercased()
                         if token == "-c" || token == "--config-env" {
-                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) { return .sensitive }
+                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) { return .riskyCommands }
                             if let equals = operand.firstIndex(of: "=") {
                                 let value = String(operand[operand.index(after: equals)...])
-                                if (value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..")) && pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                                if (value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..")) && pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .riskyCommands }
                             }
                         }
                         index += 2
@@ -506,16 +605,16 @@ enum NativeCommandClassifier {
                 continue
             }
             if destructive.contains(name) {
-                guard let segmentWorking, !subshells else { return .sensitive }
-                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .sensitive }
-                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .sensitive }
+                guard let segmentWorking, !subshells else { return .riskyCommands }
+                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .riskyCommands }
+                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .riskyCommands }
             }
             if writers.contains(name) {
                 for argument in arguments where !argument.contains("://") {
                     let value = argument.hasPrefix("--") && argument.contains("=") ? String(argument[argument.index(after: argument.firstIndex(of: "=")!)...]) : argument
                     if value.hasPrefix("-") { continue }
                     if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
-                        if pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .sensitive }
+                        if pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .riskyCommands }
                     }
                 }
             }
@@ -796,6 +895,7 @@ struct NativeRuleResolver: Sendable {
     }
 
     func choice(for action: NativeActionClass) -> NativeRuleChoice {
+        if global.holds(action) { return .handOff }
         let base = global.choice(for: action)
         guard let tightened = conversation.choices[action] else { return base }
         return NativeRuleChoice.stricter(base, tightened)
@@ -828,7 +928,7 @@ struct NativeRuleResolver: Sendable {
 
     func resolve(_ query: NativeRuleQuery, honoringLimitedUse: Bool)
         -> (decision: NativeRuleDecision, resolution: NativeRuleResolution?, authorizedBy: [String]) {
-        if query.action.isFixed { return (.handOff, nil, []) }
+        if global.holds(query.action) { return (.handOff, nil, []) }
         var worst: (decision: NativeRuleDecision, resolution: NativeRuleResolution?)?
         var firstResolution: NativeRuleResolution?
         var authorizing: [String] = []
@@ -910,6 +1010,9 @@ struct NativeRuleResolver: Sendable {
     }
 
     static func handOffMessage(_ action: NativeActionClass) -> String {
-        "This action is set to hand off to the user in their rules (\(action.title.lowercased())). Do not attempt it; tell the user exactly what you would do so they can do it themselves or change the rule."
+        if let item = action.floorItem {
+            return "This action is handed to the user: \(item.title.lowercased()). \(item.reason) Do not attempt it and do not look for another way to do it; tell the user exactly what you would do so they can do it themselves."
+        }
+        return "This action is set to hand off to the user in their rules (\(action.title.lowercased())). Do not attempt it; tell the user exactly what you would do so they can do it themselves or change the rule."
     }
 }

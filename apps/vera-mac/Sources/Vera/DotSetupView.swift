@@ -23,7 +23,7 @@ enum DotProfileCopy {
     @MainActor
     static func commitRules(_ rules: [NativeActionClass: NativeRuleChoice], revokedPrefixes: Set<String> = [], store: ChatStore) {
         guard let id = store.veraThreadID else { return }
-        for action in NativeActionClass.allCases where !action.isFixed {
+        for action in NativeActionClass.configurable {
             store.tightenConversationRule(rules[action] ?? store.nativeRules.choice(for: action), for: action, conversationID: id)
         }
         for prefix in revokedPrefixes.sorted() {

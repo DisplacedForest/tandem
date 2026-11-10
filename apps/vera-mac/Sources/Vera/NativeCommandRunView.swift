@@ -179,20 +179,13 @@ struct ConversationRulesEditor: View {
                 Text("A chat can only ask more than your defaults in Settings, Rules, never less.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(NativeActionClass.allCases.filter { !$0.isFixed }, id: \.self) { action in
+            ForEach(NativeActionClass.configurable, id: \.self) { action in
                 Picker(action.title, selection: binding(for: action)) {
                     ForEach(choices(for: action), id: \.self) { choice in
                         Text(choice.title).tag(choice)
                     }
                 }
                 .font(.system(size: 12))
-            }
-            if embedded {
-                HStack {
-                    Text(NativeActionClass.sensitive.title).font(.system(size: 12))
-                    Spacer()
-                    Text("Always handed to you").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                }
             }
             if !shownPrefixes.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(height: 1)

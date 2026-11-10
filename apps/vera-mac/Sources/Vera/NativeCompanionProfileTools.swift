@@ -20,7 +20,7 @@ enum NativeCompanionProfileTools {
         if action == "name" && value.count > 80 { throw NativeToolError.invalidArguments("Use a name of at most 80 characters.") }
         if action == "rule" {
             guard let category = string(arguments["category"]), let actionClass = NativeActionClass(rawValue: category),
-                  !actionClass.isFixed, NativeRuleChoice(rawValue: value) != nil else {
+                  NativeActionClass.configurable.contains(actionClass), NativeRuleChoice(rawValue: value) != nil else {
                 throw NativeToolError.invalidArguments("Choose a configurable rule and a supported choice.")
             }
         } else if arguments["category"] != nil {
@@ -55,7 +55,7 @@ extension ChatStore {
         let serviceNames = services.map(\.name).joined(separator: ", ")
         var definition = NativeToolDefinition(id: NativeCompanionProfileTools.toolID, name: NativeCompanionProfileTools.name,
             title: "Update companion profile",
-            description: "Apply one profile change explicitly requested by the current user. Actions: name, goal, rule, connect, disconnect, note, finish_setup. value is the new text or service name. For rule only, category is file_edits, commands, trash or network_sends, and value is act, act_if_preapproved, ask or hand_off. Global restrictions cannot be widened. Notes become memory suggestions for review and require memory enabled. finish_setup uses an empty value when setup was answered or skipped. Configured service names: " + serviceNames,
+            description: "Apply one profile change explicitly requested by the current user. Actions: name, goal, rule, connect, disconnect, note, finish_setup. value is the new text or service name. For rule only, category is file_edits, commands, trash, network_sends, risky_commands or other_changes, and value is act, act_if_preapproved, ask or hand_off. Global restrictions cannot be widened. Notes become memory suggestions for review and require memory enabled. finish_setup uses an empty value when setup was answered or skipped. Configured service names: " + serviceNames,
             parameters: .object(["type": .string("object"), "properties": .object([
                 "action": .object(["type": .string("string")]),
                 "value": .object(["type": .string("string")]),

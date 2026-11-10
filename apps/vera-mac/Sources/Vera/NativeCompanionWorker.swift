@@ -239,7 +239,7 @@ enum NativeCompanionWorker {
 
     static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver: NativeRuleResolver,
                              honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
-        let action = definition.actionClass(for: arguments) ?? .sensitive
+        let action = definition.actionClass(for: arguments) ?? .otherChanges
         let query = ruleQuery(definition, arguments, action: action)
         let footprint = query.targets.filter { $0.kind == .folder }.map(\.value)
         let scoped = resolver.tool(definition.id, subjects: query.subjects)
@@ -254,6 +254,11 @@ enum NativeCompanionWorker {
             return (action, fallback.decision, fallback.authorizedBy, footprint)
         }
         return (action, resolved.decision, resolved.authorizedBy, footprint)
+    }
+
+    static func handOffText(name: String, title: String, action: NativeActionClass?) -> String {
+        guard let item = action?.floorItem else { return "\(name) stopped before this step because your rules hand it to you: \(title)." }
+        return "\(name) stopped before this step because it is always handed to you: \(title). \(item.reason)"
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
@@ -551,9 +556,9 @@ private struct NativeCompanionRun {
         return text
     }
 
-    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String) throws -> NativeTaskStepResult {
+    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String, action: NativeActionClass?) throws -> NativeTaskStepResult {
         checkpoint.note(title, "handed to you")
-        let text = "\(context.assistantName) stopped before this step because your rules hand it to you: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
+        let text = NativeCompanionWorker.handOffText(name: context.assistantName, title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
     }
 
@@ -647,7 +652,7 @@ private struct NativeCompanionRun {
         }
         let authority = authority()
         let (action, decision, authorizedBy, footprint) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
-        if decision == .handOff { return try handOff(&checkpoint, title: title) }
+        if decision == .handOff { return try handOff(&checkpoint, title: title, action: action) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
             argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)), target: NativeCompanionWorker.target(arguments),
@@ -666,14 +671,14 @@ private struct NativeCompanionRun {
                                                      live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy)
         if !authorizedBy.isEmpty, case .admitted = admission { environment.recordsChanged() }
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title,
-                                  footprint: footprint, &checkpoint)
+                                  footprint: footprint, action: action, &checkpoint)
     }
 
     func dispatch(_ admission: NativeEffectAdmission, call: NativeTaskGenerationToolCall, definition: NativeToolDefinition,
-                  arguments: [String: NativeJSONValue], key: String, title: String, footprint: [String]? = nil,
+                  arguments: [String: NativeJSONValue], key: String, title: String, footprint: [String]? = nil, action: NativeActionClass? = nil,
                   _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
         guard case .admitted(let record) = admission else {
-            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, &checkpoint) }
+            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, action: action, &checkpoint) }
             return nil
         }
         checkpoint.segmentCalls += 1
@@ -719,13 +724,13 @@ private struct NativeCompanionRun {
         }
     }
 
-    func refused(_ reason: NativeEffectRefusal, call: NativeTaskGenerationToolCall, title: String,
+    func refused(_ reason: NativeEffectRefusal, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass? = nil,
                  _ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? {
         switch reason {
         case .taskInactive, .staleGeneration:
             throw CancellationError()
         case .ruleHandsOff:
-            return try handOff(&checkpoint, title: title)
+            return try handOff(&checkpoint, title: title, action: action)
         case .declined:
             checkpoint.note(title, "declined")
             checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
@@ -866,13 +871,13 @@ private struct NativeCompanionRun {
             }
             let authority = authority()
             let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
-            if approved.decision == .handOff { return try handOff(&checkpoint, title: title) }
+            if approved.decision == .handOff { return try handOff(&checkpoint, title: title, action: approved.action) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
                                                          live: liveRevisions, rulesDurable: authority.resolver.durable)
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
-                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, &checkpoint)
+                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action, &checkpoint)
         case "reconcile":
             guard let digest = pending.digest, let call = call(pending.callID, checkpoint) else { return nil }
             let title = pending.title ?? "an earlier step"

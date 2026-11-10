@@ -355,7 +355,8 @@ extension SelfTest {
         let run = commands[0]
         try require(run.actionClass(for: ["command": .string("swift build")]) == .commands
                     && run.actionClass(for: ["command": .string("npm publish")]) == .networkSends
-                    && run.actionClass(for: ["command": .string("rm -rf ../Other")]) == .sensitive,
+                    && run.actionClass(for: ["command": .string("rm -rf ../Other")]) == .permanentDeletion
+                    && run.actionClass(for: ["command": .string("sudo make install")]) == .riskyCommands,
                     "A command's planned classification can raise its action per call")
         try require(effects[NativeWebTools.searchToolName]?.actionClass(for: [:]) == nil, "A read carries no action class")
 
@@ -375,6 +376,17 @@ extension SelfTest {
                                               parameters: .object(["type": .string("object")]), confirmation: .none,
                                               isAvailable: { true }, execute: { _ in .null })
         try require(undeclared.effect == .write && NativeToolDefinition.readOnly([undeclared]).isEmpty, "An undeclared tool never passes as a read")
+        let fallback = NativeCompanionWorker.ruleDecision(undeclared, [:], resolver: NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: ""),
+                                                          honoringLimitedUse: true)
+        try require(fallback.action == .otherChanges && fallback.decision == .ask, "An undeclared write counts as another change and asks under the defaults")
+        var otherActs = NativeRules.defaults
+        otherActs.set(.act, for: .otherChanges)
+        let acting = NativeCompanionWorker.ruleDecision(undeclared, [:], resolver: NativeRuleResolver(global: otherActs, conversation: NativeConversationRules(), requestText: ""),
+                                                        honoringLimitedUse: true)
+        try require(acting.action == .otherChanges && acting.decision == .act(.rule), "An undeclared write acts when other changes are set to act")
+        try require(NativeCompanionWorker.handOffText(name: "Ada", title: "Pay the invoice", action: .payments).hasSuffix(NativeFloorItem.payments.reason)
+                    && NativeCompanionWorker.handOffText(name: "Ada", title: "Send a note", action: .networkSends) == "Ada stopped before this step because your rules hand it to you: Send a note.",
+                    "A floor hand off gives its reason and an ordinary one keeps its wording")
     }
 
     private static func runNativeRuleRevisions() throws {

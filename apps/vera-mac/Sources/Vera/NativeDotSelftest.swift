@@ -50,9 +50,14 @@ extension SelfTest {
         try require(store.conversationRules(for: veraID).choices[.commands] == nil
                     && store.ruleResolver(for: veraID, requestText: "").choice(for: .commands) == .ask, "The Vera thread cannot loosen past the global ask")
         store.tightenConversationRule(.handOff, for: .commands, conversationID: veraID)
-        store.tightenConversationRule(.act, for: .sensitive, conversationID: veraID)
+        let rulesBefore = store.conversationRules(for: veraID)
+        store.tightenConversationRule(.handOff, for: .payments, conversationID: veraID)
+        store.tightenConversationRule(.act, for: .payments, conversationID: veraID)
         let resolver = store.ruleResolver(for: veraID, requestText: "")
-        try require(resolver.choice(for: .commands) == .handOff && resolver.choice(for: .sensitive) == .handOff, "Tightening holds and sensitive stays handed off")
+        try require(store.conversationRules(for: veraID) == rulesBefore && store.conversationRules(for: veraID).choices[.payments] == nil,
+                    "Tightening a held floor class stores nothing")
+        try require(resolver.choice(for: .commands) == .handOff && resolver.choice(for: .payments) == .handOff && resolver.decision(for: .payments) == .handOff,
+                    "Tightening holds and payments stay handed off")
         try require(store.ruleResolver(for: focused.id, requestText: "").choice(for: .commands) == .ask, "Tightening the Vera thread leaves other chats alone")
 
         guard let dotContext = store.dotContext(for: veraID, requestText: "what's next?") else {
@@ -300,11 +305,11 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let tightened = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
         let summary = NativeDotContext.headerSummary(resolver: tightened)
-        try require(summary == "Asks first for Trash. Hands off commands and sending.", "The header summary reads plainly: \(summary)")
-        let relaxed = NativeRules(choices: [.fileEdits: .act, .commands: .act, .trash: .act, .networkSends: .act])
+        try require(summary == "Asks first for Trash, sending and other changes. Hands off commands and risky commands.", "The header summary reads plainly: \(summary)")
+        let relaxed = NativeRules(choices: [.fileEdits: .act, .commands: .act, .trash: .act, .networkSends: .act, .riskyCommands: .act, .otherChanges: .act])
         let quiet = NativeDotContext.headerSummary(resolver: NativeRuleResolver(global: relaxed, conversation: NativeConversationRules(), requestText: ""))
         try require(quiet == "Acts without asking", "Nothing asking reads plainly: \(quiet)")
-        let mixed = NativeRules(choices: [.fileEdits: .actIfPreapproved, .commands: .ask, .trash: .ask, .networkSends: .act])
+        let mixed = NativeRules(choices: [.fileEdits: .actIfPreapproved, .commands: .ask, .trash: .ask, .networkSends: .act, .riskyCommands: .act, .otherChanges: .act])
         let mixedSummary = NativeDotContext.headerSummary(resolver: NativeRuleResolver(global: mixed, conversation: NativeConversationRules(), requestText: ""))
         try require(mixedSummary == "Asks first for commands and Trash. Needs your go-ahead in the request for file edits.", "Mixed rules read plainly: \(mixedSummary)")
         let raw = NativeActionClass.allCases.map(\.rawValue) + NativeRuleChoice.allCases.map(\.rawValue)
