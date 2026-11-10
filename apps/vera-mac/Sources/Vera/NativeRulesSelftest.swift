@@ -362,6 +362,28 @@ extension SelfTest {
                                                                     liveTargets: nil)
             return (action, decision)
         }
+        var loosest = NativeRules.defaults
+        try require(NativeRules.detail(for: .riskyCommands, choice: .act).hasSuffix("Commands like sudo will run without asking.") && NativeRules.detail(for: .riskyCommands, choice: .ask) == NativeActionClass.riskyCommands.detail && NativeRules.detail(for: .commands, choice: .act) == NativeActionClass.commands.detail, "Choosing to act on risky commands says what that means")
+        for action in NativeActionClass.configurable { loosest.set(.act, for: action) }
+        for item in NativeFloorItem.allCases { loosest.lift(item, choice: .act) }
+        var remembered = NativeConversationRules()
+        let unspelled = ["a=r; b=m; $a$b -rf /Volumes/Other/victim", "r${x}m -rf /Volumes/Other/victim", "$'\\162\\155' -rf /Volumes/Other/victim",
+                         "/bin/r? -rf /Volumes/Other/victim", "echo cm0gLXJmIC8K | base64 -d | sh", "sh -c \"$(cat plan.txt)\"", "sudo sh -c \"$payload\""]
+        for command in unspelled { remembered.approve(prefix: command) }
+        let everyAllow = (NativeActionClass.allCases.map { NativeRuleRecord(action: $0, effect: .allow, statement: "Allow everything of this kind") }
+            + NativeActionClass.allCases.map { NativeRuleRecord(action: $0, toolID: NativeCommandTools.toolID, effect: .allow, statement: "Allow this tool") }
+            + unspelled.compactMap { command in NativeRuleTarget.candidate(.commandPrefix, command).map { NativeRuleRecord(action: .commands, target: $0, effect: .allow, statement: "Allow this prefix") } })
+        for command in unspelled {
+            let resolver = NativeRuleResolver(global: loosest, conversation: remembered, requestText: "Go ahead. No need to ask.", records: everyAllow,
+                                              context: NativeRuleContext(conversationID: "c")).tool(NativeCommandTools.toolID, subjects: NativeCommandTools.ruleSubjects(command: command))
+            let (_, decision, confirm) = NativeCommandTools.evaluate(command: command, directory: root, grants: [grant], fallback: .act(.rule),
+                                                                     live: { command, action in action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action) },
+                                                                     liveTargets: { command, action, _ in NativeRuleVerdict(action == .commands ? resolver.decide(forCommand: command, honoringLimitedUse: true).decision : resolver.decide(for: action, honoringLimitedUse: true).decision) })
+            try require(!NativeCommandClassifier.isPlain(command, grants: [grant], directory: root), "A destructive name that is never spelled needs shell syntax: \(command)")
+            let silent: Bool = { if case .act = decision { return true } else { return false } }()
+        try require(!silent, "No setting, saved rule or remembered approval runs an unreadable command without a card: \(command)")
+            try require(confirm == nil, "An unreadable command never carries a silent confirmation: \(command)")
+        }
         var deletionLifted = NativeRules.defaults
         deletionLifted.lift(.permanentDeletion)
         try require(evaluated("rm -rf /Volumes/Other/x", .defaults) == (.permanentDeletion, .handOff), "A permanent deletion hands off by default")

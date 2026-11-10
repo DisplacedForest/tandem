@@ -10,6 +10,10 @@ struct RulesSettingsTab: View {
             set: { config.applyRule($0, for: action, store: store) })
     }
 
+    private func detail(for action: NativeActionClass) -> String {
+        NativeRules.detail(for: action, choice: config.nativeSettings.rules.choice(for: action))
+    }
+
     private func floorDetail(_ item: NativeFloorItem) -> String {
         let rules = config.nativeSettings.rules
         guard let action = item.actionClass, rules.isLifted(item) else { return item.reason }
@@ -32,7 +36,7 @@ struct RulesSettingsTab: View {
                                 Text(choice.title).tag(choice)
                             }
                         }
-                        Text(action.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        Text(detail(for: action)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
                     .padding(.vertical, 2)
                 }

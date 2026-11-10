@@ -178,6 +178,11 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
         choices[action] ?? Self.defaults.choices[action] ?? .handOff
     }
 
+    static func detail(for action: NativeActionClass, choice: NativeRuleChoice) -> String {
+        guard action == .riskyCommands, choice == .act else { return action.detail }
+        return action.detail + " Commands like sudo will run without asking."
+    }
+
     func isLifted(_ item: NativeFloorItem) -> Bool {
         guard let action = item.actionClass else { return false }
         return choices[action] != nil
