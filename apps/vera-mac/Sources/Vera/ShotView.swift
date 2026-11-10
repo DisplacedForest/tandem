@@ -15,6 +15,7 @@ struct ShotView: View {
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
     var mentions: Bool = false
+    var jumpToLatest: Bool = false
     var dotHeader: Bool = false
     var companionPanel: CompanionOverviewModel? = nil
     var companionSelection: String? = nil
@@ -569,6 +570,9 @@ struct ShotView: View {
             .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()
+            .overlay(alignment: .bottom) {
+                if jumpToLatest { JumpToLatestButton(action: {}).padding(.bottom, 8) }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })

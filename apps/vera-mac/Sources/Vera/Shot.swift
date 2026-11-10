@@ -508,7 +508,7 @@ enum Shot {
                 section = .vera
                 store.ensureVeraThread()
                 store.openVeraThread()
-            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-folder", "chats-command", "chats-schedule",
+            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-jump", "chats-folder", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
@@ -537,6 +537,7 @@ enum Shot {
                          schedule: view == "chats-schedule",
                          collapsedSidebar: view == "sidebar-collapsed",
                          mentions: view == "chats-mentions",
+                         jumpToLatest: view == "chats-jump",
                          artifactSelection: artifactSeed?.selection,
                          artifactFilter: artifactSeed?.filter ?? .all,
                          artifactSearch: artifactSeed?.search ?? "",
