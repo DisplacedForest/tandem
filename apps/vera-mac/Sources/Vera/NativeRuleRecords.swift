@@ -69,7 +69,9 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         case .recipient, .service:
             return trimmed.lowercased()
         case .commandPrefix:
-            return NativeCommandPrefix.normalize(trimmed)
+            var tokens = NativeCommandPrefix.tokens(of: NativeCommandPrefix.normalize(trimmed))
+            if let first = tokens.first { tokens[0] = first.split(separator: "/").last.map(String.init) ?? first }
+            return tokens.joined(separator: " ")
         case .folder:
             guard trimmed.hasPrefix("/") else { return "" }
             var parts: [Substring] = []
@@ -133,14 +135,24 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
 
 enum NativeCommandMatch {
     static let opaqueCharacters: Set<Character> = ["`", "$", "\\"]
+    static let delegators: Set<String> = ["xargs", "parallel", "watch", "time", "nice", "nohup", "env", "command", "exec", "builtin",
+                                          "caffeinate", "arch", "xcrun", "timeout", "gtimeout", "stdbuf", "chroot", "script", "osascript", "open"]
+
+    static func delegates(_ name: String, _ arguments: [String]) -> Bool {
+        let classifier = NativeCommandClassifier.self
+        if classifier.wrappers.contains(name) || classifier.shells.contains(name) || classifier.interpreters.contains(name)
+            || classifier.executors.contains(name) || classifier.privileged.contains(name) || delegators.contains(name) { return true }
+        if name == "find" && arguments.contains(where: { classifier.findEffects.contains($0) }) { return true }
+        return classifier.hasInlineCode(name, arguments)
+    }
 
     static func segments(_ command: String) -> [[String]]? {
-        if command.contains(where: { opaqueCharacters.contains($0) }) { return nil }
+        if command.contains(where: { opaqueCharacters.contains($0) }) || command.contains("<(") || command.contains(">(") || command.contains("<<") { return nil }
         var parsed: [[String]] = []
         for segment in NativeCommandClassifier.segments(of: command) {
             let (name, arguments) = NativeCommandClassifier.executable(segment)
             if name.isEmpty { continue }
-            if name == "?" || NativeCommandClassifier.hasInlineCode(name, arguments) { return nil }
+            if name == "?" || delegates(name, arguments) { return nil }
             let tokens = [name] + arguments
             if tokens.contains(where: { $0.contains("\"") || $0.contains("'") }) { return nil }
             parsed.append(tokens)
@@ -319,12 +331,24 @@ struct NativeRuleContext: Codable, Equatable, Hashable, Sendable {
 struct NativeRuleQuery: Equatable, Sendable {
     var action: NativeActionClass
     var toolID: String?
-    var targets: [NativeRuleTarget]
+    var subjects: [[NativeRuleTarget]]
+
+    var targets: [NativeRuleTarget] { subjects.flatMap { $0 } }
 
     init(action: NativeActionClass, toolID: String? = nil, targets: [NativeRuleTarget] = []) {
         self.action = action
         self.toolID = toolID
-        self.targets = targets
+        subjects = targets.isEmpty ? [] : [targets]
+    }
+
+    init(action: NativeActionClass, toolID: String?, subjects: [[NativeRuleTarget]]) {
+        self.action = action
+        self.toolID = toolID
+        self.subjects = subjects.filter { !$0.isEmpty }
+    }
+
+    var parts: [NativeRuleQuery] {
+        subjects.isEmpty ? [self] : subjects.map { NativeRuleQuery(action: action, toolID: toolID, targets: $0) }
     }
 }
 
@@ -575,6 +599,25 @@ struct NativeRuleRecordStore: Sendable {
     static func advanceVersion(_ db: Database) throws -> Int {
         try db.execute(sql: "INSERT INTO native_rule_version(id, value) VALUES(1, 1) ON CONFLICT(id) DO UPDATE SET value = value + 1")
         return try version(db)
+    }
+
+    func confirm(revision: Int, authorizing ids: [String]) throws -> Authorization {
+        try database.write { db in
+            guard try Self.version(db) == revision else { return .stale }
+            let current = now()
+            var outcome = Authorization.authorized
+            try db.inSavepoint {
+                for id in Set(ids).sorted() {
+                    let result = try Self.authorize(db, id: id, at: current)
+                    if result != .authorized {
+                        outcome = result
+                        return .rollback
+                    }
+                }
+                return .commit
+            }
+            return outcome
+        }
     }
 
     func consume(id: String) throws -> Bool {

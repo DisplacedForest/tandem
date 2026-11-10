@@ -39,23 +39,27 @@ enum NativeFolderTools {
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], ledger: NativeFileChangeLedger,
                             edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                             live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
-                            liveTargets: (@Sendable (NativeActionClass, [NativeRuleTarget]) -> NativeRuleDecision?)? = nil,
+                            liveTargets: (@Sendable (NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
         let editConfirmation: NativeToolConfirmation = edits.requiresConfirmation ? .required : .none
-        let targets: @Sendable ([String: NativeJSONValue], [String]) -> [NativeRuleTarget] = { arguments, keys in
-            ruleTargets(arguments, keys: keys, access: access())
+        let subjects: @Sendable ([String: NativeJSONValue], [String]) -> [[NativeRuleTarget]] = { arguments, keys in
+            ruleTargets(arguments, keys: keys, access: access()).map { [$0] }
         }
-        let current: @Sendable (NativeActionClass, [String: NativeJSONValue], [String]) -> NativeRuleDecision? = { action, arguments, keys in
-            if let liveTargets { return liveTargets(action, targets(arguments, keys)) }
-            return live(action)
+        let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> Void = { action, arguments, keys, planned in
+            if let liveTargets {
+                try NativeRuleResolver.gate(liveTargets(action, subjects(arguments, keys)), fallback: nil, planned: planned, action: action,
+                                            approved: planned.requiresConfirmation)
+            } else {
+                try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+            }
         }
         let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> Void = { arguments, keys in
-            try NativeRuleResolver.gate(live: current(.fileEdits, arguments, keys) ?? edits, planned: edits, action: .fileEdits, approved: edits.requiresConfirmation)
+            try checkGate(.fileEdits, arguments, keys, edits)
         }
-        let declared: @Sendable ([String]) -> @Sendable ([String: NativeJSONValue]) -> [NativeRuleTarget] = { keys in
-            { arguments in targets(arguments, keys) }
+        let declared: @Sendable ([String]) -> @Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]] = { keys in
+            { arguments in subjects(arguments, keys) }
         }
         let definitions: [NativeToolDefinition] = [
             NativeToolDefinition(
@@ -176,7 +180,7 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, action: .trash, isAvailable: available,
                 execute: { arguments in
-                    try NativeRuleResolver.gate(live: current(.trash, arguments, ["path"]) ?? trash, planned: trash, action: .trash, approved: trash.requiresConfirmation)
+                    try checkGate(.trash, arguments, ["path"], trash)
                     let current = access()
                     let location = try current.locate(try requiredString(arguments, "path"))
                     try current.requireNoReadOnlyRoot(under: location)
@@ -187,7 +191,7 @@ enum NativeFolderTools {
         return definitions.map { definition in
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
-            targeted.ruleTargets = declared(paths)
+            targeted.ruleSubjects = declared(paths)
             return targeted
         }
     }

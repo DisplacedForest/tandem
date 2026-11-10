@@ -65,6 +65,10 @@ enum NativeCommandTools {
     static let runName = "run_command"
     static let toolNames: Set<String> = [runName]
 
+    static func ruleSubjects(command: String, directory: String?, access: NativeFolderAccess) -> [[NativeRuleTarget]] {
+        ruleTargets(command: command, directory: directory, access: access).map { [$0] }
+    }
+
     static func ruleTargets(command: String, directory: String?, access: NativeFolderAccess) -> [NativeRuleTarget] {
         var targets = NativeRuleTarget.candidate(.commandPrefix, command).map { [$0] } ?? []
         let location: NativeFolderLocation?
@@ -80,7 +84,7 @@ enum NativeCommandTools {
                             reason: @escaping @Sendable (String) -> NativeRuleReason?,
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
                             live: @escaping @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { _, _ in nil },
-                            liveTargets: (@Sendable (String, NativeActionClass, [NativeRuleTarget]) -> NativeRuleDecision?)? = nil,
+                            liveTargets: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
                             declined: @escaping @Sendable (String) -> Bool = { _ in false },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
@@ -89,19 +93,21 @@ enum NativeCommandTools {
         let staticReason: NativeRuleReason?
         if case .act(let value) = decision { staticReason = value } else { staticReason = nil }
         let grantedAtStart = grants()
-        let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision) = { command, directory in
+        let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision, (@Sendable () -> Bool)?) = { command, directory in
             let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
             let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
-            let targeted: NativeRuleDecision? = liveTargets.flatMap { $0(command, action, ruleTargets(command: command, directory: directory, access: access())) }
+            let verdict = liveTargets.flatMap { $0(command, action, ruleSubjects(command: command, directory: directory, access: access())) }
+            let current: NativeRuleDecision
             switch action {
-            case .sensitive: return (action, .handOff)
+            case .sensitive: return (action, .handOff, nil)
             case .commands:
-                let current = targeted ?? live(command, .commands) ?? decision
-                return (action, plain ? current : current.atLeastAsk)
+                current = verdict?.decision ?? live(command, .commands) ?? decision
             default:
-                let current = targeted ?? live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
-                return (action, plain ? current : current.atLeastAsk)
+                current = verdict?.decision ?? live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
             }
+            let final = plain ? current : current.atLeastAsk
+            if case .act = final { return (action, final, verdict?.confirm) }
+            return (action, final, nil)
         }
         var definition = NativeToolDefinition(
             id: toolID, name: runName, title: "Run a command",
@@ -124,9 +130,10 @@ enum NativeCommandTools {
                 }
                 let approvedNow = reason(activityID)
                 let requested = arguments.folderString("directory")
-                let (action, current) = planned(command, requested)
+                let (action, current, confirm) = planned(command, requested)
                 if action == .sensitive { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.sensitive)) }
                 try NativeRuleResolver.gate(live: current, planned: approvedNow == nil ? .act(.rule) : .ask, action: action, approved: approvedNow != nil)
+                if let confirm, !confirm() { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
                 let currentGrants = grants()
                 guard !currentGrants.isEmpty else {
                     let intended = requested ?? (grantedAtStart.count == 1 ? grantedAtStart[0].path : "the working directory")
@@ -164,9 +171,9 @@ enum NativeCommandTools {
             guard case .string(let command)? = arguments["command"] else { return .commands }
             return NativeCommandClassifier.classify(command, grants: grants(), directory: arguments.folderString("directory"))
         }
-        definition.ruleTargets = { arguments in
+        definition.ruleSubjects = { arguments in
             guard case .string(let command)? = arguments["command"] else { return [] }
-            return ruleTargets(command: command, directory: arguments.folderString("directory"), access: access())
+            return ruleSubjects(command: command, directory: arguments.folderString("directory"), access: access())
         }
         definition.ruleDecision = { arguments, resolver in
             guard case .string(let command)? = arguments["command"] else { return .handOff }
@@ -183,7 +190,7 @@ enum NativeCommandTools {
         }
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
-            let (action, current) = planned(command, arguments.folderString("directory"))
+            let (action, current, _) = planned(command, arguments.folderString("directory"))
             if action == .sensitive { return false }
             return current.requiresConfirmation
         }

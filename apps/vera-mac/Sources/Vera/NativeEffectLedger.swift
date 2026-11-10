@@ -163,10 +163,10 @@ struct NativeEffectLedgerStore: Sendable {
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
                decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
                live: (@Sendable () -> (rules: Int, grants: Int))? = nil, rulesDurable: Bool = false,
-               authorizedBy recordID: String? = nil) throws -> NativeEffectAdmission {
-        let current = now()
-        return try database.write { db in
+               authorizedBy recordIDs: [String] = []) throws -> NativeEffectAdmission {
+        try database.write { db in
             let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
+            let current = now()
             guard let record = try Self.record(db, digest: digest) else { return .refused(.notFound) }
             guard record.proposal.digest == digest else { return .refused(.digestMismatch) }
             switch record.state {
@@ -200,7 +200,7 @@ struct NativeEffectLedgerStore: Sendable {
             }
             var outcome = NativeEffectAdmission.refused(.alreadySettled)
             try db.inSavepoint {
-                if let recordID {
+                for recordID in Set(recordIDs).sorted() {
                     switch try NativeRuleRecordStore.authorize(db, id: recordID, at: current) {
                     case .authorized: break
                     case .spent:

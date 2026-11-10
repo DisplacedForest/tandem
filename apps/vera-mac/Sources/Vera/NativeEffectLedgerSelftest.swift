@@ -48,6 +48,8 @@ extension SelfTest {
         try runNativeToolEffects()
         try runNativeRuleRevisions()
         try runNativeRuleRecordAdmission()
+        try runNativeRulePublicationOrder()
+        try runNativeAdmissionClock()
         print("  effect ledger OK (canonical arguments, digest, admission refusals, ask binding, claim fence, observations, settle, recovery, expiry, barrier, tool effects, revisions)")
     }
 
@@ -432,7 +434,7 @@ extension SelfTest {
         ChatStore.reloadRules(source, from: records)
         let first = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-first"))
         guard case .admitted = try ledger.admit(digest: first.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
-                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: grant.id) else {
+                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [grant.id]) else {
             throw NativeTaskFixture.Failure.assertion("A one-use grant admits its first proposal")
         }
         try require(try records.record(id: grant.id)?.remainingUses == 0 && (try records.version()) == first.proposal.rulesRevision + 1,
@@ -440,22 +442,22 @@ extension SelfTest {
         ChatStore.reloadRules(source, from: records)
         let second = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-second"))
         try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: grant.id) == .refused(.grantSpent)
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [grant.id]) == .refused(.grantSpent)
                     && (try ledger.record(digest: second.digest))?.state == .proposed,
                     "A second proposal authorized by the same one-use grant is refused as spent and stays unadmitted")
         try require(try ledger.admit(digest: second.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: "missing") == .refused(.grantSpent),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: ["missing"]) == .refused(.grantSpent),
                     "A missing authorizing record is refused as spent")
 
         let spare = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Save once more", remainingUses: 1))
         ChatStore.reloadRules(source, from: records)
         let fenced = try ledger.propose(effectProposal(clock, rules: source.revision, key: "record-fenced"))
         try require(try ledger.admit(digest: fenced.digest, generation: 2, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: spare.id) == .refused(.staleGeneration)
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [spare.id]) == .refused(.staleGeneration)
                     && (try records.record(id: spare.id))?.remainingUses == 1,
                     "An admission refused for another reason leaves the use in place")
         guard case .admitted = try ledger.admit(digest: fenced.digest, generation: 1, rulesRevision: source.revision, grantsRevision: 0, decision: .act(.grant),
-                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: spare.id) else {
+                                                decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [spare.id]) else {
             throw NativeTaskFixture.Failure.assertion("The preserved use still admits")
         }
         try require(try records.record(id: spare.id)?.remainingUses == 0, "Admission and the decrement land together")
@@ -468,10 +470,10 @@ extension SelfTest {
         try records.revoke(id: standing.id)
         try require(source.revision == resolved.revision, "The in-memory source is deliberately not reloaded")
         try require(try ledger.admit(digest: raced.digest, generation: 1, rulesRevision: resolved.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: standing.id) == .refused(.staleRules),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [standing.id]) == .refused(.staleRules),
                     "A revoke that commits after resolution but before admission refuses the admission")
         try require(try ledger.admit(digest: raced.digest, generation: 1, rulesRevision: resolved.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: false, authorizedBy: standing.id) == .refused(.staleRules),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: false, authorizedBy: [standing.id]) == .refused(.staleRules),
                     "The authorizing record check alone also refuses a revoked allow")
 
         let expiring = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Edit for ten seconds",
@@ -482,7 +484,7 @@ extension SelfTest {
         let lapsing = try ledger.propose(effectProposal(clock, rules: timed.revision, key: "record-lapsing"))
         clock.advance(11)
         try require(try ledger.admit(digest: lapsing.digest, generation: 1, rulesRevision: timed.revision, grantsRevision: 0, decision: .act(.grant),
-                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: expiring.id) == .refused(.staleRules),
+                                     decisionID: nil, reply: nil, live: live, rulesDurable: true, authorizedBy: [expiring.id]) == .refused(.staleRules),
                     "An unlimited allow that expires between resolution and admission is refused")
 
         let broken = NativeRuleSource()
@@ -499,4 +501,99 @@ extension SelfTest {
                                      decisionID: nil, reply: nil, live: { (rules: broken.revision, grants: 0) }) == .refused(.staleRules),
                     "Every admission under a failed version is stale")
     }
+
+    private static func runNativeRulePublicationOrder() throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        let records = NativeRuleRecordStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository)
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.commands: .act]))
+        let pause = NativeRulePausePoint()
+        source.attach(allocator: {
+            let next = try records.advanceVersion()
+            pause.reached()
+            return next
+        })
+        pause.arm()
+        let changed = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            source.setGlobal(NativeRules(choices: [.commands: .ask]))
+            changed.signal()
+        }
+        pause.waitUntilReached()
+        let committed = try records.version()
+        let published = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            if let snapshot = try? records.snapshot() { source.publish(snapshot.records, version: snapshot.version) }
+            published.signal()
+        }
+        let publishedEarly = published.wait(timeout: .now() + 0.5) == .success
+        let captured = source.resolver(for: "conversation-1", requestText: "")
+        try require(!publishedEarly, "A snapshot publish waits while a rule change holds its allocated version")
+        try require(captured.revision != committed && captured.decision(forCommand: "swift build") == .act(.rule),
+                    "A resolver captured mid-change still carries the old revision with the old policy")
+        let proposal = NativeEffectProposal(id: UUID().uuidString.lowercased(), taskID: "task-1", generation: 1, toolID: NativeCommandTools.toolID,
+                                            function: "run_command", argumentsJSON: "{}", target: nil, action: .commands,
+                                            rulesRevision: captured.revision, grantsRevision: 0, conversationID: "conversation-1",
+                                            expiresAtMilliseconds: NativeEffectProposal.expiry(from: clock.now), idempotencyKey: "publication-order")
+        let minted = try ledger.propose(proposal)
+        try require(try ledger.admit(digest: minted.digest, generation: 1, rulesRevision: captured.revision, grantsRevision: 0, decision: .act(.rule),
+                                     decisionID: nil, reply: nil, live: { (rules: source.revision, grants: 0) }, rulesDurable: true) == .refused(.staleRules),
+                    "A proposal from the old policy is refused once the tightening's version is committed")
+        pause.release()
+        changed.wait()
+        published.wait()
+        try require(source.revision == committed && source.resolver(for: "conversation-1", requestText: "").decision(forCommand: "swift build") == .ask,
+                    "After both land the source serves the tightened policy at the committed version")
+    }
+
+    private static func runNativeAdmissionClock() throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
+        let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        let records = NativeRuleRecordStore(database: repository.database, now: { clock.now })
+        try seedRunningTask(repository)
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        let expiring = try records.add(NativeRuleRecord(action: .fileEdits, effect: .allow, statement: "Edit for ten seconds",
+                                                        expiresAt: clock.now.addingTimeInterval(10)))
+        ChatStore.reloadRules(source, from: records)
+        let revision = source.revision
+        let waiting = try ledger.propose(effectProposal(clock, rules: revision, key: "clock-waits"))
+        try require(try ledger.admit(digest: waiting.digest, generation: 1, rulesRevision: revision, grantsRevision: 0, decision: .act(.grant),
+                                     decisionID: nil, reply: nil, live: {
+            clock.advance(11)
+            return (rules: source.revision, grants: 0)
+        }, rulesDurable: true, authorizedBy: [expiring.id]) == .refused(.staleRules),
+                    "Admission reads its clock inside the transaction, so an expiry passed while waiting refuses it")
+    }
+}
+
+final class NativeRulePausePoint: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+    private let arrived = DispatchSemaphore(value: 0)
+    private let resume = DispatchSemaphore(value: 0)
+
+    func arm() { lock.withLock { armed = true } }
+
+    func reached() {
+        let pausing = lock.withLock { () -> Bool in
+            let current = armed
+            armed = false
+            return current
+        }
+        guard pausing else { return }
+        arrived.signal()
+        resume.wait()
+    }
+
+    func waitUntilReached() { arrived.wait() }
+
+    func release() { resume.signal() }
 }
