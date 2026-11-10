@@ -524,10 +524,8 @@ tolerated, and it is held under a size cap. A non-2xx response shows in chat as 
 tool call with its status. Deleting a declaration, or setting `enabled` to false, removes
 the tool starting with the next message.
 
-The app bundles a few declarations this way: an actions surface, skill authoring, and a
-recurring-watch author that drafts a vein from a plain chat request and saves it only
-after you agree in the conversation. All of them ride vera-api routes and activate once
-the vera-api base URL is configured.
+The app bundles a few declarations this way: an actions surface and skill authoring. Both
+ride vera-api routes and activate once the vera-api base URL is configured.
 
 ### Native personal memory
 
