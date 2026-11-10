@@ -1,12 +1,19 @@
 [tasks.api-test]
 dir = "services/vera-api"
-run = "python -m pytest -q"
+run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q'
+
+[tasks.api-deps-upgrade]
+dir = "services/vera-api"
+run = [
+  "uv pip compile --universal --python-version 3.11 --no-header --no-annotate --upgrade requirements.in -o requirements.txt",
+  "uv pip compile --universal --python-version 3.11 --no-header --no-annotate --upgrade requirements-dev.in -o requirements-dev.txt",
+]
 
 [tasks.task-engine-contract]
-run = "python scripts/tests/task_engine_contract.py"
+run = '"{{config_root}}/scripts/api-python.sh" scripts/tests/task_engine_contract.py'
 
 [tasks.task-engine-package-test]
-run = "python scripts/tests/task_engine_contract.py --engine services/vera-api/dist/vera-api/vera-api"
+run = '"{{config_root}}/scripts/api-python.sh" scripts/tests/task_engine_contract.py --engine services/vera-api/dist/vera-api/vera-api'
 
 [tasks.mac-build]
 dir = "apps/vera-mac"
@@ -33,7 +40,7 @@ run = ".build/debug/Vera --provider-smoke-selftest"
 depends = ["mac-build"]
 env = { VERA_NATIVE_TASK_TEST = "1", VERA_NATIVE_TASK_LIVE = "0" }
 dir = "services/vera-api"
-run = "python -m pytest -q tests/test_native_task_handoff.py"
+run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q tests/test_native_task_handoff.py'
 
 [tasks.native-task-engine-test]
 depends = ["mac-build"]
@@ -80,7 +87,7 @@ run = "npm ci --ignore-scripts --no-audit --no-fund --prefix prototypes/pi_assis
 [tasks.pi-prototype-test]
 depends = ["pi-prototype-deps", "assistant-ui-test"]
 env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
-run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/tests"
+run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider prototypes/pi_assistant/tests'
 
 [tasks.pi-integration-test]
 depends = ["pi-prototype-deps", "assistant-ui-test"]
@@ -95,12 +102,12 @@ run = "swift build && .build/debug/VeraNativeTransport --selftest && python3 tes
 [tasks.pi-native-integration-test]
 depends = ["pi-native-transport-test", "pi-prototype-deps"]
 env = { PYTHONPATH = "prototypes:services/vera-api", PYTHONDONTWRITEBYTECODE = "1" }
-run = "python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/native_tests"
+run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider prototypes/pi_assistant/native_tests'
 
 [tasks.pi-app-broker-test]
 depends = ["mac-build", "pi-prototype-deps"]
 env = { PYTHONDONTWRITEBYTECODE = "1" }
-run = "apps/vera-mac/.build/debug/Vera --pi-broker-selftest && python -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests"
+run = 'apps/vera-mac/.build/debug/Vera --pi-broker-selftest && "{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests'
 
 [tasks.engine-lifecycle-test]
 run = "sh apps/vera-mac/scripts/test-engine-lifecycle.sh"
