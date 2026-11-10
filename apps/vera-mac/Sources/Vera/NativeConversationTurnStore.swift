@@ -545,9 +545,9 @@ extension ChatStore {
         if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) { return false }
         if activity.toolID == NativeCommandTools.toolID, activity.name == NativeCommandTools.runName,
            let command = NativeCommandTools.command(inRequest: activity.request),
-           NativeCommandClassifier.classify(command, grants: grants(for: turn.conversationID)) == .commands,
-           Self.prefixApprovalAnswers(nativeRuleSource, conversationID: turn.conversationID,
-                                      requestText: turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "", command: command) {
+           Self.prefixApprovalAnswers(nativeRuleSource, store: nativeRuleRecordStore, conversationID: turn.conversationID,
+                                      requestText: turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? "", command: command,
+                                      directory: NativeCommandTools.directory(inRequest: activity.request), grants: grants(for: turn.conversationID)) {
             guard turnOwned(turn) else { return false }
             turnCommandReasonSource.set(.conversationPrefix, for: Self.scopedBlockID(activity.id, turn: turn))
             return true

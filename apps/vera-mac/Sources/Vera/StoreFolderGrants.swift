@@ -120,16 +120,10 @@ extension ChatStore {
         let turnID = turn.id
         let scope = Self.scopedBlockID("", turn: turn)
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
+        let closures = Self.commandLive(rules, store: records, conversationID: conversationID, requestText: text)
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: scope + $0) }, record: record,
-                                              live: { command, action in
-                                                  let resolver = rules.resolver(for: conversationID, requestText: text).tool(NativeCommandTools.toolID, targets: [])
-                                                  return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
-                                              },
-                                              liveTargets: { command, action, subjects in
-                                                  Self.commandDecision(rules, store: records, conversationID: conversationID, requestText: text,
-                                                                       command: command, action: action, subjects: subjects)
-                                              },
+                                              live: closures.live, liveTargets: closures.liveTargets,
                                               declined: { declines.contains($0, turn: turnID) },
                                               alwaysAvailable: alwaysAvailable)
     }
@@ -144,9 +138,27 @@ extension ChatStore {
         return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
     }
 
-    nonisolated static func prefixApprovalAnswers(_ rules: NativeRuleSource, conversationID: String, requestText: String, command: String) -> Bool {
-        commandDecision(rules, conversationID: conversationID, requestText: requestText, command: command, action: .commands,
-                        subjects: NativeCommandTools.ruleSubjects(command: command)).decision == .act(.conversationPrefix)
+    nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String)
+        -> (live: @Sendable (String, NativeActionClass) -> NativeRuleDecision?,
+            liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?) {
+        let live: @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { command, action in
+            let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, targets: [])
+            return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
+        }
+        let liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict? = { command, action, subjects in
+            commandDecision(rules, store: store, conversationID: conversationID, requestText: requestText,
+                            command: command, action: action, subjects: subjects)
+        }
+        return (live, liveTargets)
+    }
+
+    nonisolated static func prefixApprovalAnswers(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
+                                                  requestText: String, command: String, directory: String? = nil, grants: [FolderGrant] = [],
+                                                  fallback: NativeRuleDecision = .ask) -> Bool {
+        let closures = commandLive(rules, store: store, conversationID: conversationID, requestText: requestText)
+        let (_, decision, _) = NativeCommandTools.evaluate(command: command, directory: directory, grants: grants, fallback: fallback,
+                                                           live: closures.live, liveTargets: closures.liveTargets)
+        return decision == .act(.conversationPrefix)
     }
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,

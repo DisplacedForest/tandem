@@ -348,7 +348,8 @@ enum NativeFolderTools {
         let directory = try NativeFolderIO.parent(of: location)
         var existed = false
         var before: String?
-        if let info = NativeFolderIO.status(directory, location.name) {
+        switch NativeFolderIO.lookup(directory, location.name) {
+        case .present(let info):
             switch NativeFolderIO.kind(info) {
             case "file":
                 existed = true
@@ -356,6 +357,8 @@ enum NativeFolderTools {
             case "link": throw NativeFolderAccessError.symlink(location.path)
             default: throw NativeFolderAccessError.notADirectory(location.path)
             }
+        case .failed(let code): throw NativeFolderIO.failure(code, "Couldn't check \(location.path)")
+        case .absent: try NativeFolderIO.requireNewName(directory, location.name, display: location.path)
         }
         let change = NativeFileChange(path: location.path, kind: existed ? .edited : .created, before: before, after: content)
         try commit()
@@ -402,7 +405,11 @@ enum NativeFolderTools {
         guard let info = NativeFolderIO.status(fromDirectory, from.name) else { throw NativeFolderAccessError.notFound(from.path) }
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(from.path) }
         let toDirectory = try NativeFolderIO.parent(of: to)
-        guard NativeFolderIO.status(toDirectory, to.name) == nil else { throw NativeFolderAccessError.exists(to.path) }
+        switch NativeFolderIO.lookup(toDirectory, to.name) {
+        case .present: throw NativeFolderAccessError.exists(to.path)
+        case .failed(let code): throw NativeFolderIO.failure(code, "Couldn't check \(to.path)")
+        case .absent: try NativeFolderIO.requireNewName(toDirectory, to.name, display: to.path)
+        }
         let text = NativeFolderIO.kind(info) == "file" ? NativeFolderIO.readTextIfSmall(fromDirectory, from.name, display: from.path, limit: NativeFileChange.contentCap) : nil
         try commit()
         try NativeFolderIO.rename(from: fromDirectory, from.name, to: toDirectory, to.name, display: to.path)
@@ -439,16 +446,22 @@ enum NativeFolderTools {
         for component in location.components {
             display += "/" + component
             let allowed = declared(display)
-            if !missing, let info = NativeFolderIO.status(directory, component) {
-                switch NativeFolderIO.kind(info) {
-                case "folder": break
-                case "link": throw NativeFolderAccessError.symlink(display)
-                default: throw NativeFolderAccessError.notADirectory(display)
+            if !missing {
+                switch NativeFolderIO.lookup(directory, component) {
+                case .present(let info):
+                    switch NativeFolderIO.kind(info) {
+                    case "folder": break
+                    case "link": throw NativeFolderAccessError.symlink(display)
+                    default: throw NativeFolderAccessError.notADirectory(display)
+                    }
+                    directory = try NativeFolderIO.openDirectory(directory, component, display: display)
+                    continue
+                case .failed(let code): throw NativeFolderIO.failure(code, "Couldn't check \(display)")
+                case .absent: break
                 }
-                directory = try NativeFolderIO.openDirectory(directory, component, display: display)
-                continue
             }
             guard allowed else { throw footprintChanged(display) }
+            try NativeFolderIO.requireNewName(directory, component, display: display)
             missing = true
             guard creating else { continue }
             if mkdirat(directory.raw, component, 0o755) == 0 {

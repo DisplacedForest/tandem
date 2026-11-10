@@ -65,6 +65,33 @@ enum NativeCommandTools {
     static let runName = "run_command"
     static let toolNames: Set<String> = [runName]
 
+    static func evaluate(command: String, directory: String?, grants: [FolderGrant], fallback: NativeRuleDecision,
+                         live: (String, NativeActionClass) -> NativeRuleDecision?,
+                         liveTargets: ((String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)?)
+        -> (NativeActionClass, NativeRuleDecision, (@Sendable () -> Bool)?) {
+        let action = NativeCommandClassifier.classify(command, grants: grants, directory: directory)
+        let plain = NativeCommandClassifier.isPlain(command, grants: grants, directory: directory)
+        let verdict = liveTargets.flatMap { $0(command, action, ruleSubjects(command: command)) }
+        let current: NativeRuleDecision
+        switch action {
+        case .sensitive: return (action, .handOff, nil)
+        case .commands:
+            current = verdict?.decision ?? live(command, .commands) ?? fallback
+        default:
+            current = verdict?.decision ?? live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
+        }
+        let final = plain ? current : current.atLeastAsk
+        if case .act = final { return (action, final, verdict?.confirm) }
+        return (action, final, nil)
+    }
+
+    static func approvedThisTurn(_ reason: NativeRuleReason) -> Bool {
+        switch reason {
+        case .userApproved: return true
+        case .rule, .requestPreapproval, .conversationPrefix, .grant: return false
+        }
+    }
+
     static func ruleSubjects(command: String) -> [[NativeRuleTarget]] {
         NativeRuleTarget.candidate(.commandPrefix, command).map { [[$0]] } ?? []
     }
@@ -84,20 +111,7 @@ enum NativeCommandTools {
         if case .act(let value) = decision { staticReason = value } else { staticReason = nil }
         let grantedAtStart = grants()
         let planned: @Sendable (String, String?) -> (NativeActionClass, NativeRuleDecision, (@Sendable () -> Bool)?) = { command, directory in
-            let action = NativeCommandClassifier.classify(command, grants: grants(), directory: directory)
-            let plain = NativeCommandClassifier.isPlain(command, grants: grants(), directory: directory)
-            let verdict = liveTargets.flatMap { $0(command, action, ruleSubjects(command: command)) }
-            let current: NativeRuleDecision
-            switch action {
-            case .sensitive: return (action, .handOff, nil)
-            case .commands:
-                current = verdict?.decision ?? live(command, .commands) ?? decision
-            default:
-                current = verdict?.decision ?? live(command, action) ?? NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action)
-            }
-            let final = plain ? current : current.atLeastAsk
-            if case .act = final { return (action, final, verdict?.confirm) }
-            return (action, final, nil)
+            evaluate(command: command, directory: directory, grants: grants(), fallback: decision, live: live, liveTargets: liveTargets)
         }
         var definition = NativeToolDefinition(
             id: toolID, name: runName, title: "Run a command",
@@ -119,10 +133,14 @@ enum NativeCommandTools {
                 if let request = NativeToolCallContext.request, declined(NativeToolRequestKey.canonical(name: runName, request: request)) {
                     throw NativeToolError.failed("The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again.")
                 }
-                let approvedNow = reason(activityID)
+                let remembered = reason(activityID)
+                let approvedNow = remembered.flatMap { approvedThisTurn($0) ? $0 : nil }
                 let requested = arguments.folderString("directory")
                 let (action, current, confirm) = planned(command, requested)
                 if action == .sensitive { throw NativeToolError.failed(NativeRuleResolver.handOffMessage(.sensitive)) }
+                if approvedNow == nil, remembered != nil {
+                    guard case .act = current else { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+                }
                 try NativeRuleResolver.gate(live: current, planned: approvedNow == nil ? .act(.rule) : .ask, action: action, approved: approvedNow != nil)
                 let currentGrants = grants()
                 guard !currentGrants.isEmpty else {

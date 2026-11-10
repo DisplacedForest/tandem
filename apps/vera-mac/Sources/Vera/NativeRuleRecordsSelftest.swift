@@ -47,6 +47,8 @@ enum NativeRuleRecordsSelftest {
         try await significantWhitespace(require)
         try prefixApprovalShortcut(require)
         try await commandValidationFirst(require)
+        try await rememberedApprovals(require)
+        try await longNames(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -1173,5 +1175,79 @@ enum NativeRuleRecordsSelftest {
         var runnerRefused = false
         do { try NativeCommandRunner.validate("echo hi\u{0}there") } catch { runnerRefused = true }
         try require(runnerRefused, "The runner uses the same validator")
+    }
+
+    private static func rememberedApprovals(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        func source() -> NativeRuleSource {
+            let source = NativeRuleSource()
+            source.setGlobal(NativeRules(choices: [.commands: .ask]))
+            source.set(NativeConversationRules(approvedCommandPrefixes: ["echo hello"]), for: "c1")
+            return source
+        }
+        func tool(_ source: NativeRuleSource, reason: NativeRuleReason?) -> NativeToolDefinition {
+            let closures = ChatStore.commandLive(source, store: nil, conversationID: "c1", requestText: "")
+            return NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .ask, reason: { _ in reason }, record: { _ in },
+                                                  live: closures.live, liveTargets: closures.liveTargets)[0]
+        }
+        func answers(_ source: NativeRuleSource, _ command: String) -> Bool {
+            ChatStore.prefixApprovalAnswers(source, conversationID: "c1", requestText: "", command: command, grants: [fixture.grant])
+        }
+        let plain: [String: NativeJSONValue] = ["command": .string("echo hello")]
+        let nonPlain: [String: NativeJSONValue] = ["command": .string("echo hello time")]
+        let changed = NativeRuleResolver.changedMessage
+
+        let healthy = source()
+        let silent = tool(healthy, reason: nil)
+        let silentRun = await run(silent, plain)
+        try require(answers(healthy, "echo hello") && silent.confirmationFor?(plain) == false && silentRun == "ran",
+                    "A plain command matching an approved prefix still runs without a card, as before")
+        let remembered = await run(tool(healthy, reason: .conversationPrefix), nonPlain)
+        try require(!answers(healthy, "echo hello time") && silent.confirmationFor?(nonPlain) == true && remembered == changed,
+                    "A non-plain command is never answered by a remembered prefix")
+
+        let failing = source()
+        let answeredBeforeFailure = answers(failing, "echo hello")
+        failing.fail()
+        let afterFailure = await run(tool(failing, reason: .conversationPrefix), plain)
+        try require(answeredBeforeFailure && afterFailure == changed,
+                    "A remembered prefix answered before failed mode is refused at execution and nothing runs")
+        let asking = source()
+        let answeredBeforeRecord = answers(asking, "echo hello")
+        asking.setRecords([record(.ask, .commands, statement: "Always ask before any command")])
+        let afterRecord = await run(tool(asking, reason: .conversationPrefix), plain)
+        try require(answeredBeforeRecord && afterRecord == changed,
+                    "A remembered prefix answered before a saved ask record is refused at execution")
+        let approvedUnderAsk = await run(tool(asking, reason: .userApproved), plain)
+        let approvedFailed = await run(tool(failing, reason: .userApproved), plain)
+        try require(approvedUnderAsk == "ran" && approvedFailed == "ran", "A real approval in this turn still runs under a saved ask and in failed mode")
+        for reason in [NativeRuleReason.rule, .requestPreapproval, .conversationPrefix, .grant] {
+            try require(!NativeCommandTools.approvedThisTurn(reason), "\(reason.rawValue) is a remembered reason, not an approval")
+        }
+        try require(NativeCommandTools.approvedThisTurn(.userApproved), "A click in this turn is a real approval")
+    }
+
+    private static func longNames(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let open = fixture.root + "/open"
+        try "x".write(toFile: open + "/from.txt", atomically: true, encoding: .utf8)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        let once = try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(open), uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let tools = chatFolders(source, store: records, grant: fixture.grant)
+        let long = String(repeating: "n", count: 300)
+        let made = await run(tools[NativeFolderTools.mkdirName]!, ["path": .string(open + "/" + long)])
+        try require(made != "ran" && (try records.record(id: once.id))?.remainingUses == 1, "A folder name longer than the volume allows is refused before the use is spent")
+        let written = await run(tools[NativeFolderTools.writeName]!, ["path": .string(open + "/" + long), "content": .string("x")])
+        try require(written != "ran" && (try records.record(id: once.id))?.remainingUses == 1, "A file name longer than the volume allows is refused before the use is spent")
+        let moved = await run(tools[NativeFolderTools.moveName]!, ["from": .string(open + "/from.txt"), "to": .string(open + "/" + long)])
+        try require(moved != "ran" && (try records.record(id: once.id))?.remainingUses == 1 && FileManager.default.fileExists(atPath: open + "/from.txt"),
+                    "A move destination name longer than the volume allows is refused before the use is spent")
     }
 }

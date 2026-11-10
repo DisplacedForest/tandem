@@ -42,6 +42,30 @@ enum NativeFolderIO {
         NativeToolError.failed("\(context): \(String(cString: strerror(Darwin.errno)))")
     }
 
+    enum Entry {
+        case absent
+        case present(stat)
+        case failed(Int32)
+    }
+
+    static func lookup(_ directory: NativeFolderDescriptor, _ name: String) -> Entry {
+        var info = stat()
+        if fstatat(directory.raw, name, &info, AT_SYMLINK_NOFOLLOW) == 0 { return .present(info) }
+        let code = Darwin.errno
+        return code == ENOENT ? .absent : .failed(code)
+    }
+
+    static func failure(_ code: Int32, _ context: String) -> NativeToolError {
+        NativeToolError.failed("\(context): \(String(cString: strerror(code)))")
+    }
+
+    static func requireNewName(_ directory: NativeFolderDescriptor, _ name: String, display: String) throws {
+        let limit = fpathconf(directory.raw, _PC_NAME_MAX)
+        if limit > 0, name.utf8.count > limit {
+            throw NativeToolError.invalidArguments("The name of \(display) is longer than this volume allows")
+        }
+    }
+
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
         let fd = open(grant.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { throw NativeFolderAccessError.notFound(grant.path) }
