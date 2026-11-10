@@ -13,6 +13,28 @@ LOCAL_PACKAGE = re.compile(r'\.package\(\s*path:\s*"([^"]+)"')
 NAME = re.compile(r"\bVera\b")
 
 
+INTERPOLATION = "\x01"
+SIMPLE_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "0": "\x00", "\\": "\\", '"': '"', "'": "'"}
+
+
+def decode_escape(text, after):
+    if after >= len(text):
+        return " ", after
+    char = text[after]
+    if char in SIMPLE_ESCAPES:
+        return SIMPLE_ESCAPES[char], after + 1
+    if char == "u" and text.startswith("{", after + 1):
+        close = text.find("}", after + 2)
+        if close > 0:
+            try:
+                return chr(int(text[after + 2:close], 16)), close + 1
+            except (ValueError, OverflowError):
+                return " ", close + 1
+    if char == "\n":
+        return "\n", after + 1
+    return " ", after + 1
+
+
 class Tokenizer:
     def __init__(self, text):
         self.text = text
@@ -119,14 +141,13 @@ class Tokenizer:
             if text.startswith(escape, i):
                 after = i + len(escape)
                 if after < self.size and text[after] == "(":
-                    body.append("\0")
+                    body.append(INTERPOLATION)
                     i = self.code(after + 1, True)
                     continue
-                if after < self.size:
-                    body.append(text[after])
-                    if text[after] == "\n":
-                        self.line += 1
-                i = after + 1
+                decoded, i = decode_escape(text, after)
+                if decoded == "\n":
+                    self.line += 1
+                body.append(decoded)
                 continue
             if char == "\n":
                 if not multiline:
@@ -169,7 +190,7 @@ def package_call(tokenizer, text, start):
                 k += 1
             before = len(tokenizer.literals)
             end = tokenizer.skip(k) if k < len(text) and text[k] in '#"' else None
-            if end is not None and len(tokenizer.literals) > before and "\0" not in tokenizer.literals[-1][1]:
+            if end is not None and len(tokenizer.literals) > before and INTERPOLATION not in tokenizer.literals[-1][1]:
                 paths.append(tokenizer.literals[-1][1])
                 i = end
                 continue
@@ -230,7 +251,7 @@ def scan(root):
                 hits = []
                 for number, body in sorted(string_literals(text)):
                     if NAME.search(body):
-                        hits.append((number, body.replace("\0", "...").split("\n")[0][:100]))
+                        hits.append((number, body.replace(INTERPOLATION, "...").split("\n")[0][:100]))
                 if hits:
                     found[relative] = hits
     return found

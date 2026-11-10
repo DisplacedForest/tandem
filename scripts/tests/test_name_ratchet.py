@@ -177,6 +177,35 @@ class NameRatchetTests(unittest.TestCase):
         self.manifest('.package(url: "https://example.com/path: x.git", from: "1.0.0"),\n.package(name: "UI", path: "../../prototypes/assistant-ui"),')
         self.assertEqual(self.run_script("--update").returncode, 0)
 
+    def assert_new_literal_fails(self, literal):
+        self.write("A.swift", ["let a = 1"])
+        self.assertEqual(self.run_script("--update").returncode, 0)
+        self.write("A.swift", ["let a = 1", "let b = " + literal])
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("A.swift:2", result.stdout)
+        before = self.baseline_text()
+        self.assertNotEqual(self.run_script("--update").returncode, 0)
+        self.assertEqual(self.baseline_text(), before)
+
+    def test_escaped_whitespace_before_the_word(self):
+        self.assert_new_literal_fails(r'"Hello\nVera"')
+
+    def test_escaped_whitespace_after_the_word(self):
+        self.assert_new_literal_fails(r'"Vera\nReady"')
+
+    def test_escaped_tab_around_the_word(self):
+        self.assert_new_literal_fails(r'"Hello\tVera\tnow"')
+
+    def test_escaped_whitespace_in_a_raw_string(self):
+        self.assert_new_literal_fails(r'#"Hello\#nVera"#')
+
+    def test_unicode_escape_before_the_word(self):
+        self.assert_new_literal_fails(r'"Hello\u{0020}Vera"')
+
+    def test_unknown_escape_never_glues_words(self):
+        self.assert_new_literal_fails(r'"Hello\qVera"')
+
     def test_other_words_do_not_count(self):
         self.write("A.swift", ['let a = "Veranda"', 'let b = Vera', 'let c = "vera"'])
         self.assertEqual(self.run_script("--update").returncode, 0)

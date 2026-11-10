@@ -8,7 +8,10 @@ enum RulesShot {
         let showsHelp = view == "rules-info" || view == "rules-unnamed"
         let companion: String? = view == "rules-unnamed" ? nil : "Ada"
         let size = NSSize(width: showsHelp ? 1240 : 860, height: 980)
-        let store = ChatStore()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rules-shot-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil,
+                              attachmentStore: NativeAttachmentStore(directory: directory))
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let root = HStack(alignment: .top, spacing: 16) {
