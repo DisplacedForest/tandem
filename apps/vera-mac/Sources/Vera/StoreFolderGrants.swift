@@ -169,12 +169,14 @@ extension ChatStore {
         wrapped.governed = true
         wrapped.alwaysAsks = original.confirmation == .required && original.confirmationFor == nil
         wrapped.confirmationFor = { arguments in
+            if original.proposesFor?(arguments) == true { return original.confirmationFor?(arguments) ?? (original.confirmation == .required) }
             let decision = decide(arguments).1.decision
             if decision == .handOff { return false }
             return decision.requiresConfirmation || (original.confirmationFor?(arguments) ?? (original.confirmation == .required))
         }
         wrapped.execute = { arguments in
-            if !NativeRuleAdmission.admitted {
+            try original.preflight?(arguments)
+            if !NativeRuleAdmission.admitted, original.proposesFor?(arguments) != true {
                 let (action, verdict) = decide(arguments)
                 let commit = try NativeRuleResolver.gate(verdict, fallback: nil, planned: .act(.rule), action: action,
                                                          approved: NativeToolCallContext.confirmed ?? false)

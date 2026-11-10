@@ -70,6 +70,8 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
 
     var needsAPIBase: Bool { URL(string: endpoint)?.scheme == nil }
 
+    var reads: Bool { method == .get && confirmation != .required }
+
     var parameters: NativeJSONValue {
         var fields: [String: NativeJSONValue] = [:]
         for property in properties {
@@ -155,7 +157,8 @@ enum NativeCapabilityTools {
         declarations.filter(\.enabled).map { definition($0, base: base, client: client) }
     }
 
-    static let proposing: Set<String> = ["propose_action", "recurring_watch"]
+    static let proposing: Set<String> = ["propose_action"]
+    static let drafting: [String: String] = ["recurring_watch": "draft"]
 
     static func definition(
         _ declaration: NativeToolDeclaration,
@@ -163,7 +166,11 @@ enum NativeCapabilityTools {
         client: NativeHTTPToolClient = .live
     ) -> NativeToolDefinition {
         var definition = plainDefinition(declaration, base: base, client: client)
-        definition.proposes = declaration.source == bundledSource && proposing.contains(declaration.name)
+        guard declaration.source == bundledSource else { return definition }
+        definition.proposes = proposing.contains(declaration.name)
+        if let mode = drafting[declaration.name] {
+            definition.proposesFor = { $0["mode"] == .string(mode) }
+        }
         return definition
     }
 
@@ -180,11 +187,14 @@ enum NativeCapabilityTools {
             parameters: declaration.parameters,
             confirmation: declaration.confirmation,
             timeout: .seconds(declaration.timeoutSeconds),
-            effect: declaration.method == .get ? .read : .write,
-            action: declaration.method == .get ? nil : .networkSends,
+            effect: declaration.reads ? .read : .write,
+            action: declaration.reads ? nil : declaration.method == .get ? .otherChanges : .networkSends,
             isAvailable: { resolve(declaration, base: base()) != nil },
             execute: { arguments in
                 try await call(declaration, arguments: arguments, base: base(), client: client)
+            },
+            preflight: { _ in
+                guard resolve(declaration, base: base()) != nil else { throw NativeToolError.unavailable }
             })
     }
 

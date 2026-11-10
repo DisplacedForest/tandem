@@ -342,7 +342,7 @@ extension SelfTest {
         for definition in definitions {
             try require(definition.isDeclared, "\(definition.name) is either a read or a write with an action")
         }
-        let undeclaredWrites: Set<String> = [NativeCompanionProfileTools.toolID]
+        let undeclaredWrites: Set<String> = [NativeCompanionProfileTools.toolID, NativeScheduleTools.toolID]
         for definition in definitions where definition.effect == .write && !undeclaredWrites.contains(definition.id) {
             try require(definition.action != nil && definition.action != .otherChanges && definition.actionClass(for: [:]) != .otherChanges,
                         "\(definition.name) declares its kind instead of falling back to other changes")
@@ -357,7 +357,7 @@ extension SelfTest {
         for (name, action) in [("apple_reminders_create", NativeActionClass.reminders), ("apple_reminders_complete", .reminders),
                                (NativeFolderTools.writeName, .fileEdits), (NativeFolderTools.editName, .fileEdits), (NativeFolderTools.moveName, .fileEdits),
                                (NativeFolderTools.mkdirName, .fileEdits), (NativeFolderTools.trashName, .trash), (NativeCommandTools.runName, .commands),
-                               (NativeImageTools.toolName, .fileEdits), (NativeScheduleTools.toolName, .networkSends), ("garden_note", .networkSends)] {
+                               (NativeImageTools.toolName, .fileEdits), (NativeScheduleTools.toolName, .otherChanges), ("garden_note", .networkSends)] {
             try require(effects[name]?.effect == .write && effects[name]?.action == action, "\(name) is a write under \(action.rawValue)")
         }
         let run = commands[0]

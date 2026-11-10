@@ -102,7 +102,7 @@ enum NativeCardChoices {
         case NativeCardChoiceKind.allowHere.rawValue: return "Always allow in this task"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Always allow for this schedule"
         case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow everywhere"
-        case NativeCardChoiceKind.never.rawValue: return "Never allow this"
+        case NativeCardChoiceKind.never.rawValue: return "Never allow this in this task"
         case commandNever: return "Never run commands in this task"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
         default: return nil
@@ -182,7 +182,7 @@ enum NativeCardChoices {
         let decline = NativeCardChoice(kind: .decline, title: "Decline")
         let covered = coverage(subject)
         var standing = !subject.alwaysAsks
-        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered, action: subject.action))
+        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered, action: subject.action, place: place))
         switch covered {
         case .none: return [decline, once]
         case .commandPrefix:
@@ -208,13 +208,13 @@ enum NativeCardChoices {
         return choices
     }
 
-    static func neverTitle(_ covered: NativeCardCoverage, action: NativeActionClass) -> String {
+    static func neverTitle(_ covered: NativeCardCoverage, action: NativeActionClass, place: NativeCardPlace) -> String {
         switch covered {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
         case .sendTargets(let targets, _): return "Never send to " + list(targets.map(\.value))
-        case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this"
+        case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this \(place.neverWords)"
         }
     }
 

@@ -174,6 +174,57 @@ extension SelfTest {
 
         let bundled = NativeCapabilityTools.bundled
         let shipped = bundled.map { NativeCapabilityTools.definition($0, base: { nil }) }
+        let preflightCount = NativeChatRulesCounter()
+        var checked = tool("fixture-preflight", action: .networkSends, counter: preflightCount)
+        checked.preflight = { arguments in
+            guard arguments["line"] != nil else { throw NativeToolError.invalidArguments("A line is required") }
+        }
+        let sparing = try records.add(NativeRuleRecord(scope: .conversation(chat), action: .networkSends, toolID: checked.id, effect: .allow,
+                                                       statement: "Allow the checked post once", remainingUses: 1))
+        ChatStore.reloadRules(durable, from: records)
+        let spared = ruled(checked, durable, store: records)
+        try require(await run(spared, confirmed: false) != nil && preflightCount.count == 0,
+                    "A call that fails its own checks does not run")
+        try require(try records.all().first { $0.id == sparing.id }?.remainingUses == 1 && asks(spared, ["line": .string("Beans")]) == false,
+                    "A call that fails its own checks leaves a one-use allow unspent")
+        try require(await run(spared, ["line": .string("Beans")], confirmed: false) == nil && preflightCount.count == 1,
+                    "The next valid call uses the one-use allow")
+
+        let watch = try { () throws -> NativeToolDefinition in
+            guard let found = bundled.first(where: { $0.name == "recurring_watch" }) else { throw NativeTaskFixture.Failure.assertion("The watch tool ships") }
+            return NativeCapabilityTools.definition(found, base: { URL(string: "https://api.example") })
+        }()
+        let draft: [String: NativeJSONValue] = ["mode": .string("draft")]
+        let save: [String: NativeJSONValue] = ["mode": .string("save")]
+        try require(!watch.proposes && ChatStore.followsRules(watch) && watch.proposesFor?(draft) == true && watch.proposesFor?(save) == false
+                        && watch.proposesFor?([:]) == false,
+                    "The watch tool proposes only while drafting")
+        let watchAsk = ruled(watch, source())
+        try require(asks(watchAsk, draft) == false && asks(watchAsk, save) == true, "Drafting a watch shows no card and saving one asks under the default sends rule")
+        let watchOff = ruled(watch, source(rules(.handOff, for: .networkSends)))
+        try require(await run(watchOff, save, confirmed: true) == NativeRuleResolver.handOffMessage(.networkSends),
+                    "Saving a watch is refused when sends are handed off")
+        try require(await run(watchAsk, save, confirmed: false) == NativeRuleResolver.changedMessage, "Saving a watch never runs without an answer")
+        _ = try records.add(NativeRuleRecord(scope: .conversation(other), action: nil, toolID: watch.id, effect: .forbid,
+                                             statement: "Never allow this in this chat"))
+        ChatStore.reloadRules(durable, from: records)
+        let watchNever = ruled(watch, durable, conversation: other, store: records)
+        try require(await run(watchNever, save, confirmed: true) != nil, "A saved never refuses saving a watch")
+        try require(asks(watchNever, draft) == false, "A saved never still lets a watch be drafted")
+
+        let lookup = try NativeCapabilityTools.parse(data: try JSONSerialization.data(withJSONObject: [
+            "name": "garden_lookup", "title": "Look up the garden log", "description": "Read the garden log",
+            "parameters": ["type": "object", "properties": [:] as [String: Any], "additionalProperties": false],
+            "endpoint": "https://garden.example/log", "method": "GET", "confirmation": "required",
+        ] as [String: Any]), source: "garden_lookup.json")
+        let guarded = NativeCapabilityTools.definition(lookup, base: { nil })
+        try require(!lookup.reads && guarded.effect == .write && guarded.action == .otherChanges && ChatStore.followsRules(guarded),
+                    "A lookup file that demands confirmation counts as another change")
+        let guardedRuled = ruled(guarded, source(rules(.act, for: .otherChanges)))
+        try require(guardedRuled.alwaysAsks && asks(guardedRuled) == true, "It always asks, whatever the rule says")
+        try require(shipped.filter { $0.effect == .read }.allSatisfy { $0.confirmation == .none && $0.confirmationFor == nil },
+                    "No shipped lookup can show a card")
+
         try require(shipped.allSatisfy { $0.proposes == NativeCapabilityTools.proposing.contains($0.name) },
                     "A shipped tool carries the proposing mark exactly when its name is in the proposing set")
         try require(shipped.contains { $0.proposes } && shipped.first { $0.name == "propose_action" }?.proposes == true,
@@ -203,7 +254,7 @@ extension SelfTest {
             try require(wrapped.governed && asks(wrapped, ["line": .string("Watered the beans")]) == true,
                         "A posting file asks first under the default sends rule: \(label)")
         }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vera-chat-rules-\(UUID().uuidString)", isDirectory: true)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-chat-rules-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         try file("propose_action").write(to: folder.appendingPathComponent("propose_action.json"))

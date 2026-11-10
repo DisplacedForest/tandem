@@ -190,6 +190,8 @@ struct NativeToolDefinition: Sendable {
     var governed = false
     var proposes = false
     var alwaysAsks = false
+    var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
+    var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
 
     var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 

@@ -299,7 +299,7 @@ The **Scheduled** destination in the rail creates and manages recurring research
 
 Scheduled runs only read. A run started by a schedule can look things up and write its report or document, but it can't change anything else: no file edits, commands, sends or changes in a connected service. Settings, Rules and saved allows don't widen this, and Run now is held to the same limit. A scheduled run never stops to ask for approval of a change. It notes the step, carries on, and says in its report what it left undone.
 
-Schedules can also be proposed from a chat through the `schedule_task` tool. It's offered during typed chat only when Background work is on in Settings, Tools, and the message asks for recurring or later work (for example "every weekday at 7" or "tomorrow at 9"). It always asks for confirmation in the app, and no rule can turn that off. Setting **Send on your behalf** to **Leave it to me**, or choosing Never on its card, stops it from scheduling in chat at all. Its fields are `title`, `worker_type` (`research` or `document`), `instruction`, `results_to` (`assistant` or `own_chat`), `repeat` (`daily`, `weekdays`, `weekly`, `every_hours` or `once`), `time` as HH:MM local time, `weekday`, `hours` (1 to 168), and `at` as YYYY-MM-DDTHH:MM local time. The confirmation card shows the cadence in plain words along with the work and where results go. Declining saves nothing. Approving saves the schedule and it appears in Scheduled. A research schedule is refused with the usual explanation when no search URL is set.
+Schedules can also be proposed from a chat through the `schedule_task` tool. It's offered during typed chat only when Background work is on in Settings, Tools, and the message asks for recurring or later work (for example "every weekday at 7" or "tomorrow at 9"). It always asks for confirmation in the app, and no rule can turn that off. Scheduling counts as **Make other changes**: setting that to **Leave it to me**, or choosing Never on its card, stops it from scheduling in chat at all. Its fields are `title`, `worker_type` (`research` or `document`), `instruction`, `results_to` (`assistant` or `own_chat`), `repeat` (`daily`, `weekdays`, `weekly`, `every_hours` or `once`), `time` as HH:MM local time, `weekday`, `hours` (1 to 168), and `at` as YYYY-MM-DDTHH:MM local time. The confirmation card shows the cadence in plain words along with the work and where results go. Declining saves nothing. Approving saves the schedule and it appears in Scheduled. A research schedule is refused with the usual explanation when no search URL is set.
 
 Each run appends a turn to the owning chat: the instruction as the user message, then a reply with the same task card the in-app task engine uses, along with its report or document, Stop and Retry. Each schedule has a run history showing the scheduled time, the outcome (Finished, Couldn't finish, Stopped, Missed, Skipped or Couldn't start, or while a run is open, Running, Waiting for you or Blocked), a short note where it helps, and Open to jump to the chat that holds the run. Rows offer Run now, Pause or Resume, Edit and Delete. A one-time schedule turns itself off after its time. Deleting a schedule removes its history but keeps the chats. Schedules and history live in the app's local history database next to tasks, and nothing exists after an upgrade until you create a schedule.
 
@@ -407,7 +407,7 @@ Settings, Rules holds one setting per kind of action:
 | Run risky commands (privileged, touching system or credential locations, or unreadable) | Leave it to me |
 | Change your reminders (adding, editing and completing Apple Reminders when you ask in a chat) | Do it without asking |
 | Make changes through connected services (connected service tools you allowed to change something) | Ask first |
-| Make other changes (tools that don't say what kind of change they make) | Ask first |
+| Make other changes (scheduling work, and tools that don't say what kind of change they make) | Ask first |
 
 Three things are always handed to you and aren't in that list of choices: entering a credential, card number or one-time code; paying or transferring money; and deleting permanently outside a granted folder or emptying the Trash. Rules and permissions never loosen from inside a conversation, whatever a message or a tool asks; only your click in Settings or on a card loosens them.
 
@@ -510,7 +510,8 @@ service:
   your rules say. With `"none"`, a `GET` runs immediately and a `POST` follows the **Send on
   your behalf** rule, which asks first by default: **Do it without asking** runs it with no
   card, **Do it when I say go ahead** runs it when your message says so, and **Leave it to
-  me** stops it.
+  me** stops it. A `GET` marked `"required"` is treated as a change instead of a lookup: it
+  counts under **Make other changes**, always asks, and **Leave it to me** stops it.
 - `timeout_s`: optional, seconds before the call is abandoned (default 20).
 - `enabled`: optional, default true.
 - `json_fields`: optional, POST only. Maps a declared string property to a request body

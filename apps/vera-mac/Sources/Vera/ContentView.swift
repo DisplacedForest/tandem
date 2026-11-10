@@ -945,17 +945,11 @@ struct NativeToolConfirmationBar: View {
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
         if let prompt = NativeCompanionProfileTools.prompt(request) { return prompt }
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
-            return NativeScheduleTools.prompt(for: draft)
-        }
         return nil
     }
 
     static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
-            return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
-        }
-        return nil
+        nil
     }
 
     static func sentence(for request: NativeToolConfirmationRequest, actor: String) -> String {
@@ -967,6 +961,9 @@ struct NativeToolConfirmationBar: View {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+            return NativeScheduleTools.literal(for: draft)
+        }
         let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines
     }
