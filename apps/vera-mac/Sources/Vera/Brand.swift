@@ -106,6 +106,9 @@ struct CompanionSubject: Equatable, Sendable {
     var threadTitle: String { leading }
     var menuBarTitle: String { name ?? "Tandem" }
     var thread: String { name.map { "the \($0) thread" } ?? "\(CompanionSentence.unnamedSubject)'s thread" }
+    var threadTemplate: String {
+        name == nil ? "\(CompanionSentence.placeholder)'s thread" : "the \(CompanionSentence.placeholder) thread"
+    }
 }
 
 enum CompanionSentence {

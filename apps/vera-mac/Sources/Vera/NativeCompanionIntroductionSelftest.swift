@@ -102,7 +102,7 @@ extension SelfTest {
             try await NativeSessionFixture.eventually("Companion answer completes", settled)
         }
         try await send("Call yourself Moss")
-        try require(persistedName == "Moss" && store.assistantName == "Moss", "Name saved through current tool call")
+        try require(persistedName == "Moss" && store.companionName == "Moss", "Name saved through current tool call")
         try await send("Watch the greenhouse")
         try require(store.dotProfile.goal == "Watch the greenhouse", "Goal saved through current tool call")
         try await send("Hand commands to me")

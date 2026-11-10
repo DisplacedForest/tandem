@@ -74,12 +74,12 @@ extension SelfTest {
         let prompt = NativeScheduleTools.prompt(for: parsed, timeZone: zone)
         try require(prompt.contains("Morning policy check") && prompt.contains("weekdays at") && prompt.hasSuffix("?"),
                     "The confirmation prompt names the schedule and its cadence")
-        let detail = NativeScheduleTools.detail(for: parsed, assistantName: "Sol")
+        let detail = NativeScheduleTools.detail(for: parsed, companionThread: CompanionSubject("Sol").thread)
         try require(detail.contains("Results go to its own chat") && detail.contains("Nothing is saved until you approve"),
                     "The confirmation detail names the destination and that nothing is saved yet")
         var threaded = parsed
         threaded.owner = .dot
-        try require(NativeScheduleTools.detail(for: threaded, assistantName: "Sol").contains("the Sol thread"),
+        try require(NativeScheduleTools.detail(for: threaded, companionThread: CompanionSubject("Sol").thread).contains("the Sol thread"),
                     "The confirmation detail names the assistant thread")
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 

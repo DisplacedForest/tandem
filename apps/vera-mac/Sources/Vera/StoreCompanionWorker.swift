@@ -82,6 +82,6 @@ extension ChatStore {
         definitions.append(contentsOf: extra)
         enabled.formUnion(extra.map(\.id))
         let tools = NativeToolRegistry(definitions: definitions).active(enabledIDs: enabled)
-        return NativeCompanionWorkerContext(assistantName: assistantName, threadID: threadID, tools: tools)
+        return NativeCompanionWorkerContext(assistantName: companionName, threadID: threadID, tools: tools)
     }
 }

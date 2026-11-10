@@ -399,8 +399,8 @@ private struct ChatPane: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("\(store.assistantName)'s state, activity and results")
-                .accessibilityLabel("Details for \(store.assistantName)")
+                .help("\(store.companion.leading)'s state, activity and results")
+                .accessibilityLabel("Details for \(store.companion.inline)")
                 .padding(.top, 44).padding(.trailing, 20)
             }
         }
@@ -515,7 +515,7 @@ struct EmptyChatView: View {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else if !store.isLive {
                     Button { config.showOnboarding = true } label: {
-                        Label("\(store.conversationAssistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label("\(store.conversationAssistantLead) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())
@@ -715,7 +715,7 @@ struct MessageRow: View {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
-                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
+                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, companionThread: store.companion.threadTemplate),
                                 actor: companionThread ? CompanionSentence.placeholder : "Tandem",
                                 onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
                                 onChoice: { onToolDecision?($0) })
@@ -951,9 +951,9 @@ struct NativeToolConfirmationBar: View {
         return nil
     }
 
-    static func detail(for request: NativeToolConfirmationRequest, assistantName: String = "") -> String? {
+    static func detail(for request: NativeToolConfirmationRequest, companionThread: String = CompanionSubject(nil).thread) -> String? {
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
-            return NativeScheduleTools.detail(for: draft, assistantName: assistantName.isEmpty ? "assistant" : assistantName)
+            return NativeScheduleTools.detail(for: draft, companionThread: companionThread)
         }
         return nil
     }

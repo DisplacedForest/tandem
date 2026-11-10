@@ -123,10 +123,6 @@ enum NativeScheduleTools {
         return "Schedule \(draft.title), \(cadence.prefix(1).lowercased() + cadence.dropFirst())?"
     }
 
-    static func detail(for draft: NativeScheduleDraft, assistantName: String) -> String {
-        detail(for: draft, companionThread: "the \(assistantName) thread")
-    }
-
     static func detail(for draft: NativeScheduleDraft, companionThread: String) -> String {
         let work = draft.workerType == "document" ? "Write a document" : "Research"
         let destination = draft.owner == .dot ? companionThread : "its own chat"

@@ -101,7 +101,6 @@ final class ChatStore: ObservableObject {
     private var nativeOwnerName: String?
     @Published private(set) var companionName: String?
     var companion: CompanionSubject { CompanionSubject(companionName) }
-    var assistantName: String { companion.leading }
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?

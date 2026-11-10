@@ -251,6 +251,7 @@ extension SelfTest {
         try await companionReadLoopAndIsolation()
         try await companionProactiveRefusesWrites()
         try await companionUnattendedReadOnly()
+        try await companionUnnamedWorker()
         try await companionSavedAllows()
         try await companionActWrite()
         try await companionOneUseGrant()

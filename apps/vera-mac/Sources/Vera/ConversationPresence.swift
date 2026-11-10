@@ -48,6 +48,10 @@ struct ConversationFigureView: View {
 
 @MainActor
 extension ChatStore {
+    var conversationAssistantLead: String {
+        ConversationPresence.assistantName(companionThread: isVeraThread(selectedID), savedName: companion.leading)
+    }
+
     var conversationAssistantName: String {
         ConversationPresence.assistantName(companionThread: isVeraThread(selectedID), savedName: companion.inline)
     }

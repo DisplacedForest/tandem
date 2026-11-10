@@ -46,7 +46,7 @@ enum CardShot {
         case "card-task", "card-task-command":
             size = CGSize(width: 1180, height: 1040)
             seedTask(command: variant == "card-task-command", store: store)
-            let model = CompanionOverviewModel.build(name: store.assistantName, profile: store.dotProfile,
+            let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
