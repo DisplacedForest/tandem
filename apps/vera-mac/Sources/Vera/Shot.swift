@@ -14,6 +14,10 @@ enum Shot {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if NativeToolAccessShot.views[view] != nil {
+            NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view == "rules" || view == "rules-dark" || view == "rules-info" || view == "rules-unnamed" {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
@@ -1142,7 +1146,7 @@ struct NativeSettingsShotView: View {
             }
         } else if tab == "Tools" {
             VStack(alignment: .leading, spacing: 12) {
-                Text("TOOLS AVAILABLE TO THE MODEL").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                Text("TOOLS").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
                 Text("Only enabled tools that native chat can actually run are shared with the model.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -1150,7 +1154,7 @@ struct NativeSettingsShotView: View {
                     Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Apple Reminders").font(.system(size: 12, weight: .medium))
-                        Text("Reads and updates reminder lists after you grant access.")
+                        Text("Reads and updates your reminder lists.")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()

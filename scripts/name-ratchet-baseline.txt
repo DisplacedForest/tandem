@@ -1,6 +1,5 @@
 2 apps/vera-mac/Sources/Vera/AgenticCanvasScreens.swift
 2 apps/vera-mac/Sources/Vera/AgenticView.swift
-1 apps/vera-mac/Sources/Vera/Artifact.swift
 5 apps/vera-mac/Sources/Vera/ConversationPresenceSelftest.swift
 3 apps/vera-mac/Sources/Vera/IntegrationsView.swift
 2 apps/vera-mac/Sources/Vera/KnowledgeView.swift

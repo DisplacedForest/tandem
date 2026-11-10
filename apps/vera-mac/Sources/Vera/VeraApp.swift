@@ -86,6 +86,7 @@ struct VeraApp: App {
             artifactPersistenceEnabled: fixture == nil)
         storeInstance.followSavedCompanionName(of: configInstance)
         storeInstance.asksForCompanionName = fixture == nil
+        storeInstance.asksForSystemAccess = fixture == nil
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name
@@ -134,6 +135,7 @@ struct VeraApp: App {
                 .sheet(item: $store.companionNameAsk) { _ in
                     CompanionNamePrompt().environmentObject(store).environmentObject(config)
                 }
+                .task { if NativePiNativeContext.candidate == nil { store.requestSystemAccess() } }
         }
         .defaultSize(width: 1180, height: 760)
         .windowStyle(.hiddenTitleBar)
