@@ -151,5 +151,30 @@ enum ArtifactStoreSelftest {
         let removedNotes = try repository.resolveArtifacts(conversationID: "conversation-d", choice: .delete)
         try check(Set(removedNotes) == [noteOne.fileName, noteTwo.fileName], "Deleting returns both versions of the note")
         try check(try repository.revisionTarget(messageID: "message-r") == nil, "A revision target to a deleted artifact reads as nil")
+
+        let cited = ArtifactDraft(
+            kind: .document, title: "Cited", conversationID: "conversation-e", originTitle: "Weather",
+            messageID: "message-e", sourceKey: "cited:1", data: Data("Rain [1].".utf8),
+            mime: "text/markdown", fileExtension: "md")
+        let citedFirst = try repository.recordArtifact(cited, revising: nil)
+        let filesBeforeSources = try files().count
+        let citedSources = [PulseSource(n: 1, title: "Forecast", url: "https://example.org/forecast")]
+        var sourced = cited
+        sourced.details = ArtifactDetails(sources: citedSources)
+        let citedUpdated = try repository.recordArtifact(sourced, revising: nil)
+        try check(citedUpdated.id == citedFirst.id && citedUpdated.details.sources == citedSources,
+                  "Same content with new sources updates the stored version's sources")
+        try check(try repository.artifactVersion(sourceKey: "cited:1")?.details.sources == citedSources, "The updated sources persist")
+        try check(try repository.artifact(citedFirst.artifactID)?.versionCount == 1 && (try files().count) == filesBeforeSources,
+                  "Updating sources adds no version and no file")
+        let citedAgain = try repository.recordArtifact(cited, revising: nil)
+        try check(citedAgain.details.sources == citedSources
+                  && (try repository.artifactVersion(sourceKey: "cited:1")?.details.sources) == citedSources,
+                  "Saving the same content with no sources keeps the stored sources")
+        var citedChanged = sourced
+        citedChanged.data = Data("Rain [1] and wind.".utf8)
+        let citedSecond = try repository.recordArtifact(citedChanged, revising: nil)
+        try check(citedSecond.artifactID == citedFirst.artifactID && citedSecond.ordinal == 2 && citedSecond.id != citedFirst.id,
+                  "Different content still appends a version")
     }
 }

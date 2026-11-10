@@ -30,16 +30,31 @@ struct AssistantBody: View {
 
     private var parsed: (clean: String, calls: [ToolCall]) { ToolCallParser.parse(message.text) }
 
+    private struct ReplyCitations {
+        let body: String
+        let sources: [PulseSource]
+    }
+
+    private func replyCitations(_ clean: String) -> ReplyCitations? {
+        if !message.sources.isEmpty {
+            return ReplyCitations(body: CitationResolver.withoutMatchingList(clean, sources: message.sources), sources: message.sources)
+        }
+        let allowRecovery = message.state != .streaming
+        guard allowRecovery, let recovered = CitationResolver.recover(clean) else { return nil }
+        return ReplyCitations(body: recovered.body, sources: recovered.sources)
+    }
+
     @ViewBuilder private var bubble: some View {
         let clean = parsed.clean
-        let display = message.sources.isEmpty ? clean : PulseMarkers.stripSourcesSection(clean)
+        let cited = replyCitations(clean)
+        let display = cited?.body ?? clean
         if !display.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(VeraBlocks.segments(display)) { seg in
                     switch seg {
                     case .prose(_, let t):
-                        if message.sources.isEmpty { ProseMarkdown(text: t) }
-                        else { CitedProse(text: t, sources: message.sources) }
+                        if let cited { CitedText(text: t, sources: cited.sources, style: .chat, allowRecovery: false) }
+                        else { ProseMarkdown(text: t) }
                     case .chart(_, let spec): ChartBlockView(spec: spec)
                     case .stats(_, let cards): StatCardsView(cards: cards)
                     }
@@ -60,8 +75,10 @@ struct AssistantBody: View {
     }
 
     @ViewBuilder private var extras: some View {
+        let parsed = parsed
         let groups = ToolCallParser.group(parsed.calls)
-        if !groups.isEmpty || message.ask != nil || !message.artifacts.isEmpty || !message.sources.isEmpty {
+        let sources = replyCitations(parsed.clean)?.sources ?? []
+        if !groups.isEmpty || message.ask != nil || !message.artifacts.isEmpty || !sources.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(groups) { ToolGroupChip(group: $0) }
                 if message.ask != nil {
@@ -72,8 +89,8 @@ struct AssistantBody: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open " + ArtifactChip.displayTitle(art))
                 }
-                if !message.sources.isEmpty {
-                    SourcesRow(sources: message.sources)
+                if !sources.isEmpty {
+                    SourcesRow(sources: sources)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -84,7 +101,9 @@ struct AssistantBody: View {
         let clean = parsed.clean
         if !clean.isEmpty {
             HStack(spacing: 16) {
-                msgAction("doc.on.doc", label: "Copy response") { copyText(clean) }
+                msgAction("doc.on.doc", label: "Copy response") {
+                    copyText(CitationResolver.exportText(clean, sources: replyCitations(clean)?.sources ?? []))
+                }
                 if nativeActions {
                     msgAction("hand.thumbsup", label: "Good response", on: store.messageRatings[message.id] == "up") { rate("up") }
                     msgAction("hand.thumbsdown", label: "Bad response", on: store.messageRatings[message.id] == "down") { rate("down") }

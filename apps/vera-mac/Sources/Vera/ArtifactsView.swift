@@ -133,6 +133,16 @@ struct ArtifactLibrarySelection: Equatable {
 }
 
 extension ChatStore {
+    func librarySaveData(_ version: ArtifactVersion) -> Result<Data, ArtifactExportProblem> {
+        let result = artifactSource(version)
+        guard case .success(let data) = result, !version.details.sources.isEmpty,
+              (artifactRecords.first(where: { $0.id == version.artifactID })
+                ?? (try? artifactRepository?.artifact(version.artifactID)))?.kind == .document,
+              let text = String(data: data, encoding: .utf8) else { return result }
+        let exported = CitationResolver.exportText(text, sources: version.details.sources)
+        return exported == text ? result : .success(Data(exported.utf8))
+    }
+
     func artifactOriginLabel(_ record: ArtifactRecord) -> String {
         if let id = record.conversationID, isVeraThread(id) {
             return ArtifactLibrarySelection.companionOriginLabel(name: savedCompanionName)
@@ -212,7 +222,7 @@ struct ArtifactsView: View {
     private var listColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
             searchField
-            ArtifactFlowLayout(spacing: 6) {
+            WrappingLayout(spacing: 6) {
                 ForEach(ArtifactKindFilter.allCases) { option in
                     ArtifactFilterPill(title: option.title, selected: option == state.filter) { state.filter = option }
                 }
@@ -291,7 +301,7 @@ struct ArtifactsView: View {
     private var exportFlow: ArtifactExportFlow {
         let store = store
         return ArtifactExportFlow(
-            exporter: ArtifactExporter(read: { store.artifactSource($0) }),
+            exporter: ArtifactExporter(read: { store.librarySaveData($0) }),
             choose: { fileName, directory in Self.chooseDestination(fileName: fileName, directory: directory) })
     }
 
@@ -612,7 +622,11 @@ private struct ArtifactDetail: View {
             guard let data = store.artifactData(version), let image = NSImage(data: data) else { return }
             pasteboard.clearContents()
             pasteboard.writeObjects([image])
-        case .document, .canvas, .fileChange:
+        case .document, .canvas:
+            guard let text = store.artifactText(version) else { return }
+            pasteboard.clearContents()
+            pasteboard.setString(CitationResolver.exportText(text, sources: version.details.sources), forType: .string)
+        case .fileChange:
             guard let text = store.artifactText(version) else { return }
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
@@ -642,13 +656,12 @@ private struct ArtifactContent: View {
     @ViewBuilder
     private var document: some View {
         if let text = store.artifactText(version) {
+            let sources = version.details.sources.isEmpty ? [] : NativeResearchReportSafety.sources(version.details.sources)
+            let resolved = CitationResolver.resolve(text: text, sources: sources, allowRecovery: true)
             VStack(alignment: .leading, spacing: 18) {
-                if version.details.sources.isEmpty {
-                    NativeArtifactMarkdown(text: text).equatable()
-                } else {
-                    let sources = NativeResearchReportSafety.sources(version.details.sources)
-                    CitedProse(text: PulseMarkers.stripSourcesSection(text), sources: sources)
-                    SourcesRow(sources: sources)
+                CitedText(resolved: resolved, style: .document)
+                if !resolved.sources.isEmpty {
+                    SourcesRow(sources: resolved.sources)
                 }
             }
             .frame(maxWidth: 720, alignment: .leading)
@@ -859,46 +872,5 @@ private struct ArtifactReviseSheet: View {
         }
         .padding(20)
         .frame(width: 440)
-    }
-}
-
-private struct ArtifactFlowLayout: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var line: CGFloat = 0
-        var widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width {
-                y += line + spacing
-                x = 0
-                line = 0
-            }
-            x += size.width + spacing
-            line = max(line, size.height)
-            widest = max(widest, x - spacing)
-        }
-        return CGSize(width: proposal.width ?? widest, height: y + line)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var line: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                y += line + spacing
-                x = bounds.minX
-                line = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            line = max(line, size.height)
-        }
     }
 }
