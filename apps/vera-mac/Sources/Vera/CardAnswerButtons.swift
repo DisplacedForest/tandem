@@ -15,16 +15,23 @@ struct CardAnswers: Equatable {
     var declineMenu: [CardMenuItem] = []
 
     static let allowOrder: [NativeCardChoiceKind] = [.allowHere, .allowSchedule, .allowAlways]
+    static let displayLimit = 400
+
+    static func shown(_ text: String?) -> String? {
+        guard let text, !text.isEmpty, text.unicodeScalars.count <= displayLimit, !text.contains(where: \.isNewline) else { return nil }
+        return text
+    }
 
     static func chat(_ request: NativeToolConfirmationRequest) -> CardAnswers {
         var answers = CardAnswers()
         guard let subject = request.subject else { return answers }
-        let scope = NativeCardChoices.scope(subject)
-        for kind in allowOrder {
-            guard let choice = request.choices.first(where: { $0.kind == kind }) else { continue }
-            answers.allowMenu.append(CardMenuItem(id: kind.rawValue, title: choice.title, note: scope))
+        if let scope = shown(NativeCardChoices.scope(subject)) {
+            for kind in allowOrder {
+                guard let choice = request.choices.first(where: { $0.kind == kind }) else { continue }
+                answers.allowMenu.append(CardMenuItem(id: kind.rawValue, title: choice.title, note: scope))
+            }
         }
-        if NativeCardChoices.declineMenu, let never = request.choices.first(where: { $0.kind == .never }) {
+        if NativeCardChoices.declineMenu, let never = request.choices.first(where: { $0.kind == .never }), shown(never.title) != nil {
             answers.declineMenu = [CardMenuItem(id: NativeCardChoiceKind.never.rawValue, title: never.title,
                                                 note: subject.toolID == NativeCommandTools.toolID ? NativeCardChoices.neverHelp : nil)]
         }
@@ -33,15 +40,17 @@ struct CardAnswers: Equatable {
 
     static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
         var answers = CardAnswers()
-        for kind in allowOrder where choices.contains(kind.rawValue) {
-            var title = NativeCardChoices.wireTitle(kind.rawValue) ?? kind.rawValue
-            if run, kind == .allowHere { title = "Always allow for this run" }
-            answers.allowMenu.append(CardMenuItem(id: kind.rawValue, title: title, note: covers))
+        if let scope = shown(covers) {
+            for kind in allowOrder where choices.contains(kind.rawValue) {
+                var title = NativeCardChoices.wireTitle(kind.rawValue) ?? kind.rawValue
+                if run, kind == .allowHere { title = "Always allow for this run" }
+                answers.allowMenu.append(CardMenuItem(id: kind.rawValue, title: title, note: scope))
+            }
         }
         guard NativeCardChoices.declineMenu,
               let wire = choices.first(where: { NativeCardChoices.kind(wire: $0) == .never }) else { return answers }
         let commands = wire == NativeCardChoices.commandNever
-        var title = commands ? (NativeCardChoices.wireTitle(wire) ?? wire) : (neverTitle ?? NativeCardChoices.wireTitle(wire) ?? wire)
+        guard commands || shown(neverTitle) != nil, var title = commands ? NativeCardChoices.wireTitle(wire) : neverTitle else { return answers }
         if run, commands { title = "Never run commands in this run" }
         answers.declineMenu = [CardMenuItem(id: wire, title: title, note: commands ? NativeCardChoices.neverHelp : nil)]
         return answers

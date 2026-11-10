@@ -80,8 +80,8 @@ enum NativeTaskProjection {
                 : decision.prompt
             card.canRetry = decision.choices.contains("retry") && !retryPending
             if dot, !retryPending, let details = decision.details, details.unicodeScalars.count <= 20000 { card.details = details }
-            if dot, !retryPending, let covers = decision.covers, covers.unicodeScalars.count <= 400 { card.covers = covers }
-            if dot, !retryPending, let never = decision.never, never.unicodeScalars.count <= 400 { card.neverTitle = never }
+            if dot, !retryPending { card.covers = CardAnswers.shown(decision.covers) }
+            if dot, !retryPending { card.neverTitle = CardAnswers.shown(decision.never) }
         case .failed:
             card.status = .failed
             let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"

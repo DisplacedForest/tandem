@@ -385,9 +385,15 @@ extension NativeTaskDisplayFixture {
                     && commands.declineMenu[0].note == NativeCardChoices.neverHelp
                     && commands.allowMenu[0].spoken == "Always allow in this task. Commands that start with make pdf",
                     "A command card's Never names its reach and says allowed commands still run")
-        let run = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
+        let run = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: "Commands that start with make pdf", neverTitle: nil, run: true)
         try require(run.allowMenu.map(\.title) == ["Always allow for this run", "Always allow everywhere"] && run.declineMenu[0].title == "Never run commands in this run",
                     "On the Scheduled screen the standing choices speak of the run")
+        let long = String(repeating: "a", count: CardAnswers.displayLimit + 1)
+        let hidden = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "Commands that start with " + long, neverTitle: "Never edit in " + long)
+        let unlabelled = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
+        try require(hidden.allowMenu.isEmpty && hidden.declineMenu.isEmpty && unlabelled.allowMenu.isEmpty && unlabelled.declineMenu.isEmpty
+                    && CardAnswers.shown("Edits in a\nb") == nil && CardAnswers.shown("Edits in Greenhouse") == "Edits in Greenhouse",
+                    "A standing choice is never offered when what it covers can't be shown in full")
         let plain = CardAnswers.task(choices: ["decline", "approve"], covers: nil, neverTitle: nil)
         try require(plain.allowMenu.isEmpty && plain.declineMenu.isEmpty, "A card with nothing to save has no carets")
         try require(NativeScheduleAnswer.route("retry") == .retry && NativeScheduleAnswer.route("stop") == .stop && NativeScheduleAnswer.route("cancel") == .stop

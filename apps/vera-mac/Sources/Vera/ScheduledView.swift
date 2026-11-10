@@ -210,6 +210,7 @@ private struct ScheduleDetail: View {
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
                                        covers: store.scheduleRunDecision(run)?.covers, neverTitle: store.scheduleRunDecision(run)?.never,
+                                       literal: store.scheduleRunDecision(run)?.details,
                                        onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
                 }
@@ -248,6 +249,7 @@ private struct ScheduleRunRow: View {
     let choices: [String]
     var covers: String? = nil
     var neverTitle: String? = nil
+    var literal: String? = nil
     let onChoose: ((String) -> Void)?
 
     private var isApproval: Bool {
@@ -270,6 +272,16 @@ private struct ScheduleRunRow: View {
                     Spacer(minLength: 8)
                     if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                     if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
+                }
+                if isApproval, let literal, !literal.isEmpty, literal.unicodeScalars.count <= 20000 {
+                    Text(literal)
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled).lineLimit(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.bg))
+                        .accessibilityLabel("Action details")
                 }
                 if isApproval {
                     CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true),
