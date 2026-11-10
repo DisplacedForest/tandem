@@ -153,7 +153,9 @@ final class ChatStore: ObservableObject {
     @Published var dotProfileLoaded = false
     var dotResetGeneration = 0
     var companionNameWriter: ((String) throws -> Void)?
-    var companionHasSavedName = false
+    @Published private(set) var savedCompanionName: String?
+    var companionHasSavedName: Bool { savedCompanionName != nil }
+    var companionDisplayName: String? { savedCompanionName }
     var discardedConversationIDs: Set<String> = []
     var nativeDotProfileStore: NativeDotProfileStore?
     var nativeScheduler: NativeScheduler?
@@ -678,6 +680,18 @@ final class ChatStore: ObservableObject {
     }
 
     func isVeraThread(_ id: String?) -> Bool { id != nil && id == veraThreadID }
+
+    func followSavedCompanionName(of config: ConfigStore) {
+        config.onSaved = { [weak self, weak config] in
+            guard let self, let config else { return }
+            self.refreshCompanionName(from: config)
+        }
+        refreshCompanionName(from: config)
+    }
+
+    func refreshCompanionName(from config: ConfigStore) {
+        savedCompanionName = config.suppliedAssistantName
+    }
 
     func adoptAssistantName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)

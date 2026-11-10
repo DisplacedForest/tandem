@@ -25,6 +25,7 @@ Enforced in review:
 2. **Degrade gracefully.** Every capability must behave sensibly when its endpoint or integration is unconfigured: report itself as off in the config report, refuse politely at runtime, and never affect the rest of the stack.
 3. **One capability = one router.** New server-side capabilities are a single `APIRouter` module in `services/vera-api/routers/` plus one entry in the `CAPABILITIES` table in `main.py`. No new containers, no sidecars.
 4. **Typed throughout.** Python is type-hinted, Swift is Swift 6 strict.
+5. **Text names the companion through the app's companion name value.** User-visible text never hardcodes a name, and `mise run name-ratchet` (part of `mise run check`) fails when a new string literal says Vera.
 
 ## Project layout
 
