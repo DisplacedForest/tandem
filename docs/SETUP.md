@@ -406,6 +406,8 @@ Settings, Rules holds one setting per kind of action:
 | Move files to the Trash | Ask first |
 | Send on your behalf (connected services that send) | Ask first |
 | Run risky commands (privileged, touching system or credential locations, or unreadable) | Hand off to me |
+| Change your reminders (adding, editing and completing Apple Reminders when you ask in a chat) | Act without asking |
+| Make changes through connected services (connected service tools you allowed to change something) | Ask first |
 | Make other changes (tools that don't say what kind of change they make) | Ask first |
 
 Three things are always handed to you and aren't in that list of choices: entering a credential, card number or one-time code; paying or transferring money; and deleting permanently outside a granted folder or emptying the Trash. Rules and permissions never loosen from inside a conversation, whatever a message or a tool asks; only your click in Settings or on a card loosens them.

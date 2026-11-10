@@ -24,7 +24,7 @@ extension SelfTest {
         try require(global.choice(for: .fileEdits) == .act && global.choice(for: .commands) == .ask
                     && global.choice(for: .trash) == .ask && global.choice(for: .networkSends) == .ask
                     && global.choice(for: .riskyCommands) == .handOff && global.choice(for: .otherChanges) == .ask, "Defaults match the safe set")
-        try require(NativeActionClass.configurable == [.fileEdits, .commands, .trash, .networkSends, .riskyCommands, .otherChanges], "Only ordinary classes are configurable")
+        try require(NativeActionClass.configurable == [.fileEdits, .commands, .trash, .networkSends, .riskyCommands, .reminders, .serviceChanges, .otherChanges], "Only ordinary classes are configurable")
         for item in NativeFloorItem.allCases where item.isLiftable {
             guard let action = item.actionClass else { continue }
             try require(global.holds(action) && !global.isLifted(item) && global.choice(for: action) == .handOff, "A floor item is held by default: \(item)")

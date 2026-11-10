@@ -7,6 +7,8 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
     case trash
     case networkSends = "network_sends"
     case riskyCommands = "risky_commands"
+    case reminders
+    case serviceChanges = "service_changes"
     case otherChanges = "other_changes"
     case credentialEntry = "credential_entry"
     case payments
@@ -21,6 +23,8 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         case .trash: return "Move files to the Trash"
         case .networkSends: return "Send on your behalf"
         case .riskyCommands: return "Run risky commands"
+        case .reminders: return "Change your reminders"
+        case .serviceChanges: return "Make changes through connected services"
         case .otherChanges: return "Make other changes"
         case .credentialEntry: return NativeFloorItem.credentialEntry.title
         case .payments: return NativeFloorItem.payments.title
@@ -35,6 +39,8 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         case .trash: return "Moving a file or folder inside a grant to the Trash. Nothing is ever deleted outright."
         case .networkSends: return "Connected services that send messages, posts or uploads for you."
         case .riskyCommands: return "Commands that use administrator rights, touch system or credential locations, or can't be read with confidence."
+        case .reminders: return "Adding, editing and completing Apple Reminders when you ask in a chat."
+        case .serviceChanges: return "Connected service tools you allowed to change something."
         case .otherChanges: return "Tools that change something without saying what kind of change it is."
         case .credentialEntry: return NativeFloorItem.credentialEntry.reason
         case .payments: return NativeFloorItem.payments.reason
@@ -47,7 +53,7 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         case .credentialEntry: return .credentialEntry
         case .payments: return .payments
         case .permanentDeletion: return .permanentDeletion
-        case .fileEdits, .commands, .trash, .networkSends, .riskyCommands, .otherChanges: return nil
+        case .fileEdits, .commands, .trash, .networkSends, .riskyCommands, .reminders, .serviceChanges, .otherChanges: return nil
         }
     }
 }
@@ -126,6 +132,8 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
         .trash: .ask,
         .networkSends: .ask,
         .riskyCommands: .handOff,
+        .reminders: .act,
+        .serviceChanges: .ask,
         .otherChanges: .ask,
     ])
 

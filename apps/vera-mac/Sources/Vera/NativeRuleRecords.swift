@@ -395,7 +395,7 @@ struct NativeRuleRecordStore: Sendable {
     }
 
     static let originalActions = ["file_edits", "commands", "trash", "network_sends", "sensitive"]
-    static let storedActions = ["file_edits", "commands", "trash", "network_sends", "risky_commands", "other_changes",
+    static let storedActions = ["file_edits", "commands", "trash", "network_sends", "risky_commands", "reminders", "service_changes", "other_changes",
                                 "credential_entry", "payments", "permanent_deletion"]
 
     static func tableSQL(name: String, actions: [String]) -> String {

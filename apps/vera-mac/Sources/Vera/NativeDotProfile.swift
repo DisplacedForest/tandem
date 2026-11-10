@@ -202,6 +202,8 @@ enum NativeDotContext {
         case .trash: return "Trash"
         case .networkSends: return "sending"
         case .riskyCommands: return "risky commands"
+        case .reminders: return "reminders"
+        case .serviceChanges: return "connected service changes"
         case .otherChanges: return "other changes"
         case .credentialEntry: return "credentials"
         case .payments: return "payments"

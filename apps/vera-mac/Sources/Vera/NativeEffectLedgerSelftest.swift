@@ -346,7 +346,7 @@ extension SelfTest {
                      NativeFolderTools.listName, NativeFolderTools.readName, NativeFolderTools.searchName, "garden_status"] {
             try require(effects[name]?.effect == .read, "\(name) is declared a read")
         }
-        for (name, action) in [("apple_reminders_create", NativeActionClass.networkSends), ("apple_reminders_complete", .networkSends),
+        for (name, action) in [("apple_reminders_create", NativeActionClass.reminders), ("apple_reminders_complete", .reminders),
                                (NativeFolderTools.writeName, .fileEdits), (NativeFolderTools.editName, .fileEdits), (NativeFolderTools.moveName, .fileEdits),
                                (NativeFolderTools.mkdirName, .fileEdits), (NativeFolderTools.trashName, .trash), (NativeCommandTools.runName, .commands),
                                (NativeImageTools.toolName, .fileEdits), (NativeScheduleTools.toolName, .networkSends), ("garden_note", .networkSends)] {

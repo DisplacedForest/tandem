@@ -324,7 +324,7 @@ enum NativeRemindersTools {
                         "due": .object(["type": .string("string"), "description": .string("Optional ISO 8601 date or date-time")]),
                     ], required: ["list", "title"]),
                 confirmation: .none,
-                effect: .write, action: .networkSends,
+                effect: .write, action: .reminders,
                 isAvailable: available,
                 execute: { arguments in
                     guard let list = arguments.string("list"), let title = arguments.string("title") else {
@@ -347,7 +347,7 @@ enum NativeRemindersTools {
                         "id": .object(["type": .string("string"), "description": .string("Exact reminder identifier returned by the list tool")]),
                     ], required: ["id"]),
                 confirmation: .none,
-                effect: .write, action: .networkSends,
+                effect: .write, action: .reminders,
                 isAvailable: available,
                 execute: { arguments in
                     guard let id = arguments.string("id") else {
