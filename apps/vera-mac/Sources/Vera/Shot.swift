@@ -495,7 +495,8 @@ enum Shot {
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
-                 "artifacts-filter-images", "artifacts-no-results": section = .artifacts
+                 "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
+                 "artifacts-save-missing": section = .artifacts
             case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
@@ -521,6 +522,7 @@ enum Shot {
                          artifactSelection: artifactSeed?.selection,
                          artifactFilter: artifactSeed?.filter ?? .all,
                          artifactSearch: artifactSeed?.search ?? "",
+                         artifactNotice: artifactSeed?.notice,
                          projectSelection: projectSeed?.selection,
                          integrationsSeed: integrationsSeed,
                          workColumn: view == "conversation-work",
