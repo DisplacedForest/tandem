@@ -46,7 +46,8 @@ def _action_events(hours: int) -> list[dict]:
 
 
 def _scheduler_events(hours: int) -> list[dict]:
-    from .scheduler import REGISTRY
+    from .scheduler import builtin_jobs
+    REGISTRY = builtin_jobs()
     out = []
     for r in scheduler_store.recent_runs(hours):
         label = REGISTRY[r["job_id"]][0] if r["job_id"] in REGISTRY else r["job_id"]

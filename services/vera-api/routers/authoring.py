@@ -3,6 +3,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from . import action_registry
 from . import authoring_store as store
 
 router = APIRouter()
@@ -74,3 +75,33 @@ async def revert(b: RevertBody):
     store.snapshot(target, r["content"], note=f"revert to #{b.rev_id}")
     await _skill_upsert(sid, name, desc, r["content"])
     return {"ok": True, "id": sid, "reverted_to": b.rev_id}
+
+
+def _v_skill(args):
+    if not (args.get("name") or "").strip():
+        return "skill name required"
+    if not (args.get("content") or "").strip():
+        return "skill content required"
+    return None
+
+
+def _p_skill(args):
+    name = (args.get("name") or "(unnamed)").strip()
+    content = (args.get("content") or "").strip()
+    opening = content.splitlines()[0][:80] if content else ""
+    return f"Author skill '{name}' ({len(content)} chars). Opens: {opening}"
+
+
+async def _x_skill_upsert(args):
+    sid = (args.get("id") or "").strip() or _slug(args.get("name") or "")
+    content = args.get("content") or ""
+    store.snapshot(f"skill:{sid}", content, note=args.get("name") or sid)
+    await _skill_upsert(sid, args.get("name"), args.get("description"), content)
+    return {"ok": True, "id": sid}
+
+
+action_registry.register_action(
+    "authoring.skill_upsert", validate=_v_skill, preview=_p_skill, risk="high", reversible=True,
+    autonomous=False, order=10, executor=_x_skill_upsert,
+    summary="create or modify a skill (Vera's own cognition config)",
+    args='{"name": "...", "content": "...", "id": "...", "description": "..."}')

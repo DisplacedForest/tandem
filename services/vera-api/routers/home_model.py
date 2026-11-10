@@ -20,6 +20,8 @@ from fastapi import APIRouter
 from . import home_events_store as store
 from . import home_model_mine as mine
 from . import home_model_store as hms
+from . import scheduler
+from .home import _gate_home_modeling
 from .pulse import _vera
 
 router = APIRouter()
@@ -235,3 +237,11 @@ async def model(kind: str | None = None, automated: bool | None = None,
 @router.get("/home/model/stats", tags=["home"])
 async def model_stats():
     return {"run": hms.last_run(), "window_days": WINDOW_DAYS, "ha_configured": bool(_ha()[1])}
+
+
+async def _job_home_model():
+    return await refresh()
+
+
+scheduler.register_job("home_model", "Home model refresh", "30 3 * * *", _job_home_model,
+                       order=20, gate=_gate_home_modeling)

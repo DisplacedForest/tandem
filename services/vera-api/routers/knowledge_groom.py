@@ -21,6 +21,7 @@ import time
 
 from . import groom_common as gcm
 from . import knowledge_store as ks
+from . import scheduler
 from .pulse import HOUSEHOLD, _inject, _vera
 
 MAX_REVIEW_CARDS = 10  # bound the nightly card volume; overflow is logged, never silently dropped
@@ -218,3 +219,10 @@ async def run(dry_run=False, run_id=None):
         out["errors"].append(f"summary card: {e}")
 
     return out
+
+
+async def _job_knowledge_groom():
+    return await run()
+
+
+scheduler.register_job("knowledge_groom", "Knowledge store grooming", "0 4 * * *", _job_knowledge_groom, order=70)

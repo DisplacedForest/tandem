@@ -13,6 +13,8 @@ import aiohttp
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from . import action_registry
+
 router = APIRouter()
 
 TMDB_IMG = "https://image.tmdb.org/t/p/w185"  # poster thumbnail base
@@ -178,3 +180,32 @@ async def requests(take: int = 20):
             "availability": _STATUS.get(m.get("status"), "not_requested"),
         })
     return {"ok": True, "results": out}
+
+
+def _v_overseerr(args):
+    if args.get("media_type") not in ("movie", "tv"):
+        return "overseerr_request needs media_type movie|tv"
+    if not args.get("media_id"):
+        return "overseerr_request needs media_id"
+    return None
+
+
+def _p_overseerr(args):
+    label = args.get("title") or f"tmdb {args.get('media_id')}"
+    return f"Request {label} ({args.get('media_type')}) to the media library"
+
+
+async def _x_overseerr(args):
+    try:
+        return await submit_request(
+            args["media_type"], args["media_id"], args.get("seasons"), bool(args.get("is4k", False))
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(getattr(e, "detail", e))}
+
+
+action_registry.register_action(
+    "overseerr_request", validate=_v_overseerr, preview=_p_overseerr, risk="low", reversible=True,
+    autonomous=False, order=100, executor=_x_overseerr,
+    summary="request a title for the media library",
+    args='{"media_type": "movie|tv", "media_id": N, "title": "..."}')

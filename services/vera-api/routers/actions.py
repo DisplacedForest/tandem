@@ -1,7 +1,5 @@
 """Actions router — the typed execute primitive.
 
-Generalizes the knowledge store's propose/token/commit into a registry of allowlisted verbs, each with a pure
-validator/preview (action_spec.py) and an async executor here. Two lanes:
   - gated (default): propose -> stage (token) -> commit (execute once, audited, idempotent).
     Cards carry an action+token; the Mac app Confirms.
   - free (/actions/auto): verbs explicitly enrolled with `autonomous: True` execute with no
@@ -12,195 +10,23 @@ import os
 import time
 import uuid
 
-import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from . import action_registry
 from . import action_spec as spec
 from . import action_store as store
-from . import groom_common as gcm
-from . import kitchen
-from . import knowledge_store as ks
-from . import media_store as mstore
-from . import overseerr
 from . import pulse_store as pstore
 from .pulse import HOUSEHOLD, _inject
 
 router = APIRouter()
 
-
-def _integration(iid: str) -> dict | None:
-    """Executor-side registry lookup at call time, so runtime toggles apply."""
-    from . import integrations
-    return integrations.integration(iid)
-
-
-# ---- executors (async; do the real work) -----------------------------------
-
-async def _x_ha(args):
-    d, s = args.get("domain"), args.get("service")
-    if not spec.ha_allowed(d, s):  # defense in depth (validator already gated propose)
-        return {"ok": False, "error": f"{d}.{s} not allowlisted"}
-    ha = _integration("home_assistant")
-    if not ha:
-        return {"ok": False, "error": "home_assistant integration not enabled"}
-    async with aiohttp.ClientSession() as sess:
-        async with sess.post(
-            f"{ha['url']}/api/services/{d}/{s}",
-            headers={"Authorization": f"Bearer {ha['token']}"},
-            json=args.get("data") or {},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            return {"ok": r.status < 300, "status": r.status, "service": f"{d}.{s}"}
-
-
-async def _x_knowledge_set(args):
-    p = ks.propose("set", type=args.get("type"), name=args.get("name"),
-                   attrs=args.get("attrs") or {}, source="action", actor="vera")
-    return ks.commit(p["token"])
-
-
-async def _x_knowledge_delete(args):
-    p = ks.propose("delete", entity_id=args.get("entity_id"), type=args.get("type"),
-                   name=args.get("name"), source="action", actor="vera")
-    return ks.commit(p["token"])
-
-
-async def _x_knowledge_reverify(args):
-    """Re-stamp a durable fact's last_verified to NOW. Stamps at commit time, not propose
-    time, so the date reflects when the human actually confirmed. Merges — preserves all other attrs."""
-    import time as _t
-    eid = args.get("entity_id")
-    cur = ks.get(eid)
-    if not cur:
-        return {"ok": False, "error": f"unknown entity {eid}"}
-    p = ks.propose("set", entity_id=eid, type=cur["type"], name=cur["name"],
-                   attrs={"last_verified": int(_t.time())}, source="action", actor="vera")
-    return ks.commit(p["token"])
-
-
-async def _x_knowledge_promote(args):
-    """Codify a type's schema (the groom card's flagged-proposal Approve). Reversible via knowledge.uncodify
-    on the restore path. All-or-nothing — ks.promote refuses if any entity is invalid."""
-    return ks.promote(args.get("type"), args.get("schema") or {}, by="owner")
-
-
-async def _x_grocy(args):
-    grocy = _integration("grocy")
-    if not grocy:
-        return {"ok": False, "error": "grocy integration not enabled"}
-    path = f"/api/stock/products/{args['product_id']}/{args['op']}"
-    async with aiohttp.ClientSession() as sess:
-        async with sess.post(
-            f"{grocy['url']}{path}", headers={"GROCY-API-KEY": grocy['api_key']},
-            json={"amount": args["amount"]}, timeout=aiohttp.ClientTimeout(total=15),
-        ) as r:
-            return {"ok": r.status < 300, "status": r.status}
-
-
-async def _x_health(args):
-    out = {"ok": True, "vera_api": "ok"}
-    ha = _integration("home_assistant")
-    if not ha:
-        out["home_assistant"] = "integration not enabled"
-        return out
-    try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(f"{ha['url']}/api/", headers={"Authorization": f"Bearer {ha['token']}"},
-                                timeout=aiohttp.ClientTimeout(total=10)) as r:
-                out["home_assistant"] = "reachable" if r.status < 300 else f"http {r.status}"
-    except Exception as e:
-        out["home_assistant"] = f"unreachable: {e}"
-    return out
-
-
-async def _x_mealie_import(args):
-    return await kitchen.import_recipe(args["url"])
-
-
-def _norm_image(ref: str) -> str:
-    """Image ref minus @digest and :tag, tag-insensitive (handles registry:port/path). For matching
-    the card row's image against the Unraid container list."""
-    ref = (ref or "").split("@", 1)[0]
-    colon, slash = ref.rfind(":"), ref.rfind("/")
-    return ref[:colon] if colon > slash else ref
-
-
-async def _x_docker_update(args):
-    """Update one container via the official Unraid GraphQL API: resolve the
-    container id (no docker socket in vera-api), then `docker.updateContainer` (pull + recreate
-    from template). High-risk: bounces the running container. Confirm-gated upstream."""
-    unraid = _integration("unraid")
-    if not unraid:
-        return {"ok": False, "error": "unraid integration not enabled"}
-    api_url = unraid["url"]
-    want_name = (args.get("name") or "").lstrip("/")
-    want_image = _norm_image(args.get("image") or "")
-    hdr = {"x-api-key": unraid["api_key"], "Content-Type": "application/json"}
-    async with aiohttp.ClientSession() as sess:
-        async with sess.post(api_url, headers=hdr, timeout=aiohttp.ClientTimeout(total=20),
-                             json={"query": "{ docker { containers { id names image isUpdateAvailable } } }"}) as r:
-            data = await r.json()
-        conts = (((data or {}).get("data") or {}).get("docker") or {}).get("containers") or []
-        match = None
-        for c in conts:
-            names = [n.lstrip("/") for n in (c.get("names") or [])]
-            if (want_name and want_name in names) or (want_image and _norm_image(c.get("image")) == want_image):
-                match = c
-                break
-        if not match:
-            return {"ok": False, "error": f"container not found: {want_name or want_image}"}
-        mut = {"query": "mutation($id: PrefixedID!){ docker { updateContainer(id:$id){ id names state isUpdateAvailable } } }",
-               "variables": {"id": match["id"]}}
-        async with sess.post(api_url, headers=hdr, timeout=aiohttp.ClientTimeout(total=300), json=mut) as r:
-            res = await r.json()
-    if res.get("errors"):
-        return {"ok": False, "error": str(res["errors"])[:200]}
-    updated = (((res.get("data") or {}).get("docker") or {}).get("updateContainer") or {})
-    # Unraid's updater only handles GUI/template-managed containers; for compose/manually-created
-    # ones the underlying script no-ops ("Configuration not found") yet the mutation still returns
-    # success. A real update flips isUpdateAvailable false — if it's still true, nothing happened.
-    if updated.get("isUpdateAvailable"):
-        return {"ok": False, "container": want_name or want_image,
-                "error": "Unraid could not update this container (not GUI/template-managed)"}
-    return {"ok": True, "container": want_name or want_image, "state": updated.get("state")}
-
-
-async def _x_overseerr(args):
-    try:
-        return await overseerr.submit_request(
-            args["media_type"], args["media_id"], args.get("seasons"), bool(args.get("is4k", False))
-        )
-    except Exception as e:
-        return {"ok": False, "error": str(getattr(e, "detail", e))}
-
-
-async def _x_skill_upsert(args):
-    from . import authoring
-    sid = (args.get("id") or "").strip() or authoring._slug(args.get("name") or "")
-    content = args.get("content") or ""
-    authoring.store.snapshot(f"skill:{sid}", content, note=args.get("name") or sid)
-    await authoring._skill_upsert(sid, args.get("name"), args.get("description"), content)
-    return {"ok": True, "id": sid}
-
-
-EXECUTORS = {
-    "authoring.skill_upsert": _x_skill_upsert,
-    "ha.service": _x_ha,
-    "knowledge.set": _x_knowledge_set,
-    "knowledge.delete": _x_knowledge_delete,
-    "knowledge.reverify": _x_knowledge_reverify,
-    "knowledge.promote": _x_knowledge_promote,
-    "kitchen.grocy_adjust": _x_grocy,
-    "kitchen.mealie_import": _x_mealie_import,
-    "health.check": _x_health,
-    "overseerr_request": _x_overseerr,
-    "docker.update": _x_docker_update,
-}
+EXECUTORS = action_registry.EXECUTORS
 
 
 def _stage(verb, args, source, actor, chat_id, message_id):
     """Validate + preview + stage. Returns (ok_dict, error_dict)."""
+    action_registry.load_builtin()
     s = spec.SPEC.get(verb)
     if not s or verb not in EXECUTORS:
         return None, {"ok": False, "error": f"unknown verb {verb}"}
@@ -236,6 +62,7 @@ class Commit(BaseModel):
 
 async def _run_token(token: str) -> dict:
     """Execute a staged action once (idempotent). Returns {applied, result?, error?}."""
+    action_registry.load_builtin()
     p = store.get(token)
     if not p:
         return {"applied": False, "error": "unknown or expired token"}
@@ -328,12 +155,12 @@ async def auto(a: Auto):
 async def registry():
     """The verb catalog — the discovery surface clients and tools read instead of
     hardcoding verbs, arg shapes, or the HA allowlist (which is deployment config)."""
+    action_registry.load_builtin()
     return {"verbs": [{"verb": k, "risk": v["risk"], "reversible": v["reversible"],
                        "autonomous": bool(v.get("autonomous")),
                        "summary": v.get("summary", ""), "args": v.get("args", "{}")}
                       for k, v in spec.SPEC.items() if k in EXECUTORS],
-            "ha_allowlist": {"services": sorted(spec.HA_ALLOWED_SERVICES),
-                             "domains": sorted(spec.HA_ALLOWED_DOMAINS)}}
+            **{key: fn() for key, fn in action_registry.CATALOG_EXTRAS.items()}}
 
 
 @router.get("/actions/log", tags=["actions"])
@@ -425,16 +252,11 @@ async def propose_digest(p: ProposeDigest):
 async def _apply_item(item: dict, decision: str) -> dict:
     """Apply one decision to a digest item (mutates item['state'] in place). Both decisions persist
     to the media store so a skipped title never resurfaces and an approved one isn't re-proposed."""
-    mt, tid, title = item.get("media_type"), item.get("tmdb_id"), item.get("title", "")
-    verb = (item.get("action") or {}).get("verb")
+    action_registry.load_builtin()
     if decision == "skip":
         item["state"] = "skipped"
-        if mt and tid is not None:
-            mstore.record(mt, tid, title, "skipped")
-        # rejecting a flagged groom proposal records a durable don't-redo for the next run
-        if verb == "knowledge.promote":
-            gcm.suppress("knowledge", "promote", (item.get("action") or {}).get("args", {}).get("type", ""),
-                         reason="flagged proposal rejected")
+        for hook in action_registry.ITEM_DECISION_HOOKS:
+            hook(item, "skip", True)
         return {"ok": True, "state": "skipped"}
     if decision == "approve":
         token = (item.get("action") or {}).get("token")
@@ -442,8 +264,8 @@ async def _apply_item(item: dict, decision: str) -> dict:
         ran_ok = (not run.get("error")) and bool((run.get("result") or {}).get("ok", True))
         if ran_ok:
             item["state"] = "approved"
-            if mt and tid is not None:
-                mstore.record(mt, tid, title, "approved")
+            for hook in action_registry.ITEM_DECISION_HOOKS:
+                hook(item, "approve", True)
             return {"ok": True, "state": "approved", "result": run.get("result")}
         return {"ok": False, "state": "pending",
                 "error": run.get("error") or (run.get("result") or {}).get("error", "failed")}

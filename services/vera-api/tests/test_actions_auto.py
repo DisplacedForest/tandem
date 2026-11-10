@@ -8,6 +8,7 @@ import pytest
 from routers import action_spec as spec
 from routers import action_store as astore
 from routers import actions
+from routers import kitchen
 
 
 def run(coro):
