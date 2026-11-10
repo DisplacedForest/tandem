@@ -235,7 +235,10 @@ enum CitationResolverSelftest {
         let five = (1...500).map { PulseSource(n: $0, title: "Source \($0)", url: "https://example.org/\($0)") }
         let heavyBullets = "Fact [1].\n\n## Sources\n1. https://example.org/1\n"
             + (0..<900).map { _ in "- " + String(repeating: "[", count: 3900) + " https://example.org/500" }.joined(separator: "\n")
-        try check(CitationResolver.withoutMatchingList(heavyBullets, sources: five) == "Fact [1].", "Heavy bullet entries are each read once")
+        try check(CitationResolver.withoutMatchingList(heavyBullets, sources: five) == heavyBullets, "Heavy bullet entries keep the list")
+        let plainBullets = "Fact [1].\n\n## Sources\n1. https://example.org/1\n"
+            + (0..<900).map { _ in "- https://example.org/500" }.joined(separator: "\n")
+        try check(CitationResolver.withoutMatchingList(plainBullets, sources: five) == "Fact [1].", "Many matching bullet entries are hidden")
         let heavyLinks = "Fact [1].\n\n## Sources\n"
             + (0..<900).map { _ in "1. " + String(repeating: "[a](x", count: 790) }.joined(separator: "\n")
         try check(CitationResolver.recover(heavyLinks) == nil, "A flood of open links in entries is not recovered")
@@ -247,6 +250,19 @@ enum CitationResolverSelftest {
         let longTitle = "Fact [1].\n\n## Sources\n1. " + String(repeating: "a", count: 301)
         try check(CitationResolver.withoutMatchingList(longTitle, sources: [PulseSource(n: 1, title: "a", url: "https://example.org/a")]) == longTitle,
                   "A very long title entry keeps the list")
+        for entry in ["[Title](https://example.org/Frost_(weather))", "[Title](<https://example.org/Frost_(weather)>)",
+                      "[Title]( https://example.org/Frost_(weather) )"] {
+            let linked = CitationResolver.recover("Fact [1].\n\n## Sources\n1. " + entry)
+            try check(linked?.sources.first == PulseSource(n: 1, title: "Title", url: "https://example.org/Frost_(weather)"),
+                      "\(entry) keeps its whole address, got \(String(describing: linked?.sources.first))")
+        }
+        try check(CitationResolver.recover("Fact [1].\n\n## Sources\n1. [A](https://example.org/a) and [B](https://example.org/b)") == nil,
+                  "Two links in one entry are not recovered")
+        try check(CitationResolver.recover("Fact [1].\n\n## Sources\n1. [A](https://example.org/a \"Title\")") == nil,
+                  "A link with more than an address inside is not recovered")
+        let fatLabel = "Fact [1].\n\n## Sources\n1. [" + String(repeating: "a", count: 301) + "](https://example.org/a)"
+        try check(CitationResolver.withoutMatchingList(fatLabel, sources: [PulseSource(n: 1, title: "a", url: "https://example.org/a")]) == fatLabel,
+                  "A very long link label keeps the list")
         let nestedLabel = CitationResolver.recover("Fact [1].\n\n## Sources\n1. [[1] Frost guide](https://example.org/frost)")
         try check(nestedLabel?.sources.first?.url == "https://example.org/frost", "A label with its own brackets still gives its address")
 

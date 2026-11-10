@@ -41,7 +41,6 @@ enum CitationResolver {
     }
 
     private static let separators = CharacterSet(charactersIn: " \t-\u{2013}:()<>|")
-    private static let linkPattern = try? NSRegularExpression(pattern: "\\[([^\\[\\]]*)\\]\\(\\s*<?([^)\\s>\\[\\]]+)>?\\s*\\)")
     private static let httpPattern = try? NSRegularExpression(pattern: "https?://", options: [.caseInsensitive])
 
     static func resolve(text: String, sources: [PulseSource], allowRecovery: Bool = true) -> ResolvedCitations {
@@ -578,14 +577,30 @@ enum CitationResolver {
 
     private static func entryLink(_ rest: String) -> (url: String, title: String)? {
         guard rest.utf16.count <= entryLimit else { return nil }
-        let ns = rest as NSString
-        let links = linkPattern?.matches(in: rest, range: NSRange(location: 0, length: ns.length)) ?? []
+        let chars = Array(rest)
+        let brackets = bracketPairs(chars)
+        let parens = parenPairs(chars)
+        var links: [(open: Int, close: Int, end: Int)] = []
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "\\" {
+                i += 2
+            } else if chars[i] == "[", let close = brackets[i], close + 1 < chars.count, chars[close + 1] == "(",
+                      let end = parens[close + 1] {
+                links.append((i, close, end))
+                i = end + 1
+            } else {
+                i += 1
+            }
+        }
         if links.count > 1 { return nil }
         if let link = links.first {
-            let label = ns.substring(with: link.range(at: 1)).trimmingCharacters(in: .whitespaces)
-            let url = ns.substring(with: link.range(at: 2))
-            let remainder = ns.replacingCharacters(in: link.range, with: " ")
-            guard httpCount(url) == 1, url.lowercased().hasPrefix("http"), httpCount(remainder) == 0 else { return nil }
+            let label = String(chars[(link.open + 1)..<link.close]).trimmingCharacters(in: .whitespaces)
+            var url = String(chars[(link.close + 2)..<link.end]).trimmingCharacters(in: .whitespaces)
+            if url.hasPrefix("<"), url.hasSuffix(">") { url = String(url.dropFirst().dropLast()) }
+            let remainder = String(chars[..<link.open]) + " " + String(chars[(link.end + 1)...])
+            guard !url.contains(where: \.isWhitespace), httpCount(url) == 1, url.lowercased().hasPrefix("http"),
+                  httpCount(remainder) == 0 else { return nil }
             if httpCount(label) > 0 {
                 guard normalized(label) == normalized(url) else { return nil }
                 return (url, "")
@@ -615,7 +630,7 @@ enum CitationResolver {
 
     private static func writtenEntry(_ rest: String) -> WrittenEntry? {
         if httpCount(rest) > 0 {
-            guard let link = entryLink(rest) else { return nil }
+            guard let link = entryLink(rest), link.title.count <= labelLimit else { return nil }
             return .address(normalized(link.url))
         }
         let label = rest.trimmingCharacters(in: separators).lowercased()
