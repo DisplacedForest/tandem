@@ -5,18 +5,29 @@ lands without documentation, so the surface can never silently drift again.
 Run: python3 -m pytest tests/test_env_surface.py
 """
 import ast
+import functools
+import os
 import pathlib
 import re
-from collections.abc import Iterable, Iterator, Mapping
+import subprocess
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 API_ROOT = pathlib.Path(__file__).resolve().parent.parent          # services/vera-api
 ENV_EXAMPLE = API_ROOT.parent.parent / ".env.example"              # repo root
 REPO_ROOT = API_ROOT.parent.parent
+SERVER_DIR = "services/vera-api"
 
 # Vars deliberately NOT in .env.example — every entry needs a reason.
 EXEMPT: dict[str, str] = {
     "VERA_VERSION": "image-build fallback for /version when no VERSION file is baked; not deployment config",
+}
+
+DOCUMENTED_IN_PROSE: dict[str, str] = {
+    "HOME_EVENTS_ENABLED": "legacy kill switch that can only force home modeling off; named in the Home Assistant "
+                           "prose beside the feature it overrides rather than as an entry",
+    "MEDIA_CURATION_ENABLED": "legacy kill switch that can only force media curation off; named in the Media "
+                              "prose beside the feature it overrides rather than as an entry",
 }
 
 DOCUMENTED_NOT_READ: dict[str, str] = {
@@ -27,21 +38,44 @@ DYNAMIC_KEY_PATTERNS: dict[str, str] = {
     r"SCHEDULE_[A-Z0-9_]+": "the scheduler builds SCHEDULE_<JOB> and SCHEDULE_<JOB>_ENABLED from each job id",
 }
 
+LITERAL_TABLES: dict[tuple[str, str], str] = {
+    ("services/vera-api/data_paths.py", "STORE_PATHS"): "keys",
+    ("services/vera-api/routers/integrations_registry.py", "_FEATURE_KILL_SWITCH"): "values",
+}
+
+TEST_ONLY_SWIFT_NAME_PARTS: tuple[str, ...] = ("Selftest", "SelfTest", "Fixture", "Shot", "Tests")
+SWIFT_ENVIRONMENT_NAMES: tuple[str, ...] = ("env", "environment")
+OUTSIDE_PYTHON_ROOTS: tuple[str, ...] = ("scripts/", "apps/vera-mac/scripts/")
+OUTSIDE_SHELL_ROOTS: tuple[str, ...] = ("scripts/", "apps/vera-mac/scripts/")
+OUTSIDE_SWIFT_ROOTS: tuple[str, ...] = ("apps/vera-mac/Sources/", "apps/vera-mac/scripts/")
+COMPOSE_FILE = "docker-compose.yml"
+
 ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]+$")
-WORD_SEARCH_SKIP_SUFFIXES = frozenset({".md", ".txt"})
+_KEY = r"[A-Z][A-Z0-9_]+"
 _COMPAT_FUNCS = ("read", "is_set")
+_ENVIRON_CALLS = ("environ.get", "environ.setdefault", "environ.pop", "os.getenv")
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 Spec = tuple[int | None, str]
-Helpers = dict[str, set[Spec]]
+Exports = dict[str, set[Spec]]
+
+
+@dataclass(frozen=True)
+class _Imported:
+    module: str
+    level: int
+    name: str
+
+
+Binding = ast.AST | _Imported | None
 
 
 @dataclass
 class _Frame:
     scope: ast.AST
     params: set[str]
-    assigned: dict[str, list[ast.expr | None]] = field(default_factory=dict)
+    assigned: dict[str, list[Binding]] = field(default_factory=dict)
 
 
 def _params(scope: ast.AST) -> set[str]:
@@ -54,11 +88,13 @@ def _params(scope: ast.AST) -> set[str]:
 
 
 def _outer_parts(node: ast.AST) -> list[ast.AST]:
-    parts: list[ast.AST] = list(getattr(node, "decorator_list", []))
+    parts: list[ast.AST] = list(getattr(node, "decorator_list", [])) + list(getattr(node, "type_params", []))
     if isinstance(node, ast.ClassDef):
-        parts += node.bases + [k.value for k in node.keywords]
+        parts += node.bases + node.keywords
     elif isinstance(node, (*_FUNCS, ast.Lambda)):
-        parts += node.args.defaults + [d for d in node.args.kw_defaults if d is not None]
+        parts.append(node.args)
+        if not isinstance(node, ast.Lambda) and node.returns is not None:
+            parts.append(node.returns)
     return parts
 
 
@@ -87,10 +123,16 @@ def _frame(scope: ast.AST, own: list[ast.AST]) -> _Frame:
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             frame.assigned.setdefault(node.id, []).append(direct.get(id(node)))
         elif isinstance(node, (*_FUNCS, ast.ClassDef)):
-            frame.assigned.setdefault(node.name, []).append(None)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            frame.assigned.setdefault(node.name, []).append(node)
+        elif isinstance(node, ast.Import):
             for alias in node.names:
-                frame.assigned.setdefault((alias.asname or alias.name).split(".")[0], []).append(None)
+                bound = alias.asname or alias.name.split(".")[0]
+                module = alias.name if alias.asname else bound
+                frame.assigned.setdefault(bound, []).append(_Imported(module, 0, ""))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                frame.assigned.setdefault(alias.asname or alias.name, []).append(
+                    _Imported(node.module or "", node.level, alias.name))
     return frame
 
 
@@ -112,36 +154,68 @@ def _binding(name: str, chain: list[_Frame]) -> _Frame | None:
     return None
 
 
-def _literals(node: ast.expr | None, chain: list[_Frame]) -> set[str]:
+def _resolve(name: str, chain: list[_Frame]) -> list[Binding]:
+    frame = _binding(name, chain)
+    if frame is None or name in frame.params:
+        return []
+    return frame.assigned[name]
+
+
+def _literals(node: ast.AST | None, chain: list[_Frame]) -> set[str]:
     if isinstance(node, ast.Constant):
         return {node.value} if isinstance(node.value, str) else set()
     if isinstance(node, ast.IfExp):
         body, orelse = _literals(node.body, chain), _literals(node.orelse, chain)
         return body | orelse if body and orelse else set()
     if isinstance(node, ast.Name) and chain:
-        frame = _binding(node.id, chain)
-        if frame is None or node.id in frame.params:
+        bindings = _resolve(node.id, chain)
+        if not bindings or not all(isinstance(b, ast.expr) for b in bindings):
             return set()
-        parts = [_literals(value, []) for value in frame.assigned[node.id]]
-        return set().union(*parts) if parts and all(parts) else set()
+        parts = [_literals(b, []) for b in bindings]
+        return set().union(*parts) if all(parts) else set()
     return set()
 
 
-def _compat_bindings(tree: ast.Module) -> tuple[set[str], dict[str, str]]:
-    modules: set[str] = set()
-    funcs: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(a.asname for a in node.names
-                           if a.asname and a.name.split(".")[-1] == "env_compat")
-        elif isinstance(node, ast.ImportFrom):
-            from_compat = (node.module or "").split(".")[-1] == "env_compat"
-            for alias in node.names:
-                if alias.name == "env_compat":
-                    modules.add(alias.asname or alias.name)
-                elif from_compat and alias.name in _COMPAT_FUNCS:
-                    funcs[alias.asname or alias.name] = alias.name
-    return modules, funcs
+def _is_compat(module: str) -> bool:
+    return module.split(".")[-1] == "env_compat"
+
+
+def _compat_module(value: ast.expr, chain: list[_Frame]) -> bool:
+    if isinstance(value, ast.Attribute):
+        return value.attr == "env_compat"
+    if not isinstance(value, ast.Name):
+        return False
+    bindings = _resolve(value.id, chain)
+    return bool(bindings) and all(
+        isinstance(b, _Imported) and (b.name == "env_compat" or (not b.name and _is_compat(b.module)))
+        for b in bindings)
+
+
+def _compat_function(bindings: list[Binding]) -> bool:
+    return bool(bindings) and all(
+        isinstance(b, _Imported) and _is_compat(b.module) and b.name in _COMPAT_FUNCS for b in bindings)
+
+
+def _import_target(rel: str, module: str, level: int) -> str:
+    module_path = module.replace(".", "/") + ".py"
+    if not level:
+        return pathlib.PurePosixPath(module_path).as_posix()
+    base = pathlib.PurePosixPath(rel).parent
+    for _ in range(level - 1):
+        base = base.parent
+    return (base / module_path).as_posix()
+
+
+def _helper_specs(bindings: list[Binding], rel: str, local: Mapping[int, set[Spec]],
+                  exports: Mapping[str, Exports]) -> set[Spec]:
+    if not bindings:
+        return set()
+    if all(isinstance(b, _FUNCS) and id(b) in local for b in bindings):
+        return set().union(*(local[id(b)] for b in bindings))
+    if len(bindings) == 1 and isinstance(bindings[0], _Imported) and bindings[0].name and bindings[0].module:
+        b = bindings[0]
+        return set(exports.get(_import_target(rel, b.module, b.level), {}).get(b.name, set()))
+    return set()
 
 
 def _arg(call: ast.Call, index: int | None, keyword: str) -> ast.expr | None:
@@ -151,27 +225,30 @@ def _arg(call: ast.Call, index: int | None, keyword: str) -> ast.expr | None:
     return next((k.value for k in call.keywords if k.arg == keyword), None)
 
 
-def _key_args(node: ast.AST, modules: set[str], funcs: dict[str, str], helpers: Helpers) -> list[ast.expr]:
+def _key_args(node: ast.AST, chain: list[_Frame], rel: str, local: Mapping[int, set[Spec]],
+              exports: Mapping[str, Exports]) -> list[ast.expr]:
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) \
             and "environ" in ast.unparse(node.value):
         return [node.slice]
+    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], (ast.In, ast.NotIn)) \
+            and ast.unparse(node.comparators[0]).endswith("environ"):
+        return [node.left]
     if not isinstance(node, ast.Call):
         return []
     func = node.func
     keyword = None
     if isinstance(func, ast.Attribute):
-        src = ast.unparse(func)
-        if src.endswith("environ.get") or src.endswith("os.getenv"):
+        if ast.unparse(func).endswith(_ENVIRON_CALLS):
             keyword = "key"
-        elif func.attr in _COMPAT_FUNCS and (
-                (isinstance(func.value, ast.Name) and func.value.id in modules)
-                or ast.unparse(func.value).split(".")[-1] == "env_compat"):
+        elif func.attr in _COMPAT_FUNCS and _compat_module(func.value, chain):
             keyword = "name"
     elif isinstance(func, ast.Name):
-        if func.id in funcs:
+        bindings = _resolve(func.id, chain)
+        if _compat_function(bindings):
             keyword = "name"
-        elif func.id in helpers:
-            found = (_arg(node, index, param) for index, param in sorted(helpers[func.id], key=str))
+        else:
+            specs = _helper_specs(bindings, rel, local, exports)
+            found = (_arg(node, index, param) for index, param in sorted(specs, key=str))
             return [a for a in found if a is not None]
     if keyword is None:
         return []
@@ -179,10 +256,13 @@ def _key_args(node: ast.AST, modules: set[str], funcs: dict[str, str], helpers: 
     return [found_arg] if found_arg is not None else []
 
 
-def _env_dict_keys(node: ast.Dict) -> set[str]:
-    return {v.value for k, v in zip(node.keys, node.values)
-            if isinstance(k, ast.Constant) and k.value == "env"
-            and isinstance(v, ast.Constant) and isinstance(v.value, str) and ENV_KEY.match(v.value)}
+def _env_field_keys(node: ast.Dict) -> set[str]:
+    fields = {k.value: v for k, v in zip(node.keys, node.values)
+              if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    env = fields.get("env")
+    if not {"id", "label"} <= set(fields) or not isinstance(env, ast.Constant):
+        return set()
+    return {env.value} if isinstance(env.value, str) and ENV_KEY.match(env.value) else set()
 
 
 def _spec(func: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> Spec:
@@ -190,57 +270,37 @@ def _spec(func: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> Spec:
     return (positional.index(param) if param in positional else None, param)
 
 
-def _scan(tree: ast.Module, helpers: Helpers) -> tuple[set[str], Helpers]:
-    modules, funcs = _compat_bindings(tree)
+def _scan(tree: ast.Module, rel: str, local: Mapping[int, set[Spec]],
+          exports: Mapping[str, Exports]) -> tuple[set[str], dict[int, set[Spec]]]:
     keys: set[str] = set()
-    found: Helpers = {}
+    found: dict[int, set[Spec]] = {}
     for own, chain in _walk_scopes(tree):
         for node in own:
             if isinstance(node, ast.Dict):
-                keys |= _env_dict_keys(node)
-            for arg in _key_args(node, modules, funcs, helpers):
+                keys |= _env_field_keys(node)
+            for arg in _key_args(node, chain, rel, local, exports):
                 if isinstance(arg, ast.Name):
                     frame = _binding(arg.id, chain)
                     if frame is not None and arg.id in frame.params:
                         if isinstance(frame.scope, _FUNCS):
-                            found.setdefault(frame.scope.name, set()).add(_spec(frame.scope, arg.id))
+                            found.setdefault(id(frame.scope), set()).add(_spec(frame.scope, arg.id))
                         continue
                 keys |= _literals(arg, chain)
     return keys, found
 
 
-def _analyze(tree: ast.Module, imported: Helpers) -> tuple[set[str], Helpers]:
-    helpers: Helpers = {name: set(specs) for name, specs in imported.items()}
+def _analyze(tree: ast.Module, rel: str, exports: Mapping[str, Exports]) -> tuple[set[str], Exports]:
+    local: dict[int, set[Spec]] = {}
     while True:
-        keys, found = _scan(tree, helpers)
+        keys, found = _scan(tree, rel, local, exports)
         grown = False
-        for name, specs in found.items():
-            if not specs <= helpers.get(name, set()):
-                helpers.setdefault(name, set()).update(specs)
+        for key, specs in found.items():
+            if not specs <= local.get(key, set()):
+                local.setdefault(key, set()).update(specs)
                 grown = True
         if not grown:
-            return keys, found
-
-
-def _import_target(rel: str, node: ast.ImportFrom) -> str:
-    module_path = (node.module or "").replace(".", "/") + ".py"
-    if not node.level:
-        return pathlib.PurePosixPath(module_path).as_posix()
-    base = pathlib.PurePosixPath(rel).parent
-    for _ in range(node.level - 1):
-        base = base.parent
-    return (base / module_path).as_posix()
-
-
-def _imported_helpers(rel: str, tree: ast.Module, exported: Mapping[str, Helpers]) -> Helpers:
-    out: Helpers = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            source = exported.get(_import_target(rel, node), {})
-            for alias in node.names:
-                if alias.name in source:
-                    out.setdefault(alias.asname or alias.name, set()).update(source[alias.name])
-    return out
+            exported = {n.name: local[id(n)] for n in tree.body if isinstance(n, _FUNCS) and id(n) in local}
+            return keys, exported
 
 
 def collect_from_sources(sources: Mapping[str, str]) -> dict[str, str]:
@@ -250,14 +310,11 @@ def collect_from_sources(sources: Mapping[str, str]) -> dict[str, str]:
             trees[rel] = ast.parse(source)
         except SyntaxError:
             continue
-    local = {rel: _analyze(tree, {}) for rel, tree in trees.items()}
-    exported = {rel: helpers for rel, (_, helpers) in local.items()}
+    first = {rel: _analyze(tree, rel, {}) for rel, tree in trees.items()}
+    exports = {rel: exported for rel, (_, exported) in first.items()}
     out: dict[str, str] = {}
     for rel in sorted(trees):
-        keys = local[rel][0]
-        imported = _imported_helpers(rel, trees[rel], exported)
-        if imported:
-            keys = _analyze(trees[rel], imported)[0]
+        keys = _analyze(trees[rel], rel, exports)[0]
         for key in sorted(keys):
             out.setdefault(key, rel)
     return out
@@ -267,14 +324,64 @@ def collect_from_source(source: str) -> set[str]:
     return set(collect_from_sources({"module.py": source}))
 
 
-def _python_sources(root: pathlib.Path) -> dict[str, str]:
-    return {p.relative_to(root).as_posix(): p.read_text(errors="ignore")
-            for p in sorted(root.rglob("*.py"))
-            if not {"tests", "__pycache__"} & set(p.relative_to(root).parts)}
+def tracked_files(repo_root: pathlib.Path) -> list[str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        proc = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, env=env,
+                              capture_output=True, check=False)
+    except OSError as exc:
+        raise AssertionError(f"the env surface guard needs git to list tracked files: {exc}") from exc
+    assert proc.returncode == 0, (
+        f"the env surface guard needs a git work tree at {repo_root} to list tracked files: "
+        + proc.stderr.decode(errors="replace").strip())
+    return sorted(p for p in proc.stdout.decode().split("\0") if p)
 
 
-def collect_env_reads(root: pathlib.Path) -> dict[str, str]:
-    return collect_from_sources(_python_sources(root))
+@functools.lru_cache(maxsize=1)
+def _repo_files() -> tuple[str, ...]:
+    return tuple(tracked_files(REPO_ROOT))
+
+
+def _under(files: Iterable[str], prefix: str) -> list[str]:
+    stem = prefix.rstrip("/") + "/"
+    return [f[len(stem):] for f in files if f.startswith(stem)]
+
+
+def _python_test_file(rel: str) -> bool:
+    path = pathlib.PurePosixPath(rel)
+    return bool({"tests", "test"} & set(path.parts)) or path.name.startswith("test_") \
+        or path.name == "conftest.py"
+
+
+def collect_env_reads(root: pathlib.Path, files: Iterable[str]) -> dict[str, str]:
+    sources: dict[str, str] = {}
+    for rel in sorted(files):
+        path = root / rel
+        if rel.endswith(".py") and "__pycache__" not in rel.split("/") and not _python_test_file(rel) \
+                and path.is_file():
+            sources[rel] = path.read_text(errors="ignore")
+    return collect_from_sources(sources)
+
+
+def literal_table_keys(repo_root: pathlib.Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for (rel, name), side in LITERAL_TABLES.items():
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                table = ast.literal_eval(node.value)
+                for key in (table.keys() if side == "keys" else table.values()):
+                    out.setdefault(key, rel)
+    return out
+
+
+def server_reads(repo_root: pathlib.Path, files: Sequence[str]) -> dict[str, str]:
+    reads = collect_env_reads(repo_root / SERVER_DIR, _under(files, SERVER_DIR))
+    for key, rel in literal_table_keys(repo_root).items():
+        reads.setdefault(key, pathlib.PurePosixPath(rel).relative_to(SERVER_DIR).as_posix())
+    return reads
 
 
 def documented_keys(env_example: pathlib.Path) -> set[str]:
@@ -287,62 +394,139 @@ def undocumented_reads(reads: Mapping[str, str], documented: set[str],
             if name not in documented and name not in exempt}
 
 
-def _files(root: pathlib.Path) -> Iterator[pathlib.Path]:
-    if root.is_file():
-        yield root
-        return
-    if not root.is_dir():
-        return
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and "__pycache__" not in p.parts and p.suffix not in WORD_SEARCH_SKIP_SUFFIXES:
-            yield p
+def _strip_swift_comments(text: str) -> str:
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote: str | None = None
+    while i < n:
+        if quote:
+            if text.startswith(quote, i):
+                out.append(quote)
+                i += len(quote)
+                quote = None
+            elif text[i] == "\\" and i + 1 < n:
+                out.append(text[i:i + 2])
+                i += 2
+            else:
+                out.append(text[i])
+                i += 1
+        elif text.startswith('"""', i) or text[i] == '"':
+            quote = '"""' if text.startswith('"""', i) else '"'
+            out.append(quote)
+            i += len(quote)
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
-def _words(paths: Iterable[pathlib.Path]) -> set[str]:
-    words: set[str] = set()
-    for p in paths:
-        words.update(re.findall(r"\w+", p.read_text(errors="ignore")))
-    return words
+def _swift_test_file(rel: str) -> bool:
+    stem = pathlib.PurePosixPath(rel).stem
+    return any(part in stem for part in TEST_ONLY_SWIFT_NAME_PARTS)
 
 
-def store_path_keys(repo_root: pathlib.Path) -> set[str]:
-    table = repo_root / "services" / "vera-api" / "data_paths.py"
-    if not table.is_file():
-        return set()
-    for node in ast.parse(table.read_text()).body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "STORE_PATHS"
-                                                for t in node.targets) and isinstance(node.value, ast.Dict):
-            return {k.value for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-    return set()
+def swift_reads(text: str) -> set[str]:
+    code = _strip_swift_comments(text)
+    holders = "|".join(re.escape(n) for n in SWIFT_ENVIRONMENT_NAMES)
+    holder = rf"(?:ProcessInfo\.processInfo\.environment|\b(?:{holders}))"
+    keys = set(re.findall(rf'{holder}\[\s*"({_KEY})"\s*\]', code))
+    for match in re.finditer(r"\bfunc\s+(\w+)\s*\(\s*_\s+(\w+)\s*:\s*String\b", code):
+        start = code.find("{", match.end())
+        if start < 0:
+            continue
+        depth, end = 0, start
+        while end < len(code):
+            depth += {"{": 1, "}": -1}.get(code[end], 0)
+            if depth == 0:
+                break
+            end += 1
+        if re.search(rf"{holder}\[\s*{re.escape(match.group(2))}\s*\]", code[start:end]):
+            keys |= set(re.findall(rf'\b{re.escape(match.group(1))}\(\s*"({_KEY})"', code))
+    return keys
 
 
-def reads_outside_server(repo_root: pathlib.Path) -> set[str]:
-    found: set[str] = set()
-    services = repo_root / "services"
-    satellites = sorted(p for p in services.iterdir() if p.is_dir() and p.name != "vera-api") \
-        if services.is_dir() else []
-    for satellite in satellites:
-        found |= set(collect_env_reads(satellite))
-        found |= _words(p for p in _files(satellite) if p.suffix != ".py")
-    found |= _words(_files(repo_root / "docker-compose.yml"))
-    for place in ("apps/vera-mac/Sources", "apps/vera-mac/scripts", "scripts"):
-        found |= _words(_files(repo_root / place))
+def _shell_file(rel: str, text: str) -> bool:
+    name = pathlib.PurePosixPath(rel).name
+    if name.startswith(("test-", "test_")):
+        return False
+    first = text.split("\n", 1)[0]
+    return rel.endswith(".sh") or (first.startswith("#!") and re.search(r"\b(?:ba|z)?sh\b", first) is not None)
+
+
+def shell_reads(text: str) -> set[str]:
+    keys: set[str] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        keys |= set(re.findall(rf"\$\{{?({_KEY})\b", line))
+    return keys
+
+
+def compose_reads(text: str) -> set[str]:
+    keys: set[str] = set()
+    block_indent: int | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if block_indent is not None and indent <= block_indent:
+            block_indent = None
+        keys |= set(re.findall(rf"\$\{{?({_KEY})\b", line))
+        if block_indent is not None:
+            keys |= set(re.findall(rf"^-?\s*({_KEY})\s*(?:[=:]|$)", stripped))
+        if stripped.rstrip(":") == "environment" and stripped.endswith(":"):
+            block_indent = indent
+    return keys
+
+
+def reads_outside_server(repo_root: pathlib.Path, files: Sequence[str]) -> dict[str, str]:
+    found: dict[str, str] = {}
+
+    def add(keys: Iterable[str], where: str) -> None:
+        for key in sorted(keys):
+            found.setdefault(key, where)
+
+    satellites = sorted({f.split("/")[1] for f in files
+                         if f.startswith("services/") and f.count("/") >= 2} - {"vera-api"})
+    python_roots = [f"services/{s}/" for s in satellites] + list(OUTSIDE_PYTHON_ROOTS)
+    for root in python_roots:
+        for key, rel in collect_env_reads(repo_root / root, _under(files, root)).items():
+            found.setdefault(key, root + rel)
+    for rel in files:
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        if rel.endswith(".swift") and rel.startswith(OUTSIDE_SWIFT_ROOTS) and not _swift_test_file(rel):
+            add(swift_reads(path.read_text(errors="ignore")), rel)
+        elif rel == COMPOSE_FILE:
+            add(compose_reads(path.read_text(errors="ignore")), rel)
+        elif rel.startswith(OUTSIDE_SHELL_ROOTS + tuple(f"services/{s}/" for s in satellites)) \
+                and not rel.endswith(".py"):
+            text = path.read_text(errors="ignore")
+            if _shell_file(rel, text):
+                add(shell_reads(text), rel)
     return found
 
 
-def unread_documented(repo_root: pathlib.Path, allow: Mapping[str, str]) -> list[str]:
+def unread_documented(repo_root: pathlib.Path, files: Sequence[str], allow: Mapping[str, str]) -> list[str]:
     documented = documented_keys(repo_root / ".env.example")
-    read = set(collect_env_reads(repo_root / "services" / "vera-api"))
-    read |= reads_outside_server(repo_root) | store_path_keys(repo_root)
+    read = set(server_reads(repo_root, files)) | set(reads_outside_server(repo_root, files))
     return sorted(key for key in documented
                   if key not in read and key not in allow
                   and not any(re.fullmatch(p, key) for p in DYNAMIC_KEY_PATTERNS))
 
 
 def test_every_env_read_is_documented():
-    reads = collect_env_reads(API_ROOT)
+    reads = server_reads(REPO_ROOT, _repo_files())
     assert reads, "extractor found no env reads — it is broken, not the codebase"
-    undocumented = undocumented_reads(reads, documented_keys(ENV_EXAMPLE), EXEMPT)
+    undocumented = undocumented_reads(reads, documented_keys(ENV_EXAMPLE), {**EXEMPT, **DOCUMENTED_IN_PROSE})
     assert not undocumented, (
         "env vars read in code but missing from .env.example "
         "(add them there, or add an EXEMPT entry with a reason):\n"
@@ -351,13 +535,32 @@ def test_every_env_read_is_documented():
 
 def test_exemptions_are_still_real():
     """An EXEMPT entry for a var nobody reads anymore is stale — prune it."""
-    reads = collect_env_reads(API_ROOT)
+    reads = server_reads(REPO_ROOT, _repo_files())
     stale = set(EXEMPT) - set(reads)
     assert not stale, f"stale exemptions (no longer read anywhere): {sorted(stale)}"
 
 
+def test_prose_documented_keys_are_read_and_named() -> None:
+    reads = server_reads(REPO_ROOT, _repo_files())
+    text = ENV_EXAMPLE.read_text()
+    documented = documented_keys(ENV_EXAMPLE)
+    for key, reason in DOCUMENTED_IN_PROSE.items():
+        assert reason.strip()
+        assert key in reads, f"{key} is no longer read; drop it from DOCUMENTED_IN_PROSE"
+        assert re.search(rf"\b{key}\b", text), f"{key} is no longer named in .env.example"
+        assert key not in documented, f"{key} now has an entry line; drop it from DOCUMENTED_IN_PROSE"
+
+
+def test_deprecated_aliases_follow_the_convention() -> None:
+    from routers.env_compat import ALIASES
+    documented = documented_keys(ENV_EXAMPLE)
+    assert ALIASES
+    assert not sorted(c for c in ALIASES if c not in documented), "every canonical name needs an entry"
+    assert not sorted(o for o in ALIASES.values() if o in documented), "deprecated names never get an entry"
+
+
 def test_every_documented_key_is_read() -> None:
-    unread = unread_documented(REPO_ROOT, DOCUMENTED_NOT_READ)
+    unread = unread_documented(REPO_ROOT, _repo_files(), DOCUMENTED_NOT_READ)
     assert not unread, (
         "keys documented in .env.example that nothing reads "
         "(remove them, or add a DOCUMENTED_NOT_READ entry with a reason):\n"
@@ -366,7 +569,7 @@ def test_every_documented_key_is_read() -> None:
 
 def test_documented_not_read_entries_are_still_needed() -> None:
     documented = documented_keys(ENV_EXAMPLE)
-    unread = set(unread_documented(REPO_ROOT, {}))
+    unread = set(unread_documented(REPO_ROOT, _repo_files(), {}))
     stale = sorted(k for k in DOCUMENTED_NOT_READ if k not in documented or k not in unread)
     assert not stale, f"stale DOCUMENTED_NOT_READ entries (undocumented or now read): {stale}"
     assert all(reason.strip() for reason in DOCUMENTED_NOT_READ.values())
