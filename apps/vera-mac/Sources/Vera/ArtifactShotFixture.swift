@@ -68,9 +68,24 @@ enum ArtifactShotFixture {
             originTitle: conversation.title, messageID: nil, sourceKey: "shot:doc:2", data: Data(reportRevised.utf8),
             mime: "text/markdown", fileExtension: "md", details: ArtifactDetails(sources: sources)),
             revising: first?.artifactID)
+        let citedCode = record(ArtifactDraft(
+            kind: .document, title: "Heater controller notes", conversationID: conversation.id,
+            originTitle: conversation.title, messageID: nil, sourceKey: "shot:doc:code", data: Data(citedCodeText.utf8),
+            mime: "text/markdown", fileExtension: "md", details: ArtifactDetails(sources: sources)))
+        let recovered = record(ArtifactDraft(
+            kind: .document, title: "Cold frame timing", conversationID: conversation.id,
+            originTitle: conversation.title, messageID: nil, sourceKey: "shot:doc:recovered", data: Data(recoveredText.utf8),
+            mime: "text/markdown", fileExtension: "md"))
+        let ambiguous = record(ArtifactDraft(
+            kind: .document, title: "Seed order", conversationID: conversation.id,
+            originTitle: conversation.title, messageID: nil, sourceKey: "shot:doc:ambiguous", data: Data(ambiguousText.utf8),
+            mime: "text/markdown", fileExtension: "md"))
         store.reloadArtifacts()
         let selection: String?
-        switch variant {
+        switch variant.replacingOccurrences(of: "-narrow", with: "") {
+        case "artifacts-cited-code": selection = citedCode?.artifactID
+        case "artifacts-recovered": selection = recovered?.artifactID
+        case "artifacts-ambiguous": selection = ambiguous?.artifactID
         case "artifacts-image": selection = image?.artifactID
         case "artifacts-file-change": selection = fileChange?.artifactID
         case "artifacts-trashed": selection = trashed?.artifactID
@@ -150,6 +165,45 @@ enum ArtifactShotFixture {
 
         1. Extension guide to cold frames
         2. Polycarbonate glazing basics
+        """
+
+    private static let citedCodeText = """
+        ## Heater controller
+
+        A thermostat outlet keeps the heater off until the air drops below 4 °C [1].
+
+        ```python
+        readings = [3.5, 4.2]
+        if readings[1] < 4:
+            print("heater on [1]")
+        ```
+
+        Run the controller on its own circuit, away from the grow lights [2].
+        """
+
+    private static let recoveredText = """
+        ## Cold frame timing
+
+        Cold frames extend the season by about three weeks at each end [1]. Twin wall lids hold heat \
+        better than single glass [2].
+
+        Open the lids on sunny days above 10 °C so seedlings don't cook [1][2].
+
+        ## Sources
+
+        1. Cold frame season guide (https://example.org/cold-frame-season)
+        2. https://example.com/twin-wall-lids
+        """
+
+    private static let ambiguousText = """
+        ## Seed order
+
+        Order the onion sets early [1] and the leeks before spring [2].
+
+        ## Sources
+
+        1. https://example.org/onion-sets
+        2. Leek growers notes
         """
 
     private static let canvasText = """

@@ -249,6 +249,35 @@ enum ArtifactExportSelftest {
         try manager.removeItem(at: storedURL)
         try check(store.artifactSource(stored) == .failure(.sourceMissing), "A deleted original reads as missing")
 
+        let citedBytes = Data("# Forecast\n\nRain is likely [1] and wind picks up [2].\n".utf8)
+        let citedSources = [
+            PulseSource(n: 1, title: "Rain outlook", url: "https://example.org/rain"),
+            PulseSource(n: 2, title: "", url: "https://example.com/wind"),
+        ]
+        guard let cited = store.recordArtifact(ArtifactDraft(
+            kind: .document, title: "Forecast", conversationID: nil, originTitle: nil, messageID: nil,
+            sourceKey: "selftest:cited", data: citedBytes, mime: "text/markdown", fileExtension: "md",
+            details: ArtifactDetails(sources: citedSources))) else { throw Failure(description: "The store records a cited document") }
+        let libraryExporter = ArtifactExporter(read: { store.librarySaveData($0) })
+        let citedDestination = out.appendingPathComponent("Forecast.md")
+        let citedRecord = record(cited.artifactID, .document, "Forecast")
+        try check(libraryExporter.run(attempt(citedRecord, cited, to: citedDestination)).isSaved, "A cited document saves")
+        let citedSaved = (try? Data(contentsOf: citedDestination)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        try check(citedSaved == "# Forecast\n\nRain is likely [1] and wind picks up [2].\n\n## Sources\n\n1. Rain outlook (https://example.org/rain)\n2. https://example.com/wind\n",
+                  "Save as adds the Sources list to a cited document, got \(citedSaved.debugDescription)")
+        try check(store.artifactSource(cited) == .success(citedBytes), "The stored file is left as it was")
+        let uncitedBytes = Data("# Notes\n\nRain is likely [1].\r\n".utf8)
+        guard let uncited = store.recordArtifact(ArtifactDraft(
+            kind: .document, title: "Notes", conversationID: nil, originTitle: nil, messageID: nil,
+            sourceKey: "selftest:uncited", data: uncitedBytes, mime: "text/markdown", fileExtension: "md",
+            details: ArtifactDetails())) else { throw Failure(description: "The store records a plain document") }
+        try check(store.librarySaveData(uncited) == .success(uncitedBytes), "A document without sources saves its original bytes")
+        guard let canvas = store.recordArtifact(ArtifactDraft(
+            kind: .canvas, title: "Sketch", conversationID: nil, originTitle: nil, messageID: nil,
+            sourceKey: "selftest:canvas", data: citedBytes, mime: "text/markdown", fileExtension: "md",
+            details: ArtifactDetails(sources: citedSources, canvasType: .markdown))) else { throw Failure(description: "The store records a canvas") }
+        try check(store.librarySaveData(canvas) == .success(citedBytes), "A canvas saves its original bytes")
+
         print("  artifact export OK")
     }
 }
