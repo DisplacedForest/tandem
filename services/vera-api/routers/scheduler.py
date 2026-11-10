@@ -58,6 +58,23 @@ def register_job(job_id: str, label: str, cron: str, handler: Callable[[], Await
     REGISTRY.clear()
     REGISTRY.update(ordered)
     REGISTRY.update(extras)
+    gates = {j: GATES[j] for j in ordered if j in GATES}
+    gates.update({j: g for j, g in GATES.items() if j not in gates})
+    GATES.clear()
+    GATES.update(gates)
+
+
+def snapshot() -> dict[str, dict]:
+    return {"registry": dict(REGISTRY), "gates": dict(GATES), "order": dict(_JOB_ORDER)}
+
+
+def restore(saved: dict[str, dict]) -> None:
+    REGISTRY.clear()
+    REGISTRY.update(saved["registry"])
+    GATES.clear()
+    GATES.update(saved["gates"])
+    _JOB_ORDER.clear()
+    _JOB_ORDER.update(saved["order"])
 
 
 def unregister_job(job_id: str) -> None:

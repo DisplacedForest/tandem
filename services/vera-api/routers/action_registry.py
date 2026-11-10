@@ -66,6 +66,24 @@ def register_catalog_extra(key: str, fn: Callable[[], Any]) -> None:
     CATALOG_EXTRAS[key] = fn
 
 
+def snapshot() -> dict[str, Any]:
+    return {"spec": dict(SPEC), "executors": dict(EXECUTORS), "order": dict(ORDER),
+            "hooks": list(_HOOK_ORDER), "extras": dict(CATALOG_EXTRAS)}
+
+
+def restore(saved: dict[str, Any]) -> None:
+    SPEC.clear()
+    SPEC.update(saved["spec"])
+    EXECUTORS.clear()
+    EXECUTORS.update(saved["executors"])
+    ORDER.clear()
+    ORDER.update(saved["order"])
+    _HOOK_ORDER[:] = saved["hooks"]
+    ITEM_DECISION_HOOKS[:] = [fn for _, fn in _HOOK_ORDER]
+    CATALOG_EXTRAS.clear()
+    CATALOG_EXTRAS.update(saved["extras"])
+
+
 def load_builtin() -> None:
     from . import builtin_capabilities
     builtin_capabilities.load()

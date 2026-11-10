@@ -363,3 +363,73 @@ def test_each_owner_imports_alone() -> None:
                  "knowledge_actions", "knowledge_groom", "learn", "media_curation", "overseerr", "pulse",
                  "updates", "actions", "scheduler", "action_spec", "builtin_capabilities"):
         _fresh(f"import routers.{name}\n")
+
+
+def test_a_second_thread_waits_for_the_load_instead_of_reading_empty_tables() -> None:
+    _fresh(
+        "import builtins, threading\n"
+        "from routers import builtin_capabilities, scheduler\n"
+        "started, release = threading.Event(), threading.Event()\n"
+        "real_import = builtins.__import__\n"
+        "def slow_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
+        "    if level == 1 and fromlist and 'authoring' in fromlist and not started.is_set():\n"
+        "        started.set()\n"
+        "        release.wait(10)\n"
+        "    return real_import(name, globals, locals, fromlist, level)\n"
+        "builtins.__import__ = slow_import\n"
+        "loader = threading.Thread(target=builtin_capabilities.load)\n"
+        "loader.start()\n"
+        "assert started.wait(10)\n"
+        "seen = {}\n"
+        "def read():\n"
+        "    seen['jobs'] = list(scheduler.builtin_jobs())\n"
+        "    seen['gate'] = scheduler._gate_reason('home_model')\n"
+        "reader = threading.Thread(target=read)\n"
+        "reader.start()\n"
+        "reader.join(0.5)\n"
+        "assert reader.is_alive(), seen\n"
+        "release.set()\n"
+        "loader.join(30)\n"
+        "reader.join(30)\n"
+        "builtins.__import__ = real_import\n"
+        f"assert seen['jobs'] == list({ORDERED_JOBS!r}), seen\n"
+        "assert seen['gate'] and 'home_modeling' in seen['gate'], seen\n"
+    )
+
+
+def test_a_failed_load_rolls_back_and_the_next_load_succeeds() -> None:
+    _fresh(
+        "from routers import action_registry, builtin_capabilities, scheduler\n"
+        "real = action_registry.register_action\n"
+        "calls = {'n': 0}\n"
+        "def flaky(verb, **kw):\n"
+        "    real(verb, **kw)\n"
+        "    calls['n'] += 1\n"
+        "    if calls['n'] == 3:\n"
+        "        raise RuntimeError('boom')\n"
+        "action_registry.register_action = flaky\n"
+        "try:\n"
+        "    builtin_capabilities.load()\n"
+        "except RuntimeError as e:\n"
+        "    assert str(e) == 'boom'\n"
+        "else:\n"
+        "    raise AssertionError('load did not fail')\n"
+        "assert not action_registry.SPEC and not action_registry.EXECUTORS and not action_registry.ORDER\n"
+        "assert not action_registry.ITEM_DECISION_HOOKS and not action_registry.CATALOG_EXTRAS\n"
+        "assert not scheduler.REGISTRY and not scheduler.GATES\n"
+        "action_registry.register_action = real\n"
+        "builtin_capabilities.load()\n"
+        f"assert list(action_registry.SPEC) == list({ORDERED_VERBS!r})\n"
+        f"assert list(scheduler.REGISTRY) == list({ORDERED_JOBS!r})\n"
+        "assert len(action_registry.ITEM_DECISION_HOOKS) == 2\n"
+    )
+
+
+def test_gate_table_order_does_not_depend_on_what_is_imported_first() -> None:
+    for first in ("home_reconcile", "home_model", "scheduler"):
+        _fresh(
+            f"import routers.{first}\n"
+            "from routers import scheduler\n"
+            "scheduler.builtin_jobs()\n"
+            "assert list(scheduler.GATES) == ['home_model', 'home_reconcile', 'home_digest'], list(scheduler.GATES)\n"
+        )
