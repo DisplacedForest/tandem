@@ -36,7 +36,7 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
         switch self {
         case .fileEdits: return "Writing, editing, moving and creating files and folders inside a folder you granted."
         case .commands: return "Running a command inside a folder you granted."
-        case .trash: return "Moving a file or folder inside a grant to the Trash. Nothing is ever deleted outright."
+        case .trash: return "Moving a file or folder inside a folder you granted to the Trash. Nothing is ever deleted outright."
         case .networkSends: return "Connected services that send messages, posts or uploads for you."
         case .riskyCommands: return "Commands that need administrator rights, reach into system or password locations, or can't be fully checked before they run."
         case .reminders: return "Adding, editing and completing Apple Reminders when you ask in a chat."

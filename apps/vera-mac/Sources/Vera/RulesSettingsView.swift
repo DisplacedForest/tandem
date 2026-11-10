@@ -2,6 +2,7 @@ import SwiftUI
 
 enum RulesCopy {
     static let headerTemplate = "These apply everywhere, including work \(CompanionSentence.placeholder) does without you. A chat can make them stricter, never looser."
+    static let sectionTemplate = "What \(CompanionSentence.placeholder) may do"
     static let infoLabel = "What each choice means"
     static let floorSectionTitle = "Always left to you"
 
@@ -15,7 +16,7 @@ enum RulesCopy {
     }
 
     static func screenStrings(name: String?) -> [String] {
-        var strings = [CompanionSentence.plain(headerTemplate, name: name), infoLabel, floorSectionTitle]
+        var strings = [CompanionSentence.plain(headerTemplate, name: name), CompanionSentence.plain(sectionTemplate, name: name), infoLabel, floorSectionTitle]
         for choice in NativeRuleChoice.allCases {
             strings.append(choice.title)
             strings.append(CompanionSentence.plain(explanationTemplate(choice), name: name))
@@ -94,7 +95,7 @@ struct RulesSettingsTab: View {
                 }
             } header: {
                 HStack {
-                    Text("What asks first")
+                    CompanionNamedText(template: RulesCopy.sectionTemplate)
                     Spacer()
                     Button {
                         showsChoiceHelp.toggle()
