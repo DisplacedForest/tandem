@@ -72,7 +72,7 @@ enum ArtifactExportSelftest {
         try check(documentNotice == .saved(id: documentAttempt.id, fileName: "Heating report.md"), "A document export is saved under its file name")
         try check((try? Data(contentsOf: documentDestination)) == documentBytes, "The saved document has the source bytes")
         try check(documentNotice.message == "Saved \"Heating report.md\".", "The saved message names the file")
-        try check(!documentNotice.canRetry && !documentNotice.canChooseLocation, "A saved notice offers no recovery")
+        try check(!documentNotice.canChooseLocation, "A saved notice offers no recovery")
 
         let dusk = record("img-a", .image, "Greenhouse at dusk")
         var imageBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF, 0x00, 0xFE])
@@ -100,7 +100,7 @@ enum ArtifactExportSelftest {
         let goneDestination = out.appendingPathComponent("Garden plan.md")
         let goneNotice = exporter.run(attempt(gone, goneVersion, to: goneDestination))
         guard case .failed(_, .sourceMissing) = goneNotice else { throw Failure(description: "A missing original is reported as missing") }
-        try check(!goneNotice.canRetry && !goneNotice.canChooseLocation, "A missing original offers only dismissal")
+        try check(!goneNotice.canChooseLocation, "A missing original offers only dismissal")
         try check(!exists(goneDestination), "A missing original creates no file")
 
         try Data("locked away".utf8).write(to: unreadableSource)
@@ -112,7 +112,7 @@ enum ArtifactExportSelftest {
         guard case .failed(_, .sourceUnreadable) = sealedNotice else {
             throw Failure(description: "An unreadable original is reported as unreadable, got \(sealedNotice)")
         }
-        try check(sealedNotice.canRetry && !sealedNotice.canChooseLocation, "An unreadable original offers retry and dismissal only")
+        try check(!sealedNotice.canChooseLocation, "An unreadable original offers only dismissal")
         try check(!exists(sealedDestination), "An unreadable original creates no file")
 
         let missingFolder = root.appendingPathComponent("not-yet", isDirectory: true)
@@ -126,7 +126,7 @@ enum ArtifactExportSelftest {
         let strandedAttempt = attempt(report, documentVersion, to: strandedDestination)
         let strandedNotice = exporter.run(strandedAttempt)
         try check(strandedNotice == .failed(strandedAttempt, .folderUnavailable), "A missing folder fails the export as unavailable")
-        try check(strandedNotice.canRetry && strandedNotice.canChooseLocation, "A destination problem offers retry and another location")
+        try check(strandedNotice.canChooseLocation, "A destination problem offers another location")
         try check(!exists(strandedDestination) && !exists(missingFolder), "A missing folder is not created")
 
         let keptFile = locked.appendingPathComponent("Heating report.md")
@@ -170,11 +170,13 @@ enum ArtifactExportSelftest {
         })
 
         try manager.createDirectory(at: missingFolder, withIntermediateDirectories: true)
-        let retried = flow.retry(strandedAttempt)
-        try check(retried == .saved(id: strandedAttempt.id, fileName: "Heating report.md"), "A retry after the cause is fixed is saved with the same attempt")
-        try check(reads.last == documentVersion, "A retry reads the same version")
-        try check((try? Data(contentsOf: strandedDestination)) == documentBytes, "The retried file has the right bytes")
+        chosen = strandedDestination
+        guard let again = flow.chooseAnother(strandedAttempt) else { throw Failure(description: "Choosing the same place again runs the export") }
+        try check(again == .saved(id: strandedAttempt.id, fileName: "Heating report.md"), "The same place works once the cause is fixed, with the same attempt")
+        try check(reads.last == documentVersion, "Saving to the same place again reads the same version")
+        try check((try? Data(contentsOf: strandedDestination)) == documentBytes, "The file saved to the same place has the right bytes")
         try manager.removeItem(at: missingFolder)
+        offered.removeAll()
 
         let elsewhere = root.appendingPathComponent("elsewhere", isDirectory: true)
         try manager.createDirectory(at: elsewhere, withIntermediateDirectories: true)

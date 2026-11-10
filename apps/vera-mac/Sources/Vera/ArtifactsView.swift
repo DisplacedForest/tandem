@@ -277,7 +277,7 @@ struct ArtifactsView: View {
             if let exportNotice {
                 ArtifactExportStrip(
                     notice: exportNotice, renderSafe: renderSafe,
-                    retry: { retryExport() }, chooseAnother: { chooseAnotherLocation() }, dismiss: { dismissNotice() })
+                    chooseAnother: { chooseAnotherLocation() }, dismiss: { dismissNotice() })
             }
             if let selected {
                 ArtifactDetail(record: selected, onSaveAs: beginExport).id(selected.id)
@@ -307,11 +307,6 @@ struct ArtifactsView: View {
     private func beginExport(_ record: ArtifactRecord, _ version: ArtifactVersion, _ fileName: String) {
         guard let notice = exportFlow.begin(record, version: version, fileName: fileName) else { return }
         show(notice)
-    }
-
-    private func retryExport() {
-        guard let attempt = exportNotice?.attempt else { return }
-        show(exportFlow.retry(attempt))
     }
 
     private func chooseAnotherLocation() {
@@ -347,7 +342,6 @@ struct ArtifactsView: View {
 private struct ArtifactExportStrip: View {
     let notice: ArtifactExportNotice
     let renderSafe: Bool
-    let retry: () -> Void
     let chooseAnother: () -> Void
     let dismiss: () -> Void
 
@@ -372,8 +366,7 @@ private struct ArtifactExportStrip: View {
 
     private var controls: some View {
         HStack(spacing: 14) {
-            if notice.canRetry { control("Try again", action: retry) }
-            if notice.canChooseLocation { control("Choose another location…", action: chooseAnother) }
+            if notice.canChooseLocation { control("Save somewhere else…", action: chooseAnother) }
             if renderSafe {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             } else {

@@ -47,11 +47,6 @@ enum ArtifactExportNotice: Equatable, Identifiable {
         }
     }
 
-    var canRetry: Bool {
-        guard case .failed(_, let problem) = self else { return false }
-        return problem != .sourceMissing
-    }
-
     var canChooseLocation: Bool {
         guard case .failed(_, let problem) = self else { return false }
         switch problem {
@@ -136,10 +131,6 @@ struct ArtifactExportFlow {
         let attempt = ArtifactExportAttempt(
             id: UUID(), artifactID: record.id, title: record.title, version: version, destination: destination)
         return exporter.run(attempt)
-    }
-
-    func retry(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice {
-        exporter.run(attempt)
     }
 
     func chooseAnother(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
