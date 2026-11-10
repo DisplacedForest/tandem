@@ -29,10 +29,10 @@ enum CardShot {
         var size = CGSize(width: 1180, height: 760)
         let content: AnyView
         switch variant {
-        case "card-command", "card-folder-edit", "card-once-only":
+        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-send-companion":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
-        case "card-command-menus", "card-folder-edit-menus":
+        case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus":
             size = CGSize(width: 640, height: 420)
             let request = self.chat(String(variant.dropLast("-menus".count)), store: store).confirmation
             let answers = CardAnswers.chat(request)
@@ -99,16 +99,63 @@ enum CardShot {
         }
     }
 
+    static func ruledActivity(_ definition: NativeToolDefinition, rules: NativeRules, id: String, request: String, ask: String,
+                              conversationID: String) -> (NativeToolActivity, NativeCardSubject) {
+        let source = NativeRuleSource()
+        source.setGlobal(rules)
+        let ruled = ChatStore.ruled(definition, rules: source, store: nil, conversationID: conversationID, requestText: ask)
+        let activity = NativeToolActivity(id: id, toolID: ruled.id, name: ruled.name, title: ruled.title, round: 1,
+                                          request: request, result: nil, state: .pending, confirmationRequired: true)
+        let subject = ChatStore.cardSubject(for: activity, definitions: [ruled], typedText: ask)
+            ?? NativeCardSubject(action: .otherChanges, toolID: ruled.id, toolTitle: ruled.title)
+        return (activity, subject)
+    }
+
+    static var gardenLog: NativeToolDefinition {
+        let declaration = try? NativeCapabilityTools.parse(object: [
+            "name": "garden_log", "title": "Post to the garden log", "description": "Post a line to the garden log",
+            "parameters": ["type": "object", "properties": ["entry": ["type": "string"]], "required": ["entry"], "additionalProperties": false],
+            "endpoint": "https://garden.example/log", "method": "POST", "confirmation": "none",
+        ], source: "garden_log.json")
+        return NativeCapabilityTools.definition(declaration!, base: { nil })
+    }
+
     static func chat(_ variant: String, store: ChatStore) -> CardShotChat {
         let conversation = Conversation(id: "card-chat", title: "Greenhouse notes", messages: [], updatedAt: Date())
-        store.conversations.insert(conversation, at: 0)
-        store.selectedID = conversation.id
+        let conversationID: String
+        if variant == "card-send-companion" {
+            store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+            store.openVeraThread()
+            conversationID = store.veraThreadID ?? conversation.id
+            store.selectedID = conversationID
+        } else {
+            store.conversations.insert(conversation, at: 0)
+            store.selectedID = conversation.id
+            conversationID = conversation.id
+        }
         store.section = .chat
-        let place = NativeCardPlace.chat(conversationID: conversation.id)
+        let place = NativeCardPlace.chat(conversationID: conversationID)
         let activity: NativeToolActivity
         let subject: NativeCardSubject
         let ask: String
         switch variant {
+        case "card-send", "card-send-companion":
+            ask = "Note that I watered the tomato bed twice today."
+            (activity, subject) = ruledActivity(gardenLog, rules: .defaults, id: "card-send",
+                                                request: "{\"entry\":\"Watered the tomato bed twice.\"}", ask: ask, conversationID: conversationID)
+        case "card-reminder":
+            ask = "Remind me to buy seed potatoes."
+            var rules = NativeRules.defaults
+            rules.set(.ask, for: .reminders)
+            let create = NativeRemindersTools.definitions(service: SelfTestRemindersService()).first { $0.name == "apple_reminders_create" }!
+            (activity, subject) = ruledActivity(create, rules: rules, id: "card-reminder",
+                                                request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", ask: ask, conversationID: conversationID)
+        case "card-schedule", "card-schedule-companion":
+            ask = "Every weekday at 7, check the frost forecast for the greenhouse."
+            let schedule = NativeScheduleTools.definition(assistantName: { "" }, save: { _ in throw NativeToolError.unavailable })
+            (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
+                                                request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                                                ask: ask, conversationID: conversationID)
         case "card-folder-edit":
             ask = "Add the afternoon vent check to the plan."
             activity = NativeToolActivity(id: "card-edit", toolID: NativeFolderTools.toolID, name: NativeFolderTools.editName, title: "Edit a file", round: 1,
@@ -203,7 +250,7 @@ enum CardShot {
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [
                "id": "card-schedule", "prompt": prompt, "choices": ["decline", "never", "allow_always", "allow_here", "approve"],
                "details": "Message: Lumber is up 2.4 percent since yesterday.\nTo: workshop@example.com",
-               "covers": "This action every time", "never": "Never allow this",
+               "covers": "This action every time", "never": "Never allow this in this task",
            ]) {
             _ = try? repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
             _ = try? repository.projectTask(id: reference.id, snapshot: waiting)

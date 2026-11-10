@@ -46,7 +46,7 @@ enum NativeScheduleTools {
                                       "description": .string("For every_hours")]),
                     "at": .object(["type": .string("string"), "description": .string("YYYY-MM-DDTHH:MM local time, for once")]),
                 ]),
-            ]), confirmation: .required, timeout: .seconds(10), action: .networkSends, isAvailable: { true }, execute: { arguments in
+            ]), confirmation: .required, timeout: .seconds(10), action: .otherChanges, isAvailable: { true }, execute: { arguments in
                 let draft = try draft(from: arguments, now: now(), timeZone: timeZone())
                 if draft.workerType == "research", !searchAvailable() {
                     throw NativeToolError.failed(NativeTaskTools.searchUnavailable)
@@ -58,7 +58,7 @@ enum NativeScheduleTools {
                     "message": .string("Saved. \(schedule.cadenceSummary). It appears in Scheduled, and results go to \(destination)."),
                     "saved": .bool(true),
                 ])
-            })
+            }, wants: wants)
     }
 
     static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone) throws -> NativeScheduleDraft {
@@ -118,17 +118,17 @@ enum NativeScheduleTools {
         return try? draft(from: values, now: now, timeZone: timeZone)
     }
 
-    static func prompt(for draft: NativeScheduleDraft, timeZone: TimeZone = .current) -> String {
-        let cadence = draft.cadence.summary(timeZone: timeZone)
-        return "Schedule \(draft.title), \(cadence.prefix(1).lowercased() + cadence.dropFirst())?"
-    }
+    static let wants = "schedule this"
 
-    static func detail(for draft: NativeScheduleDraft, assistantName: String) -> String {
-        let work = draft.workerType == "document" ? "Write a document" : "Research"
-        let destination = draft.owner == .dot ? "the \(assistantName) thread" : "its own chat"
+    static func literal(for draft: NativeScheduleDraft, timeZone: TimeZone = .current) -> String {
+        let cadence = draft.cadence.summary(timeZone: timeZone)
         var instruction = draft.instruction.replacingOccurrences(of: "\n", with: " ")
         if instruction.count > 180 { instruction = String(instruction.prefix(177)).trimmingCharacters(in: .whitespaces) + "..." }
-        return "\(work): \(instruction) Results go to \(destination). Nothing is saved until you approve."
+        return [draft.title + ", " + cadence.prefix(1).lowercased() + cadence.dropFirst(), instruction].joined(separator: "\n")
+    }
+
+    static func destination(for draft: NativeScheduleDraft) -> String {
+        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)'s thread." : "Results go to its own chat."
     }
 
     private static func minute(_ value: NativeJSONValue?) throws -> Int {
