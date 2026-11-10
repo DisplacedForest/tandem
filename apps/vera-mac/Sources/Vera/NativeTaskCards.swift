@@ -28,10 +28,15 @@ struct NativeTaskCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let answer = card.answer, card.status == .completed {
-                NativeArtifactMarkdown(text: answer).equatable()
+                let resolved = CitationResolver.resolve(text: answer, sources: NativeResearchReportSafety.sources(card.sources),
+                                                        allowRecovery: true)
+                CitedText(resolved: resolved, style: .chat)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
+                if !resolved.sources.isEmpty {
+                    SourcesRow(sources: resolved.sources, numbered: false)
+                }
             }
             if let details = card.details, !details.isEmpty, card.status == .needsInput {
                 let block = Text(details)
@@ -58,6 +63,9 @@ struct NativeTaskCardView: View {
             }
             if !card.sources.isEmpty && [.stopped, .needsInput, .failed].contains(card.status) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources))
+            }
+            if !card.sources.isEmpty && card.status == .completed && !card.isCompanion {
+                SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
             if let onSaveAnswer, card.answer != nil, card.status == .completed {
                 Button("Save as document") { onSaveAnswer() }
@@ -183,8 +191,10 @@ struct NativeResearchReportView: View {
     let artifact: NativeResearchArtifact
     @Environment(\.dismiss) private var dismiss
 
-    var reportText: String {
-        artifact.sources.isEmpty ? artifact.report : PulseMarkers.stripSourcesSection(artifact.report)
+    var resolved: ResolvedCitations {
+        CitationResolver.resolve(text: artifact.report,
+                                 sources: artifact.sources.isEmpty ? [] : NativeResearchReportSafety.sources(artifact.sources),
+                                 allowRecovery: true)
     }
 
     var body: some View {
@@ -197,12 +207,11 @@ struct NativeResearchReportView: View {
             .padding(20)
             Divider()
             ScrollView {
+                let resolved = self.resolved
                 VStack(alignment: .leading, spacing: 18) {
-                    if artifact.sources.isEmpty {
-                        NativeArtifactMarkdown(text: reportText).equatable()
-                    } else {
-                        CitedProse(text: reportText, sources: NativeResearchReportSafety.sources(artifact.sources))
-                        SourcesRow(sources: NativeResearchReportSafety.sources(artifact.sources))
+                    CitedText(resolved: resolved, style: .document)
+                    if !resolved.sources.isEmpty {
+                        SourcesRow(sources: resolved.sources, numbered: false)
                     }
                 }
                 .padding(24)

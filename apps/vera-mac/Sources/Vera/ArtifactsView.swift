@@ -136,8 +136,9 @@ extension ChatStore {
     func librarySaveData(_ version: ArtifactVersion) -> Result<Data, ArtifactExportProblem> {
         let result = artifactSource(version)
         guard case .success(let data) = result, !version.details.sources.isEmpty,
-              (artifactRecords.first(where: { $0.id == version.artifactID })
-                ?? (try? artifactRepository?.artifact(version.artifactID)))?.kind == .document,
+              let kind = (artifactRecords.first(where: { $0.id == version.artifactID })
+                ?? (try? artifactRepository?.artifact(version.artifactID)))?.kind,
+              kind == .document || (kind == .canvas && (version.details.canvasType ?? .markdown) == .markdown),
               let text = String(data: data, encoding: .utf8) else { return result }
         let exported = CitationResolver.exportText(text, sources: version.details.sources)
         return exported == text ? result : .success(Data(exported.utf8))
@@ -636,13 +637,13 @@ private struct ArtifactDetail: View {
 
 private struct ArtifactContent: View {
     @EnvironmentObject var store: ChatStore
-    @Environment(\.renderSafe) private var renderSafe
     let record: ArtifactRecord
     let version: ArtifactVersion
 
     var body: some View {
         switch record.kind {
         case .document: document
+        case .canvas where (version.details.canvasType ?? .markdown) == .markdown: document
         case .canvas: canvas
         case .image: image
         case .fileChange: ArtifactFileChangeContent(version: version, text: store.artifactText(version) ?? "")
@@ -680,14 +681,10 @@ private struct ArtifactContent: View {
         if let text = store.artifactText(version) {
             let artifact = Artifact(id: version.id, title: record.title, type: version.details.canvasType ?? .markdown,
                                     language: version.details.language ?? "", content: text)
-            if renderSafe && artifact.type == .markdown {
-                NativeArtifactMarkdown(text: text).equatable()
-            } else {
-                ArtifactPreview(artifact: artifact)
-                    .frame(minHeight: 460)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
-            }
+            ArtifactPreview(artifact: artifact)
+                .frame(minHeight: 460)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
         } else {
             missing
         }

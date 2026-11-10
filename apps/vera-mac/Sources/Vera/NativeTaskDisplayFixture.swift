@@ -18,6 +18,7 @@ enum NativeTaskDisplayFixture {
         try NativeTaskEventsSelfTest.run()
         try await decisionChoices()
         try await savedAnswer()
+        try companionSources()
         let require = NativeTaskFixture.require
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -270,6 +271,53 @@ enum NativeTaskDisplayFixture {
 }
 
 extension NativeTaskDisplayFixture {
+    static func companionSources() throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: "How much rain fell?", mode: "manual"))
+        let origin = try NativeTaskFixture.origin(repository)
+        let prepared = try repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil)
+        let payload = (try JSONSerialization.jsonObject(with: prepared.body) as! [String: Any])["payload"]!
+        let remote = UUID().uuidString
+        func finished(_ report: String, sources: [[String: Any]], shape: String) throws -> NativeTaskSnapshot {
+            try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical([
+                "id": remote, "worker_type": "companion", "payload": payload, "state": "completed",
+                "checkpoint": [:], "cancel_requested": false, "generation": 1, "updated_at": 1.0,
+                "result": ["kind": "companion_report", "query": prepared.request.objective, "report": report, "sources": sources,
+                           "summary": report, "title": prepared.request.objective, "shape": shape],
+            ]))
+        }
+        let reference = try repository.acknowledgeTaskReference(id: prepared.id, snapshot: try finished("", sources: [], shape: "answer"))
+        let listed: [[String: Any]] = [["n": 1, "title": "Rain totals", "url": "https://weather.example/rain"],
+                                       ["n": 2, "title": "River levels", "url": "https://gauge.example/levels"]]
+        let expected = [PulseSource(n: 1, title: "Rain totals", url: "https://weather.example/rain"),
+                        PulseSource(n: 2, title: "River levels", url: "https://gauge.example/levels")]
+        let report = "Two inches fell [1]. The river rose [2]."
+        let answer = try NativeTaskProjection.display(reference: reference, snapshot: try finished(report, sources: listed, shape: "answer"))
+        try require(answer.card.answer == report && answer.card.sources == expected && answer.artifact == nil,
+                    "A cited companion answer keeps its sources on the card")
+        try require(NativeTaskProjection.answerDocument(answer.card)?.sources == expected, "Saving the answer keeps its sources")
+        let document = try NativeTaskProjection.display(reference: reference, snapshot: try finished(report, sources: listed, shape: "document"))
+        try require(document.artifact?.sources == expected && document.artifact?.isDocument == true && document.card.sources == expected,
+                    "A cited companion document keeps its sources")
+        try require(document.card.milestone == "Two inches fell. The river rose.", "The one-line summary on the card drops its bracket numbers")
+        let year = try NativeTaskProjection.display(reference: reference, snapshot: try finished("Records began in [2024] and rain fell [1].",
+                                                                                                    sources: [listed[0]], shape: "answer"))
+        try require(year.card.answer == "Records began in [2024] and rain fell [1]." && year.card.sources == [expected[0]],
+                    "A bracketed number that is not a source is accepted and left as written")
+        let duplicate = [listed[0], ["n": 1, "title": "Again", "url": "https://again.example/"]]
+        let outside: [[String: Any]] = [["n": 15, "title": "Late", "url": "https://late.example/"]]
+        let zero: [[String: Any]] = [["n": 0, "title": "Zero", "url": "https://zero.example/"]]
+        let many: [[String: Any]] = (1...15).map { ["n": $0, "title": "Source \($0)", "url": "https://many.example/\($0)"] }
+        for invalid in [duplicate, outside, zero, many] {
+            var rejected = false
+            do { _ = try NativeTaskProjection.display(reference: reference, snapshot: try finished(report, sources: invalid, shape: "answer")) }
+            catch NativeTaskHTTPError.invalidResponse { rejected = true }
+            try require(rejected, "Invalid companion sources are rejected: \(invalid.count)")
+        }
+    }
+
     static func savedAnswer() async throws {
         let require = NativeTaskFixture.require
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -62,9 +62,10 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var effects: [NativeCompanionEffectNote] = []
     var nativeUnavailable: String?
     var keep: Bool?
+    var sources: [NativeTaskSource]?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
@@ -123,6 +124,38 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
             while cut.last == "\u{FFFD}" { cut.removeLast() }
         }
         return bytes.isEmpty ? none : cut + marker
+    }
+
+    mutating func numbered(_ value: NativeJSONValue, definition: NativeToolDefinition) -> NativeJSONValue {
+        let web = (definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName)
+            || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName)
+        guard web, !NativeToolLoop.resultFailed(value, toolName: definition.name) else { return value }
+        var known = sources ?? []
+        var numbers = Dictionary(known.map { ($0.url, $0.n) }, uniquingKeysWith: { first, _ in first })
+        let result = NativeWebTools.numbered(value, sources: &numbers)
+        guard case .object(let fields) = result else { return result }
+        var entries = [fields]
+        if case .array(let results)? = fields["results"] {
+            entries = results.compactMap { entry -> [String: NativeJSONValue]? in
+                guard case .object(let object) = entry else { return nil }
+                return object
+            }
+        }
+        for entry in entries {
+            guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"],
+                  !known.contains(where: { $0.url == url }) else { continue }
+            var title = ""
+            if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
+            known.append(NativeTaskSource(n: Int(n), title: title, url: url))
+        }
+        sources = known.isEmpty ? nil : known
+        return result
+    }
+
+    func cited(_ text: String) -> [[String: Any]] {
+        let known = (sources ?? []).filter { $0.url.unicodeScalars.count <= 1024 }
+        let refs = Set(CitationResolver.scan(text, known: Set(known.map(\.n))).refs)
+        return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.title, "url": $0.url] }
     }
 
     mutating func note(_ title: String, _ outcome: String) {
@@ -366,7 +399,7 @@ enum NativeCompanionWorker {
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": $0.title, "outcome": $0.outcome] }
         var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
-                                     "summary": summary, "sources": [Any](), "effects": effects]
+                                     "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
         if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
             result: try NativeTaskStore.canonical(result), event: "completed")
@@ -487,6 +520,7 @@ private struct NativeCompanionRun {
             "Only report what tool results show. Never claim an action happened unless its tool result confirms it. If something was declined, not done or uncertain, say so plainly.",
             NativeCompanionWorker.privacyRule,
         ]
+        lines.append("When you used web results, cite them with the bracket numbers shown on the results, like [1], right after the sentence they support. Do not list web addresses at the end; the app adds the list of sources.")
         if !dot.goal.isEmpty { lines.append("The companion's standing goal, for context: \(dot.goal)") }
         if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
         if origin.unattended {
@@ -680,7 +714,8 @@ private struct NativeCompanionRun {
             checkpoint.segmentCalls += 1
             checkpoint.calls += 1
             do {
-                let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                let raw = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                let value = checkpoint.numbered(raw, definition: definition)
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
