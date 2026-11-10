@@ -109,6 +109,84 @@ enum CompanionColor: String, CaseIterable, Codable, Sendable {
     var eyeColor: Color { Color(nsColor: NSColor(hex: Self.eyeHex)) }
 }
 
+extension CompanionColor {
+    static let lightBackgroundHex = "#FFFFFF"
+    static let darkBackgroundHex = "#2A2A2A"
+    static let minimumTextContrast = 4.5
+
+    private static func channels(_ hex: String) -> (r: Double, g: Double, b: Double) {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        var value: UInt64 = 0
+        Scanner(string: digits).scanHexInt64(&value)
+        return (Double((value >> 16) & 0xFF) / 255, Double((value >> 8) & 0xFF) / 255, Double(value & 0xFF) / 255)
+    }
+
+    private static func hex(_ rgb: (r: Double, g: Double, b: Double)) -> String {
+        func byte(_ v: Double) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(rgb.r), byte(rgb.g), byte(rgb.b))
+    }
+
+    private static func luminance(_ rgb: (r: Double, g: Double, b: Double)) -> Double {
+        func linear(_ v: Double) -> Double { v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+    }
+
+    static func contrast(_ first: String, _ second: String) -> Double {
+        let a = luminance(channels(first)), b = luminance(channels(second))
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    private static func hsl(_ rgb: (r: Double, g: Double, b: Double)) -> (h: Double, s: Double, l: Double) {
+        let hi = max(rgb.r, rgb.g, rgb.b), lo = min(rgb.r, rgb.g, rgb.b)
+        let l = (hi + lo) / 2
+        let d = hi - lo
+        if d == 0 { return (0, 0, l) }
+        let s = d / (1 - abs(2 * l - 1))
+        var h: Double
+        if hi == rgb.r { h = ((rgb.g - rgb.b) / d).truncatingRemainder(dividingBy: 6) }
+        else if hi == rgb.g { h = (rgb.b - rgb.r) / d + 2 }
+        else { h = (rgb.r - rgb.g) / d + 4 }
+        h /= 6
+        if h < 0 { h += 1 }
+        return (h, s, l)
+    }
+
+    private static func rgb(_ value: (h: Double, s: Double, l: Double)) -> (r: Double, g: Double, b: Double) {
+        let c = (1 - abs(2 * value.l - 1)) * value.s
+        let x = c * (1 - abs((value.h * 6).truncatingRemainder(dividingBy: 2) - 1))
+        let m = value.l - c / 2
+        let sector = Int(value.h * 6) % 6
+        let base: (Double, Double, Double)
+        switch sector {
+        case 0: base = (c, x, 0)
+        case 1: base = (x, c, 0)
+        case 2: base = (0, c, x)
+        case 3: base = (0, x, c)
+        case 4: base = (x, 0, c)
+        default: base = (c, 0, x)
+        }
+        return (base.0 + m, base.1 + m, base.2 + m)
+    }
+
+    func textHex(dark: Bool) -> String {
+        let background = dark ? Self.darkBackgroundHex : Self.lightBackgroundHex
+        if Self.contrast(hex, background) >= Self.minimumTextContrast { return hex }
+        var tone = Self.hsl(Self.channels(hex))
+        let step = dark ? 0.01 : -0.01
+        var candidate = hex
+        while tone.l > 0, tone.l < 1 {
+            tone.l = ((tone.l + step) * 100).rounded() / 100
+            candidate = Self.hex(Self.rgb(tone))
+            if Self.contrast(candidate, background) >= Self.minimumTextContrast { break }
+        }
+        return candidate
+    }
+
+    func textColor(for colorScheme: ColorScheme) -> Color {
+        Color(nsColor: NSColor(hex: textHex(dark: colorScheme == .dark)))
+    }
+}
+
 struct CompanionAppearance: Equatable, Codable, Sendable {
     var shape: CompanionShape
     var color: CompanionColor

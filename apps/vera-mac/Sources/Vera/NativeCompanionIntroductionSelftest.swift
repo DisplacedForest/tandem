@@ -173,7 +173,6 @@ extension SelfTest {
         await pending.connect()
         pending.suspendsTurnScheduling = true
         pending.adoptAssistantName("Moss")
-        pending.companionHasSavedName = true
         pending.openVeraThread()
         pending.resetDot()
         let openingID = pending.selected?.messages.first?.id

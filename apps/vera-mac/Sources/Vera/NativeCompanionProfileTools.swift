@@ -100,7 +100,6 @@ extension ChatStore {
         case "name":
             guard let companionNameWriter else { throw NativeToolError.failed("The name couldn't be saved.") }
             try companionNameWriter(change.value)
-            companionHasSavedName = true
             adoptAssistantName(change.value)
             return .object(["result": .string("Name updated.")])
         case "goal": profile.goal = change.value
