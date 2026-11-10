@@ -31,7 +31,7 @@
 1 apps/vera-mac/Sources/Vera/SafeAppReplacement.swift
 23 apps/vera-mac/Sources/Vera/SelfTest.swift
 7 apps/vera-mac/Sources/Vera/SettingsView.swift
-4 apps/vera-mac/Sources/Vera/Shot.swift
+2 apps/vera-mac/Sources/Vera/Shot.swift
 4 apps/vera-mac/Sources/Vera/ShotView.swift
 7 apps/vera-mac/Sources/Vera/Store.swift
 2 apps/vera-mac/Sources/Vera/StoreRuleRecords.swift

@@ -1361,8 +1361,8 @@ struct OnboardingShotView: View {
                 HStack(spacing: 12) {
                     VeraMark(size: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Set up Vera").font(.system(size: 20, weight: .semibold))
-                        Text("Connect a model, choose how Vera responds, and review available tools.")
+                        Text("Set up Tandem").font(.system(size: 20, weight: .semibold))
+                        Text("Connect a model. Memory and Pulse are optional and can be set up later in Settings.")
                             .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                 }
