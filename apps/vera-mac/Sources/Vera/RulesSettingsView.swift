@@ -35,6 +35,22 @@ enum RulesCopy {
     }
 }
 
+struct RulesChoiceHelp: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(choice.title).font(.system(size: 12))
+                    CompanionNamedText(template: RulesCopy.explanationTemplate(choice))
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 300, alignment: .leading)
+    }
+}
+
 struct RulesSettingsTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
@@ -89,17 +105,7 @@ struct RulesSettingsTab: View {
                     .accessibilityLabel(RulesCopy.infoLabel)
                     .help(RulesCopy.infoLabel)
                     .popover(isPresented: $showsChoiceHelp, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(choice.title).font(.system(size: 12))
-                                    CompanionNamedText(template: RulesCopy.explanationTemplate(choice))
-                                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                                }
-                            }
-                        }
-                        .padding(14)
-                        .frame(width: 300, alignment: .leading)
+                        RulesChoiceHelp()
                     }
                 }
             }

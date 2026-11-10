@@ -14,6 +14,10 @@ enum Shot {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view == "rules" || view == "rules-dark" || view == "rules-info" {
+            RulesShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("composer-") {
             ComposerShot.render(view: view, to: path, appearance: appearance)
             return
