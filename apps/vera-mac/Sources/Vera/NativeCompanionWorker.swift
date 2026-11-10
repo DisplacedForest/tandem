@@ -367,6 +367,15 @@ enum NativeCompanionWorker {
     }
 }
 
+extension NativeCompanionWorker {
+    static func authority(_ base: NativeCompanionWorkerAuthority, taskID: String, origin: NativeRunOrigin) -> NativeCompanionWorkerAuthority {
+        var resolver = base.resolver
+        resolver.context?.taskID = taskID
+        resolver.context?.scheduleID = origin.scheduleID
+        return NativeCompanionWorkerAuthority(resolver: resolver, grantsRevision: base.grantsRevision)
+    }
+}
+
 struct NativeCompanionDeadline: Error {}
 
 struct NativeCompanionStopped: Error {}
@@ -378,7 +387,15 @@ private struct NativeCompanionRun {
     let environment: NativeCompanionWorkerEnvironment
     let model: NativeCompanionWorker.Model
 
-    var proactive: Bool { dot.mode == "proactive" }
+    var origin: NativeRunOrigin { dot.origin }
+
+    func readOnlyRefusal(_ definition: NativeToolDefinition) -> String? {
+        NativeReadOnlyRun.refusal(run: origin, call: NativeRunCall(toolID: definition.id, function: definition.name, effect: definition.effect))
+    }
+
+    func readOnlyRefusal(_ proposal: NativeEffectProposal) -> String? {
+        NativeReadOnlyRun.refusal(run: origin, call: NativeRunCall(toolID: proposal.toolID, function: proposal.function, effect: .write))
+    }
 
     var stopProbe: @Sendable () -> Bool {
         let tasks = environment.tasks
@@ -390,20 +407,20 @@ private struct NativeCompanionRun {
         }
     }
 
+    var usable: [NativeToolDefinition] {
+        context.tools.filter { !NativeCompanionWorker.excludedToolIDs.contains($0.id) && $0.isAvailable() }
+    }
+
     var advertised: [NativeToolDefinition] {
-        let usable = context.tools.filter { !NativeCompanionWorker.excludedToolIDs.contains($0.id) && $0.isAvailable() }
-        return proactive ? NativeToolDefinition.readOnly(usable) : usable
+        usable.filter { readOnlyRefusal($0) == nil }
     }
 
     func definition(named name: String) -> NativeToolDefinition? {
-        advertised.first { $0.name == name }
+        usable.first { $0.name == name }
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
-        let base = environment.authority(context.threadID, dot.assignment)
-        var resolver = base.resolver
-        resolver.context?.taskID = task.id
-        return NativeCompanionWorkerAuthority(resolver: resolver, grantsRevision: base.grantsRevision)
+        NativeCompanionWorker.authority(environment.authority(context.threadID, dot.assignment), taskID: task.id, origin: origin)
     }
 
     var liveRevisions: @Sendable () -> (rules: Int, grants: Int) {
@@ -431,7 +448,9 @@ private struct NativeCompanionRun {
         ]
         if !dot.goal.isEmpty { lines.append("The companion's standing goal, for context: \(dot.goal)") }
         if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
-        if proactive { lines.append("This is a read-only check. You can look things up but cannot change anything.") }
+        if origin.unattended {
+            lines.append("This run was started by a schedule or by Tandem itself, so it is read-only. You can look things up but cannot change anything. If the assignment needs a change, do the rest and say plainly what you left undone.")
+        }
         if finishing {
             lines.append("Stop using tools now. Answer the person directly, the way you would reply in a chat, and say plainly what you did. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
         } else {
@@ -475,6 +494,7 @@ private struct NativeCompanionRun {
             return try await finish(&checkpoint)
         }
         if checkpoint.segmentRounds >= budget.rounds {
+            if origin.unattended { return try await finish(&checkpoint) }
             checkpoint.pending = NativeCompanionPending(kind: "cap")
             return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
                                               ["continue", "finish"])
@@ -525,7 +545,12 @@ private struct NativeCompanionRun {
         if checkpoint.keep == nil {
             checkpoint.keep = try await classify(checkpoint)
         }
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text, keep: checkpoint.keep)
+        var body = text
+        if let undone = NativeReadOnlyRun.undone(checkpoint.effects.filter { $0.outcome == NativeReadOnlyRun.outcome }.map(\.title)) {
+            let room = max(0, NativeCompanionWorker.reportCharacters - undone.count - 2)
+            body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + undone
+        }
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep)
     }
 
     func classify(_ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
@@ -566,7 +591,7 @@ private struct NativeCompanionRun {
         let budget = environment.budget
         for call in checkpoint.outstandingCalls {
             if checkpoint.segmentCalls >= budget.calls || checkpoint.calls >= budget.taskCalls {
-                if checkpoint.calls >= budget.taskCalls {
+                if checkpoint.calls >= budget.taskCalls || origin.unattended {
                     for remaining in checkpoint.outstandingCalls {
                         checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: this assignment reached its action limit."))
                     }
@@ -583,9 +608,12 @@ private struct NativeCompanionRun {
 
     func execute(_ call: NativeTaskGenerationToolCall, _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
         guard let definition = definition(named: call.name) else {
-            let refusal = context.tools.contains(where: { $0.name == call.name }) && proactive
-                ? "Not allowed: this is a read-only check, so changes are refused."
-                : "Unknown tool. Use only the tools offered."
+            checkpoint.answer(call, NativeCompanionWorker.message("Unknown tool. Use only the tools offered."))
+            return nil
+        }
+        if let refusal = readOnlyRefusal(definition) {
+            let arguments = (try? definition.validatedArguments(call.arguments)) ?? [:]
+            checkpoint.note(NativeCompanionWorker.describe(definition, arguments), NativeReadOnlyRun.outcome)
             checkpoint.answer(call, NativeCompanionWorker.message(refusal))
             return nil
         }
@@ -757,6 +785,11 @@ private struct NativeCompanionRun {
             checkpoint.answer(call, NativeCompanionWorker.message("This did not happen. Propose it again only if it is still needed; it will need the usual approval."))
             return nil
         }
+        if readOnlyRefusal(record.proposal) != nil {
+            checkpoint.note(title, "unconfirmed")
+            checkpoint.answer(call, NativeCompanionWorker.message(NativeReadOnlyRun.unchecked))
+            return nil
+        }
         if let definition, let hook = definition.reconcile {
             let arguments = (try? definition.validatedArguments(call.arguments)) ?? [:]
             let observation = (try? await NativeCompanionWorker.withDeadline(environment.defaultToolSeconds) {
@@ -825,6 +858,12 @@ private struct NativeCompanionRun {
                 }
                 return try await finish(&checkpoint)
             default:
+                if origin.unattended {
+                    for remaining in checkpoint.outstandingCalls {
+                        checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: this run reached its limit."))
+                    }
+                    return try await finish(&checkpoint)
+                }
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "Keep going, or finish with what it has?", ["continue", "finish"])
             }
@@ -844,6 +883,11 @@ private struct NativeCompanionRun {
                 return try await reconcile(record, call: call, definition: definition(named: call.name), &checkpoint)
             case .declined, .proposed, .expired:
                 break
+            }
+            if let refusal = readOnlyRefusal(record.proposal) {
+                checkpoint.note(title, NativeReadOnlyRun.outcome)
+                checkpoint.answer(call, NativeCompanionWorker.message(refusal))
+                return nil
             }
             let bound = NativeEffectProposal.bindsReply(reply, to: digest)
             if action == "decline" || record.state == .declined {
@@ -900,6 +944,11 @@ private struct NativeCompanionRun {
                 let text = "\(context.assistantName) stopped at your request. It could not confirm whether this happened: \(title)."
                 return try await conclude(&checkpoint, text: text)
             default:
+                if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
+                    checkpoint.note(title, "unconfirmed")
+                    checkpoint.answer(call, NativeCompanionWorker.message(NativeReadOnlyRun.unchecked))
+                    return nil
+                }
                 checkpoint.pending = pending
                 return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) can't tell whether this happened: \(title). Please check, then say what you found.",
                                                   ["it_happened", "it_did_not", "stop"])

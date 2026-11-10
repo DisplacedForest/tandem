@@ -184,8 +184,8 @@ struct NativeCompanionHarness {
         return [status, water, weeds]
     }
 
-    func create(_ assignment: String = "Water the north bed", mode: String = "manual") throws -> String {
-        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode)
+    func create(_ assignment: String = "Water the north bed", mode: String = "manual", scheduleID: String? = nil) throws -> String {
+        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode, scheduleID: scheduleID)
         let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -247,6 +247,7 @@ extension SelfTest {
     static func runNativeCompanionWorker() async throws {
         try await companionReadLoopAndIsolation()
         try await companionProactiveRefusesWrites()
+        try await companionUnattendedReadOnly()
         try await companionActWrite()
         try await companionOneUseGrant()
         try await companionAdmittedFolderWrites()
@@ -267,7 +268,7 @@ extension SelfTest {
         try await companionAssignmentEntry()
         try companionShape()
         try await companionClassification()
-        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -389,6 +390,152 @@ extension SelfTest {
         try require(harness.model.allOffered.allSatisfy { $0 == ["garden_status"] }, "A proactive run is offered read tools only")
         try require(NativeCompanionScriptedModel.toolResults(harness.model.allRequests.last ?? []).first?.contains("read-only") == true,
                     "The model is told why the write was refused")
+    }
+
+    private static func companionUnattendedReadOnly() async throws {
+        let require = NativeTaskFixture.require
+        let permissive = Dictionary(uniqueKeysWithValues: NativeActionClass.allCases.map { ($0, NativeRuleChoice.act) })
+        let schedule = "schedule-1"
+        let allows = [NativeRuleRecord(action: .networkSends, effect: .allow, statement: "Always allow sending"),
+                      NativeRuleRecord(scope: .schedule(schedule), action: .networkSends, effect: .allow, statement: "Allow sending for this schedule")]
+        let script: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion = { messages in
+            let results = NativeCompanionScriptedModel.toolResults(messages)
+            if results.isEmpty { return NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}") }
+            if results.count == 1 { return NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-2") }
+            return NativeCompanionScriptedModel.text("The garden has three beds.")
+        }
+        for (mode, scheduleID) in [("scheduled", schedule as String?), ("scheduled", nil), ("proactive", nil)] {
+            let harness = try NativeCompanionHarness(rules: permissive, script: script)
+            harness.rules.setRecords(allows)
+            let id = try harness.create(mode: mode, scheduleID: scheduleID)
+            let origin = try harness.ledger.origin(taskID: id)
+            try require(origin == NativeRunOrigin(mode: mode, scheduleID: scheduleID) && origin.unattended,
+                        "A \(mode) task is unattended and its record carries the schedule that started it")
+            let done = try await harness.runUntilSettled()
+            try require(done.state == .completed && harness.service.count("water_bed") == 0 && (try harness.effects(id)).isEmpty,
+                        "A \(mode) run can't write under act defaults, a broad allow and an allow for its schedule, and it finishes without waiting")
+            try require(harness.service.count("garden_status") == 1, "A \(mode) run carries on reading after a refused write")
+            try require(harness.model.allOffered.allSatisfy { $0 == ["garden_status"] }, "A \(mode) run is offered read tools only")
+            try require(NativeCompanionScriptedModel.toolResults(harness.model.allRequests.last ?? []).first?.contains("read-only") == true,
+                        "The refusal in a \(mode) run says the run is read-only")
+            let result = try harness.result(done)
+            let report = result["report"] as? String ?? ""
+            let effects = result["effects"] as? [[String: String]] ?? []
+            try require(report.hasPrefix("The garden has three beds.") && report.contains("Left undone") && report.contains("can only read")
+                            && effects.count == 1 && effects[0]["outcome"] == NativeReadOnlyRun.outcome && report.contains(effects[0]["title"] ?? "-"),
+                        "The report of a \(mode) run names the step it left undone and why")
+            let proposal = NativeEffectProposal(
+                id: UUID().uuidString.lowercased(), taskID: id, generation: done.generation, toolID: "garden", function: "water_bed",
+                argumentsJSON: "{}", target: nil, action: .networkSends, rulesRevision: harness.rules.revision,
+                grantsRevision: harness.grants.revision, conversationID: harness.thread.current,
+                expiresAtMilliseconds: NativeEffectProposal.expiry(from: harness.clock.now), idempotencyKey: "direct")
+            var refused = false
+            do { _ = try harness.ledger.propose(proposal) } catch NativeEffectLedgerError.readOnlyRun { refused = true }
+            try require(refused && (try harness.effects(id)).isEmpty, "The ledger refuses to record a change for a \(mode) task")
+            let base = harness.environment.authority(harness.thread.current, "")
+            let context = NativeCompanionWorker.authority(base, taskID: id, origin: origin).resolver.context
+            try require(context?.taskID == id && context?.scheduleID == scheduleID, "Decisions in a \(mode) run see the schedule that started it")
+        }
+        let insisting = try NativeCompanionHarness(rules: permissive) { messages in
+            NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
+        }
+        let insistingID = try insisting.create(mode: "scheduled", scheduleID: schedule)
+        let gaveUp = try await insisting.runUntilSettled(40)
+        let gaveUpReport = try insisting.result(gaveUp)["report"] as? String ?? ""
+        try require(gaveUp.state == .completed && insisting.service.count("water_bed") == 0 && (try insisting.effects(insistingID)).isEmpty,
+                    "A scheduled run that keeps asking to write finishes at its limit and never waits to be told to keep going")
+        try require(gaveUpReport.components(separatedBy: "Left undone").count == 2, "Its report names the undone step once")
+        for uncertain in [false, true] {
+            let legacy = try NativeCompanionHarness(rules: [.networkSends: .ask], withReconcile: true, script: script)
+            let legacyID = try legacy.create()
+            let waiting = try await legacy.runUntilSettled()
+            try require(waiting.state == .needsDecision, "The saved approval fixture waits first")
+            try await legacy.repository.database.write { db in
+                try db.execute(sql: "UPDATE native_engine_tasks SET payload = replace(payload, '\"mode\":\"manual\"', '\"mode\":\"scheduled\"') WHERE id = ?",
+                               arguments: [legacyID])
+                if uncertain { try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain' WHERE task_id = ?", arguments: [legacyID]) }
+            }
+            try require(try legacy.ledger.origin(taskID: legacyID).unattended, "The saved approval fixture now belongs to a scheduled task")
+            try legacy.reply(waiting, "approve")
+            let ended = try await legacy.runUntilSettled()
+            let outcomes = (try legacy.result(ended)["effects"] as? [[String: String]] ?? []).compactMap { $0["outcome"] }
+            try require(ended.state == .completed && legacy.service.count("water_bed") == 0 && legacy.service.count("reconcile") == 0,
+                        "An approval saved on a scheduled task is not carried out or checked against the service when it resumes")
+            try require(outcomes == [uncertain ? "unconfirmed" : NativeReadOnlyRun.outcome],
+                        uncertain ? "An interrupted earlier change stays marked as unconfirmed" : "A resumed approval on a scheduled task is left undone")
+        }
+        func reschedule(_ harness: NativeCompanionHarness, _ taskID: String, _ waiting: NativeTaskRecord) async throws {
+            try await harness.repository.database.write { db in
+                try db.execute(sql: "UPDATE native_engine_tasks SET payload = replace(payload, '\"mode\":\"manual\"', '\"mode\":\"scheduled\"') WHERE id = ?",
+                               arguments: [taskID])
+            }
+            guard let decisionID = waiting.decisionID() else { throw NativeTaskFixture.Failure.assertion("The saved question has an id") }
+            _ = try harness.store.respond(taskID, decisionID: decisionID, replyKey: UUID().uuidString, reply: try NativeTaskStore.canonical([String: Any]()))
+        }
+        let capped = try NativeCompanionHarness(rules: permissive) { messages in
+            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
+        }
+        let cappedID = try capped.create()
+        let atCap = try await capped.runUntilSettled(40)
+        try require(atCap.state == .needsDecision && (try capped.decision(atCap)["choices"] as? [String]) == ["continue", "finish"],
+                    "The saved limit fixture waits at the keep going question first")
+        try await reschedule(capped, cappedID, atCap)
+        try require(try await capped.runUntilSettled(40).state == .completed,
+                    "A limit question saved on a scheduled task finishes when it resumes without an answer")
+        let unsure = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
+        unsure.service.transportFailWrites = true
+        let unsureID = try unsure.create()
+        let checking = try await unsure.runUntilSettled()
+        try require(checking.state == .needsDecision && (try unsure.decision(checking)["choices"] as? [String])?.contains("it_happened") == true,
+                    "The saved check fixture waits at the did this happen question first")
+        try await reschedule(unsure, unsureID, checking)
+        let moved = try await unsure.runUntilSettled()
+        try require(moved.state == .completed && unsure.service.count("water_bed") == 1
+                        && (try unsure.result(moved)["effects"] as? [[String: String]] ?? []).contains { $0["outcome"] == "unconfirmed" },
+                    "A did this happen question saved on a scheduled task resumes without asking again and stays unconfirmed")
+        let attended = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
+        let id = try attended.create()
+        let done = try await attended.runUntilSettled()
+        let origin = try attended.ledger.origin(taskID: id)
+        try require(done.state == .completed && attended.service.count("water_bed") == 1 && (try attended.effects(id)).map(\.state) == [.completed],
+                    "Work the person started still writes under an act rule")
+        try require(origin == .attended && !(try attended.result(done)["report"] as? String ?? "").contains("Left undone"),
+                    "Work the person started carries no schedule and reports nothing left undone")
+        let base = attended.environment.authority(attended.thread.current, "")
+        try require(NativeCompanionWorker.authority(base, taskID: id, origin: origin).resolver.context?.scheduleID == nil,
+                    "Decisions in work the person started see no schedule")
+        let asking = try NativeCompanionHarness(rules: [.networkSends: .ask], script: script)
+        _ = try asking.create()
+        try require(try await asking.runUntilSettled().state == .needsDecision && asking.service.count("water_bed") == 0,
+                    "Work the person started still asks under an ask rule")
+        var mismatched = false
+        do { _ = try NativeCompanionTaskPayload(assignment: "Water", mode: "manual", scheduleID: schedule) } catch { mismatched = true }
+        try require(mismatched, "A schedule id is only accepted on scheduled work")
+        for worker in ["research", "document"] {
+            let ledger = attended.ledger
+            func task(_ scheduleID: String?) throws -> String {
+                let request = try NativeResearchTaskRequest(objective: "Look into the fictional moon", deliverables: ["A summary"],
+                                                            workerType: worker, scheduleID: scheduleID)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                return try attended.store.create(workerType: worker, payload: try NativeTaskStore.canonical(try encoder.encode(NativeResearchTaskPayload(request: request))),
+                                                 idempotencyKey: UUID().uuidString).id
+            }
+            func proposal(_ taskID: String) -> NativeEffectProposal {
+                NativeEffectProposal(id: UUID().uuidString.lowercased(), taskID: taskID, generation: 1, toolID: "garden", function: "water_bed",
+                                     argumentsJSON: "{}", target: nil, action: .networkSends, rulesRevision: attended.rules.revision,
+                                     grantsRevision: attended.grants.revision, conversationID: attended.thread.current,
+                                     expiresAtMilliseconds: NativeEffectProposal.expiry(from: attended.clock.now), idempotencyKey: taskID)
+            }
+            let scheduled = try task(schedule)
+            var refused = false
+            do { _ = try ledger.propose(proposal(scheduled)) } catch NativeEffectLedgerError.readOnlyRun { refused = true }
+            try require(refused && (try ledger.origin(taskID: scheduled)).scheduleID == schedule,
+                        "A scheduled \(worker) task carries its schedule and the ledger refuses any change for it")
+            let manual = try task(nil)
+            try require(try ledger.propose(proposal(manual)).state == .proposed && (try ledger.origin(taskID: manual)) == .attended,
+                        "A \(worker) task the person started carries no schedule and is not held to read-only")
+        }
     }
 
     private static func companionOneUseGrant() async throws {
