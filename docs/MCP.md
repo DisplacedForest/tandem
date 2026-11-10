@@ -84,4 +84,4 @@ Local stdio servers, a remote registry fetch, plugin packages and publisher veri
 
 Run `mise run native-mcp-test` for schema, shared-authority and synthetic HTTP SDK tests, and `mise run check` for the repository regressions. The HTTP fixture binds only to loopback and makes no paid model calls. Synthetic test results do not establish live-service compatibility. See [SDK evaluation](MCP_SDK.md) for the exact dependency pin and transport boundaries.
 
-Consequential MCP calls remain unavailable. An isolated prepared-invocation fixture exercises durable per-action decisions through the existing TaskStore, with exact action bindings and no replay after uncertain dispatch. It does not register a production action tool, accept model-authored approval or migrate an existing database.
+Consequential MCP calls remain unavailable.

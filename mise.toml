@@ -55,7 +55,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-prepared-invocation-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
+depends = ["lint", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
 
 [tasks.native-preferences-test]
 depends = ["mac-build"]
@@ -143,9 +143,6 @@ run = "sh apps/vera-mac/scripts/test-native-entry.sh"
 depends = ["mac-build", "pi-prototype-deps"]
 dir = "apps/vera-mac"
 run = "sh scripts/test-native-mcp.sh"
-
-[tasks.native-prepared-invocation-test]
-run = "python3 apps/vera-mac/Tests/PreparedInvocation/run.py"
 
 [tasks.native-document-test]
 depends = ["mac-build"]
