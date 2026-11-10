@@ -436,6 +436,34 @@ extension SelfTest {
             let context = NativeCompanionWorker.authority(base, taskID: id, origin: origin).resolver.context
             try require(context?.taskID == id && context?.scheduleID == scheduleID, "Decisions in a \(mode) run see the schedule that started it")
         }
+        let insisting = try NativeCompanionHarness(rules: permissive) { messages in
+            NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
+        }
+        let insistingID = try insisting.create(mode: "scheduled", scheduleID: schedule)
+        let gaveUp = try await insisting.runUntilSettled(40)
+        let gaveUpReport = try insisting.result(gaveUp)["report"] as? String ?? ""
+        try require(gaveUp.state == .completed && insisting.service.count("water_bed") == 0 && (try insisting.effects(insistingID)).isEmpty,
+                    "A scheduled run that keeps asking to write finishes at its limit and never waits to be told to keep going")
+        try require(gaveUpReport.components(separatedBy: "Left undone").count == 2, "Its report names the undone step once")
+        for uncertain in [false, true] {
+            let legacy = try NativeCompanionHarness(rules: [.networkSends: .ask], withReconcile: true, script: script)
+            let legacyID = try legacy.create()
+            let waiting = try await legacy.runUntilSettled()
+            try require(waiting.state == .needsDecision, "The saved approval fixture waits first")
+            try await legacy.repository.database.write { db in
+                try db.execute(sql: "UPDATE native_engine_tasks SET payload = replace(payload, '\"mode\":\"manual\"', '\"mode\":\"scheduled\"') WHERE id = ?",
+                               arguments: [legacyID])
+                if uncertain { try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain' WHERE task_id = ?", arguments: [legacyID]) }
+            }
+            try require(try legacy.ledger.origin(taskID: legacyID).unattended, "The saved approval fixture now belongs to a scheduled task")
+            try legacy.reply(waiting, "approve")
+            let ended = try await legacy.runUntilSettled()
+            let outcomes = (try legacy.result(ended)["effects"] as? [[String: String]] ?? []).compactMap { $0["outcome"] }
+            try require(ended.state == .completed && legacy.service.count("water_bed") == 0 && legacy.service.count("reconcile") == 0,
+                        "An approval saved on a scheduled task is not carried out or checked against the service when it resumes")
+            try require(outcomes == [uncertain ? "unconfirmed" : NativeReadOnlyRun.outcome],
+                        uncertain ? "An interrupted earlier change stays marked as unconfirmed" : "A resumed approval on a scheduled task is left undone")
+        }
         let attended = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
         let id = try attended.create()
         let done = try await attended.runUntilSettled()

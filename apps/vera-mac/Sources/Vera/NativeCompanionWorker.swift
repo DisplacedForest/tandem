@@ -393,6 +393,10 @@ private struct NativeCompanionRun {
         NativeReadOnlyRun.refusal(run: origin, call: NativeRunCall(toolID: definition.id, function: definition.name, effect: definition.effect))
     }
 
+    func readOnlyRefusal(_ proposal: NativeEffectProposal) -> String? {
+        NativeReadOnlyRun.refusal(run: origin, call: NativeRunCall(toolID: proposal.toolID, function: proposal.function, effect: .write))
+    }
+
     var stopProbe: @Sendable () -> Bool {
         let tasks = environment.tasks
         let id = task.id
@@ -490,6 +494,7 @@ private struct NativeCompanionRun {
             return try await finish(&checkpoint)
         }
         if checkpoint.segmentRounds >= budget.rounds {
+            if origin.unattended { return try await finish(&checkpoint) }
             checkpoint.pending = NativeCompanionPending(kind: "cap")
             return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
                                               ["continue", "finish"])
@@ -586,7 +591,7 @@ private struct NativeCompanionRun {
         let budget = environment.budget
         for call in checkpoint.outstandingCalls {
             if checkpoint.segmentCalls >= budget.calls || checkpoint.calls >= budget.taskCalls {
-                if checkpoint.calls >= budget.taskCalls {
+                if checkpoint.calls >= budget.taskCalls || origin.unattended {
                     for remaining in checkpoint.outstandingCalls {
                         checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: this assignment reached its action limit."))
                     }
@@ -780,6 +785,11 @@ private struct NativeCompanionRun {
             checkpoint.answer(call, NativeCompanionWorker.message("This did not happen. Propose it again only if it is still needed; it will need the usual approval."))
             return nil
         }
+        if readOnlyRefusal(record.proposal) != nil {
+            checkpoint.note(title, "unconfirmed")
+            checkpoint.answer(call, NativeCompanionWorker.message("An earlier attempt at this may have changed something. It was not checked or tried again because this run is read-only. Say so in your reply."))
+            return nil
+        }
         if let definition, let hook = definition.reconcile {
             let arguments = (try? definition.validatedArguments(call.arguments)) ?? [:]
             let observation = (try? await NativeCompanionWorker.withDeadline(environment.defaultToolSeconds) {
@@ -868,7 +878,7 @@ private struct NativeCompanionRun {
             case .declined, .proposed, .expired:
                 break
             }
-            if let refusal = definition(named: call.name).flatMap(readOnlyRefusal) ?? (origin.unattended ? NativeReadOnlyRun.reason : nil) {
+            if let refusal = readOnlyRefusal(record.proposal) {
                 checkpoint.note(title, NativeReadOnlyRun.outcome)
                 checkpoint.answer(call, NativeCompanionWorker.message(refusal))
                 return nil
