@@ -39,6 +39,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static let outputPreview = 4
 
     var name: String
+    var mention: String { name == CompanionSubject(nil).leading ? CompanionSubject(nil).inline : name }
     var goal: String
     var services: String
     var rules: String

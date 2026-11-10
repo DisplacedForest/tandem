@@ -511,8 +511,13 @@ extension SelfTest {
         let nameConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { nameDisk.contents },
                                      nativeMCP: NativeMCPManager(servers: []),
                                      writeConfiguration: { nameDisk.contents = $0; nameDisk.writes += 1 })
-        let nameChat = ChatStore()
+        let nameRepository = try LocalChatRepository(inMemory: true)
+        let nameChat = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nameRepository)
+        nameChat.ensureVeraThread()
         nameChat.followSavedCompanionName(of: nameConfig)
+        func savedTitle(_ chat: ChatStore, _ repository: LocalChatRepository) throws -> String? {
+            try repository.listConversations().first { $0.id == chat.veraThreadID }?.title
+        }
         func screenIsClean(_ expectedSubject: String) throws {
             let strings = RulesCopy.screenStrings(name: nameChat.companionDisplayName)
             try require(strings.allSatisfy { !$0.contains("Ver" + "a") && !$0.contains("Tandem") }, "The rules screen carries no default name")
@@ -521,7 +526,10 @@ extension SelfTest {
                         "The avatar label follows the saved name")
         }
         func identityMatchesMain() throws {
-            try require(nameChat.assistantName == nameConfig.assistantName, "The effective identity is the resolved name: \(nameChat.assistantName)")
+            let supplied = nameConfig.suppliedAssistantName
+            try require(nameChat.companionName == supplied && nameChat.nativeWorkerIdentity.current.assistantName == supplied
+                            && (try savedTitle(nameChat, nameRepository)) == (supplied ?? "Your companion"),
+                        "The shown name, the worker identity and the thread title all follow the supplied name: \(String(describing: nameChat.companionName))")
         }
         try require(nameChat.companionDisplayName == nil && !nameChat.companionHasSavedName, "A fresh store has no saved name")
         try screenIsClean("your companion")
@@ -531,14 +539,15 @@ extension SelfTest {
         try require(nameChat.companionDisplayName == "Ada", "Saving settings with no model configured still updates the shown name")
         try require(nameConfig.nativeResolved == nil, "No model is configured in this fixture")
         try screenIsClean("Ada")
-        nameChat.adoptAssistantName(nameConfig.assistantName)
         try identityMatchesMain()
         nameConfig["assistant_name"] = ""
         try nameConfig.save()
         try require(nameChat.companionDisplayName == nil, "Clearing the name and saving returns to unnamed")
         try screenIsClean("your companion")
-        nameChat.adoptAssistantName(nameConfig.assistantName)
-        try require(nameChat.assistantName == ConfigStore.defaultAssistantName, "Identity still falls back to the built-in default")
+        try identityMatchesMain()
+        try require(nameChat.companionName == nil && nameChat.companion.inline == "your companion" && nameChat.companion.leading == "Your companion"
+                        && nameChat.companion.menuBarTitle == "Tandem" && nameChat.nativeWorkerIdentity.current.assistantName == nil,
+                    "With no name there is no built-in one: the interface says your companion and the worker identity is empty")
         let nameFake = CompanionAppearanceFixtureStore()
         var renamed = CompanionAppearanceDraft(name: "", appearance: nameFake.load())
         renamed.name = "Wren"
@@ -560,18 +569,37 @@ extension SelfTest {
 
         setenv("VERA_ASSISTANT_NAME", "Orion", 1)
         defer { unsetenv("VERA_ASSISTANT_NAME") }
-        let overridden = ChatStore()
-        overridden.adoptAssistantName(nameConfig.assistantName)
+        let overriddenRepository = try LocalChatRepository(inMemory: true)
+        let overridden = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: overriddenRepository)
+        overridden.ensureVeraThread()
         overridden.followSavedCompanionName(of: nameConfig)
-        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "A name from the environment is shown and is the identity")
+        try require(try savedTitle(overridden, overriddenRepository) == "Orion", "A name from the environment titles the saved thread")
+        var pickerRename = CompanionAppearanceDraft(name: "Orion", appearance: nameFake.load())
+        pickerRename.name = "Fern"
+        try pickerRename.commit(config: nameConfig, store: nameFake, chat: overridden)
+        try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion"
+                        && (try savedTitle(overridden, overriddenRepository)) == "Orion",
+                    "Renaming from Appearance while the environment supplies the name leaves the shown name, the worker identity and the saved title on the environment name")
+        let unnamedDraft = CompanionAppearanceDraft(name: "", appearance: nameFake.load())
+        try require(!unnamedDraft.nameChanged && unnamedDraft.subject.inline == "your companion" && unnamedDraft.subject.leading == "Your companion"
+                        && unnamedDraft.subject.name == nil,
+                    "The Appearance sheet for an unnamed companion shows the unnamed wording, never a blank")
+        try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion", "A name from the environment is shown and is the identity")
         try nameConfig.save()
-        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "Saving settings leaves an environment name alone")
+        try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion", "Saving settings leaves an environment name alone")
         nameConfig["assistant_name"] = "Ada"
         try nameConfig.save()
-        try require(overridden.companionDisplayName == "Orion" && overridden.assistantName == "Orion", "The environment name still wins after a file name is saved")
+        try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion", "The environment name still wins after a file name is saved")
         unsetenv("VERA_ASSISTANT_NAME")
         try nameConfig.save()
-        try require(overridden.companionDisplayName == "Ada", "Without the environment name the saved file name shows")
+        try require(overridden.companionName == "Ada" && overridden.nativeWorkerIdentity.current.assistantName == "Ada", "Without the environment name the saved file name shows and is the identity")
+        nameConfig["assistant_name"] = ""
+        try nameConfig.save()
+        try require(overridden.companionName == nil && overridden.nativeWorkerIdentity.current.assistantName == nil, "With neither a file name nor an environment name the companion is unnamed")
+        try require(try savedTitle(overridden, overriddenRepository) == "Your companion", "An unnamed companion's saved thread is titled Your companion")
+        setenv("VERA_ASSISTANT_NAME", "Orion", 1)
+        try nameConfig.save()
+        try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion", "An environment name alone, with none in the file, is the identity after a save")
         print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

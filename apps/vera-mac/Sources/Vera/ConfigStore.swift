@@ -874,17 +874,11 @@ final class ConfigStore: ObservableObject {
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
-    static let defaultAssistantName = "Vera"
-
     var suppliedAssistantName: String? {
         let env = ProcessInfo.processInfo.environment["VERA_ASSISTANT_NAME"]
         let v = (env?.isEmpty == false ? env : nil) ?? (raw["assistant_name"] as? String)
         let trimmed = v?.trimmingCharacters(in: .whitespaces) ?? ""
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    var assistantName: String {
-        suppliedAssistantName ?? Self.defaultAssistantName
     }
 }
 

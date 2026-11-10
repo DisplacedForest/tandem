@@ -46,7 +46,7 @@ enum CardShot {
         case "card-task", "card-task-command":
             size = CGSize(width: 1180, height: 1040)
             seedTask(command: variant == "card-task-command", store: store)
-            let model = CompanionOverviewModel.build(name: store.assistantName, profile: store.dotProfile,
+            let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
@@ -152,7 +152,7 @@ enum CardShot {
                                                 request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", ask: ask, conversationID: conversationID)
         case "card-schedule", "card-schedule-companion":
             ask = "Every weekday at 7, check the frost forecast for the greenhouse."
-            let schedule = NativeScheduleTools.definition(assistantName: { "" }, save: { _ in throw NativeToolError.unavailable })
+            let schedule = NativeScheduleTools.definition(companionThread: { CompanionSubject(nil).thread }, save: { _ in throw NativeToolError.unavailable })
             (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
                                                 request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
                                                 ask: ask, conversationID: conversationID)

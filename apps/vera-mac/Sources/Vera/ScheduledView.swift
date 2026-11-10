@@ -66,7 +66,7 @@ struct ScheduledView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Scheduled").font(.system(size: 22, weight: .semibold))
-                Text("Work \(store.assistantName) runs on a schedule while Tandem is open or in the menu bar.")
+                Text("Work \(store.companion.inline) runs on a schedule while Tandem is open or in the menu bar.")
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -104,8 +104,8 @@ struct ScheduledView: View {
             VStack(spacing: 8) {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
-                                ownerLabel: schedule.owner == .dot ? store.assistantName : "its own chat",
-                                pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused, assistantName: store.assistantName),
+                                ownerLabel: schedule.owner == .dot ? store.companion.inline : "its own chat",
+                                pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused, assistantName: store.companion.inline),
                                 openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome)
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
@@ -192,7 +192,7 @@ private struct ScheduleDetail: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(schedule.title).font(.system(size: 17, weight: .semibold))
-                    Text("\(schedule.workTitle). \(schedule.cadenceSummary). Results go to \(schedule.owner == .dot ? store.assistantName : "its own chat").")
+                    Text("\(schedule.workTitle). \(schedule.cadenceSummary). Results go to \(schedule.owner == .dot ? store.companion.inline : "its own chat").")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Text(schedule.instruction).font(.system(size: 13)).textSelection(.enabled).padding(.top, 4)
                 }
@@ -228,7 +228,7 @@ private struct ScheduleControlButtons: View {
 
     var body: some View {
         ForEach(NativeScheduleControls.controls(for: schedule, assistantPaused: store.isDotPaused), id: \.self) { control in
-            Button(NativeScheduleControls.title(control, assistantName: store.assistantName)) {
+            Button(NativeScheduleControls.title(control, assistantName: store.companion.inline)) {
                 switch control {
                 case .runNow: store.runScheduleNow(schedule.id)
                 case .pause: store.setSchedule(schedule.id, enabled: false)
@@ -378,7 +378,7 @@ struct ScheduleEditor: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
                 }
                 Picker("Results go to", selection: $draft.owner) {
-                    Text(store.assistantName).tag(NativeScheduleOwner.dot)
+                    Text(store.companion.leading).tag(NativeScheduleOwner.dot)
                     Text("Its own chat").tag(NativeScheduleOwner.conversation)
                 }
                 Picker("Repeat", selection: $repeatMode) {

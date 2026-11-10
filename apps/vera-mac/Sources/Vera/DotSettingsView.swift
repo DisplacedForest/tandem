@@ -16,7 +16,7 @@ struct DotSettingsView: View {
 
     private var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? store.assistantName : trimmed
+        return trimmed.isEmpty ? store.companion.leading : trimmed
     }
 
     var body: some View {
@@ -44,7 +44,7 @@ struct DotSettingsView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear(perform: load)
-        .confirmationDialog("Start over with \(store.assistantName)?", isPresented: $confirmingReset, titleVisibility: .visible) {
+        .confirmationDialog("Start over with \(store.companion.inline)?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
                 store.resetDot()
                 dismiss()
@@ -75,7 +75,7 @@ struct DotSettingsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Start over")
-                    Text(DotProfileCopy.startOver(store.assistantName))
+                    Text(DotProfileCopy.startOver(store.companion.inline))
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

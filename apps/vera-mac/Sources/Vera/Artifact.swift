@@ -83,7 +83,7 @@ struct Artifact: Identifiable, Hashable, Codable {
     }
 
     static func mock() -> Artifact {
-        Artifact(id: "demo-svg", title: "Vera mark sketch", type: .svg, language: "",
+        Artifact(id: "demo-svg", title: "Logo mark sketch", type: .svg, language: "",
                  content: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"120\"><circle cx=\"60\" cy=\"60\" r=\"50\" fill=\"#E8923B\"/></svg>")
     }
 }
