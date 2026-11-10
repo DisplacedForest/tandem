@@ -19,9 +19,9 @@ extension ChatStore {
     @discardableResult
     func startCompanionAssignment(_ text: String) async -> String? {
         let assignment = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !assignment.isEmpty else { return "Describe what \(assistantName) should work on." }
+        guard !assignment.isEmpty else { return "Describe what \(companion.inline) should work on." }
         guard assignment.count <= Self.companionAssignmentLimit else { return "Keep the assignment under \(Self.companionAssignmentLimit) characters." }
-        guard !dotProfile.isPaused else { return "\(assistantName) is paused. Resume to give it work." }
+        guard !dotProfile.isPaused else { return "\(companion.leading) is paused. Resume to give it work." }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return "Background work isn't available right now."
         }
@@ -37,7 +37,7 @@ extension ChatStore {
             return error.localizedDescription
         }
         ensureVeraThread()
-        guard let conversationID = veraThreadID else { return "\(assistantName)'s conversation couldn't be opened." }
+        guard let conversationID = veraThreadID else { return "\(companion.leading)'s conversation couldn't be opened." }
         let user = Message(role: .user, text: assignment)
         let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
         do {
@@ -60,7 +60,7 @@ extension ChatStore {
             let reference = try await service.submit(origin: origin, request: request, profile: profile)
             reloadNativeTaskReferences()
             if reference.deliveryState == NativeTaskDeliveryState.rejected {
-                return reference.lastDeliveryError ?? "\(assistantName) couldn't start this work."
+                return reference.lastDeliveryError ?? "\(companion.leading) couldn't start this work."
             }
             return nil
         } catch {

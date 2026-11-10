@@ -154,11 +154,11 @@ extension SelfTest {
         var renaming = CompanionAppearanceDraft(name: "Juniper", appearance: fake.load())
         renaming.name = "Fern"
         try renaming.commit(config: pickerConfig, store: fake, chat: chat)
-        try require(chat.assistantName == "Fern", "A saved rename reaches the running chat identity")
+        try require(chat.companionName == "Fern", "A saved rename reaches the running chat identity")
         var untouchedChat = CompanionAppearanceDraft(name: "Fern", appearance: fake.load())
         untouchedChat.appearance = CompanionAppearance(shape: .mallow, color: .rose)
         try untouchedChat.commit(config: pickerConfig, store: fake, chat: chat)
-        try require(chat.assistantName == "Fern", "Saving only an appearance leaves the running name alone")
+        try require(chat.companionName == "Fern", "Saving only an appearance leaves the running name alone")
 
         let brokenDisk = CompanionAppearanceFixtureDisk()
         brokenDisk.contents = ["assistant_name": "Juniper"]
@@ -172,7 +172,7 @@ extension SelfTest {
         var threw = false
         do { try failing.commit(config: brokenConfig, store: brokenStore, chat: chat) } catch { threw = true }
         try require(threw, "A failed write surfaces as an error")
-        try require(brokenConfig["assistant_name"] == "Juniper" && brokenStore.load() == .default && chat.assistantName == "Fern",
+        try require(brokenConfig["assistant_name"] == "Juniper" && brokenStore.load() == .default && chat.companionName == "Fern",
                     "A failed save restores the previous name and appearance and leaves the running identity alone")
 
         for size in [CGFloat(20), 36, 120, 220] {

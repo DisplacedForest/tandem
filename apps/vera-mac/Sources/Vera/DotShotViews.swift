@@ -13,15 +13,15 @@ struct DotSheetShot: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(settings ? store.assistantName : "Set up \(store.assistantName)").font(.system(size: 17, weight: .semibold))
+            Text(settings ? store.companion.leading : "Set up \(store.companion.inline)").font(.system(size: 17, weight: .semibold))
             if !settings {
-                Text(DotProfileCopy.subtitle(store.assistantName))
+                Text(DotProfileCopy.subtitle(store.companion.inline))
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
             }
             VStack(alignment: .leading, spacing: 12) {
-                row("Name") { box(Text(store.assistantName).font(.system(size: 13)), height: nil) }
+                row("Name") { box(Text(store.companionName ?? "Name").font(.system(size: 13)).foregroundStyle(store.companionName == nil ? Theme.textSecondary : Theme.textPrimary), height: nil) }
                 row("Goal") { box(Text(goal).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true), height: settings ? 54 : 74) }
                 row("Connected services") {
                     VStack(alignment: .leading, spacing: 5) {
@@ -68,7 +68,7 @@ struct DotSheetShot: View {
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                     row("Start over") {
                         HStack(alignment: .top) {
-                            Text(DotProfileCopy.startOver(store.assistantName))
+                            Text(DotProfileCopy.startOver(store.companion.inline))
                                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 10)

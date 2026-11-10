@@ -15,13 +15,15 @@ final class CompanionPanelController: ObservableObject {
 
     private let store: ChatStore
     private let config: ConfigStore
+    private let presence: CompanionPresence
     private var panel: CompanionPanel?
     private var keyMonitor: Any?
     private var resignObserver: NSObjectProtocol?
 
-    init(store: ChatStore, config: ConfigStore) {
+    init(store: ChatStore, config: ConfigStore, presence: CompanionPresence? = nil) {
         self.store = store
         self.config = config
+        self.presence = presence ?? CompanionPresence(store: store)
     }
 
     func toggle() {
@@ -31,7 +33,7 @@ final class CompanionPanelController: ObservableObject {
     func show() {
         let panel = panel ?? makePanel()
         position(panel)
-        store.prepareCompanionThread()
+        store.prepareCompanionThread(askForName: false)
         store.markCompanionSeen()
         panel.makeKeyAndOrderFront(nil)
         isVisible = true
@@ -60,6 +62,7 @@ final class CompanionPanelController: ObservableObject {
         panel.hasShadow = true
         let root = CompanionPanelView()
             .modifier(CompanionAttentionWindow())
+            .modifier(CompanionEnvironment(store: store, config: config, presence: presence))
             .environmentObject(store)
             .environmentObject(config)
             .environmentObject(self)
@@ -134,9 +137,9 @@ final class CompanionCoordinator: ObservableObject {
     private let config: ConfigStore
     private var hotkey: CompanionHotkey?
 
-    init(store: ChatStore, config: ConfigStore) {
+    init(store: ChatStore, config: ConfigStore, presence: CompanionPresence? = nil) {
         self.config = config
-        self.panel = CompanionPanelController(store: store, config: config)
+        self.panel = CompanionPanelController(store: store, config: config, presence: presence)
     }
 
     func toggle() { panel.toggle() }
@@ -205,7 +208,7 @@ struct CompanionPanelView: View {
             Image(systemName: "sparkle")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.accent)
-            Text(store.assistantName)
+            Text(store.companion.leading)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             let unread = store.companionUnreadCount
@@ -242,7 +245,7 @@ struct CompanionPanelView: View {
     private var transcriptContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             if recent.isEmpty {
-                Text("Ask anything. It goes to the \(store.assistantName) thread.")
+                Text("Ask anything. It goes to \(store.companion.thread).")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -371,7 +374,7 @@ struct CompanionPanelView: View {
                     }
             }
             if store.companionDraft.isEmpty {
-                Text("Message \(store.assistantName)…")
+                Text("Message \(store.companion.inline)…")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 5).padding(.vertical, 8)

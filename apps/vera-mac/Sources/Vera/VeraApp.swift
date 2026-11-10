@@ -70,7 +70,7 @@ struct VeraApp: App {
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
             nativePersonaID: configInstance.nativeSettings.activePersonaID,
             nativeOwnerName: configInstance.ownerName,
-            nativeAssistantName: configInstance.assistantName,
+            nativeAssistantName: configInstance.suppliedAssistantName,
             nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
             nativeCapabilityOverrides: configInstance.nativeSettings.capabilityOverrides,
             visionBridgeConfig: configInstance.visionBridgeResolved,
@@ -85,7 +85,9 @@ struct VeraApp: App {
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
         storeInstance.followSavedCompanionName(of: configInstance)
+        storeInstance.asksForCompanionName = fixture == nil
         storeInstance.asksForSystemAccess = fixture == nil
+        storeInstance.companionNameResolver = { configInstance.suppliedAssistantName }
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name
@@ -106,9 +108,10 @@ struct VeraApp: App {
         }
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
-        _companion = StateObject(wrappedValue: CompanionCoordinator(store: storeInstance, config: configInstance))
+        let companionPresenceInstance = CompanionPresence(store: storeInstance)
+        _companion = StateObject(wrappedValue: CompanionCoordinator(store: storeInstance, config: configInstance, presence: companionPresenceInstance))
         _presence = StateObject(wrappedValue: TandemLogoPresence(store: storeInstance))
-        _companionPresence = StateObject(wrappedValue: CompanionPresence(store: storeInstance))
+        _companionPresence = StateObject(wrappedValue: companionPresenceInstance)
     }
 
     var body: some Scene {
@@ -129,6 +132,10 @@ struct VeraApp: App {
                 .task { if NativePiNativeContext.candidate == nil { presence.start(); companionPresence.start() } }
                 .task { if NativePiNativeContext.candidate == nil { await engine.reconcileOnLaunch() } }
                 .task { if NativePiNativeContext.candidate == nil { companion.start() } }
+                .task { if NativePiNativeContext.candidate == nil { store.askForCompanionNameAtLaunch(settingUp: config.showOnboarding) } }
+                .sheet(item: $store.companionNameAsk) { _ in
+                    CompanionNamePrompt().environmentObject(store).environmentObject(config)
+                }
                 .task { if NativePiNativeContext.candidate == nil { store.requestSystemAccess() } }
         }
         .defaultSize(width: 1180, height: 760)
@@ -149,7 +156,7 @@ struct VeraApp: App {
                 .environmentObject(companion)
         } label: {
             Label {
-                Text(store.companionUnreadCount > 0 ? config.assistantName + " •" : config.assistantName)
+                Text(store.companionUnreadCount > 0 ? store.companion.menuBarTitle + " •" : store.companion.menuBarTitle)
             } icon: {
                 Image(nsImage: TandemTemplate.image(pointSize: 18))
             }
