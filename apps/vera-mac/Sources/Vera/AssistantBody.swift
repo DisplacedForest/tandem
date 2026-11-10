@@ -90,7 +90,7 @@ struct AssistantBody: View {
                         .accessibilityLabel("Open " + ArtifactChip.displayTitle(art))
                 }
                 if !sources.isEmpty {
-                    SourcesRow(sources: sources)
+                    SourcesRow(sources: sources, numbered: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

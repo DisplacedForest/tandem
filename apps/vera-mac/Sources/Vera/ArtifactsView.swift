@@ -661,7 +661,7 @@ private struct ArtifactContent: View {
             VStack(alignment: .leading, spacing: 18) {
                 CitedText(resolved: resolved, style: .document)
                 if !resolved.sources.isEmpty {
-                    SourcesRow(sources: resolved.sources)
+                    SourcesRow(sources: resolved.sources, numbered: false)
                 }
             }
             .frame(maxWidth: 720, alignment: .leading)

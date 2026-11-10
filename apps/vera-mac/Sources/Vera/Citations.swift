@@ -36,7 +36,8 @@ func extractRefs(_ text: String) -> (String, [Int]) {
 }
 
 func sourceIsLinked(_ url: String) -> Bool {
-    url.hasPrefix("http://") || url.hasPrefix("https://")
+    let scheme = url.prefix(8).lowercased()
+    return scheme.hasPrefix("http://") || scheme.hasPrefix("https://")
 }
 
 struct CitationChip: View {
@@ -103,6 +104,7 @@ struct SourcesRow: View {
     @Environment(\.sourcesListExpanded) private var startsExpanded
     let sources: [PulseSource]
     var initiallyExpanded: Bool? = nil
+    var numbered = true
     @State private var toggled = false
 
     private var expanded: Bool { (initiallyExpanded ?? startsExpanded) != toggled }
@@ -133,7 +135,7 @@ struct SourcesRow: View {
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(sources) { SourceListRow(source: $0) }
+                    ForEach(sources) { SourceListRow(source: $0, numbered: numbered) }
                 }
                 .padding(.bottom, 12)
             }
@@ -144,6 +146,7 @@ struct SourcesRow: View {
 private struct SourceListRow: View {
     @Environment(\.inspectMemorySource) private var inspectMemory
     let source: PulseSource
+    let numbered: Bool
 
     private var linked: Bool { sourceIsLinked(source.url) }
 
@@ -171,6 +174,10 @@ private struct SourceListRow: View {
 
     private var content: some View {
         HStack(alignment: .top, spacing: 8) {
+            if numbered {
+                Text("\(source.n)").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary).frame(width: 18, alignment: .trailing)
+            }
             if linked { Favicon(urlString: source.url) }
             VStack(alignment: .leading, spacing: 1) {
                 Text(name)

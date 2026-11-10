@@ -194,6 +194,46 @@ enum CitationResolverSelftest {
                   == "Rain [1] and wind [2] and [3].\n\n## Sources\n\n1. Cold frames guide (https://example.org/cold)\n2. https://example.com/glazing\n",
                   "Export appends titled and untitled entries and skips a source with no web address")
 
+        try expect("Read [1]before proceeding.", becomes: "Read before proceeding.", refs: [1])
+        try expect("Read [1][2]before proceeding.", becomes: "Read before proceeding.", refs: [1, 2])
+        try expect("Read [1]`code` next.", becomes: "Read `code` next.", refs: [1])
+        try expect("Read [1][more](https://example.org/more).", becomes: "Read [more](https://example.org/more).", refs: [1])
+        try expect("Read [1]", becomes: "Read", refs: [1])
+
+        let quotedFence = "> ~~~\n> values[1]\n> ~~~\n\nAfter [1]."
+        let quotedBlocks = CitationResolver.blocks(text: quotedFence, sources: all)
+        try check(quotedBlocks.first == CitationBlock(text: "> ~~~\n> values[1]\n> ~~~", refs: [], isCode: false),
+                  "A fence inside a quote is untouched, got \(quotedBlocks)")
+        try check(quotedBlocks.last == CitationBlock(text: "After.", refs: [1], isCode: false), "Prose after a quoted fence is cited")
+        let quotedOpen = CitationResolver.blocks(text: "> ```\n> a[1]\n\nLater [2].", sources: all)
+        try check(quotedOpen.first?.text == "> ```\n> a[1]" && quotedOpen.last == CitationBlock(text: "Later.", refs: [2], isCode: false),
+                  "An unclosed quoted fence ends with its quote, got \(quotedOpen)")
+        try expect("> Quoted prose [1].", becomes: "> Quoted prose.", refs: [1])
+
+        let flood = String(repeating: "[", count: 100_000) + " tail [1]."
+        let started = Date()
+        let flooded = CitationResolver.scan(flood, known: [1])
+        try check(flooded.refs == [1] && flooded.text.hasSuffix(" tail."), "A flood of open brackets still resolves what follows")
+        let parens = CitationResolver.scan(String(repeating: "[x](", count: 30_000), known: [1])
+        try check(parens.refs.isEmpty, "A flood of open links cites nothing")
+        let ticks = CitationResolver.scan((1...300).map { String(repeating: "`", count: $0) }.joined(separator: " "), known: [1])
+        try check(ticks.refs.isEmpty, "A flood of code marks cites nothing")
+        try check(Date().timeIntervalSince(started) < 5, "Hostile bracket floods are scanned in linear time")
+
+        let shouted = CitationResolver.resolve(text: "Rain [1].\n\n## Sources\n1. HTTPS://example.org/rain", sources: [])
+        try check(shouted.recovered && sourceIsLinked(shouted.sources[0].url)
+                  && NativeResearchReportSafety.destination(shouted.sources[0].url) != nil,
+                  "A recovered address with a capital scheme is still a link")
+        try check(!sourceIsLinked("knowledge") && !sourceIsLinked("javascript:alert(1)") && !sourceIsLinked("HTTPS:example"),
+                  "Only web addresses count as links")
+
+        let proseHeading = "## Sources\nWe interviewed several growers.\n\n## Findings\nFrost is likely [1]."
+        try check(CitationResolver.exportText(proseHeading, sources: [cold])
+                  == proseHeading + "\n\n## Sources\n\n1. Cold frames guide (https://example.org/cold)\n",
+                  "A Sources heading over prose is not a written list, so export adds one")
+        let bulleted = "Frost [1].\n\n## Sources\n- Cold frames guide"
+        try check(CitationResolver.exportText(bulleted, sources: [cold]) == bulleted, "A bulleted written list is left as it is")
+
         print("  citation resolver OK")
     }
 }

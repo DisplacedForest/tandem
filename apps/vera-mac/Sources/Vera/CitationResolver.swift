@@ -22,7 +22,10 @@ enum CitationResolver {
     private struct Fence {
         let mark: Character
         let length: Int
+        var quoted = false
     }
+
+    private static let spanLimit = 2000
 
     private struct Segment {
         var lines: [String]
@@ -103,7 +106,7 @@ enum CitationResolver {
 
     static func exportText(_ text: String, sources: [PulseSource]) -> String {
         guard !sources.isEmpty else { return text }
-        guard headingIndices(text.components(separatedBy: "\n")).isEmpty else { return text }
+        guard !hasWrittenList(text.components(separatedBy: "\n")) else { return text }
         guard !scan(text, known: Set(sources.map(\.n))).refs.isEmpty else { return text }
         let entries = sources.sorted { $0.n < $1.n }.compactMap { source -> String? in
             let url = source.url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -176,48 +179,62 @@ enum CitationResolver {
         var refs = Set<Int>()
         var markers: [[Int]] = []
         var plainCloses = Set<Int>()
+        let brackets = bracketPairs(chars)
+        var deadTicks = Set<Int>()
+        var owed = false
+        func restore() {
+            if owed { out.append(" ") }
+            owed = false
+        }
         var i = 0
         while i < chars.count {
             let c = chars[i]
             if c == "\\" {
+                restore()
                 out.append(c)
                 if i + 1 < chars.count { out.append(chars[i + 1]) }
                 i += 2
                 continue
             }
             if c == "`" {
+                restore()
                 let run = runLength(chars, at: i)
-                if let close = closingBackticks(chars, from: i + run, length: run) {
+                if !deadTicks.contains(run), let close = closingBackticks(chars, from: i + run, length: run) {
                     out.append(contentsOf: chars[i..<(close + run)])
                     i = close + run
                 } else {
+                    deadTicks.insert(run)
                     out.append(contentsOf: chars[i..<(i + run)])
                     i += run
                 }
                 continue
             }
             if c == "!", i + 1 < chars.count, chars[i + 1] == "[",
-               let close = closingBracket(chars, from: i + 1),
+               let close = brackets[i + 1],
                close + 1 < chars.count, chars[close + 1] == "(",
                let paren = closingParen(chars, from: close + 1) {
+                restore()
                 out.append(contentsOf: chars[i...paren])
                 i = paren + 1
                 continue
             }
-            if c == "[", let close = closingBracket(chars, from: i) {
+            if c == "[", let close = brackets[i] {
                 if close + 1 < chars.count, chars[close + 1] == "(", let paren = closingParen(chars, from: close + 1) {
+                    restore()
                     out.append(contentsOf: chars[i...paren])
                     i = paren + 1
                     continue
                 }
                 let inner = String(chars[(i + 1)..<close])
                 if inner.hasPrefix("^") {
+                    restore()
                     out.append(contentsOf: chars[i...close])
                     i = close + 1
                     continue
                 }
                 guard let numbers = markerNumbers(inner) else {
                     plainCloses.insert(close)
+                    restore()
                     out.append(c)
                     i += 1
                     continue
@@ -225,20 +242,25 @@ enum CitationResolver {
                 let definition = close + 1 < chars.count && chars[close + 1] == ":" && atLineStart(chars, i)
                 let reference = i > 0 && plainCloses.contains(i - 1)
                 if definition || reference {
+                    restore()
                     out.append(contentsOf: chars[i...close])
                     i = close + 1
                     continue
                 }
                 markers.append(numbers)
                 if numbers.allSatisfy(known.contains) {
+                    let before = out.count
                     trimHorizontal(&out)
+                    if out.count < before { owed = true }
                     refs.formUnion(numbers)
                 } else {
+                    restore()
                     out.append(contentsOf: chars[i...close])
                 }
                 i = close + 1
                 continue
             }
+            if c.isLetter || c.isNumber { restore() } else { owed = false }
             out.append(c)
             i += 1
         }
@@ -265,30 +287,33 @@ enum CitationResolver {
         return nil
     }
 
-    private static func closingBracket(_ chars: [Character], from start: Int) -> Int? {
-        var depth = 0
-        var i = start
+    private static func bracketPairs(_ chars: [Character]) -> [Int: Int] {
+        var pairs: [Int: Int] = [:]
+        var open: [Int] = []
+        var i = 0
         while i < chars.count {
             let c = chars[i]
             if c == "\\" {
                 i += 2
                 continue
             }
-            if c == "[" { depth += 1 }
-            if c == "]" {
-                depth -= 1
-                if depth == 0 { return i }
+            if c == "[" {
+                open.append(i)
+            } else if c == "]", let start = open.popLast() {
+                if i - start <= spanLimit { pairs[start] = i }
+            } else if c.isNewline, i + 1 < chars.count, chars[i + 1].isNewline {
+                open.removeAll(keepingCapacity: true)
             }
-            if c.isNewline, i + 1 < chars.count, chars[i + 1].isNewline { return nil }
             i += 1
         }
-        return nil
+        return pairs
     }
 
     private static func closingParen(_ chars: [Character], from start: Int) -> Int? {
         var depth = 0
         var i = start
-        while i < chars.count {
+        let limit = min(chars.count, start + spanLimit)
+        while i < limit {
             let c = chars[i]
             if c == "\\" {
                 i += 2
@@ -336,7 +361,7 @@ enum CitationResolver {
         var index = 0
         while index < lines.count {
             let line = lines[index]
-            if listOpen, indentation(line) > 0, let fence = fenceOpening(line, maxIndent: Int.max) {
+            if let fence = fenceOpening(line, maxIndent: Int.max), fence.quoted || (listOpen && indentation(line) > 0) {
                 let end = fenceEnd(lines, from: index, fence: fence)
                 current.append(contentsOf: lines[index...end])
                 index = end + 1
@@ -409,17 +434,34 @@ enum CitationResolver {
 
     private static func fenceOpening(_ line: String, maxIndent: Int) -> Fence? {
         let indent = line.prefix { $0 == " " || $0 == "\t" }
-        guard indent.count <= maxIndent else { return nil }
-        let rest = line.dropFirst(indent.count)
+        let unquoted = withoutQuoteMarks(line)
+        let quoted = unquoted.count < line.count - indent.count
+        guard quoted || indent.count <= maxIndent else { return nil }
+        let rest = quoted ? unquoted : line.dropFirst(indent.count)
         guard let mark = rest.first, mark == "`" || mark == "~" else { return nil }
         let length = rest.prefix { $0 == mark }.count
         guard length >= 3 else { return nil }
         if mark == "`", rest.dropFirst(length).contains("`") { return nil }
-        return Fence(mark: mark, length: length)
+        return Fence(mark: mark, length: length, quoted: quoted)
+    }
+
+    private static func withoutQuoteMarks(_ line: String) -> Substring {
+        var rest = line.drop { $0 == " " || $0 == "\t" }
+        while rest.first == ">" {
+            rest = rest.dropFirst().drop { $0 == " " || $0 == "\t" }
+        }
+        return rest
+    }
+
+    private static func hasWrittenList(_ lines: [String]) -> Bool {
+        headingIndices(lines).contains { heading in
+            guard let next = nextNonBlank(lines, after: heading) else { return false }
+            return entryPrefix(lines[next]) != nil || bulletRest(lines[next]) != nil
+        }
     }
 
     private static func fenceCloses(_ line: String, _ fence: Fence) -> Bool {
-        let body = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = (fence.quoted ? String(withoutQuoteMarks(line)) : line).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = body.first, first == fence.mark else { return false }
         return body.allSatisfy { $0 == fence.mark } && body.count >= fence.length
     }
@@ -428,6 +470,7 @@ enum CitationResolver {
         var i = start + 1
         while i < lines.count {
             if fenceCloses(lines[i], fence) { return i }
+            if fence.quoted, lines[i].drop(while: { $0 == " " || $0 == "\t" }).first != ">" { return i - 1 }
             i += 1
         }
         return lines.count - 1
