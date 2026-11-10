@@ -20,7 +20,6 @@ enum CardShot {
         let store = ChatStore()
         let companion = named ? CompanionAppearance(shape: .fold, color: .periwinkle) : CompanionAppearance.default
         store.adoptAssistantName(named ? NativeDotShotFixture.name : "")
-        store.companionHasSavedName = named
         store.ensureVeraThread()
         let settings: [String: String] = named
             ? ["assistant_name": NativeDotShotFixture.name, ConfigStore.companionShapeKey: companion.shape.rawValue,
@@ -41,7 +40,7 @@ enum CardShot {
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
         case "card-rules-popover":
-            size = CGSize(width: 420, height: 500)
+            size = CGSize(width: 420, height: 760)
             let id = seedRules(store)
             content = AnyView(ConversationRulesEditor(conversationID: id).background(Theme.bg)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 20))
@@ -56,6 +55,7 @@ enum CardShot {
         let hosting = NSHostingView(rootView: content
             .environment(\.renderSafe, true)
             .environment(\.companionAppearance, companion)
+            .environment(\.companionName, named ? NativeDotShotFixture.name : nil)
             .environmentObject(store)
             .environmentObject(config)
             .frame(width: size.width, height: size.height)
@@ -143,7 +143,7 @@ enum CardShot {
             details += "\nApplies to \(covers)."
         }
         let decision: [String: Any] = [
-            "id": "card-decision", "prompt": "\(store.assistantName) wants to do this: \(toolTitle).",
+            "id": "card-decision", "prompt": "\(CompanionSentence.placeholder) wants to do this: \(toolTitle).",
             "choices": offered.map { NativeCardChoices.wire($0, subject: subject) }, "details": details,
         ]
         let title = command ? "Rebuild the greenhouse PDF" : "Book the workshop inspection"
@@ -187,7 +187,7 @@ enum CardShot {
             NativeScheduleShotFixture.populate(store)
             return
         }
-        let prompt = "\(store.assistantName) wants to do this: Send a price alert."
+        let prompt = "\(CompanionSentence.placeholder) wants to do this: Send a price alert."
         let remote = UUID().uuidString
         if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [

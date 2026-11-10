@@ -22,7 +22,7 @@ struct NativeTaskCardView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             if !card.milestone.isEmpty {
-                Text(card.milestone)
+                CompanionNamedText(template: card.milestone)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

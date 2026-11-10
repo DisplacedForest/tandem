@@ -715,7 +715,7 @@ struct MessageRow: View {
                             NativeToolConfirmationBar(
                                 request: pendingConfirmation,
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
-                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: store.assistantName),
+                                detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
                                 onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
                                 onChoice: { onToolDecision?($0) })
                         }
@@ -1009,7 +1009,7 @@ struct NativeToolConfirmationBar: View {
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.conversationBackground))
                     }
-                    Text(detail ?? "This runs only if you allow it.")
+                    CompanionNamedText(template: detail ?? "This runs only if you allow it.")
                         .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

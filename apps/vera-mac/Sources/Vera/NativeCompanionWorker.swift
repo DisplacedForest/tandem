@@ -718,7 +718,7 @@ private struct NativeCompanionRun {
             let subject = cardSubject(definition, arguments, action: action)
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
                                                         coverage: NativeCardChoices.signature(subject))
-            return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).",
+            return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSentence.placeholder) wants to do this: \(title).",
                                               approvalChoices(subject, authority: authority),
                                               extra: ["digest": record.digest,
                                                       "details": approvalDetails(subject, title: definition.title, authority: authority,
@@ -950,7 +950,7 @@ private struct NativeCompanionRun {
                 var again = pending
                 again.coverage = shown.map { NativeCardChoices.signature($0) }
                 checkpoint.pending = again
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).", offered,
+                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSentence.placeholder) wants to do this: \(title).", offered,
                                                   extra: ["digest": digest,
                                                           "details": shown.map { approvalDetails($0, title: asked?.title ?? record.proposal.function, authority: standing,
                                                                                                  argumentsJSON: record.proposal.argumentsJSON) }
