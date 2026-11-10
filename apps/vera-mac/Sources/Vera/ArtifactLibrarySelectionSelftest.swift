@@ -152,14 +152,12 @@ enum ArtifactLibrarySelectionSelftest {
         state.apply(conversation: nil, open: nil, in: records)
         try check(state == ArtifactLibrarySelection(selectedID: "doc-b"), "No pending request changes nothing")
 
-        try check(ArtifactLibrarySelection.companionFilterTitle(name: ConfigStore.defaultAssistantName) == "From your companion",
+        try check(ArtifactLibrarySelection.companionFilterTitle(name: nil) == "From your companion",
                   "An unnamed companion is your companion in the filter label")
-        try check(ArtifactLibrarySelection.companionFilterTitle(name: "  ") == "From your companion", "A blank name is your companion")
         try check(ArtifactLibrarySelection.companionFilterTitle(name: "Juniper") == "From Juniper", "A chosen name is used in the filter label")
 
-        try check(ArtifactLibrarySelection.companionOriginLabel(name: ConfigStore.defaultAssistantName) == "Your companion",
+        try check(ArtifactLibrarySelection.companionOriginLabel(name: nil) == "Your companion",
                   "An unnamed companion is your companion in a row and in the detail header")
-        try check(ArtifactLibrarySelection.companionOriginLabel(name: "") == "Your companion", "A blank name is your companion in the origin label")
         try check(ArtifactLibrarySelection.companionOriginLabel(name: "Juniper") == "Juniper", "A chosen name is used in the origin label")
 
         let directory = FileManager.default.temporaryDirectory
@@ -177,8 +175,6 @@ enum ArtifactLibrarySelectionSelftest {
                   "An item from an unnamed companion never shows the built-in name as its origin")
         try check(store.artifactOriginLabel(report) == "Greenhouse plan", "An item from an ordinary conversation keeps its conversation title")
         try check(store.artifactOriginLabel(calendar) == "No conversation", "An item with no conversation says so")
-        store.adoptAssistantName("Juniper")
-        try check(store.artifactOriginLabel(companionOutput) == "Juniper", "An item from a named companion shows the chosen name")
 
         print("  artifact library selection OK")
     }

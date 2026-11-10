@@ -123,27 +123,19 @@ struct ArtifactLibrarySelection: Equatable {
         if let id { _ = open(id, in: records) }
     }
 
-    @MainActor
-    static func chosenCompanionName(_ name: String) -> String? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || trimmed == ConfigStore.defaultAssistantName ? nil : trimmed
+    static func companionFilterTitle(name: String?) -> String {
+        "From \(name ?? "your companion")"
     }
 
-    @MainActor
-    static func companionFilterTitle(name: String) -> String {
-        "From \(chosenCompanionName(name) ?? "your companion")"
-    }
-
-    @MainActor
-    static func companionOriginLabel(name: String) -> String {
-        chosenCompanionName(name) ?? "Your companion"
+    static func companionOriginLabel(name: String?) -> String {
+        name ?? "Your companion"
     }
 }
 
 extension ChatStore {
     func artifactOriginLabel(_ record: ArtifactRecord) -> String {
         if let id = record.conversationID, isVeraThread(id) {
-            return ArtifactLibrarySelection.companionOriginLabel(name: assistantName)
+            return ArtifactLibrarySelection.companionOriginLabel(name: savedCompanionName)
         }
         return ArtifactDateLabel.origin(record)
     }
@@ -164,7 +156,7 @@ struct ArtifactsView: View {
     private var conversationFilterTitle: String? {
         guard let conversationFilter = state.conversationFilter else { return nil }
         if store.isVeraThread(conversationFilter) {
-            return ArtifactLibrarySelection.companionFilterTitle(name: store.assistantName)
+            return ArtifactLibrarySelection.companionFilterTitle(name: store.savedCompanionName)
         }
         return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
     }
