@@ -218,7 +218,22 @@ enum CitationResolverSelftest {
         try check(parens.refs.isEmpty, "A flood of open links cites nothing")
         let ticks = CitationResolver.scan((1...300).map { String(repeating: "`", count: $0) }.joined(separator: " "), known: [1])
         try check(ticks.refs.isEmpty, "A flood of code marks cites nothing")
+        let spaced = CitationResolver.scan(String(repeating: " ", count: 100_000) + String(repeating: "[1]", count: 100_000), known: [1])
+        try check(spaced.refs == [1] && spaced.text.count == 100_000, "Leading spaces before a run of markers are kept")
+        let manyTicks = CitationResolver.scan((1...1500).map { String(repeating: "`", count: $0) }.joined(separator: " "), known: [1])
+        try check(manyTicks.refs.isEmpty, "A longer flood of code marks cites nothing")
         try check(Date().timeIntervalSince(started) < 5, "Hostile bracket floods are scanned in linear time")
+
+        let splitFence = "> ~~~\n> quoted\n~~~\nvalue[1]\n~~~"
+        try check(CitationResolver.scan(splitFence, known: [1]) == CitationResolver.Scan(text: splitFence, refs: [], markers: []),
+                  "A fence after a quoted fence is its own code")
+        try check(CitationResolver.blocks(text: splitFence, sources: all).allSatisfy { $0.refs.isEmpty }
+                  && CitationResolver.blocks(text: splitFence, sources: all).map(\.text).joined(separator: "\n") == splitFence,
+                  "Blocks keep both fences untouched")
+        let longLink = "[1](https://example.org/?q=" + String(repeating: "a", count: 5000) + ")"
+        try unchanged(longLink)
+        try expect("Read [1][draft", becomes: "Read [draft", refs: [1])
+        try expect("Read  [1]\n[2] next", becomes: "Read\n next", refs: [1, 2])
 
         let shouted = CitationResolver.resolve(text: "Rain [1].\n\n## Sources\n1. HTTPS://example.org/rain", sources: [])
         try check(shouted.recovered && sourceIsLinked(shouted.sources[0].url)

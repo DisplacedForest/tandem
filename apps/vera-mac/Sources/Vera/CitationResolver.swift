@@ -25,8 +25,6 @@ enum CitationResolver {
         var quoted = false
     }
 
-    private static let spanLimit = 2000
-
     private struct Segment {
         var lines: [String]
         var isCode: Bool
@@ -180,7 +178,9 @@ enum CitationResolver {
         var markers: [[Int]] = []
         var plainCloses = Set<Int>()
         let brackets = bracketPairs(chars)
-        var deadTicks = Set<Int>()
+        let parens = parenPairs(chars)
+        let ticks = backtickPairs(chars)
+        var trimFloor = 0
         var owed = false
         func restore() {
             if owed { out.append(" ") }
@@ -199,11 +199,10 @@ enum CitationResolver {
             if c == "`" {
                 restore()
                 let run = runLength(chars, at: i)
-                if !deadTicks.contains(run), let close = closingBackticks(chars, from: i + run, length: run) {
+                if let close = ticks[i] {
                     out.append(contentsOf: chars[i..<(close + run)])
                     i = close + run
                 } else {
-                    deadTicks.insert(run)
                     out.append(contentsOf: chars[i..<(i + run)])
                     i += run
                 }
@@ -212,14 +211,14 @@ enum CitationResolver {
             if c == "!", i + 1 < chars.count, chars[i + 1] == "[",
                let close = brackets[i + 1],
                close + 1 < chars.count, chars[close + 1] == "(",
-               let paren = closingParen(chars, from: close + 1) {
+               let paren = parens[close + 1] {
                 restore()
                 out.append(contentsOf: chars[i...paren])
                 i = paren + 1
                 continue
             }
             if c == "[", let close = brackets[i] {
-                if close + 1 < chars.count, chars[close + 1] == "(", let paren = closingParen(chars, from: close + 1) {
+                if close + 1 < chars.count, chars[close + 1] == "(", let paren = parens[close + 1] {
                     restore()
                     out.append(contentsOf: chars[i...paren])
                     i = paren + 1
@@ -250,7 +249,7 @@ enum CitationResolver {
                 markers.append(numbers)
                 if numbers.allSatisfy(known.contains) {
                     let before = out.count
-                    trimHorizontal(&out)
+                    trimHorizontal(&out, floor: &trimFloor)
                     if out.count < before { owed = true }
                     refs.formUnion(numbers)
                 } else {
@@ -260,7 +259,7 @@ enum CitationResolver {
                 i = close + 1
                 continue
             }
-            if c.isLetter || c.isNumber { restore() } else { owed = false }
+            if c.isLetter || c.isNumber || c == "[" { restore() } else { owed = false }
             out.append(c)
             i += 1
         }
@@ -273,18 +272,27 @@ enum CitationResolver {
         return end - index
     }
 
-    private static func closingBackticks(_ chars: [Character], from start: Int, length: Int) -> Int? {
-        var i = start
+    private static func backtickPairs(_ chars: [Character]) -> [Int: Int] {
+        var runs: [(start: Int, length: Int)] = []
+        var i = 0
         while i < chars.count {
-            if chars[i] == "`" {
-                let run = runLength(chars, at: i)
-                if run == length { return i }
-                i += run
+            if chars[i] == "\\" {
+                i += 2
+            } else if chars[i] == "`" {
+                let length = runLength(chars, at: i)
+                runs.append((i, length))
+                i += length
             } else {
                 i += 1
             }
         }
-        return nil
+        var pairs: [Int: Int] = [:]
+        var later: [Int: Int] = [:]
+        for run in runs.reversed() {
+            if let close = later[run.length] { pairs[run.start] = close }
+            later[run.length] = run.start
+        }
+        return pairs
     }
 
     private static func bracketPairs(_ chars: [Character]) -> [Int: Int] {
@@ -300,7 +308,7 @@ enum CitationResolver {
             if c == "[" {
                 open.append(i)
             } else if c == "]", let start = open.popLast() {
-                if i - start <= spanLimit { pairs[start] = i }
+                pairs[start] = i
             } else if c.isNewline, i + 1 < chars.count, chars[i + 1].isNewline {
                 open.removeAll(keepingCapacity: true)
             }
@@ -309,25 +317,26 @@ enum CitationResolver {
         return pairs
     }
 
-    private static func closingParen(_ chars: [Character], from start: Int) -> Int? {
-        var depth = 0
-        var i = start
-        let limit = min(chars.count, start + spanLimit)
-        while i < limit {
+    private static func parenPairs(_ chars: [Character]) -> [Int: Int] {
+        var pairs: [Int: Int] = [:]
+        var open: [Int] = []
+        var i = 0
+        while i < chars.count {
             let c = chars[i]
             if c == "\\" {
                 i += 2
                 continue
             }
-            if c == "(" { depth += 1 }
-            if c == ")" {
-                depth -= 1
-                if depth == 0 { return i }
+            if c == "(" {
+                open.append(i)
+            } else if c == ")", let start = open.popLast() {
+                pairs[start] = i
+            } else if c.isNewline {
+                open.removeAll(keepingCapacity: true)
             }
-            if c.isNewline { return nil }
             i += 1
         }
-        return nil
+        return pairs
     }
 
     private static func atLineStart(_ chars: [Character], _ index: Int) -> Bool {
@@ -341,10 +350,13 @@ enum CitationResolver {
         return spaces <= 3
     }
 
-    private static func trimHorizontal(_ out: inout [Character]) {
+    private static func trimHorizontal(_ out: inout [Character], floor: inout Int) {
         var keep = out.count
-        while keep > 0, out[keep - 1] == " " || out[keep - 1] == "\t" { keep -= 1 }
-        guard keep < out.count, keep > 0, !out[keep - 1].isNewline else { return }
+        while keep > floor, out[keep - 1] == " " || out[keep - 1] == "\t" { keep -= 1 }
+        guard keep < out.count, keep > floor, !out[keep - 1].isNewline else {
+            floor = out.count
+            return
+        }
         out.removeSubrange(keep..<out.count)
     }
 
@@ -469,8 +481,8 @@ enum CitationResolver {
     private static func fenceEnd(_ lines: [String], from start: Int, fence: Fence) -> Int {
         var i = start + 1
         while i < lines.count {
-            if fenceCloses(lines[i], fence) { return i }
             if fence.quoted, lines[i].drop(while: { $0 == " " || $0 == "\t" }).first != ">" { return i - 1 }
+            if fenceCloses(lines[i], fence) { return i }
             i += 1
         }
         return lines.count - 1
