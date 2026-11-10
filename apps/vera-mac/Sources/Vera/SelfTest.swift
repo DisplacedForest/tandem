@@ -1713,8 +1713,22 @@ enum SelfTest {
                 print("SELFTEST ERROR: shell assistant name did not retitle the pinned thread"); exit(1)
             }
             named.adoptAssistantName("  ")
-            guard named.assistantName == ConfigStore.defaultAssistantName else {
-                print("SELFTEST ERROR: shell blank assistant name did not fall back to the default"); exit(1)
+            guard named.companionName == nil, named.companion.inline == "your companion",
+                  named.conversations.first(where: { $0.id == veraID })?.title == "Your companion",
+                  try LocalChatRepository(url: url).listConversations().first(where: { $0.id == veraID })?.title == "Your companion" else {
+                print("SELFTEST ERROR: shell blank assistant name did not leave the companion unnamed"); exit(1)
+            }
+            let unnamedContext = NativeContextAssembler.assemble(NativeContextInput(
+                persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: named.companionName))
+            let unnamedWorker = named.nativeWorkerIdentity.current
+            let builtIn = "Ver" + "a"
+            let unnamedPrompts = [unnamedContext.prompt, NativeResearchWorker.planPrompt(identity: unnamedWorker),
+                                  NativeResearchWorker.synthesisPrompt(identity: unnamedWorker), PiCheckpointPricing.system,
+                                  NativeDotContext.render(name: named.companionName ?? "", goal: "", resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
+            guard unnamedPrompts.allSatisfy({ !$0.contains("Your name is") && !$0.contains(builtIn) && !$0.contains("our companion") }),
+                  unnamedWorker.assistantName == nil, unnamedWorker.opening == "You are the user's assistant" else {
+                print("SELFTEST ERROR: a prompt for an unnamed companion claims a name"); exit(1)
             }
             let identity = NativeContextAssembler.assemble(NativeContextInput(
                 persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
@@ -1726,8 +1740,8 @@ enum SelfTest {
                                        writeConfiguration: { _ in })
             let chosen = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
                                      readConfiguration: { ["assistant_name": " Ada "] }, writeConfiguration: { _ in })
-            guard defaults.assistantName == "Vera", chosen.assistantName == "Ada" else {
-                print("SELFTEST ERROR: shell assistant name config default or trimming"); exit(1)
+            guard defaults.suppliedAssistantName == nil, chosen.suppliedAssistantName == "Ada" else {
+                print("SELFTEST ERROR: shell assistant name config has a default or lost its trimming"); exit(1)
             }
             guard ToolCallGroup(name: "kitchen_status", calls: []).label == "kitchen status",
                   ToolCallGroup(name: "web-search", calls: []).label == "web search" else {

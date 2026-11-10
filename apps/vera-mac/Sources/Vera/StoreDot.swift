@@ -18,7 +18,7 @@ extension ChatStore {
                 dotProfile = try store.load() ?? NativeDotProfile()
             } catch {
                 dotProfile = NativeDotProfile(connectedToolIDs: [], state: .paused, setupCompleted: true)
-                chatConfigurationError = "\(assistantName)'s goal and settings couldn't load: \(error.localizedDescription) Scheduled work is paused and no services are connected until the settings are saved again."
+                chatConfigurationError = "\(companion.leading)'s goal and settings couldn't load: \(error.localizedDescription) Scheduled work is paused and no services are connected until the settings are saved again."
             }
         } else {
             nativeDotProfileStore = nil
@@ -35,7 +35,7 @@ extension ChatStore {
         do {
             try nativeDotProfileStore?.save(next)
         } catch {
-            chatConfigurationError = "\(assistantName)'s settings couldn't be saved: \(error.localizedDescription)"
+            chatConfigurationError = "\(companion.leading)'s settings couldn't be saved: \(error.localizedDescription)"
             return
         }
         dotProfile = next
@@ -109,7 +109,7 @@ extension ChatStore {
 
     func dotContext(for conversationID: String, requestText: String) -> String? {
         guard isVeraThread(conversationID) else { return nil }
-        return NativeDotContext.render(name: assistantName, goal: dotProfile.goal,
+        return NativeDotContext.render(name: companionName ?? "", goal: dotProfile.goal,
                                        resolver: ruleResolver(for: conversationID, requestText: requestText))
     }
 
@@ -172,7 +172,7 @@ extension ChatStore {
             deleteSchedule(schedule.id)
         }
         if let threadID, let memoryRepository = repository as? any NativeMemoryRepository {
-            let note = "Removed when \(assistantName) started over"
+            let note = "Removed when \(companion.inline) started over"
             for memory in (try? memoryRepository.allMemories()) ?? []
             where memory.status != .deleted && memory.sourceConversationID == threadID {
                 do { try memoryRepository.deleteMemory(memory.id, note: note) } catch {
@@ -191,7 +191,7 @@ extension ChatStore {
         suspendsTurnScheduling = false
         scheduleConversationTurns()
         do { try nativeDotProfileStore?.reset() } catch {
-            chatConfigurationError = "\(assistantName)'s settings couldn't be cleared: \(error.localizedDescription)"
+            chatConfigurationError = "\(companion.leading)'s settings couldn't be cleared: \(error.localizedDescription)"
         }
         dotProfile = NativeDotProfile()
         dotProfile.needsIntroduction = true

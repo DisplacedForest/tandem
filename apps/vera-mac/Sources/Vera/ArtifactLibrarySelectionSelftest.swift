@@ -170,7 +170,7 @@ enum ArtifactLibrarySelectionSelftest {
             attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
         store.ensureVeraThread()
         guard let companionThread = store.veraThreadID else { throw Failure(description: "The companion thread exists") }
-        let companionOutput = record("doc-c", .document, "Morning notes", conversation: companionThread, origin: store.assistantName)
+        let companionOutput = record("doc-c", .document, "Morning notes", conversation: companionThread, origin: store.companion.threadTitle)
         try check(store.artifactOriginLabel(companionOutput) == "Your companion",
                   "An item from an unnamed companion never shows the built-in name as its origin")
         try check(store.artifactOriginLabel(report) == "Greenhouse plan", "An item from an ordinary conversation keeps its conversation title")

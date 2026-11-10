@@ -100,7 +100,11 @@ extension ChatStore {
         case "name":
             guard let companionNameWriter else { throw NativeToolError.failed("The name couldn't be saved.") }
             try companionNameWriter(change.value)
-            adoptAssistantName(change.value)
+            let effective = companionNameResolver.map { $0() } ?? change.value
+            adoptAssistantName(effective)
+            guard CompanionSubject(effective).name == CompanionSubject(change.value).name else {
+                return .object(["result": .string("The name was saved, but a setting outside Tandem fixes the name, so it stays \(CompanionSubject(effective).inline). Tell the user that plainly.")])
+            }
             return .object(["result": .string("Name updated.")])
         case "goal": profile.goal = change.value
         case "finish_setup":

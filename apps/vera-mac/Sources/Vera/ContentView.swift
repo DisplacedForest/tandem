@@ -399,8 +399,8 @@ private struct ChatPane: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("\(store.assistantName)'s state, activity and results")
-                .accessibilityLabel("Details for \(store.assistantName)")
+                .help("\(store.companion.leading)'s state, activity and results")
+                .accessibilityLabel("Details for \(store.companion.inline)")
                 .padding(.top, 44).padding(.trailing, 20)
             }
         }
@@ -515,7 +515,7 @@ struct EmptyChatView: View {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else if !store.isLive {
                     Button { config.showOnboarding = true } label: {
-                        Label("\(store.conversationAssistantName) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label("\(store.conversationAssistantLead) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())

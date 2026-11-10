@@ -6,7 +6,7 @@ enum NativeDotShotFixture {
     static let goal = "Keep the greenhouse on track this season: watering, vent checks and a short weekly note on what changed."
 
     static func populate(_ store: ChatStore, paused: Bool, setupCompleted: Bool) {
-        store.adoptAssistantName(name)
+        CompanionNameShot.apply(to: store)
         store.ensureVeraThread()
         guard let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) else { return }
         store.conversations[index].messages = [

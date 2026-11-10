@@ -7,10 +7,14 @@ struct NativeCompanionEvent: Codable, Sendable {
     let key: String
     var observation: String? = nil
 
+    static let nameDeclined = "name_declined"
+
     var isOpening: Bool { kind != .refinement }
 
     var instruction: String {
         switch kind {
+        case .introduction where observation == Self.nameDeclined:
+            return "This is your first opening in your own companion conversation, not a user request. The user chose not to name you yet, so do not give yourself a name and do not ask for one. Introduce yourself briefly in your own voice and ask what they would like help with first. Do not invent a user message or claim any work happened. Ask one question at a time. The user can skip setup and talk normally."
         case .introduction:
             return "This is your first opening in your own companion conversation, not a user request. Introduce yourself briefly in your own voice and ask only what the user would like to call you. Do not invent a user message or claim any work happened. Ask one question at a time. The user can skip setup and talk normally."
         case .welcome:
