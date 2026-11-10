@@ -35,13 +35,13 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
     var detail: String {
         switch self {
         case .fileEdits: return "Writing, editing, moving and creating files and folders inside a folder you granted."
-        case .commands: return "Running a shell command with a granted folder as its working directory."
+        case .commands: return "Running a command inside a folder you granted."
         case .trash: return "Moving a file or folder inside a grant to the Trash. Nothing is ever deleted outright."
         case .networkSends: return "Connected services that send messages, posts or uploads for you."
-        case .riskyCommands: return "Commands that use administrator rights, touch system or credential locations, or can't be read with confidence."
+        case .riskyCommands: return "Commands that need administrator rights, reach into system or password locations, or can't be fully checked before they run."
         case .reminders: return "Adding, editing and completing Apple Reminders when you ask in a chat."
-        case .serviceChanges: return "Connected service tools you allowed to change something."
-        case .otherChanges: return "Tools that change something without saying what kind of change it is."
+        case .serviceChanges: return "Creating or changing things in a connected service, like filing an issue."
+        case .otherChanges: return "Changes made by tools you added that don't fit the kinds above."
         case .credentialEntry: return NativeFloorItem.credentialEntry.reason
         case .payments: return NativeFloorItem.payments.reason
         case .permanentDeletion: return NativeFloorItem.permanentDeletion.reason
@@ -69,7 +69,7 @@ enum NativeFloorItem: String, CaseIterable, Hashable, Sendable {
         case .credentialEntry: return "Enter a credential, card number or one-time code"
         case .payments: return "Pay or transfer money"
         case .permanentDeletion: return "Delete permanently outside a granted folder, or empty the Trash"
-        case .ruleChanges: return "Change rules, permissions or this list from inside a conversation"
+        case .ruleChanges: return "Loosen a rule because a message said to"
         }
     }
 
@@ -78,7 +78,7 @@ enum NativeFloorItem: String, CaseIterable, Hashable, Sendable {
         case .credentialEntry: return "A wrong fill leaks a secret that can't be taken back."
         case .payments: return "Money that has left can't be called back."
         case .permanentDeletion: return "There is no undo."
-        case .ruleChanges: return "Being asked is never enough to loosen what you allow."
+        case .ruleChanges: return "Only you can loosen a rule, by clicking a card or changing it here. Text in a chat, a web page or an email can't."
         }
     }
 
@@ -102,10 +102,10 @@ enum NativeRuleChoice: String, Codable, CaseIterable, Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .act: return "Act without asking"
-        case .actIfPreapproved: return "Act only when the request pre-approves it"
+        case .act: return "Do it without asking"
+        case .actIfPreapproved: return "Do it when I say go ahead"
         case .ask: return "Ask first"
-        case .handOff: return "Hand off to me"
+        case .handOff: return "Leave it to me"
         }
     }
 

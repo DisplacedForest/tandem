@@ -440,6 +440,30 @@ extension SelfTest {
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))
         try require(roundTrip == block && roundTrip.id == "command:a", "Command cards persist with the message")
+        let forbidden = ["Ver" + "a", "declared table", "pre-approval is recognized", "working directory", "without saying what kind", " her ", " she "]
+        for named in ["Ada", "  Ada  ", nil, "", "   "] {
+            let expected = (named?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "Tandem"
+            let strings = RulesCopy.screenStrings(name: named)
+            for sentence in strings {
+                for word in forbidden {
+                    try require(!sentence.contains(word), "Rules screen copy avoids \(word): \(sentence)")
+                }
+            }
+            try require(strings[0].contains(expected) && !strings[0].contains(CompanionSentence.placeholder), "The header names the companion: \(strings[0])")
+            for choice in NativeRuleChoice.allCases {
+                let line = CompanionSentence.plain(RulesCopy.explanationTemplate(choice), name: named)
+                try require(!line.contains(CompanionSentence.placeholder) && (choice == .ask || line.hasPrefix(expected)), "Explanation names the companion: \(line)")
+            }
+        }
+        try require(NativeRuleChoice.allCases.map(\.title) == ["Do it without asking", "Do it when I say go ahead", "Ask first", "Leave it to me"], "The four choices use plain titles")
+        try require(CompanionSentence.resolvedName(nil) == "Tandem" && CompanionSentence.resolvedName(" \n") == "Tandem" && CompanionSentence.resolvedName("Ada") == "Ada", "A blank name falls back to Tandem")
+        for color in CompanionColor.allCases {
+            let light = CompanionColor.contrast(color.textHex(dark: false), CompanionColor.lightBackgroundHex)
+            let dark = CompanionColor.contrast(color.textHex(dark: true), CompanionColor.darkBackgroundHex)
+            let darkest = CompanionColor.contrast(color.textHex(dark: true), "#181818")
+            try require(light >= 4.5 && dark >= 4.5 && darkest >= 4.5, "\(color.rawValue) text color reads in both appearances: \(light) \(dark) \(darkest)")
+            print("    \(color.rawValue) text light \(color.textHex(dark: false)) dark \(color.textHex(dark: true))")
+        }
         print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

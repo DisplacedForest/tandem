@@ -94,6 +94,47 @@ extension EnvironmentValues {
     }
 }
 
+enum CompanionSentence {
+    static let placeholder = "{name}"
+    static let fallbackName = "Tandem"
+
+    static func resolvedName(_ name: String?) -> String {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? fallbackName : trimmed
+    }
+
+    static func plain(_ template: String, name: String?) -> String {
+        template.replacingOccurrences(of: placeholder, with: resolvedName(name))
+    }
+
+    static func parts(_ template: String) -> [String] {
+        template.components(separatedBy: placeholder)
+    }
+}
+
+struct CompanionNamedText: View {
+    var template: String
+    @Environment(\.companionName) private var name
+    @Environment(\.companionAppearance) private var appearance
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var sentence: Text {
+        let parts = CompanionSentence.parts(template)
+        let styled = Text(CompanionSentence.resolvedName(name)).bold().foregroundStyle(appearance.color.textColor(for: colorScheme))
+        var text = Text(parts.first ?? "")
+        for part in parts.dropFirst() {
+            text = text + styled + Text(part)
+        }
+        return text
+    }
+
+    var body: some View {
+        sentence
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(CompanionSentence.plain(template, name: name))
+    }
+}
+
 private struct CompanionAppearanceKey: EnvironmentKey {
     static let defaultValue = CompanionAppearance.default
 }

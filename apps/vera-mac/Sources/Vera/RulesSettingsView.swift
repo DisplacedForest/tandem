@@ -1,8 +1,44 @@
 import SwiftUI
 
+enum RulesCopy {
+    static let headerTemplate = "These apply everywhere, including work \(CompanionSentence.placeholder) does without you. A chat can make them stricter, never looser."
+    static let infoLabel = "What each choice means"
+    static let floorSectionTitle = "Always left to you"
+
+    static func explanationTemplate(_ choice: NativeRuleChoice) -> String {
+        switch choice {
+        case .act: return "\(CompanionSentence.placeholder) does it and shows you what happened."
+        case .actIfPreapproved: return "\(CompanionSentence.placeholder) does it only when your message says to, like \"go ahead\". Otherwise you get asked."
+        case .ask: return "You get a card to approve or decline."
+        case .handOff: return "\(CompanionSentence.placeholder) tells you the step and you do it yourself."
+        }
+    }
+
+    static func screenStrings(name: String?) -> [String] {
+        var strings = [CompanionSentence.plain(headerTemplate, name: name), infoLabel, floorSectionTitle]
+        for choice in NativeRuleChoice.allCases {
+            strings.append(choice.title)
+            strings.append(CompanionSentence.plain(explanationTemplate(choice), name: name))
+        }
+        for action in NativeActionClass.allCases {
+            strings.append(action.title)
+            strings.append(action.detail)
+            for choice in NativeRuleChoice.allCases {
+                strings.append(NativeRules.detail(for: action, choice: choice))
+            }
+        }
+        for item in NativeFloorItem.allCases {
+            strings.append(item.title)
+            strings.append(item.reason)
+        }
+        return strings
+    }
+}
+
 struct RulesSettingsTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @State private var showsChoiceHelp = false
 
     private func binding(for action: NativeActionClass) -> Binding<NativeRuleChoice> {
         Binding(
@@ -22,12 +58,12 @@ struct RulesSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("What asks first") {
+            Section {
                 if let notice = store.rulesNotice {
                     Label(notice, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
-                Text("These defaults apply to every chat and to work Vera does on her own. A chat can tighten them, never loosen them.")
+                CompanionNamedText(template: RulesCopy.headerTemplate)
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 ForEach(NativeActionClass.configurable, id: \.self) { action in
                     VStack(alignment: .leading, spacing: 4) {
@@ -40,8 +76,34 @@ struct RulesSettingsTab: View {
                     }
                     .padding(.vertical, 2)
                 }
+            } header: {
+                HStack {
+                    Text("What asks first")
+                    Spacer()
+                    Button {
+                        showsChoiceHelp.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(RulesCopy.infoLabel)
+                    .help(RulesCopy.infoLabel)
+                    .popover(isPresented: $showsChoiceHelp, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(choice.title).font(.system(size: 12))
+                                    CompanionNamedText(template: RulesCopy.explanationTemplate(choice))
+                                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .frame(width: 300, alignment: .leading)
+                    }
+                }
             }
-            Section("Handed to you") {
+            Section(RulesCopy.floorSectionTitle) {
                 ForEach(NativeFloorItem.allCases, id: \.self) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -49,10 +111,6 @@ struct RulesSettingsTab: View {
                     }
                     .padding(.vertical, 2)
                 }
-            }
-            Section("How the choices work") {
-                Text("Act without asking runs the action and shows what happened on the turn. Act only when the request pre-approves it runs only when your message says so in plain words, such as \"go ahead\" or \"no need to ask\", and asks otherwise. Pre-approval is recognized only when a sentence of your request is exactly the phrase on its own: \"Run the tests. Go ahead.\" runs, while \"Go ahead and run the tests\" asks. Ask first puts a card on the turn with Approve, Decline and, for commands, Approve similar, which lets later commands in that chat with the same first words run without asking. Hand off to me means Vera describes what she would do and leaves it to you. Act without asking for commands relies on a declared table of sending and destructive commands; when unsure, keep commands on Ask first.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }
         .formStyle(.grouped)
