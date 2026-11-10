@@ -364,7 +364,7 @@ enum NativeRuleRecordsSelftest {
                     "Each distinct saved prefix becomes one record in its chat, normalized to two words")
         try require(records.allSatisfy { $0.action == .commands && $0.toolID == NativeCommandTools.toolID && $0.effect == .allow && $0.origin == .migration
                         && $0.target?.kind == .commandPrefix && $0.originMessageID == nil && $0.status == .active
-                        && $0.originConversationID == $0.scope.scopeID && $0.statement.hasPrefix("In this chat, allow commands starting with ") }
+                        && $0.originConversationID == $0.scope.scopeID && $0.statement.hasPrefix("In this chat, allow commands that start with ") }
                     && Set(origins) == ["migration"], "Migrated prefixes are active chat-scoped command allows from the migration")
         try require(values("choices").isEmpty && values("empty").isEmpty && values("broken").isEmpty, "Chats without prefixes get no records")
         try require(NativeConversationRules.decode(try stored(queue, "two")).choices == [.trash: .handOff]

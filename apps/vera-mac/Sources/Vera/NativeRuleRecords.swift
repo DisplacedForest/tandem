@@ -507,7 +507,7 @@ struct NativeRuleRecordStore: Sendable {
                 prefixes.append(target)
             }
             for prefix in prefixes {
-                let named = "In this chat, allow commands starting with \(prefix.value)"
+                let named = "In this chat, allow commands that start with \(prefix.value)"
                 let draft = NativeRuleRecord(scope: .conversation(conversationID), action: .commands, toolID: NativeCommandTools.toolID,
                                              target: prefix, effect: .allow,
                                              statement: named.count <= NativeRuleRecord.maximumStatementCharacters ? named : "In this chat, allow a command you approved earlier",

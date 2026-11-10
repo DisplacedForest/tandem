@@ -250,20 +250,26 @@ private struct ScheduleRunRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: run.outcome.symbol).font(.system(size: 13)).foregroundStyle(Theme.textSecondary).frame(width: 18).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
-                    .font(.system(size: 13, weight: .medium))
-                if !run.detail.isEmpty {
-                    Text(run.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
+                            .font(.system(size: 13, weight: .medium))
+                        if !run.detail.isEmpty {
+                            Text(run.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
+                    if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                 }
-            }
-            Spacer(minLength: 8)
-            if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)) }
-            if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)) }
-            ForEach(choices, id: \.self) { choice in
-                Button(Self.title(for: choice)) { onChoose?(choice) }
-                    .buttonStyle(.bordered).controlSize(.small)
+                if !choices.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { choiceButtons }
+                        VStack(alignment: .leading, spacing: 6) { choiceButtons }
+                    }
+                }
             }
         }
         .padding(10)
@@ -272,10 +278,20 @@ private struct ScheduleRunRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    private static func title(for choice: String) -> String {
+    @ViewBuilder
+    private var choiceButtons: some View {
+        ForEach(choices, id: \.self) { choice in
+            Button(Self.title(for: choice)) { onChoose?(choice) }
+                .buttonStyle(.bordered).controlSize(.small).fixedSize()
+        }
+    }
+
+    static func title(for choice: String) -> String {
         switch choice.lowercased() {
         case "retry": return "Retry"
         case "stop", "cancel": return "Stop"
+        case NativeCardChoiceKind.allowHere.rawValue: return "Allow for this run"
+        case NativeCardChoices.commandNever: return "Never run commands in this run"
         default: return NativeTaskCardPresentation.choiceTitle(choice) ?? (choice.prefix(1).uppercased() + choice.dropFirst())
         }
     }

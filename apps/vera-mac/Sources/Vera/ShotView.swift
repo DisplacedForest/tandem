@@ -25,6 +25,7 @@ struct ShotView: View {
     var workCollapsed = false
     var voiceAvailability = ComposerVoiceAvailability(dictation: false, voiceChat: false)
     var dictating = false
+    var cardChat: CardShotChat? = nil
     var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
@@ -324,6 +325,7 @@ struct ShotView: View {
 
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
+        if let cardChat { return cardChat.messages }
         if dotHeader || companionPanel != nil { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
@@ -501,7 +503,7 @@ struct ShotView: View {
 
     private var shotStatusLine: String {
         if streaming { return "Working on your answer" }
-        if command || schedule { return "Waiting for your approval" }
+        if command || schedule || cardChat != nil { return "Waiting for your approval" }
         return "Ready"
     }
 
@@ -548,9 +550,10 @@ struct ShotView: View {
             }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
-                    MessageRow(message: message, pendingConfirmation: schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
-                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil,
-                        onToolDecision: command ? { _ in } : nil, companionThread: store.isVeraThread(store.selectedID))
+                    MessageRow(message: message, pendingConfirmation: cardChat.flatMap { card in message.toolActivities.contains { $0.id == card.confirmation.id } ? card.confirmation : nil }
+                        ?? (schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
+                        : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil),
+                        onToolDecision: command || cardChat != nil ? { _ in } : nil, companionThread: store.isVeraThread(store.selectedID))
                     if let marker = shotMarker(for: message) {
                         TranscriptMarkerRow(marker: marker)
                     }
@@ -561,7 +564,7 @@ struct ShotView: View {
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()
             VStack(alignment: .leading, spacing: 8) {
-                if folder || command {
+                if folder || command || cardChat != nil {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })
                 }
                 if mentions {

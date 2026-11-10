@@ -180,7 +180,7 @@ struct ConversationRulesEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
                 Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can only ask more than your defaults in Settings, Rules, never less.")
+                Text("A chat can be stricter than your settings, never looser.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
@@ -205,7 +205,7 @@ struct ConversationRulesEditor: View {
                             Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                         }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                        .help("Ask again before commands starting with \(prefix)")
+                        .help("Ask again before commands that start with \(prefix)")
                     }
                 }
             }

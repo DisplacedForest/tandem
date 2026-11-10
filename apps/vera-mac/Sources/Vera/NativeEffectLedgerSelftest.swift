@@ -405,7 +405,7 @@ extension SelfTest {
                     "set bumps the rules revision once and a resolver keeps the revision it was created with")
         rules.setRecords([NativeRuleRecord(scope: .conversation("conversation-1"), action: .commands, toolID: NativeCommandTools.toolID,
                                            target: NativeRuleTarget.make(.commandPrefix, "swift build"), effect: .allow,
-                                           statement: "In this chat, allow commands starting with swift build")])
+                                           statement: "In this chat, allow commands that start with swift build")])
         try require(rules.revision == 3, "A record change through the source bumps the rules revision")
         rules.replaceAll([("conversation-2", NativeConversationRules(choices: [.trash: .handOff]))])
         try require(rules.revision == 4, "replaceAll bumps the rules revision once")

@@ -98,7 +98,7 @@ enum NativeCardChoices {
         case NativeCardChoiceKind.allowHere.rawValue: return "Allow for this task"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Allow for this schedule"
         case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow"
-        case NativeCardChoiceKind.never.rawValue: return "Never allow"
+        case NativeCardChoiceKind.never.rawValue: return "Never allow this"
         case commandNever: return "Never run commands in this task"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
         default: return nil
@@ -152,7 +152,7 @@ enum NativeCardChoices {
         let decline = NativeCardChoice(kind: .decline, title: "Decline")
         let covered = coverage(subject)
         var standing = true
-        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: "Never allow")
+        var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered))
         switch covered {
         case .none: return [decline, once]
         case .commandPrefix:
@@ -178,6 +178,14 @@ enum NativeCardChoices {
         return choices
     }
 
+    static func neverTitle(_ covered: NativeCardCoverage) -> String {
+        switch covered {
+        case .folders(let folders): return "Never in " + list(folders.map { name($0.value) })
+        case .sendTargets(let targets, _): return "Never send to " + list(targets.map(\.value))
+        case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this"
+        }
+    }
+
     static func name(_ path: String) -> String {
         let last = (path as NSString).lastPathComponent
         return last.isEmpty ? path : last
@@ -191,14 +199,14 @@ enum NativeCardChoices {
     static func covers(_ subject: NativeCardSubject) -> String? {
         switch coverage(subject) {
         case .none, .commandsOnly: return nil
-        case .commandPrefix(let prefix): return "commands starting with \(prefix.value)"
+        case .commandPrefix(let prefix): return "commands that start with \(prefix.value)"
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return subject.action == .trash ? "moving things in \(names) to the Trash" : "file edits in \(names)"
         case .sendTargets(let targets, _):
             return "sending to " + list(targets.map(\.value))
         case .wholeTool:
-            return "every use of \"\(subject.toolTitle)\""
+            return "this action every time"
         }
     }
 
@@ -245,12 +253,12 @@ enum NativeCardChoices {
             case .sendTargets(let targets, _):
                 return targets.map { record(subject.action, tool: nil, target: $0, statement: "Never allow sending to \($0.value)") }
             case .wholeTool:
-                return [record(subject.action, tool: subject.toolID, target: nil, statement: "Never allow \(covers(subject) ?? "this")")]
+                return [record(subject.action, tool: subject.toolID, target: nil, statement: "Never allow: \(subject.toolTitle)")]
             case .none:
                 return []
             }
         }
-        let statement = "\(lead(kind, place: place)) \(covers(subject) ?? "this")"
+        let statement = covered == .wholeTool ? "\(lead(kind, place: place)): \(subject.toolTitle)" : "\(lead(kind, place: place)) \(covers(subject) ?? "this")"
         switch covered {
         case .commandPrefix(let prefix):
             return [record(.commands, tool: subject.toolID, target: prefix, statement: statement)]

@@ -380,7 +380,7 @@ extension SelfTest {
             + unspelled.compactMap { command in NativeRuleTarget.candidate(.commandPrefix, command).map { NativeRuleRecord(action: .commands, target: $0, effect: .allow, statement: "Allow this prefix") } }
             + unspelled.compactMap { command in NativeRuleTarget.make(.commandPrefix, command).map {
                 NativeRuleRecord(scope: .conversation("c"), action: .commands, toolID: NativeCommandTools.toolID, target: $0, effect: .allow,
-                                 statement: "In this chat, allow commands starting with \($0.value)", origin: .confirmCard) } })
+                                 statement: "In this chat, allow commands that start with \($0.value)", origin: .confirmCard) } })
         for command in unspelled {
             let resolver = NativeRuleResolver(global: loosest, conversation: NativeConversationRules(), requestText: "Go ahead. No need to ask.", records: everyAllow,
                                               context: NativeRuleContext(conversationID: "c")).tool(NativeCommandTools.toolID, subjects: NativeCommandTools.ruleSubjects(command: command))
@@ -450,7 +450,7 @@ extension SelfTest {
         request.covers = NativeCardChoices.covers(cardSubject)
         try require(NativeToolConfirmationBar.prompt(for: request) == "Run this command?\nswift test --filter x"
                     && request.choices.map(\.kind) == [.decline, .never, .allowAlways, .allowHere, .allowOnce]
-                    && request.covers == "commands starting with swift test"
+                    && request.covers == "commands that start with swift test"
                     && NativeToolConfirmationBar.detail(for: request)?.contains(root) == true, "The ask card shows the exact command and offers the prefix")
         let block = NativeDisplayBlock.commandRun(NativeCommandRun(id: "a", command: "ls", directory: root, outcome: .declined))
         let roundTrip = try JSONDecoder().decode(NativeDisplayBlock.self, from: try JSONEncoder().encode(block))

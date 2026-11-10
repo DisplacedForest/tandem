@@ -21,11 +21,11 @@ extension SelfTest {
                                            (task, NativeRuleScope.task("t1"), "Never run commands in this task", "Allow for this task")] {
             try require(kinds(command, place) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A simple command card offers every choice: \(place)")
             try require(title(command, place, .never) == never && title(command, place, .allowHere) == words, "The command card names its place: \(place)")
-            try require(NativeCardChoices.covers(command) == "commands starting with git status", "A command card covers its two-word prefix")
+            try require(NativeCardChoices.covers(command) == "commands that start with git status", "A command card covers its two-word prefix")
             let always = NativeCardChoices.records(.allowAlways, subject: command, place: place, originMessageID: nil)
             try require(always.count == 1 && always[0].scope == .everywhere && always[0].action == .commands && always[0].toolID == NativeCommandTools.toolID
                         && always[0].target == NativeRuleTarget.make(.commandPrefix, "git status") && always[0].effect == .allow
-                        && always[0].origin == .confirmCard && always[0].statement == "Always allow commands starting with git status" && valid(always[0]),
+                        && always[0].origin == .confirmCard && always[0].statement == "Always allow commands that start with git status" && valid(always[0]),
                         "Always allow saves one everywhere prefix allow: \(place)")
             let hereRecords = NativeCardChoices.records(.allowHere, subject: command, place: place, originMessageID: nil)
             try require(hereRecords.count == 1 && hereRecords[0].scope == here && valid(hereRecords[0]), "Allow here is scoped to the chat or the task: \(place)")
@@ -89,7 +89,7 @@ extension SelfTest {
         try require(kinds(other, chat) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A tool with no targets offers the standing choices")
         let wholeTool = NativeCardChoices.records(.allowAlways, subject: other, place: chat, originMessageID: nil)
         try require(wholeTool.count == 1 && wholeTool[0].toolID == "notes-tool" && wholeTool[0].target == nil && wholeTool[0].action == .otherChanges
-                    && valid(wholeTool[0]) && NativeCardChoices.covers(other) == "every use of \"Update a note\"", "A tool with no targets saves a whole-tool record")
+                    && valid(wholeTool[0]) && NativeCardChoices.covers(other) == "this action every time", "A tool with no targets saves a whole-tool record")
         let context = NativeRuleContext(conversationID: "c1")
         try require(NativeRuleMatcher.resolve(wholeTool, query: NativeRuleQuery(action: .otherChanges, toolID: "notes-tool"), context: context, at: Date(),
                                               honoringLimitedUse: false) != nil
@@ -202,7 +202,7 @@ extension SelfTest {
             guard let (messageID, request) = store.turnConfirmations.first.map({ ($0.key, $0.value) }) else {
                 throw NativeTaskFixture.Failure.assertion("The command card appears for \(choice.rawValue)")
             }
-            try require(request.choices.contains { $0.kind == choice } && request.covers == "commands starting with printf hello",
+            try require(request.choices.contains { $0.kind == choice } && request.covers == "commands that start with printf hello",
                         "The live command card offers \(choice.rawValue)")
             store.resolveTurnConfirmation(messageID, decision: choice, requestID: request.id, token: store.turnConfirmationTokens[messageID])
             waited = 0

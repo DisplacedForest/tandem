@@ -217,8 +217,10 @@ enum NativeCompanionWorker {
         guard let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any],
               let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return title + "\n" + argumentsJSON }
         let lines = values.keys.sorted().map { key -> String in
-            if case .string(let text)? = values[key] { return "\(key): \(text)" }
-            return "\(key): " + NativeEffectProposal.canonicalArguments(values[key] ?? .null)
+            let label = key.replacingOccurrences(of: "_", with: " ")
+            let shown = label.prefix(1).uppercased() + label.dropFirst()
+            if case .string(let text)? = values[key] { return "\(shown): \(text)" }
+            return "\(shown): " + NativeEffectProposal.canonicalArguments(values[key] ?? .null)
         }
         return ([title] + lines).joined(separator: "\n")
     }
@@ -424,7 +426,7 @@ private struct NativeCompanionRun {
         let subject = cardSubject(definition, arguments, action: action)
         let saving = NativeCardChoices.offered(subject, place: cardPlace(authority)).contains { $0.kind.saves && $0.kind.approves }
         guard saving, let covers = NativeCardChoices.covers(subject) else { return details }
-        return details + "\nA saved choice covers \(covers)."
+        return details + "\nApplies to \(covers)."
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
@@ -691,7 +693,7 @@ private struct NativeCompanionRun {
         if decision == .ask {
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
                                                         coverage: NativeCardChoices.signature(cardSubject(definition, arguments, action: action)))
-            return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?",
+            return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).",
                                               approvalChoices(definition, arguments, action: action, authority: authority),
                                               extra: ["digest": record.digest,
                                                       "details": approvalDetails(definition, arguments, action: action, authority: authority,
@@ -909,7 +911,7 @@ private struct NativeCompanionRun {
                 var again = pending
                 again.coverage = shown.map { NativeCardChoices.signature($0) }
                 checkpoint.pending = again
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title). Approve?", offered,
+                return try NativeCompanionWorker.decide(checkpoint, "\(context.assistantName) wants to do this: \(title).", offered,
                                                   extra: ["digest": digest,
                                                           "details": NativeCompanionWorker.details(definition(named: call.name)?.title ?? record.proposal.function,
                                                                                                    argumentsJSON: record.proposal.argumentsJSON)])

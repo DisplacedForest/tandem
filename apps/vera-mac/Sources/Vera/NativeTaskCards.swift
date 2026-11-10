@@ -68,8 +68,9 @@ struct NativeTaskCardView: View {
             if card.canCancel || !card.offeredChoices.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     if !savingChoices.isEmpty {
-                        HStack(spacing: 12) {
-                            ForEach(savingChoices, id: \.self) { choice in choiceButton(choice) }
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) { ForEach(savingChoices, id: \.self) { choice in choiceButton(choice) } }
+                            VStack(alignment: .leading, spacing: 8) { ForEach(savingChoices, id: \.self) { choice in choiceButton(choice) } }
                         }
                     }
                     HStack(spacing: 12) {
@@ -97,7 +98,7 @@ struct NativeTaskCardView: View {
     private func choiceButton(_ choice: String) -> some View {
         if let title = NativeTaskCardPresentation.choiceTitle(choice) {
             Button(title) { answer(choice) }
-                .buttonStyle(.bordered)
+                .buttonStyle(TaskChoiceStyle(prominent: choice == NativeCardChoiceKind.allowOnce.rawValue))
                 .disabled(!canAnswer(choice))
                 .fixedSize()
                 .help(choice == NativeCardChoices.commandNever ? NativeCardChoices.neverHelp : "")
@@ -243,5 +244,17 @@ struct NativeArtifactMarkdown: View, Equatable {
         Markdown(content)
             .markdownTheme(Self.theme)
             .textSelection(.enabled)
+    }
+}
+
+struct TaskChoiceStyle: PrimitiveButtonStyle {
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if prominent {
+            Button(role: configuration.role, action: configuration.trigger) { configuration.label }.buttonStyle(.borderedProminent)
+        } else {
+            Button(role: configuration.role, action: configuration.trigger) { configuration.label }.buttonStyle(.bordered)
+        }
     }
 }

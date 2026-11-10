@@ -860,7 +860,7 @@ struct NativeToolActivityChip: View {
     private var status: String {
         if declined { return "Declined" }
         switch activity.state {
-        case .pending: return activity.progress?.label ?? "Working"
+        case .pending: return awaitingDecision ? "Waiting for you" : (activity.progress?.label ?? "Working")
         case .succeeded: return "Done"
         case .failed: return "Failed"
         case .canceled: return "Canceled"
@@ -896,11 +896,6 @@ struct NativeToolActivityChip: View {
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
-                if showsConfirmationTag {
-                    Text("Confirmation required")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.orange)
-                }
                 if activity.state == .pending, let progress = activity.progress {
                     ProgressView(value: progress.fraction)
                         .progressViewStyle(.linear)
@@ -989,7 +984,7 @@ struct NativeToolConfirmationBar: View {
         request.choices.first(where: { $0.kind == .allowOnce })?.title ?? "Approve"
     }
 
-    private var lines: [String] { (prompt ?? "Run \(request.title)?").components(separatedBy: "\n") }
+    private var lines: [String] { (prompt ?? "\(request.title)?").components(separatedBy: "\n") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1014,7 +1009,7 @@ struct NativeToolConfirmationBar: View {
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.conversationBackground))
                     }
-                    Text(detail ?? "This tool runs only after your decision.")
+                    Text(detail ?? "This runs only if you allow it.")
                         .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1023,7 +1018,7 @@ struct NativeToolConfirmationBar: View {
             if !saving.isEmpty {
                 VStack(alignment: .trailing, spacing: 6) {
                     if let covers = request.covers, saving.contains(where: { $0.kind.approves }) {
-                        Text("A saved choice covers \(covers).")
+                        Text("Applies to \(covers).")
                             .font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
