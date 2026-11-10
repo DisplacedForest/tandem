@@ -1175,7 +1175,7 @@ private struct SaveSection: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
-            assistantName: config.assistantName,
+            assistantName: config["assistant_name"],
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,

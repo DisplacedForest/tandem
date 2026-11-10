@@ -475,6 +475,46 @@ extension SelfTest {
             try require(light >= 4.5 && dark >= 4.5 && darkest >= 4.5, "\(color.rawValue) text color reads in both appearances: \(light) \(dark) \(darkest)")
             print("    \(color.rawValue) text light \(color.textHex(dark: false)) dark \(color.textHex(dark: true))")
         }
+        let nameDisk = CompanionAppearanceFixtureDisk()
+        let nameConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { nameDisk.contents },
+                                     nativeMCP: NativeMCPManager(servers: []),
+                                     writeConfiguration: { nameDisk.contents = $0; nameDisk.writes += 1 })
+        let nameChat = ChatStore()
+        func screenIsClean(_ expectedSubject: String) throws {
+            let strings = RulesCopy.screenStrings(name: nameChat.companionDisplayName)
+            try require(strings.allSatisfy { !$0.contains("Ver" + "a") && !$0.contains("Tandem") }, "The rules screen carries no default name")
+            try require(strings[0].contains(expectedSubject), "The rules header follows the saved name: \(strings[0])")
+            try require(CompanionState.ready.accessibilityLabel(name: nameChat.companionDisplayName) == "\(expectedSubject == "your companion" ? "Your companion" : expectedSubject) is ready",
+                        "The avatar label follows the saved name")
+        }
+        try require(nameChat.companionDisplayName == nil && !nameChat.companionHasSavedName, "A fresh store has no saved name")
+        try screenIsClean("your companion")
+        nameChat.adoptAssistantName("Ada")
+        try require(nameChat.companionDisplayName == "Ada" && nameChat.companionHasSavedName, "Adopting a name saves it without a restart")
+        try screenIsClean("Ada")
+        nameChat.adoptAssistantName("   ")
+        try require(nameChat.companionDisplayName == nil && nameChat.assistantName == ConfigStore.defaultAssistantName, "Clearing the name returns to unnamed")
+        try screenIsClean("your companion")
+        let nameFake = CompanionAppearanceFixtureStore()
+        var renamed = CompanionAppearanceDraft(name: "", appearance: nameFake.load())
+        renamed.name = "Wren"
+        try renamed.commit(config: nameConfig, store: nameFake, chat: nameChat)
+        try require(nameChat.companionDisplayName == "Wren", "Saving a name from Appearance updates the value")
+        try screenIsClean("Wren")
+        nameConfig["assistant_name"] = ""
+        nameChat.adoptNative(NativeSessionFixture.config, assistantName: nameConfig["assistant_name"])
+        try require(nameChat.companionDisplayName == nil, "Clearing the name in Settings returns to unnamed")
+        try screenIsClean("your companion")
+        nameConfig["assistant_name"] = "Moss"
+        nameChat.adoptNative(NativeSessionFixture.config, assistantName: nameConfig["assistant_name"])
+        try require(nameChat.companionDisplayName == "Moss", "Saving a name in Settings updates the value")
+        try require(DotProfileCopy.saveName("Fern", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == "Fern", "Saving a name from companion setup updates the value")
+        try require(DotProfileCopy.saveName("", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == nil, "Clearing the name from companion setup returns to unnamed")
+        let restored = ChatStore()
+        restored.restoreSavedCompanionName("Ada")
+        try require(restored.companionDisplayName == "Ada", "A name saved before launch is restored")
+        restored.restoreSavedCompanionName("")
+        try require(restored.companionDisplayName == nil, "No saved name at launch is unnamed")
         print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

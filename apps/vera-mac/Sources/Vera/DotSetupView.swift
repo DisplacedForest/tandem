@@ -46,7 +46,7 @@ enum DotProfileCopy {
         } catch {
             return "The name couldn't be saved: \(error.localizedDescription)"
         }
-        store.adoptAssistantName(config.assistantName)
+        store.adoptAssistantName(config["assistant_name"])
         return nil
     }
 }
