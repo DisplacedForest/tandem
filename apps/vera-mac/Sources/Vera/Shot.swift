@@ -494,13 +494,15 @@ enum Shot {
             case "scheduled", "scheduled-paused": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
+            case "companion-connection": section = .vera
             default: section = .chat
             }
             store.section = section
             if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
             content = AnyView(
                 ShotView(store: store, section: section,
-                         emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed",
+                         emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed" || view == "companion-connection",
+                         needsConnection: view == "companion-connection",
                          attachDemo: view == "attach",
                          streaming: view == "chats-streaming",
                          folder: view == "chats-folder",

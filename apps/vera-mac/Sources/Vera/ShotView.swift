@@ -6,6 +6,7 @@ struct ShotView: View {
     let store: ChatStore
     var section: AppSection = .chat
     var emptyChat: Bool = false
+    var needsConnection: Bool = false
     var attachDemo: Bool = false
     var streaming: Bool = false
     var folder: Bool = false
@@ -67,7 +68,8 @@ struct ShotView: View {
                         HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 0) {
                                 if emptyChat && section == .vera {
-                                    CompanionOpeningView(error: store.chatConfigurationError, retry: {})
+                                    CompanionOpeningView(error: needsConnection ? ChatStore.companionNeedsConnection : store.chatConfigurationError,
+                                                         needsConnection: needsConnection, retry: {})
                                     shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
                                         .modifier(ShotComposerPill())
                                         .padding(.horizontal, 28).padding(.bottom, 18)
@@ -610,7 +612,7 @@ struct ShotView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Memory").font(.system(size: 24, weight: .bold))
-                    Text("A local, reviewable library of what Vera may remember about you.")
+                    Text("A local, reviewable library of what Tandem may remember about you.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
@@ -624,6 +626,8 @@ struct ShotView: View {
                     Text("Only approved, relevant, unexpired items can be added to native chat requests.")
                         .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                 }
+                Spacer()
+                SettingsSectionLink("Memory settings", tab: .memory)
             }
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
