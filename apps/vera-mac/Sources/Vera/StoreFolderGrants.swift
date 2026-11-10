@@ -144,6 +144,47 @@ extension ChatStore {
         return (live, liveTargets)
     }
 
+    nonisolated static func toolDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
+                                         requestText: String, toolID: String, action: NativeActionClass,
+                                         subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(toolID, subjects: subjects)
+        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+    }
+
+    nonisolated static func followsRules(_ definition: NativeToolDefinition) -> Bool {
+        definition.effect == .write && !definition.governed && !definition.proposes && definition.id != NativeCompanionProfileTools.toolID
+    }
+
+    nonisolated static func ruled(_ definition: NativeToolDefinition, rules: NativeRuleSource, store: NativeRuleRecordStore?,
+                                  conversationID: String, requestText: String) -> NativeToolDefinition {
+        guard followsRules(definition) else { return definition }
+        let original = definition
+        let decide: @Sendable ([String: NativeJSONValue]) -> (NativeActionClass, NativeRuleVerdict) = { arguments in
+            let action = original.actionClass(for: arguments) ?? .otherChanges
+            return (action, toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, toolID: original.id,
+                                         action: action, subjects: original.ruleSubjects?(arguments) ?? []))
+        }
+        var wrapped = definition
+        wrapped.governed = true
+        wrapped.alwaysAsks = original.confirmation == .required && original.confirmationFor == nil
+        wrapped.confirmationFor = { arguments in
+            let decision = decide(arguments).1.decision
+            if decision == .handOff { return false }
+            return decision.requiresConfirmation || (original.confirmationFor?(arguments) ?? (original.confirmation == .required))
+        }
+        wrapped.execute = { arguments in
+            if !NativeRuleAdmission.admitted {
+                let (action, verdict) = decide(arguments)
+                let commit = try NativeRuleResolver.gate(verdict, fallback: nil, planned: .act(.rule), action: action,
+                                                         approved: NativeToolCallContext.confirmed ?? false)
+                try commit()
+            }
+            return try await original.execute(arguments)
+        }
+        return wrapped
+    }
+
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, subjects: subjects)

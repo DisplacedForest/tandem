@@ -178,7 +178,7 @@ struct NativeToolDefinition: Sendable {
     var effect: NativeToolEffect = .write
     var action: NativeActionClass? = nil
     let isAvailable: @Sendable () -> Bool
-    let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
+    var execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
     var argumentValidator: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var classify: (@Sendable ([String: NativeJSONValue]) -> NativeActionClass)? = nil
@@ -187,6 +187,9 @@ struct NativeToolDefinition: Sendable {
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
     var wants: String? = nil
+    var governed = false
+    var proposes = false
+    var alwaysAsks = false
 
     var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 
@@ -343,7 +346,7 @@ enum NativeRemindersTools {
                     let reminder = try await service.nativeCreateReminder(
                         list: resolvedList, title: title, notes: arguments.string("notes"), due: arguments.string("due"))
                     return try encode(["reminder": reminder])
-                }),
+                }, wants: "add a reminder"),
             NativeToolDefinition(
                 id: toolID,
                 name: "apple_reminders_complete",
@@ -362,7 +365,7 @@ enum NativeRemindersTools {
                     }
                     let reminder = try await service.nativeCompleteReminder(id: id)
                     return try encode(["reminder": reminder])
-                }),
+                }, wants: "mark a reminder as done"),
         ]
     }
 

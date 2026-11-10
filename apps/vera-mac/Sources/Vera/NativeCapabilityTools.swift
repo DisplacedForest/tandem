@@ -155,10 +155,22 @@ enum NativeCapabilityTools {
         declarations.filter(\.enabled).map { definition($0, base: base, client: client) }
     }
 
+    static let proposing: Set<String> = ["propose_action", "recurring_watch"]
+
     static func definition(
         _ declaration: NativeToolDeclaration,
         base: @escaping @Sendable () -> URL?,
         client: NativeHTTPToolClient = .live
+    ) -> NativeToolDefinition {
+        var definition = plainDefinition(declaration, base: base, client: client)
+        definition.proposes = declaration.source == bundledSource && proposing.contains(declaration.name)
+        return definition
+    }
+
+    static func plainDefinition(
+        _ declaration: NativeToolDeclaration,
+        base: @escaping @Sendable () -> URL?,
+        client: NativeHTTPToolClient
     ) -> NativeToolDefinition {
         NativeToolDefinition(
             id: declaration.id,

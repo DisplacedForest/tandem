@@ -2368,6 +2368,11 @@ final class ChatStore: ObservableObject {
         }
         let profileTool = companionProfileTool(for: turn)
         if let profileTool { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [profileTool]) }
+        let turnRules = nativeRuleSource
+        let turnRecords = nativeRuleRecordStore
+        turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions.map {
+            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: text)
+        })
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in

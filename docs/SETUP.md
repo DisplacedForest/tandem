@@ -299,7 +299,7 @@ The **Scheduled** destination in the rail creates and manages recurring research
 
 Scheduled runs only read. A run started by a schedule can look things up and write its report or document, but it can't change anything else: no file edits, commands, sends or changes in a connected service. Settings, Rules and saved allows don't widen this, and Run now is held to the same limit. A scheduled run never stops to ask for approval of a change. It notes the step, carries on, and says in its report what it left undone.
 
-Schedules can also be proposed from a chat through the `schedule_task` tool. It's offered during typed chat only when Background work is on in Settings, Tools, and the message asks for recurring or later work (for example "every weekday at 7" or "tomorrow at 9"). It always asks for confirmation in the app, and rules can't turn that off. Its fields are `title`, `worker_type` (`research` or `document`), `instruction`, `results_to` (`assistant` or `own_chat`), `repeat` (`daily`, `weekdays`, `weekly`, `every_hours` or `once`), `time` as HH:MM local time, `weekday`, `hours` (1 to 168), and `at` as YYYY-MM-DDTHH:MM local time. The confirmation card shows the cadence in plain words along with the work and where results go. Declining saves nothing. Approving saves the schedule and it appears in Scheduled. A research schedule is refused with the usual explanation when no search URL is set.
+Schedules can also be proposed from a chat through the `schedule_task` tool. It's offered during typed chat only when Background work is on in Settings, Tools, and the message asks for recurring or later work (for example "every weekday at 7" or "tomorrow at 9"). It always asks for confirmation in the app, and no rule can turn that off. Setting **Send on your behalf** to **Leave it to me**, or choosing Never on its card, stops it from scheduling in chat at all. Its fields are `title`, `worker_type` (`research` or `document`), `instruction`, `results_to` (`assistant` or `own_chat`), `repeat` (`daily`, `weekdays`, `weekly`, `every_hours` or `once`), `time` as HH:MM local time, `weekday`, `hours` (1 to 168), and `at` as YYYY-MM-DDTHH:MM local time. The confirmation card shows the cadence in plain words along with the work and where results go. Declining saves nothing. Approving saves the schedule and it appears in Scheduled. A research schedule is refused with the usual explanation when no search URL is set.
 
 Each run appends a turn to the owning chat: the instruction as the user message, then a reply with the same task card the in-app task engine uses, along with its report or document, Stop and Retry. Each schedule has a run history showing the scheduled time, the outcome (Finished, Couldn't finish, Stopped, Missed, Skipped or Couldn't start, or while a run is open, Running, Waiting for you or Blocked), a short note where it helps, and Open to jump to the chat that holds the run. Rows offer Run now, Pause or Resume, Edit and Delete. A one-time schedule turns itself off after its time. Deleting a schedule removes its history but keeps the chats. Schedules and history live in the app's local history database next to tasks, and nothing exists after an upgrade until you create a schedule.
 
@@ -403,7 +403,7 @@ Settings, Rules holds one setting per kind of action:
 | Edit files in granted folders (write, edit, move, create folder) | Do it without asking |
 | Run commands in granted folders | Ask first |
 | Move files to the Trash | Ask first |
-| Send on your behalf (connected services that send) | Ask first |
+| Send on your behalf (connected services and tool files that send or post) | Ask first |
 | Run risky commands (privileged, touching system or credential locations, or unreadable) | Leave it to me |
 | Change your reminders (adding, editing and completing Apple Reminders when you ask in a chat) | Do it without asking |
 | Make changes through connected services (connected service tools you allowed to change something) | Ask first |
@@ -411,7 +411,7 @@ Settings, Rules holds one setting per kind of action:
 
 Three things are always handed to you and aren't in that list of choices: entering a credential, card number or one-time code; paying or transferring money; and deleting permanently outside a granted folder or emptying the Trash. Rules and permissions never loosen from inside a conversation, whatever a message or a tool asks; only your click in Settings or on a card loosens them.
 
-The four choices: **Do it without asking** runs the action and shows what happened on the turn. **Do it when I say go ahead** runs only when your message says so in plain words (for example "go ahead", "no need to ask", "you have my approval") and asks otherwise. Pre-approval is recognized only when a sentence of your request is exactly the phrase on its own: "Run the tests. Go ahead." runs, while "Go ahead and run the tests" asks. Do it without asking for commands relies on a declared table of sending and destructive commands; when unsure, keep commands on Ask first. **Ask first** puts a card on the turn before anything runs. **Leave it to me** refuses the tool call with a message that names the rule, so the model tells you what it would have done. Rules never widen what a connected MCP server allows: a tool the server's authority denies stays denied.
+The four choices: **Do it without asking** runs the action and shows what happened on the turn. **Do it when I say go ahead** runs only when your message says so in plain words (for example "go ahead", "no need to ask", "you have my approval") and asks otherwise. Pre-approval is recognized only when a sentence of your request is exactly the phrase on its own: "Run the tests. Go ahead." runs, while "Go ahead and run the tests" asks. Do it without asking for commands relies on a declared table of sending and destructive commands; when unsure, keep commands on Ask first. **Ask first** puts a card on the turn before anything runs. **Leave it to me** refuses the tool call with a message that names the rule, so the model tells you what it would have done. In a chat, every tool that changes something follows the rule for its kind; tools that only look things up never ask. Rules never widen what a connected MCP server allows: a tool the server's authority denies stays denied.
 
 The Rules button next to the folder chips tightens any of these for the current chat. A chat can only choose a stricter setting than the global one, and the popover also lists the command prefixes you've approved for that chat so you can take one back.
 
@@ -452,7 +452,7 @@ otherwise. Re-running is safe: files already present with identical content are 
 and the report lists everything created, uploaded, skipped, or failed. Chat history is not
 migrated; the native store starts fresh by design.
 
-Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, and other autonomous paths cannot invoke them.
+Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, and other autonomous paths cannot invoke them. Adding or completing a reminder follows the **Change your reminders** rule, so it runs without asking unless you change that rule.
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. Tool execution is bounded to four rounds, eight total calls, and two actual web searches. A reached limit triggers one bounded synthesis without tools. If synthesis cannot answer, the transcript retains useful evidence as an unfinished answer with follow-up or retry controls. A tool failure, malformed stream, or endpoint outage also preserves received text and activity.
 
@@ -506,8 +506,11 @@ service:
   set.
 - `method`: `GET` sends the arguments as query parameters; `POST` sends them as a JSON
   body.
-- `confirmation`: `"none"` runs the call immediately; `"required"` asks in the chat UI
-  before the request fires.
+- `confirmation`: `"required"` always asks in the chat before the request fires, whatever
+  your rules say. With `"none"`, a `GET` runs immediately and a `POST` follows the **Send on
+  your behalf** rule, which asks first by default: **Do it without asking** runs it with no
+  card, **Do it when I say go ahead** runs it when your message says so, and **Leave it to
+  me** stops it.
 - `timeout_s`: optional, seconds before the call is abandoned (default 20).
 - `enabled`: optional, default true.
 - `json_fields`: optional, POST only. Maps a declared string property to a request body

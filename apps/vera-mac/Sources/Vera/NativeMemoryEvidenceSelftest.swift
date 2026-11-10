@@ -305,7 +305,7 @@ enum NativeMemoryEvidenceSelftest {
         let gate = NativeMemoryEvidenceGate()
         let tool = NativeToolDefinition(id: "fixture-read", name: "fixture_read", title: "Fixture read", description: "Read fixture",
             parameters: .object(["type": .string("object"), "properties": .object([:])]), confirmation: .none,
-            isAvailable: { true }, execute: { _ in await gate.wait(); return .object(["ok": .bool(true)]) })
+            effect: .read, isAvailable: { true }, execute: { _ in await gate.wait(); return .object(["ok": .bool(true)]) })
         let transport = ScriptedNativeToolTransport(rounds: [
             [NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "read", name: "fixture_read", arguments: "{}")], finishReason: "tool_calls")],
             [NativeChatStreamSnapshot(content: "Should not send", toolCalls: [], finishReason: "stop")],

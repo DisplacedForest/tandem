@@ -71,6 +71,7 @@ struct NativeCardSubject: Equatable, Hashable, Sendable {
     var typedText = ""
     var scheduleInstructed = false
     var phrase: String? = nil
+    var alwaysAsks = false
 }
 
 enum NativeCardCoverage: Equatable, Sendable {
@@ -167,7 +168,7 @@ enum NativeCardChoices {
         switch coverage(subject) {
         case .none: parts.append("none")
         case .commandsOnly: parts.append("commands")
-        case .wholeTool: parts.append("tool")
+        case .wholeTool: parts.append(subject.alwaysAsks ? "tool-asks" : "tool")
         case .commandPrefix(let prefix): parts += ["prefix", prefix.kind.rawValue, prefix.value]
         case .folders(let folders): parts += ["folders"] + folders.flatMap { [$0.kind.rawValue, $0.value] }
         case .sendTargets(let targets, let typed): parts += [typed ? "typed" : "untyped"] + targets.flatMap { [$0.kind.rawValue, $0.value] }
@@ -180,7 +181,7 @@ enum NativeCardChoices {
         let once = NativeCardChoice(kind: .allowOnce, title: "Allow once")
         let decline = NativeCardChoice(kind: .decline, title: "Decline")
         let covered = coverage(subject)
-        var standing = true
+        var standing = !subject.alwaysAsks
         var never: NativeCardChoice? = NativeCardChoice(kind: .never, title: neverTitle(covered, action: subject.action))
         switch covered {
         case .none: return [decline, once]
@@ -190,7 +191,7 @@ enum NativeCardChoices {
             standing = false
             never = NativeCardChoice(kind: .never, title: "Never run commands \(place.neverWords)")
         case .sendTargets(_, let typed):
-            standing = typed
+            standing = standing && typed
         case .folders, .wholeTool:
             break
         }

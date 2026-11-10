@@ -10,7 +10,7 @@ enum NativeSessionHTTPFixture {
                                       model: "local-model", chatTemplateKwargs: nil, streaming: false)
         let hold = NativeToolDefinition(id: "hold", name: "hold", title: "Read the reference",
             description: "Read a test reference", parameters: .object(["type": .string("object")]),
-            confirmation: .none, isAvailable: { true }, execute: { _ in
+            confirmation: .none, effect: .read, isAvailable: { true }, execute: { _ in
                 let (_, response) = try await URLSession.shared.data(from: base.appendingPathComponent("hold"))
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NativeTaskHTTPError.invalidResponse }
                 return .object(["finding": .string("The reference is ready")])
@@ -71,12 +71,14 @@ extension NativeSessionHTTPFixture {
                                       model: "local-model", chatTemplateKwargs: nil, streaming: false)
         let mutation = NativeToolDefinition(id: "fixture-mutation", name: "hold", title: "Save the test item",
             description: "Save a synthetic item", parameters: .object(["type": .string("object")]),
-            confirmation: .none, isAvailable: { true }, execute: { _ in
+            confirmation: .none, action: .otherChanges, isAvailable: { true }, execute: { _ in
                 _ = try await URLSession.shared.data(from: input.base.appendingPathComponent("effect"))
                 return .object(["saved": .bool(true)])
             })
+        var rules = NativeRules.defaults
+        rules.set(.act, for: .otherChanges)
         let store = ChatStore(nativeConfig: config, nativeTransport: NativeChatClient(config: config),
-            repository: repository, nativeEnabledToolIDs: ["fixture-mutation"],
+            repository: repository, nativeEnabledToolIDs: ["fixture-mutation"], nativeRules: rules,
             nativeToolRegistry: NativeToolRegistry(definitions: [mutation]), artifactPersistenceEnabled: false)
         if input.mode == "owner" {
             store.newConversation()
