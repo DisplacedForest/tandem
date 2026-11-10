@@ -48,7 +48,16 @@ struct CardAnswers: Equatable {
     }
 }
 
+struct CardSegmentStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.contentShape(Rectangle()).opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
 struct CardSplitButton: View {
+    static let caretWidth: CGFloat = 30
+    static let height: CGFloat = 28
+
     let title: String
     let kind: ConversationButtonStyle.Kind
     var isDefault = false
@@ -57,14 +66,24 @@ struct CardSplitButton: View {
     let onPrimary: () -> Void
     let onItem: (String) -> Void
 
+    private var ink: Color { kind == .primary ? Theme.onSage : Theme.warmTextPrimary }
+
+    private var label: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold)).foregroundStyle(ink)
+            .padding(.leading, 14).padding(.trailing, items.isEmpty ? 14 : 10)
+            .frame(height: Self.height)
+    }
+
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 0) {
             if isDefault {
-                Button(title, action: onPrimary).buttonStyle(ConversationButtonStyle(kind: kind)).keyboardShortcut(.defaultAction)
+                Button(action: onPrimary) { label }.buttonStyle(CardSegmentStyle()).keyboardShortcut(.defaultAction)
             } else {
-                Button(title, action: onPrimary).buttonStyle(ConversationButtonStyle(kind: kind))
+                Button(action: onPrimary) { label }.buttonStyle(CardSegmentStyle())
             }
             if !items.isEmpty {
+                Rectangle().fill(kind == .primary ? Theme.onSage.opacity(0.35) : Theme.cardStroke).frame(width: 1, height: 16)
                 Menu {
                     ForEach(items) { item in
                         Button {
@@ -76,15 +95,20 @@ struct CardSplitButton: View {
                         .accessibilityLabel(item.spoken)
                     }
                 } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(ink)
+                        .frame(width: Self.caretWidth, height: Self.height)
                 }
                 .menuStyle(.button)
-                .buttonStyle(ConversationCaretStyle(kind: kind))
+                .buttonStyle(CardSegmentStyle())
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel("More ways to \(title.lowercased())")
             }
         }
+        .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
+        .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+        .clipShape(Capsule())
+        .opacity(enabled ? 1 : 0.45)
         .disabled(!enabled)
     }
 }

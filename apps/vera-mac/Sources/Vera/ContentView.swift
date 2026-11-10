@@ -1027,31 +1027,6 @@ struct NativeToolConfirmationBar: View {
     }
 }
 
-struct ConversationCaretStyle: ButtonStyle {
-    var kind: ConversationButtonStyle.Kind
-
-    func makeBody(configuration: Configuration) -> some View {
-        ConversationCaretBody(kind: kind, label: configuration.label, pressed: configuration.isPressed)
-    }
-}
-
-private struct ConversationCaretBody: View {
-    let kind: ConversationButtonStyle.Kind
-    let label: ButtonStyleConfiguration.Label
-    let pressed: Bool
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        label
-            .foregroundStyle(kind == .primary ? Theme.onSage : Theme.warmTextPrimary)
-            .frame(width: 28, height: 28)
-            .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
-            .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
-            .contentShape(Capsule())
-            .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
-    }
-}
-
 struct ConversationButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
     var kind: Kind
