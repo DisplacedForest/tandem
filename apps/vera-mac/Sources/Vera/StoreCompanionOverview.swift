@@ -61,7 +61,8 @@ extension ChatStore {
             let request = conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
             let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
                                                            connectionNote: saved?.connectionNote)
-            let outcome = display?.artifact?.report ?? display?.card.answer ?? display?.card.milestone
+            let outcome = display?.artifact?.report ?? display?.card.answer
+                ?? display.map { CompanionSentence.plain($0.card.milestone, name: savedCompanionName) }
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
                                            canOpen: conversation != nil)
         case .run(let id):
@@ -69,7 +70,7 @@ extension ChatStore {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
             }
             let reference = nativeTaskReferences.first { $0.id.uuidString.lowercased() == run.taskReferenceID?.lowercased() }
-            return CompanionActivityDetail(request: reference?.request.objective, outcome: run.detail,
+            return CompanionActivityDetail(request: reference?.request.objective, outcome: CompanionSentence.plain(run.detail, name: savedCompanionName),
                                            canOpen: run.conversationID.flatMap(companionActivityConversation) != nil)
         }
     }

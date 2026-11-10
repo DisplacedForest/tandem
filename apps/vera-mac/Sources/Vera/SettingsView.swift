@@ -80,7 +80,7 @@ private struct PersonaTab: View {
 private struct NativeToolsTab: View {
     var body: some View {
         Form {
-            Section("Tools available to the model") { NativeToolEditor() }
+            Section("Tools") { NativeToolEditor() }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -1196,26 +1196,28 @@ struct NativeToolAccessRow: View {
 
     var body: some View {
         let state = access.state()
-        if let status = access.status(state) {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
-                Text(status.line).font(.system(size: 12))
-                Spacer()
-                Button(status.action) {
-                    if state == .notAsked {
-                        Task {
-                            _ = await access.request()
-                            refresh += 1
+        Group {
+            if let status = access.status(state) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                    Text(status.line).font(.system(size: 12))
+                    Spacer()
+                    Button(status.action) {
+                        if state == .notAsked {
+                            Task {
+                                _ = await access.request()
+                                refresh += 1
+                            }
+                        } else if let pane = access.settingsPane {
+                            NSWorkspace.shared.open(pane)
                         }
-                    } else if let pane = access.settingsPane {
-                        NSWorkspace.shared.open(pane)
                     }
                 }
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-            .id(refresh)
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh += 1 }
         }
+        .id(refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh += 1 }
     }
 }

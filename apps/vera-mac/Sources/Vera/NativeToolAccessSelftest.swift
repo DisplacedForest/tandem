@@ -113,7 +113,6 @@ extension SelfTest {
         let typedStore = try store(typed, transport: typedTransport)
         try await ask(typedStore, "Add milk to my reminders")
         try await NativeSessionFixture.eventually("The typed turn asks for access") { typed.requests == 1 }
-        try require(prompt(typedTransport).contains("macOS is asking the person now"), "The first turn says access is being asked for")
         try await ask(typedStore, "Add milk to my reminders")
         try require(typed.requests == 1 && reminderNames.isSubset(of: offered(typedTransport)) && !prompt(typedTransport).contains("access to Reminders"),
                     "Once the person allows it, the next message has the tools and no note")
@@ -124,8 +123,9 @@ extension SelfTest {
         quietStore.asksForSystemAccess = false
         quietStore.requestSystemAccess()
         try await ask(quietStore, "Add milk to my reminders")
-        try require(quiet.requests == 0 && prompt(quietTransport).contains("access to Reminders"),
-                    "Outside the real app nothing asks macOS, and the note is still written")
+        try require(quiet.requests == 0 && prompt(quietTransport).contains("hasn't been given access to Reminders on this Mac yet")
+                        && !prompt(quietTransport).contains("is asking the person now"),
+                    "Outside the real app nothing asks macOS, and the note says access hasn't been given without claiming a prompt is on screen")
 
         let other = NativeToolAccessFixtureService(.authorized)
         let otherTransport = NativeSessionFixtureTransport()

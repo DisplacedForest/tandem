@@ -116,7 +116,7 @@ struct NativeTaskCardShotSurface: View {
             result.workerType = "companion"
             result.status = .needsInput
             result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
-            result.choices = ["approve", "decline"]
+            result.choices = ["decline", "never", "allow_always", "allow_here", "approve"]
             result.details = "Send a booking request\nmessage: Please book the workshop inspection for Tuesday morning and confirm by email.\nto: inspections@example.com"
         case "task-card-answer":
             result.title = "What's the weather in Chicago tomorrow?"
@@ -160,7 +160,7 @@ struct NativeTaskCardShotSurface: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack {
-                Text("Vera").font(.system(size: 18, weight: .semibold))
+                Text("Tandem").font(.system(size: 18, weight: .semibold))
                 Spacer()
             }
             .padding(.bottom, 12)

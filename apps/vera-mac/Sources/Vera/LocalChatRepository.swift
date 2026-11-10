@@ -280,6 +280,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativePreferencesV34") { db in try NativePreferenceStore.migrate(db) }
         migrator.registerMigration("nativeRuleRecordsV35") { db in try NativeRuleRecordStore.migrate(db) }
         migrator.registerMigration("nativeRuleActionsV36") { db in try NativeRuleRecordStore.migrateActions(db) }
+        migrator.registerMigration("nativeRuleCardsV37") { db in try NativeRuleRecordStore.migrateCards(db); try NativeRuleRecordStore.migratePrefixes(db) }
         try migrator.migrate(database)
     }
 

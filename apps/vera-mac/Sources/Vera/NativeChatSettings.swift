@@ -353,7 +353,7 @@ enum NativeChatToolCatalog {
             NativeChatToolDescriptor(
                 id: "apple-reminders",
                 name: "Apple Reminders",
-                summary: "Reads and updates reminder lists after you grant access.",
+                summary: "Reads and updates your reminder lists.",
                 available: true,
                 setup: "Enable this tool to grant Reminders access for explicit chat requests."),
             NativeChatToolDescriptor(

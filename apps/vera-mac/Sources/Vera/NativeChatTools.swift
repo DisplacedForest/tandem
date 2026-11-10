@@ -133,6 +133,9 @@ struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendabl
     let name: String
     let title: String
     let request: String
+    var subject: NativeCardSubject? = nil
+    var choices: [NativeCardChoice] = []
+    var covers: String? = nil
 
     init(activity: NativeToolActivity) {
         id = activity.id
@@ -178,7 +181,7 @@ struct NativeToolAccess: Sendable {
         switch state {
         case .granted: return nil
         case .notAsked:
-            return "\(subject) is switched on, but Tandem hasn't been given access to \(subject) on this Mac yet and macOS is asking the person now. If they ask for anything that needs \(subject), say that plainly, ask them to allow it, and suggest they ask again afterwards. Do not say it was done."
+            return "\(subject) is switched on, but Tandem hasn't been given access to \(subject) on this Mac yet. If the person asks for anything that needs \(subject), say that plainly and tell them to allow it if macOS is asking, or to choose Allow access under \(subject) in Tandem's Settings, Tools, and then ask again. Do not say it was done."
         case .refused:
             return "\(subject) is switched on, but Tandem doesn't have access to \(subject) on this Mac. If the person asks for anything that needs \(subject), say that plainly and tell them to turn on Tandem under System Settings, Privacy & Security, \(subject). Do not say it was done."
         }
@@ -215,6 +218,9 @@ struct NativeToolDefinition: Sendable {
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
     var access: NativeToolAccess? = nil
+    var wants: String? = nil
+
+    var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
@@ -787,9 +793,11 @@ struct NativeToolLoop: Sendable {
                                     }
                                     defer { gate.close() }
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
-                                        try await Self.execute(
-                                            definition, arguments: arguments, activity: activity,
-                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        try await NativeToolCallContext.$confirmed.withValue(needsConfirmation) {
+                                            try await Self.execute(
+                                                definition, arguments: arguments, activity: activity,
+                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                        }
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
                                        !Self.resultFailed(value, toolName: call.name) {

@@ -287,18 +287,23 @@ extension SelfTest {
         try require(resolver.choice(for: .trash) == .handOff, "Saving a stricter draft tightens the thread")
         DotProfileCopy.commitRules(before.choices, store: store)
         try require(store.conversationRules(for: veraID).choices == before.choices, "Committing the original draft restores the rules")
-        store.approveCommandPrefix("git status", conversationID: veraID)
-        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"), "The fixture prefix is approved on the thread")
+        let subject = NativeCardSubject(action: .commands, toolID: NativeCommandTools.toolID, toolTitle: "Run a command", command: "git status --short")
+        let drafts = NativeCardChoices.records(.allowHere, subject: subject, place: .chat(conversationID: veraID), originMessageID: nil)
+        try require(drafts.count == 1, "The fixture card choice makes one record")
+        let saved = drafts.compactMap { store.addRuleRecord($0) }
+        let approved = { store.approvedCommandRecords(for: veraID).map { $0.target?.value } }
+        try require(saved.count == 1 && approved() == ["git status"]
+                    && store.ruleResolver(for: veraID, requestText: "").tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "git status -s") == .act(.grant),
+                    "The fixture prefix is approved on the thread")
         var revoked: Set<String> = []
-        revoked.insert("git status")
-        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
-                    "Removing a prefix in the draft keeps it approved until saved")
+        revoked.insert(saved[0].id)
+        try require(approved() == ["git status"], "Removing a prefix in the draft keeps it approved until saved")
         DotProfileCopy.commitRules(before.choices, store: store)
-        try require(store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
-                    "Saving without draft removals keeps approved prefixes")
+        try require(approved() == ["git status"], "Saving without draft removals keeps approved prefixes")
         DotProfileCopy.commitRules(before.choices, revokedPrefixes: revoked, store: store)
-        try require(!store.conversationRules(for: veraID).approvedCommandPrefixes.contains("git status"),
-                    "Saving a draft removal revokes the prefix")
+        let after = store.ruleResolver(for: veraID, requestText: "").tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "git status -s")
+        let stillActs: Bool = { if case .act = after { return true } else { return false } }()
+        try require(approved().isEmpty && !stillActs, "Saving a draft removal revokes the prefix")
     }
 
     private static func checkHeaderSummary() throws {

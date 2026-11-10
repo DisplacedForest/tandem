@@ -26,8 +26,9 @@ enum DotProfileCopy {
         for action in NativeActionClass.configurable {
             store.tightenConversationRule(rules[action] ?? store.nativeRules.choice(for: action), for: action, conversationID: id)
         }
-        for prefix in revokedPrefixes.sorted() {
-            store.revokeCommandPrefix(prefix, conversationID: id)
+        let approved = Set(store.approvedCommandRecords(for: id).map(\.id))
+        for record in revokedPrefixes.sorted() where approved.contains(record) {
+            store.revokeRuleRecord(id: record)
         }
     }
 

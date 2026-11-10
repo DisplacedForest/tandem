@@ -16,7 +16,7 @@ enum NativeToolAccessShot {
         let access = NativeToolAccess(subject: "Reminders", settingsPane: nil, state: { state }, request: { false })
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let root = Form {
-            Section("Tools available to the model") {
+            Section("Tools") {
                 Toggle(isOn: .constant(true)) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(descriptor?.name ?? "")
