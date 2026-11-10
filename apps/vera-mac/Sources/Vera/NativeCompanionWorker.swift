@@ -679,8 +679,10 @@ private struct NativeCompanionRun {
         let seconds = definition.timeout.map { Double($0.components.seconds) } ?? environment.defaultToolSeconds
         do {
             let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) {
-                if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
-                return try await definition.execute(arguments)
+                try await NativeRuleAdmission.$admitted.withValue(true) {
+                    if let keyed = definition.executeWithKey { return try await keyed(arguments, key) }
+                    return try await definition.execute(arguments)
+                }
             }
             let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
             if NativeCompanionWorker.interrupted(value) {

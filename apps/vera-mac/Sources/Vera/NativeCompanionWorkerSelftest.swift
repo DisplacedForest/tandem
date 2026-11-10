@@ -249,6 +249,7 @@ extension SelfTest {
         try await companionProactiveRefusesWrites()
         try await companionActWrite()
         try await companionOneUseGrant()
+        try await companionAdmittedFolderWrites()
         try await companionAskApproveAndDecline()
         try await companionHandOff()
         try await companionStaleAuthority()
@@ -418,6 +419,56 @@ extension SelfTest {
         let done = try await harness.runUntilSettled()
         try require(done.state == .completed && harness.service.count("water_bed") == 2 && (try records.record(id: grant.id))?.remainingUses == 0,
                     "Approving the second call runs it without touching the spent grant")
+    }
+
+    private static func companionAdmittedFolderWrites() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-folder-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("open"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let open = grant.path + "/open"
+        for scoped in [false, true] {
+            let target = open + (scoped ? "/task.txt" : "/once.txt")
+            var harness = try NativeCompanionHarness(rules: [.fileEdits: scoped ? .ask : .act]) { messages in
+                let results = NativeCompanionScriptedModel.toolResults(messages)
+                if results.isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeFolderTools.writeName, "{\"path\":\"\(target)\",\"content\":\"x\"}")
+                }
+                return NativeCompanionScriptedModel.text("Saved it.")
+            }
+            let rules = harness.rules
+            let thread = harness.thread
+            let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
+                rules.resolver(for: thread.current, requestText: "").decision(for: action)
+            })
+            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            let clock = harness.clock
+            let records = NativeRuleRecordStore(database: harness.repository.database, now: { clock.now })
+            harness.environment.recordsChanged = {
+                if let active = try? records.active() { rules.setRecords(active) }
+            }
+            let id = try harness.create("Save the note")
+            let allow: NativeRuleRecord
+            if scoped {
+                allow = try records.add(NativeRuleRecord(scope: .task(id), action: .fileEdits, effect: .allow, statement: "Edit files for this work"))
+            } else {
+                _ = try records.add(NativeRuleRecord(action: .fileEdits, effect: .forbid, statement: "Never edit my files"))
+                allow = try records.add(NativeRuleRecord(action: .fileEdits, target: NativeRuleTarget.folder(open), effect: .allow,
+                                                         statement: "Edit the open folder once", remainingUses: 1))
+            }
+            rules.setRecords(try records.active())
+            let done = try await harness.runUntilSettled()
+            let effects = try harness.effects(id)
+            if scoped {
+                try require(done.state == .completed && FileManager.default.fileExists(atPath: target) && effects.count == 1 && effects[0].state == .completed,
+                            "A task-scoped allow lets the worker write without asking, end to end")
+            } else {
+                try require(done.state == .completed && FileManager.default.fileExists(atPath: target) && effects.count == 1 && effects[0].state == .completed
+                            && (try records.record(id: allow.id))?.remainingUses == 0,
+                            "A broad forbid plus a narrower one-use allow gives exactly one worker write and a spent use")
+            }
+        }
     }
 
     private static func companionActWrite() async throws {

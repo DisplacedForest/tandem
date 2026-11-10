@@ -33,14 +33,14 @@ enum NativeRuleRecordsSelftest {
         try targets(require)
         try unboundedCounter(require)
         try durableVersions(require)
-        try commandRestrictions(require)
         try await commandToolID(require)
         try await typedTargets(require)
         try await realFolderTargets(require)
-        try await commandFolderScope(require)
         try await foregroundBoundary(require)
         try await everySubject(require)
-        try commandDelegation(require)
+        try targetKinds(require)
+        try await footprints(require)
+        try await lateConfirmation(require)
         try useLimits(require)
         try strictReload(require)
         try projectMap(require)
@@ -559,31 +559,6 @@ enum NativeRuleRecordsSelftest {
                     "An older snapshot published after a newer one never restores a revoked allow")
     }
 
-    private static func commandRestrictions(_ require: (Bool, String) throws -> Void) throws {
-        let acting = NativeRules(choices: [.commands: .act])
-        let forbidden = resolver([record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))], global: acting)
-        let blocked = ["swift 'build'", "swift \"build\" --verbose", "make lint && swift build", "ls; swift build | tee log", "FOO=1 swift build",
-                       "env swift build", "nohup swift build", "command swift build", "(swift build)", "/usr/bin/swift build",
-                       "swift bu$(echo il)d", "sh -c 'swift build'", "sw\"if\"t build"]
-        for command in blocked {
-            try require(forbidden.decision(forCommand: command) == .handOff, "A forbid on swift build blocks: \(command)")
-        }
-        try require(forbidden.decision(forCommand: "swift test") == .act(.rule) && forbidden.decision(forCommand: "git status && swift test") == .act(.rule),
-                    "Commands without the restricted prefix still act")
-        let strictest = resolver([record(.ask, .commands, tool: NativeCommandTools.toolID, target: NativeRuleTarget.make(.commandPrefix, "npm test")),
-                                  record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))], global: acting)
-        try require(strictest.tool(NativeCommandTools.toolID, targets: []).decision(forCommand: "echo $HOME") == .handOff,
-                    "A command the parser cannot see through takes the strictest applicable restriction")
-        let plain = resolver([], global: acting)
-        let main = NativeRuleResolver(global: acting, conversation: NativeConversationRules(), requestText: "")
-        for command in ["echo 'hello world'", "swift build", "echo $HOME"] {
-            try require(plain.decision(forCommand: command) == main.decision(forCommand: command), "With no restrictive records a command behaves as before: \(command)")
-        }
-        let allowed = resolver([record(.allow, .commands, target: NativeRuleTarget.make(.commandPrefix, "swift build"))])
-        try require(allowed.decision(forCommand: "swift build") == .act(.grant) && allowed.decision(forCommand: "swift 'build'") == .ask
-                    && allowed.decision(forCommand: "env swift build") == .ask, "An allow prefix still matches only a plain simple command")
-    }
-
     static func folderFixture() throws -> (root: String, grant: FolderGrant, directory: URL) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-folder-" + UUID().uuidString)
         for name in ["locked", "open"] {
@@ -740,26 +715,6 @@ enum NativeRuleRecordsSelftest {
         try require(sibling == "ran", "The sibling folder still acts")
     }
 
-    private static func commandFolderScope(_ require: (Bool, String) throws -> Void) async throws {
-        let fixture = try folderFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let source = NativeRuleSource()
-        source.setGlobal(NativeRules(choices: [.commands: .ask]))
-        source.setRecords([record(.forbid, .commands, target: NativeRuleTarget.folder(fixture.root + "/locked"))])
-        let run = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in },
-                                                 liveTargets: { command, action, subjects in
-            ChatStore.commandDecision(source, conversationID: "c1", requestText: "", command: command, action: action, subjects: subjects)
-        })[0]
-        func message(_ directory: String) async -> String {
-            do { _ = try await run.execute(["command": .string("swift build"), "directory": .string(directory)]); return "ran" }
-            catch { return error.localizedDescription }
-        }
-        try require(await message(fixture.root + "/locked") == NativeRuleResolver.handOffMessage(.commands),
-                    "A folder-scoped commands forbid hands off a command whose working folder is inside it")
-        try require(await message(fixture.root + "/open") == NativeRuleResolver.changedMessage,
-                    "A command in a sibling folder follows the ordinary rules")
-    }
-
     static func chatFolders(_ source: NativeRuleSource, store records: NativeRuleRecordStore?, grant: FolderGrant) -> [String: NativeToolDefinition] {
         let definitions = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule),
                                                         liveTargets: { action, subjects in
@@ -856,54 +811,124 @@ enum NativeRuleRecordsSelftest {
         try require(insideDecision.decision == .act(.grant) && insideDecision.authorizedBy.count == 1 && insideRun == "ran",
                     "A move entirely inside the allowed folder acts under one authorizing record")
 
-        let commands = NativeRuleSource()
-        commands.setGlobal(NativeRules(choices: [.commands: .ask]))
-        commands.setRecords([record(.allow, .commands, target: NativeRuleTarget.folder(open)),
-                             record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "touch"))])
-        let run = NativeCommandTools.definitions(grants: { [fixture.grant] }, decision: .ask, reason: { _ in nil }, record: { _ in })[0]
-        let commandResolver = commands.resolver(for: "c1", requestText: "")
-        try require(NativeCompanionWorker.ruleDecision(run, ["command": .string("touch x"), "directory": .string(open)], resolver: commandResolver,
-                                                       honoringLimitedUse: true).decision == .handOff,
-                    "A command in an allowed folder with a forbidden prefix is blocked")
-        try require(NativeCompanionWorker.ruleDecision(run, ["command": .string("swift build"), "directory": .string(open)], resolver: commandResolver,
-                                                       honoringLimitedUse: true).decision == .ask,
-                    "A command in an allowed folder still needs every subject to act")
     }
 
-    private static func commandDelegation(_ require: (Bool, String) throws -> Void) throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rule-records-delegate-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let grant = try FolderGrant.make(url: directory)
-        let run = NativeCommandTools.definitions(grants: { [grant] }, decision: .ask, reason: { _ in nil }, record: { _ in })[0]
-        guard let decide = run.ruleDecision else { throw NativeTaskFixture.Failure.assertion("The command tool has a decision callback") }
+
+    private static func targetKinds(_ require: (Bool, String) throws -> Void) throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let prefix = NativeRuleTarget.make(.commandPrefix, "swift build")
+        let folder = NativeRuleTarget.folder("/tmp")
+        let invalid: [(NativeRuleRecord, String)] = [
+            (record(.forbid, .commands, target: prefix), "a restrictive command prefix"),
+            (record(.ask, .commands, target: prefix), "an asking command prefix"),
+            (record(.allow, .fileEdits, target: prefix), "a command prefix outside commands"),
+            (record(.forbid, .commands, target: folder), "a folder on commands"),
+            (record(.allow, .networkSends, target: folder), "a folder on sends"),
+            (record(.forbid, .fileEdits, target: recipient("alice")), "a recipient outside sends"),
+            (record(.allow, .trash, target: NativeRuleTarget.make(.service, "github")), "a service outside sends"),
+        ]
+        for (candidate, name) in invalid {
+            var caught: NativeRuleRecordError?
+            do { try records.add(candidate) } catch let error as NativeRuleRecordError { caught = error }
+            try require(caught == .invalidTarget, "The store rejects \(name) at add")
+        }
+        let valid = [record(.allow, .commands, target: prefix), record(.forbid, .fileEdits, target: folder), record(.ask, .trash, target: folder),
+                     record(.forbid, .networkSends, target: recipient("alice")), record(.forbid, .commands), record(.forbid, .commands, tool: "run")]
+        for candidate in valid { _ = try records.add(candidate) }
+        try require(try records.all().count == valid.count, "Allowed target kinds and class or tool records of any effect are accepted")
+        let allowPrefix = try records.all().first { $0.target?.kind == .commandPrefix }!
+        var updateCaught: NativeRuleRecordError?
+        do { try records.update(id: allowPrefix.id) { $0.effect = .forbid } } catch let error as NativeRuleRecordError { updateCaught = error }
+        try require(updateCaught == .invalidTarget && (try records.record(id: allowPrefix.id))?.effect == .allow, "The store rejects an invalid combination at update")
+        let rows: [(String, String, String, String)] = [("commands", "forbid", "command_prefix", "swift build"), ("commands", "allow", "folder", "/tmp"),
+                                                        ("file_edits", "forbid", "recipient", "alice"), ("trash", "allow", "command_prefix", "ls")]
+        for (action, effect, kind, value) in rows {
+            var rejected = false
+            do {
+                try repository.database.write { db in
+                    try db.execute(sql: """
+                        INSERT INTO native_rule_records(id, scope_kind, action, target_kind, target_value, effect, statement, origin, status, created_at, updated_at)
+                        VALUES(?, 'everywhere', ?, ?, ?, ?, 'x', 'settings', 'active', 0, 0)
+                        """, arguments: [UUID().uuidString, action, kind, value, effect])
+                }
+            } catch { rejected = true }
+            try require(rejected, "The database CHECK rejects \(effect) \(kind) on \(action)")
+        }
+    }
+
+    private static func footprints(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let project = fixture.root + "/open/project"
+        let protected = project + "/protected"
+        try FileManager.default.createDirectory(atPath: protected, withIntermediateDirectories: true)
+        try "x".write(toFile: protected + "/secret.txt", atomically: true, encoding: .utf8)
         let source = NativeRuleSource()
-        source.setGlobal(NativeRules(choices: [.commands: .act]))
-        source.setRecords([record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "touch"))])
+        source.setGlobal(NativeRules(choices: [.fileEdits: .act, .trash: .act]))
+        source.setRecords([record(.forbid, .fileEdits, target: NativeRuleTarget.folder(protected)),
+                           record(.forbid, .trash, target: NativeRuleTarget.folder(protected))])
+        let tools = chatFolders(source, store: nil, grant: fixture.grant)
         let resolver = source.resolver(for: "c1", requestText: "")
-        func decision(_ command: String) -> NativeRuleDecision {
-            decide(["command": .string(command)], resolver.tool(NativeCommandTools.toolID,
-                                                                subjects: NativeCommandTools.ruleSubjects(command: command, directory: nil,
-                                                                                                          access: NativeFolderAccess(grants: [grant]))))
-        }
-        let delegated = ["find . -prune -exec touch {} +", "find . -execdir touch x \\;", "xargs touch", "sh -c \"touch x\"",
-                         "python3 -c \"import os; os.system('touch x')\"", "env -S \"touch x\"", "echo hi\ntouch x",
-                         "sh <<EOF\ntouch x\nEOF", "cat <(touch x)", "parallel touch ::: x", "watch touch x"]
-        for command in delegated {
-            try require(decision(command) != .act(.rule) && decision(command) != .act(.grant), "A forbid on touch is not escaped by: \(command)")
-        }
-        try require(decision("swift build") == .act(.rule), "An unrelated plain command still acts")
-        let qualified = NativeRuleSource()
-        qualified.setGlobal(NativeRules(choices: [.commands: .act]))
-        qualified.setRecords([record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "/opt/homebrew/bin/git status"))])
-        let qualifiedResolver = qualified.resolver(for: "c1", requestText: "")
-        try require(NativeRuleTarget.make(.commandPrefix, "/opt/homebrew/bin/git status")?.value == "git status"
-                    && decide(["command": .string("git status")], qualifiedResolver.tool(NativeCommandTools.toolID, targets: [])) == .handOff,
-                    "A path-qualified stored prefix blocks the bare command")
-        let bare = NativeRuleSource()
-        bare.setGlobal(NativeRules(choices: [.commands: .act]))
-        bare.setRecords([record(.forbid, .commands, target: NativeRuleTarget.make(.commandPrefix, "git status"))])
-        try require(decide(["command": .string("/opt/homebrew/bin/git status")], bare.resolver(for: "c1", requestText: "").tool(NativeCommandTools.toolID, targets: [])) == .handOff,
-                    "A bare stored prefix blocks the path-qualified command")
+        let moveParent: [String: NativeJSONValue] = ["from": .string(project), "to": .string(fixture.root + "/locked/project")]
+        let trashParent: [String: NativeJSONValue] = ["path": .string(project)]
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.moveName]!, moveParent, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                    "A forbid on a protected descendant blocks moving its parent")
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.trashName]!, trashParent, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
+                    "A forbid on a protected descendant blocks trashing its parent")
+        let moveRun = await run(tools[NativeFolderTools.moveName]!, moveParent)
+        try require(moveRun == NativeRuleResolver.handOffMessage(.fileEdits) && FileManager.default.fileExists(atPath: protected + "/secret.txt"),
+                    "The parent move is refused in chat and nothing moves")
+        try "y".write(toFile: fixture.root + "/open/loose.txt", atomically: true, encoding: .utf8)
+        let sibling: [String: NativeJSONValue] = ["from": .string(fixture.root + "/open/loose.txt"), "to": .string(fixture.root + "/open/moved.txt")]
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.moveName]!, sibling, resolver: resolver, honoringLimitedUse: true).decision == .act(.rule),
+                    "A move with no restricted descendant still acts")
+
+        let creating = NativeRuleSource()
+        let leaf = fixture.root + "/open/new/leaf"
+        creating.setRecords([record(.forbid, .fileEdits), record(.allow, .fileEdits, target: NativeRuleTarget.folder(leaf))])
+        let mkdir = chatFolders(creating, store: nil, grant: fixture.grant)[NativeFolderTools.mkdirName]!
+        let make: [String: NativeJSONValue] = ["path": .string(leaf)]
+        try require(mkdir.ruleSubjects?(make).count == 2, "Creating a folder declares every missing parent plus the leaf")
+        let decided = NativeCompanionWorker.ruleDecision(mkdir, make, resolver: creating.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
+        let made = await run(mkdir, make)
+        try require(decided.decision == .handOff && made == NativeRuleResolver.handOffMessage(.fileEdits)
+                    && !FileManager.default.fileExists(atPath: fixture.root + "/open/new"),
+                    "An allow on the leaf does not authorize creating its missing parent under a class-wide forbid")
+        let insideAllowed = NativeRuleSource()
+        let allowed = fixture.root + "/open"
+        insideAllowed.setRecords([record(.forbid, .fileEdits), record(.allow, .fileEdits, target: NativeRuleTarget.folder(allowed))])
+        try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.moveName]!, sibling, resolver: insideAllowed.resolver(for: "c1", requestText: ""),
+                                                       honoringLimitedUse: true).decision == .act(.grant),
+                    "A move entirely inside an allowed folder with no restricted descendant acts")
+    }
+
+    private static func lateConfirmation(_ require: (Bool, String) throws -> Void) async throws {
+        let fixture = try folderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let open = fixture.root + "/open"
+        try "hello".write(toFile: open + "/note.txt", atomically: true, encoding: .utf8)
+        let repository = try LocalChatRepository(inMemory: true)
+        let records = store(repository, clock: NativeEffectTestClock(start))
+        let source = NativeRuleSource()
+        ChatStore.prepareRules(source, from: records)
+        source.setGlobal(NativeRules(choices: [.fileEdits: .ask]))
+        let once = try records.add(record(.allow, .fileEdits, target: NativeRuleTarget.folder(open), uses: 1))
+        ChatStore.reloadRules(source, from: records)
+        let tools = chatFolders(source, store: records, grant: fixture.grant)
+        let missing = await run(tools[NativeFolderTools.editName]!, ["path": .string(open + "/note.txt"), "old_text": .string("absent"), "new_text": .string("x")])
+        try require(missing.contains("old_text was not found") && (try records.record(id: once.id))?.remainingUses == 1,
+                    "An edit whose old_text is absent leaves a one-use allow unspent")
+        let huge = String(repeating: "a", count: NativeFolderTools.maximumWriteBytes + 1)
+        let oversized = await run(tools[NativeFolderTools.writeName]!, ["path": .string(open + "/big.txt"), "content": .string(huge)])
+        try require(oversized.contains("1 MB") && (try records.record(id: once.id))?.remainingUses == 1, "An oversized write leaves a one-use allow unspent")
+        var readOnly = fixture.grant
+        readOnly.readOnly = true
+        let readOnlyTools = chatFolders(source, store: records, grant: readOnly)
+        let blocked = await run(readOnlyTools[NativeFolderTools.writeName]!, ["path": .string(open + "/ro.txt"), "content": .string("x")])
+        try require(blocked != "ran" && (try records.record(id: once.id))?.remainingUses == 1 && !FileManager.default.fileExists(atPath: open + "/ro.txt"),
+                    "A read-only destination leaves a one-use allow unspent")
+        let done = await run(tools[NativeFolderTools.editName]!, ["path": .string(open + "/note.txt"), "old_text": .string("hello"), "new_text": .string("bye")])
+        try require(done == "ran" && (try records.record(id: once.id))?.remainingUses == 0, "The use is spent only by the edit that happens")
     }
 }

@@ -734,6 +734,10 @@ final class NativeRuleSource: @unchecked Sendable {
     }
 }
 
+enum NativeRuleAdmission {
+    @TaskLocal static var admitted = false
+}
+
 struct NativeRuleVerdict: Sendable {
     var decision: NativeRuleDecision
     var confirm: (@Sendable () -> Bool)?
@@ -881,10 +885,11 @@ struct NativeRuleResolver: Sendable {
     static let changedMessage = "The user's rules changed while this answer was running, so this action now needs their approval. It was not run. Tell the user and let them send the request again."
 
     static func gate(_ verdict: NativeRuleVerdict?, fallback: NativeRuleDecision?, planned: NativeRuleDecision, action: NativeActionClass,
-                     approved: Bool) throws {
+                     approved: Bool) throws -> () throws -> Void {
         let live = verdict?.decision ?? fallback ?? planned
         try gate(live: live, planned: planned, action: action, approved: approved)
-        if case .act = live, let confirm = verdict?.confirm, !confirm() { throw NativeToolError.failed(changedMessage) }
+        guard case .act = live, let confirm = verdict?.confirm else { return {} }
+        return { if !confirm() { throw NativeToolError.failed(changedMessage) } }
     }
 
     static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool) throws {

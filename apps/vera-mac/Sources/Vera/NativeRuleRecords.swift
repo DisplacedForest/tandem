@@ -69,9 +69,7 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         case .recipient, .service:
             return trimmed.lowercased()
         case .commandPrefix:
-            var tokens = NativeCommandPrefix.tokens(of: NativeCommandPrefix.normalize(trimmed))
-            if let first = tokens.first { tokens[0] = first.split(separator: "/").last.map(String.init) ?? first }
-            return tokens.joined(separator: " ")
+            return NativeCommandPrefix.normalize(trimmed)
         case .folder:
             guard trimmed.hasPrefix("/") else { return "" }
             var parts: [Substring] = []
@@ -88,6 +86,19 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         let normalized = normalize(value, kind: kind)
         guard !normalized.isEmpty else { return nil }
         return NativeRuleTarget(kind: kind, value: normalized)
+    }
+
+    static func folder(_ root: String, contains path: String) -> Bool {
+        if path == root { return true }
+        return path.hasPrefix(root == "/" ? "/" : root + "/")
+    }
+
+    static func allowed(_ kind: NativeRuleTargetKind, action: NativeActionClass, effect: NativeRuleEffect) -> Bool {
+        switch kind {
+        case .commandPrefix: return action == .commands && effect == .allow
+        case .folder: return action == .fileEdits || action == .trash
+        case .recipient, .service: return action == .networkSends
+        }
     }
 
     static func realFolder(_ value: String) -> String? {
@@ -113,12 +124,10 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
         case .recipient, .service:
             return candidate.value == value
         case .commandPrefix:
-            if restricting { return NativeCommandMatch.restricts(command: candidate.value, prefix: value) }
             return NativeCommandPrefix.isSimple(candidate.value) && NativeCommandPrefix.matches(command: candidate.value, prefix: value)
         case .folder:
-            if candidate.value == value { return true }
-            let root = value == "/" ? "/" : value + "/"
-            return candidate.value.hasPrefix(root)
+            if Self.folder(value, contains: candidate.value) { return true }
+            return restricting && Self.folder(candidate.value, contains: value)
         }
     }
 
@@ -130,43 +139,6 @@ struct NativeRuleTarget: Codable, Equatable, Hashable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .value, in: container, debugDescription: "empty target")
         }
         self = made
-    }
-}
-
-enum NativeCommandMatch {
-    static let opaqueCharacters: Set<Character> = ["`", "$", "\\"]
-    static let delegators: Set<String> = ["xargs", "parallel", "watch", "time", "nice", "nohup", "env", "command", "exec", "builtin",
-                                          "caffeinate", "arch", "xcrun", "timeout", "gtimeout", "stdbuf", "chroot", "script", "osascript", "open"]
-
-    static func delegates(_ name: String, _ arguments: [String]) -> Bool {
-        let classifier = NativeCommandClassifier.self
-        if classifier.wrappers.contains(name) || classifier.shells.contains(name) || classifier.interpreters.contains(name)
-            || classifier.executors.contains(name) || classifier.privileged.contains(name) || delegators.contains(name) { return true }
-        if name == "find" && arguments.contains(where: { classifier.findEffects.contains($0) }) { return true }
-        return classifier.hasInlineCode(name, arguments)
-    }
-
-    static func segments(_ command: String) -> [[String]]? {
-        if command.contains(where: { opaqueCharacters.contains($0) }) || command.contains("<(") || command.contains(">(") || command.contains("<<") { return nil }
-        var parsed: [[String]] = []
-        for segment in NativeCommandClassifier.segments(of: command) {
-            let (name, arguments) = NativeCommandClassifier.executable(segment)
-            if name.isEmpty { continue }
-            if name == "?" || delegates(name, arguments) { return nil }
-            let tokens = [name] + arguments
-            if tokens.contains(where: { $0.contains("\"") || $0.contains("'") }) { return nil }
-            parsed.append(tokens)
-        }
-        return parsed
-    }
-
-    static func isOpaque(_ command: String) -> Bool { segments(command) == nil }
-
-    static func restricts(command: String, prefix: String) -> Bool {
-        guard let parsed = segments(command) else { return true }
-        let wanted = NativeCommandPrefix.tokens(of: prefix)
-        guard !wanted.isEmpty else { return false }
-        return parsed.contains { $0.count >= wanted.count && Array($0.prefix(wanted.count)) == wanted }
     }
 }
 
@@ -208,6 +180,7 @@ enum NativeRuleRecordError: Error, Equatable, Sendable {
     case missingAction
     case emptyTarget
     case invalidUses
+    case invalidTarget
     case emptyScope
     case notFound
     case revoked
@@ -270,7 +243,8 @@ struct NativeRuleRecord: Codable, Equatable, Identifiable, Sendable {
         }
         if let toolID = clean.toolID, toolID.isEmpty { clean.toolID = nil }
         if clean.action == nil && (clean.toolID != nil || clean.target != nil) { throw NativeRuleRecordError.missingAction }
-        if let target = clean.target {
+        if let target = clean.target, let action = clean.action {
+            guard NativeRuleTarget.allowed(target.kind, action: action, effect: clean.effect) else { throw NativeRuleRecordError.invalidTarget }
             let value = target.kind == .folder ? NativeRuleTarget.realFolder(target.value) : target.value
             guard let value, let normalized = NativeRuleTarget.make(target.kind, value) else { throw NativeRuleRecordError.emptyTarget }
             clean.target = normalized
@@ -371,12 +345,7 @@ enum NativeRuleMatcher {
             if !honoringLimitedUse && record.effect == .allow && record.remainingUses != nil { return false }
             return record.scope.applies(in: context) && record.matches(query, at: now)
         }
-        let opaque = query.targets.contains { $0.kind == .commandPrefix && NativeCommandMatch.isOpaque($0.value) }
-        let restrictive = opaque ? matching.filter { $0.effect.restricts && $0.target?.kind == .commandPrefix } : []
-        let strictest = restrictive.sorted { lhs, rhs in
-            lhs.effect.strictness != rhs.effect.strictness ? lhs.effect.strictness > rhs.effect.strictness : precedes(lhs, rhs)
-        }.first
-        guard let winner = strictest ?? matching.sorted(by: precedes).first else { return nil }
+        guard let winner = matching.sorted(by: precedes).first else { return nil }
         let overridden = matching.filter { $0.specificity < winner.specificity && $0.effect != winner.effect }.sorted(by: precedes)
         return NativeRuleResolution(decidedBy: winner, overridden: overridden)
     }
@@ -423,7 +392,11 @@ struct NativeRuleRecordStore: Sendable {
                 updated_at DOUBLE NOT NULL,
                 revoked_at DOUBLE,
                 CHECK((scope_kind = 'everywhere') = (scope_id IS NULL)),
-                CHECK((target_kind IS NULL) = (target_value IS NULL))
+                CHECK((target_kind IS NULL) = (target_value IS NULL)),
+                CHECK(target_kind IS NULL
+                      OR (target_kind = 'command_prefix' AND action = 'commands' AND effect = 'allow')
+                      OR (target_kind = 'folder' AND action IN ('file_edits', 'trash'))
+                      OR (target_kind IN ('recipient', 'service') AND action = 'network_sends'))
             );
             CREATE INDEX native_rule_records_status_action ON native_rule_records(status, action);
             CREATE UNIQUE INDEX native_rule_records_origin_message ON native_rule_records(origin_message_id) WHERE origin_message_id IS NOT NULL;

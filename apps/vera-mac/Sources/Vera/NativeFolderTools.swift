@@ -47,15 +47,16 @@ enum NativeFolderTools {
         let subjects: @Sendable ([String: NativeJSONValue], [String]) -> [[NativeRuleTarget]] = { arguments, keys in
             ruleTargets(arguments, keys: keys, access: access()).map { [$0] }
         }
-        let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> Void = { action, arguments, keys, planned in
+        let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> () throws -> Void = { action, arguments, keys, planned in
+            if NativeRuleAdmission.admitted { return {} }
             if let liveTargets {
-                try NativeRuleResolver.gate(liveTargets(action, subjects(arguments, keys)), fallback: nil, planned: planned, action: action,
-                                            approved: planned.requiresConfirmation)
-            } else {
-                try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+                return try NativeRuleResolver.gate(liveTargets(action, subjects(arguments, keys)), fallback: nil, planned: planned, action: action,
+                                                   approved: planned.requiresConfirmation)
             }
+            try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: planned.requiresConfirmation)
+            return {}
         }
-        let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> Void = { arguments, keys in
+        let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> () throws -> Void = { arguments, keys in
             try checkGate(.fileEdits, arguments, keys, edits)
         }
         let declared: @Sendable ([String]) -> @Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]] = { keys in
@@ -121,11 +122,11 @@ enum NativeFolderTools {
                 ], required: ["path", "content"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate(arguments, ["path"])
+                    let commit = try editGate(arguments, ["path"])
                     let location = try access().locate(try requiredString(arguments, "path"))
                     guard case .string(let content)? = arguments["content"] else { throw NativeToolError.invalidArguments("Content is required") }
                     guard content.utf8.count <= maximumWriteBytes else { throw NativeToolError.invalidArguments("Content exceeds the 1 MB write limit") }
-                    return try write(location, content: content, ledger: ledger)
+                    return try write(location, content: content, ledger: ledger, commit: commit)
                 }),
             NativeToolDefinition(
                 id: toolID, name: editName, title: "Edit a file",
@@ -138,11 +139,11 @@ enum NativeFolderTools {
                 ], required: ["path", "old_text", "new_text"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate(arguments, ["path"])
+                    let commit = try editGate(arguments, ["path"])
                     let location = try access().locate(try requiredString(arguments, "path"))
                     guard case .string(let old)? = arguments["old_text"], !old.isEmpty else { throw NativeToolError.invalidArguments("old_text is required") }
                     guard case .string(let new)? = arguments["new_text"] else { throw NativeToolError.invalidArguments("new_text is required") }
-                    return try edit(location, old: old, new: new, all: arguments.folderBool("replace_all") ?? false, ledger: ledger)
+                    return try edit(location, old: old, new: new, all: arguments.folderBool("replace_all") ?? false, ledger: ledger, commit: commit)
                 }),
             NativeToolDefinition(
                 id: toolID, name: moveName, title: "Move or rename",
@@ -153,12 +154,12 @@ enum NativeFolderTools {
                 ], required: ["from", "to"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate(arguments, ["from", "to"])
+                    let commit = try editGate(arguments, ["from", "to"])
                     let current = access()
                     let from = try current.locate(try requiredString(arguments, "from"))
                     let to = try current.locate(try requiredString(arguments, "to"))
                     try current.requireNoReadOnlyRoot(under: from)
-                    return try move(from: from, to: to, ledger: ledger)
+                    return try move(from: from, to: to, ledger: ledger, commit: commit)
                 }),
             NativeToolDefinition(
                 id: toolID, name: mkdirName, title: "Create a folder",
@@ -168,9 +169,9 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: editConfirmation, timeout: timeout, action: .fileEdits, isAvailable: available,
                 execute: { arguments in
-                    try editGate(arguments, ["path"])
+                    let commit = try editGate(arguments, [creatingKey])
                     let location = try access().locate(try requiredString(arguments, "path"))
-                    return try makeDirectory(location, ledger: ledger)
+                    return try makeDirectory(location, ledger: ledger, commit: commit)
                 }),
             NativeToolDefinition(
                 id: toolID, name: trashName, title: "Move to the Trash",
@@ -180,14 +181,14 @@ enum NativeFolderTools {
                 ], required: ["path"]),
                 confirmation: trash.requiresConfirmation ? .required : .none, timeout: timeout, action: .trash, isAvailable: available,
                 execute: { arguments in
-                    try checkGate(.trash, arguments, ["path"], trash)
+                    let commit = try checkGate(.trash, arguments, ["path"], trash)
                     let current = access()
                     let location = try current.locate(try requiredString(arguments, "path"))
                     try current.requireNoReadOnlyRoot(under: location)
-                    return try moveToTrash(location, ledger: ledger)
+                    return try moveToTrash(location, ledger: ledger, commit: commit)
                 }),
         ]
-        let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: ["path"], trashName: ["path"]]
+        let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: [creatingKey], trashName: ["path"]]
         return definitions.map { definition in
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
@@ -196,15 +197,29 @@ enum NativeFolderTools {
         }
     }
 
+    static let creatingKey = "path+"
+
     static func ruleTargets(_ arguments: [String: NativeJSONValue], keys: [String], access: NativeFolderAccess) -> [NativeRuleTarget] {
-        keys.compactMap { key -> NativeRuleTarget? in
-            guard case .string(let raw)? = arguments[key] else { return nil }
-            if let location = try? access.locate(raw) { return NativeRuleTarget.folder(location.path) }
-            return NativeRuleTarget.folder(raw)
+        keys.flatMap { key -> [NativeRuleTarget] in
+            let creating = key == creatingKey
+            guard case .string(let raw)? = arguments[creating ? "path" : key] else { return [] }
+            let location = try? access.locate(raw)
+            let path = location?.path ?? raw
+            var paths = [path]
+            if creating, let location {
+                var current = location
+                while !current.components.isEmpty {
+                    let parent = NativeFolderLocation(root: current.root, components: current.parentComponents)
+                    guard !parent.components.isEmpty, !FileManager.default.fileExists(atPath: parent.path) else { break }
+                    paths.append(parent.path)
+                    current = parent
+                }
+            }
+            return paths.compactMap { NativeRuleTarget.folder($0) }
         }
     }
 
-    static func moveToTrash(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+    static func moveToTrash(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeToolError.failed("The granted folder itself can't be moved to the Trash: \(location.path)") }
         let directory = try NativeFolderIO.parent(of: location)
@@ -218,6 +233,7 @@ enum NativeFolderTools {
         guard check.st_dev == info.st_dev, check.st_ino == info.st_ino else {
             throw NativeToolError.failed("\(location.path) changed while it was being moved to the Trash, so it was left in place.")
         }
+        try commit()
         var resulting: NSURL?
         do { try FileManager.default.trashItem(at: pinned, resultingItemURL: &resulting) } catch {
             throw NativeToolError.failed("Couldn't move \(location.path) to the Trash: \(error.localizedDescription)")
@@ -313,7 +329,7 @@ enum NativeFolderTools {
         return .object(result)
     }
 
-    static func write(_ location: NativeFolderLocation, content: String, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+    static func write(_ location: NativeFolderLocation, content: String, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeFolderAccessError.notADirectory(location.path) }
         let directory = try NativeFolderIO.parent(of: location)
@@ -329,12 +345,14 @@ enum NativeFolderTools {
             }
         }
         let change = NativeFileChange(path: location.path, kind: existed ? .edited : .created, before: before, after: content)
+        try commit()
         try NativeFolderIO.writeAtomically(directory, location.name, display: location.path, data: Data(content.utf8))
         ledger.record(change)
         return .object(["path": .string(location.path), "bytes": .number(Double(content.utf8.count)), "created": .bool(!existed)])
     }
 
-    static func edit(_ location: NativeFolderLocation, old: String, new: String, all: Bool, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+    static func edit(_ location: NativeFolderLocation, old: String, new: String, all: Bool, ledger: NativeFileChangeLedger,
+                     commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { throw NativeFolderAccessError.binary(location.path) }
         let directory = try NativeFolderIO.parent(of: location)
@@ -356,12 +374,13 @@ enum NativeFolderTools {
         }
         guard after.utf8.count <= maximumWriteBytes else { throw NativeToolError.failed("The edited file would exceed the 1 MB limit") }
         let change = NativeFileChange(path: location.path, kind: .edited, before: before, after: after)
+        try commit()
         try NativeFolderIO.writeAtomically(directory, location.name, display: location.path, data: Data(after.utf8))
         ledger.record(change)
         return .object(["path": .string(location.path), "replacements": .number(Double(all ? occurrences : 1)), "bytes": .number(Double(after.utf8.count))])
     }
 
-    static func move(from: NativeFolderLocation, to: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+    static func move(from: NativeFolderLocation, to: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(from)
         try requireWritable(to)
         guard !from.components.isEmpty, !to.components.isEmpty else { throw NativeToolError.failed("A granted folder itself cannot be moved") }
@@ -371,15 +390,17 @@ enum NativeFolderTools {
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(from.path) }
         let toDirectory = try NativeFolderIO.parent(of: to)
         let text = NativeFolderIO.kind(info) == "file" ? NativeFolderIO.readTextIfSmall(fromDirectory, from.name, display: from.path, limit: NativeFileChange.contentCap) : nil
+        try commit()
         try NativeFolderIO.rename(from: fromDirectory, from.name, to: toDirectory, to.name, display: to.path)
         ledger.record(NativeFileChange(path: to.path, kind: .moved, before: text, after: text, movedFrom: from.path))
         return .object(["from": .string(from.path), "to": .string(to.path)])
     }
 
-    static func makeDirectory(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger) throws -> NativeJSONValue {
+    static func makeDirectory(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(location)
         guard !location.components.isEmpty else { return .object(["path": .string(location.path), "created": .bool(false)]) }
         var directory = try NativeFolderIO.openRoot(location.root)
+        try commit()
         var display = location.root.path
         var created = false
         for component in location.components {
