@@ -980,6 +980,13 @@ private struct NativeCompanionRun {
                 checkpoint.answer(call, NativeCompanionWorker.message("Not run: this action is no longer available as approved."))
                 return nil
             }
+            if let preflight = definition.preflight {
+                do { try preflight(arguments) } catch {
+                    checkpoint.note(title, "not done")
+                    checkpoint.answer(call, NativeCompanionWorker.message("Not done: \(error.localizedDescription)"))
+                    return nil
+                }
+            }
             let authority = self.authority()
             let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
             if approved.decision == .handOff { return try handOff(&checkpoint, title: title, action: approved.action) }
