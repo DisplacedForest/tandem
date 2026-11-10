@@ -113,7 +113,7 @@ enum NativeRuntimeMemorySelftest {
         let offBinding = binding(assistant)
         try bridge.authorize(offBinding, query: "Current livestock?")
         let off = try await bridge.prepare(request(offBinding))
-        try piCheck(off.memoryContext?.selected.isEmpty == true && !off.messages.first!.pi("content").piString!.contains("USER-APPROVED MEMORY CONTEXT"))
+        try piCheck(off.memoryContext?.selected.isEmpty == true && !off.messages.first!.pi("content").piString!.contains("What the user asked you to remember"))
         try piCheck(service.embedCalls == 0 && service.extractionCalls == 0)
         settings.enabled = true
         store.updateNativeMemory(settings: settings, service: nil)

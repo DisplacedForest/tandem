@@ -257,7 +257,7 @@ extension SelfTest {
                 persona: "You are Vera.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
                 timeZone: TimeZone(identifier: "America/Chicago")!, unavailableNotes: [NativeImageTools.unavailableNote]))
             guard let unavailable = note.sections.first(where: { $0.name == "unavailable" }),
-                  unavailable.content.hasPrefix("NOT AVAILABLE"), unavailable.content.contains("Image tab"),
+                  unavailable.content.hasPrefix(NativeContextAssembler.unavailableHeading), unavailable.content.contains("Image tab"),
                   NativeContextAssembler.assemble(NativeContextInput(
                       persona: "You are Vera.", timestamp: Date(), timeZone: .current)).sections
                       .contains(where: { $0.name == "unavailable" }) == false else {
