@@ -681,14 +681,20 @@ final class ChatStore: ObservableObject {
 
     func isVeraThread(_ id: String?) -> Bool { id != nil && id == veraThreadID }
 
-    func restoreSavedCompanionName(_ name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        savedCompanionName = trimmed.isEmpty ? nil : trimmed
+    func followSavedCompanionName(of config: ConfigStore) {
+        config.onSaved = { [weak self, weak config] in
+            guard let self, let config else { return }
+            self.refreshCompanionName(from: config)
+        }
+        refreshCompanionName(from: config)
+    }
+
+    func refreshCompanionName(from config: ConfigStore) {
+        savedCompanionName = config.suppliedAssistantName
     }
 
     func adoptAssistantName(_ name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        restoreSavedCompanionName(trimmed)
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
         assistantName = trimmed.isEmpty ? ConfigStore.defaultAssistantName : trimmed
         nativeWorkerIdentity.update(assistantName: assistantName, ownerName: nativeOwnerName)
         retitleVeraThread()

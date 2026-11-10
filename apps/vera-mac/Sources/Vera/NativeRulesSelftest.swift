@@ -475,11 +475,13 @@ extension SelfTest {
             try require(light >= 4.5 && dark >= 4.5 && darkest >= 4.5, "\(color.rawValue) text color reads in both appearances: \(light) \(dark) \(darkest)")
             print("    \(color.rawValue) text light \(color.textHex(dark: false)) dark \(color.textHex(dark: true))")
         }
+        unsetenv("VERA_ASSISTANT_NAME")
         let nameDisk = CompanionAppearanceFixtureDisk()
         let nameConfig = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { nameDisk.contents },
                                      nativeMCP: NativeMCPManager(servers: []),
                                      writeConfiguration: { nameDisk.contents = $0; nameDisk.writes += 1 })
         let nameChat = ChatStore()
+        nameChat.followSavedCompanionName(of: nameConfig)
         func screenIsClean(_ expectedSubject: String) throws {
             let strings = RulesCopy.screenStrings(name: nameChat.companionDisplayName)
             try require(strings.allSatisfy { !$0.contains("Ver" + "a") && !$0.contains("Tandem") }, "The rules screen carries no default name")
@@ -487,34 +489,58 @@ extension SelfTest {
             try require(CompanionState.ready.accessibilityLabel(name: nameChat.companionDisplayName) == "\(expectedSubject == "your companion" ? "Your companion" : expectedSubject) is ready",
                         "The avatar label follows the saved name")
         }
+        func identityMatchesMain() throws {
+            try require(nameChat.assistantName == nameConfig.assistantName, "The effective identity is the resolved name: \(nameChat.assistantName)")
+        }
         try require(nameChat.companionDisplayName == nil && !nameChat.companionHasSavedName, "A fresh store has no saved name")
         try screenIsClean("your companion")
-        nameChat.adoptAssistantName("Ada")
-        try require(nameChat.companionDisplayName == "Ada" && nameChat.companionHasSavedName, "Adopting a name saves it without a restart")
+        nameConfig["assistant_name"] = "Ada"
+        try require(nameChat.companionDisplayName == nil, "An unsaved edit does not change the shown name")
+        try nameConfig.save()
+        try require(nameChat.companionDisplayName == "Ada", "Saving settings with no model configured still updates the shown name")
+        try require(nameConfig.nativeResolved == nil, "No model is configured in this fixture")
         try screenIsClean("Ada")
-        nameChat.adoptAssistantName("   ")
-        try require(nameChat.companionDisplayName == nil && nameChat.assistantName == ConfigStore.defaultAssistantName, "Clearing the name returns to unnamed")
+        nameChat.adoptAssistantName(nameConfig.assistantName)
+        try identityMatchesMain()
+        nameConfig["assistant_name"] = ""
+        try nameConfig.save()
+        try require(nameChat.companionDisplayName == nil, "Clearing the name and saving returns to unnamed")
         try screenIsClean("your companion")
+        nameChat.adoptAssistantName(nameConfig.assistantName)
+        try require(nameChat.assistantName == ConfigStore.defaultAssistantName, "Identity still falls back to the built-in default")
         let nameFake = CompanionAppearanceFixtureStore()
         var renamed = CompanionAppearanceDraft(name: "", appearance: nameFake.load())
         renamed.name = "Wren"
         try renamed.commit(config: nameConfig, store: nameFake, chat: nameChat)
         try require(nameChat.companionDisplayName == "Wren", "Saving a name from Appearance updates the value")
+        try identityMatchesMain()
         try screenIsClean("Wren")
-        nameConfig["assistant_name"] = ""
-        nameChat.adoptNative(NativeSessionFixture.config, assistantName: nameConfig["assistant_name"])
-        try require(nameChat.companionDisplayName == nil, "Clearing the name in Settings returns to unnamed")
-        try screenIsClean("your companion")
-        nameConfig["assistant_name"] = "Moss"
-        nameChat.adoptNative(NativeSessionFixture.config, assistantName: nameConfig["assistant_name"])
-        try require(nameChat.companionDisplayName == "Moss", "Saving a name in Settings updates the value")
         try require(DotProfileCopy.saveName("Fern", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == "Fern", "Saving a name from companion setup updates the value")
+        try identityMatchesMain()
         try require(DotProfileCopy.saveName("", config: nameConfig, store: nameChat) == nil && nameChat.companionDisplayName == nil, "Clearing the name from companion setup returns to unnamed")
-        let restored = ChatStore()
-        restored.restoreSavedCompanionName("Ada")
-        try require(restored.companionDisplayName == "Ada", "A name saved before launch is restored")
-        restored.restoreSavedCompanionName("")
-        try require(restored.companionDisplayName == nil, "No saved name at launch is unnamed")
+        try identityMatchesMain()
+        let launched = ChatStore()
+        nameConfig["assistant_name"] = "Ada"
+        launched.followSavedCompanionName(of: nameConfig)
+        try require(launched.companionDisplayName == "Ada", "A name saved before launch is shown")
+        nameConfig["assistant_name"] = ""
+        launched.followSavedCompanionName(of: nameConfig)
+        try require(launched.companionDisplayName == nil, "No saved name at launch is unnamed")
+
+        setenv("VERA_ASSISTANT_NAME", "Orion", 1)
+        defer { unsetenv("VERA_ASSISTANT_NAME") }
+        let overridden = ChatStore()
+        overridden.adoptAssistantName(nameConfig.assistantName)
+        overridden.followSavedCompanionName(of: nameConfig)
+        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "A name from the environment is shown and is the identity")
+        try nameConfig.save()
+        try require(overridden.assistantName == "Orion" && overridden.companionDisplayName == "Orion", "Saving settings leaves an environment name alone")
+        nameConfig["assistant_name"] = "Ada"
+        try nameConfig.save()
+        try require(overridden.companionDisplayName == "Orion" && overridden.assistantName == "Orion", "The environment name still wins after a file name is saved")
+        unsetenv("VERA_ASSISTANT_NAME")
+        try nameConfig.save()
+        try require(overridden.companionDisplayName == "Ada", "Without the environment name the saved file name shows")
         print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

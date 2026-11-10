@@ -84,7 +84,7 @@ struct VeraApp: App {
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,
             artifactPersistenceEnabled: fixture == nil)
-        storeInstance.restoreSavedCompanionName(configInstance["assistant_name"])
+        storeInstance.followSavedCompanionName(of: configInstance)
         storeInstance.companionNameWriter = { name in
             let previous = configInstance["assistant_name"]
             configInstance["assistant_name"] = name

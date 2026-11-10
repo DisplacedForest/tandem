@@ -123,7 +123,7 @@ struct OnboardingSheet: View {
             systemPrompt: config.nativeSettings.systemPrompt,
             activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
-            assistantName: config["assistant_name"],
+            assistantName: config.assistantName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
