@@ -6,6 +6,7 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "name-ratchet.py")
 SOURCES = os.path.join("apps", "vera-mac", "Sources", "Vera")
+SECOND = os.path.join("prototypes", "assistant-ui", "Sources", "VeraAssistantUI")
 
 
 class NameRatchetTests(unittest.TestCase):
@@ -13,15 +14,26 @@ class NameRatchetTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = self.temp.name
         os.makedirs(os.path.join(self.root, SOURCES))
+        os.makedirs(os.path.join(self.root, SECOND))
         os.makedirs(os.path.join(self.root, "scripts"))
         self.baseline = os.path.join(self.root, "scripts", "baseline.txt")
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def write(self, name, lines):
-        with open(os.path.join(self.root, SOURCES, name), "w") as handle:
+    def write(self, name, lines, folder=SOURCES):
+        with open(os.path.join(self.root, folder, name), "w") as handle:
             handle.write("\n".join(lines) + "\n")
+
+    def baseline_text(self):
+        with open(self.baseline) as handle:
+            return handle.read()
+
+    def counts(self, lines):
+        self.write("T.swift", lines)
+        self.run_script("--update")
+        text = self.baseline_text().strip()
+        return int(text.split()[0]) if text else 0
 
     def run_script(self, *extra):
         return subprocess.run(
@@ -61,15 +73,77 @@ class NameRatchetTests(unittest.TestCase):
         self.write("A.swift", ['let a = "Vera one"'])
         self.assertEqual(self.run_script("--update").returncode, 0)
         self.write("A.swift", ['let a = "Vera one"', 'let c = "Vera two"'])
-        before = open(self.baseline).read()
+        before = self.baseline_text()
         result = self.run_script("--update")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(open(self.baseline).read(), before)
+        self.assertEqual(self.baseline_text(), before)
+
+    def test_multiline_string_counts_once_at_its_first_line(self):
+        self.write("A.swift", ["let a = 1", 'let b = """', "  hello", "  Vera is here", '  """'])
+        self.assertEqual(self.run_script("--update").returncode, 0)
+        self.assertEqual(self.baseline_text().split()[0], "1")
+        self.write("A.swift", ["let a = 1", 'let b = """', "  hello", "  Vera is here", '  """', 'let c = """', "  Vera", '  """'])
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("A.swift:6", result.stdout)
+
+    def test_multiline_string_with_a_continuation(self):
+        self.assertEqual(self.counts(['let b = """', "  Ask \\", "  Vera now", '  """']), 1)
+
+    def test_raw_strings(self):
+        self.assertEqual(self.counts(['let a = #"Ask "Vera" now"#', 'let b = ##"x "# Vera"##']), 2)
+
+    def test_raw_multiline_string(self):
+        self.assertEqual(self.counts(['let a = #"""', '  say "Vera" """ again', '  """#']), 1)
+
+    def test_literal_nested_in_an_interpolation(self):
+        self.assertEqual(self.counts(['let a = "Hello \\(name ?? "Vera")"']), 1)
+
+    def test_nested_interpolation_in_a_raw_string(self):
+        self.assertEqual(self.counts(['let a = #"Hi \\#(who ?? "Vera") there"#']), 1)
+
+    def test_outer_literal_without_the_word_is_not_counted_for_interpolated_code(self):
+        self.assertEqual(self.counts(['let a = "Hello \\(Vera.name)"']), 0)
+
+    def test_comments_are_skipped_including_nested_blocks(self):
+        lines = ["/* outer /* inner \"Vera\" */ still \"Vera\" comment */", 'let a = "fine"', '// "Vera" in a line comment']
+        self.assertEqual(self.counts(lines), 0)
+
+    def test_escaped_quote_before_the_word(self):
+        self.assertEqual(self.counts(['let a = "say \\"Vera\\" now"']), 1)
+
+    def test_comment_markers_inside_strings_are_not_comments(self):
+        self.assertEqual(self.counts(['let a = "http://x /* Vera */"']), 1)
+
+    def test_literal_added_in_a_second_root_fails(self):
+        self.write("A.swift", ["let a = 1"])
+        self.write("B.swift", ["let b = 1"], SECOND)
+        self.assertEqual(self.run_script("--update").returncode, 0)
+        self.write("B.swift", ['let b = "Vera"'], SECOND)
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("VeraAssistantUI/B.swift:1", result.stdout)
+
+    def test_unscanned_local_package_fails(self):
+        manifest = os.path.join(self.root, "apps", "vera-mac", "Package.swift")
+        with open(manifest, "w") as handle:
+            handle.write('dependencies: [.package(path: "../../prototypes/assistant-ui"), .package(path: "../../prototypes/other")]\n')
+        self.write("A.swift", ["let a = 1"])
+        result = self.run_script("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("prototypes/other", result.stdout)
+
+    def test_covered_local_package_passes(self):
+        manifest = os.path.join(self.root, "apps", "vera-mac", "Package.swift")
+        with open(manifest, "w") as handle:
+            handle.write('dependencies: [.package(path: "../../prototypes/assistant-ui")]\n')
+        self.write("A.swift", ["let a = 1"])
+        self.assertEqual(self.run_script("--update").returncode, 0)
 
     def test_other_words_do_not_count(self):
         self.write("A.swift", ['let a = "Veranda"', 'let b = Vera', 'let c = "vera"'])
         self.assertEqual(self.run_script("--update").returncode, 0)
-        self.assertEqual(open(self.baseline).read(), "")
+        self.assertEqual(self.baseline_text(), "")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 5 apps/vera-mac/Sources/Vera/ConversationPresenceSelftest.swift
 3 apps/vera-mac/Sources/Vera/IntegrationsView.swift
 2 apps/vera-mac/Sources/Vera/KnowledgeView.swift
-1 apps/vera-mac/Sources/Vera/LocalChatRepository.swift
+2 apps/vera-mac/Sources/Vera/LocalChatRepository.swift
 8 apps/vera-mac/Sources/Vera/MemoryView.swift
 1 apps/vera-mac/Sources/Vera/ModelParameters.swift
 1 apps/vera-mac/Sources/Vera/NativeAttachments.swift
@@ -47,3 +47,6 @@
 2 apps/vera-mac/Sources/Vera/WorkflowEditor.swift
 1 apps/vera-mac/Sources/Vera/WorkflowRunMode.swift
 1 apps/vera-mac/Sources/Vera/main.swift
+1 prototypes/assistant-ui/Sources/VeraAssistantUI/Models.swift
+1 prototypes/assistant-ui/Sources/VeraAssistantUI/SelfTest.swift
+6 prototypes/assistant-ui/Sources/VeraAssistantUI/Views.swift
