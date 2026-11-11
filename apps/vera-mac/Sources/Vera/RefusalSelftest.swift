@@ -100,9 +100,44 @@ extension SelfTest {
                                                    live: live, liveTargets: nil)
         try require(privileged.decision == .handOff && privileged.why?.kind != .folder && privileged.why?.trigger == NativeRuleWhy.Trigger(.program, "sudo"),
                     "A command stopped for another reason keeps that reason: \(String(describing: privileged.why))")
-        let evaluated = NativeCommandTools.evaluate(command: "rm -rf " + outsidePath, directory: shared.path, grants: [grant], fallback: .handOff,
-                                                    live: live, liveTargets: nil)
-        try require(evaluated.0 == reaching.action && evaluated.1 == reaching.decision, "The reason never changes the decision")
+        func outcome(_ command: String, _ rules: NativeRules) -> (NativeActionClass, NativeRuleDecision) {
+            let resolver = NativeRuleResolver(global: rules, conversation: NativeConversationRules(), requestText: "")
+            let result = NativeCommandTools.evaluate(command: command, directory: shared.path, grants: [grant], fallback: .handOff,
+                                                     live: { text, action in action == .commands ? resolver.decision(forCommand: text) : resolver.decision(for: action) },
+                                                     liveTargets: nil)
+            return (result.0, result.1)
+        }
+        var acting = NativeRules.defaults
+        acting.set(.act, for: .commands)
+        var deleting = acting
+        deleting.lift(.permanentDeletion, choice: .act)
+        try require(outcome("ls", .defaults) == (.commands, .ask) && outcome("ls", acting) == (.commands, .act(.rule)), "A plain command follows the commands setting")
+        try require(outcome("printf one; printf two", acting) == (.commands, .ask), "More than one command still asks when commands act")
+        try require(outcome("sudo ls", acting) == (.riskyCommands, .handOff), "A privileged command is still left to the person")
+        try require(outcome("git push origin trunk", acting) == (.networkSends, .ask), "A sending command still follows the sending setting")
+        try require(outcome("rm -rf " + outsidePath, acting) == (.permanentDeletion, .handOff) && outcome("rm -rf " + outsidePath, deleting) == (.permanentDeletion, .act(.rule)),
+                    "Deleting outside the shared folder is still held until it is turned on")
+        try require(outcome("rm -rf inner", acting) == (.commands, .act(.rule)), "Deleting inside the shared folder still follows the commands setting")
+        let several = NativeCommandTools.assess(command: "printf one; printf two", directory: shared.path, grants: [grant], fallback: .handOff,
+                                                live: { _, _ in .act(.rule) }, liveTargets: nil)
+        try require(several.decision == .ask && several.why.map { RefusalCopy.plain($0) } == "This command uses more than one command, so it asks you first.",
+                    "A command that asks only because of its shape never claims a setting: \(several.why.map { RefusalCopy.plain($0) } ?? "")")
+        var strict = NativeRules.defaults
+        strict.set(.handOff, for: .fileEdits)
+        let folderAsk = NativeRuleTarget.folder(shared.path).map {
+            NativeRuleRecord(scope: .everywhere, action: .fileEdits, target: $0, effect: .ask, statement: "Ask before file edits here")
+        }
+        let untargeted = NativeRuleResolver(global: strict, conversation: NativeConversationRules(), requestText: "", records: folderAsk.map { [$0] } ?? [])
+        try require(untargeted.decision(for: .fileEdits) == .handOff && untargeted.explain(for: .fileEdits)?.kind == .unsaved
+                        && untargeted.explain(for: .fileEdits)?.choice == .handOff,
+                    "A rule that didn't decide is never given as the reason: \(String(describing: untargeted.explain(for: .fileEdits)))")
+        let relaxed = NativeRuleResolver(global: { var rules = NativeRules.defaults; rules.set(.act, for: .fileEdits); return rules }(),
+                                         conversation: NativeConversationRules(), requestText: "", records: folderAsk.map { [$0] } ?? [])
+        try require(relaxed.decision(for: .fileEdits) == .ask && relaxed.explain(for: .fileEdits)?.kind == .rule, "A rule that raised it to a question is the reason")
+        let secret = NativeRuleWhy.Trigger(.path, "https://alice:secret@example.org/.ssh/config")
+        try require(secret.text.isEmpty && !RefusalCopy.plain(NativeRuleWhy(kind: .unsaved, action: .riskyCommands, handsOff: true, choice: .handOff, source: .settings,
+                                                                           trigger: secret)).contains("secret"),
+                    "An address with a password in it is never copied into the reason")
 
         let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger())
         let reader = tools.first { $0.name == NativeFolderTools.readName }!

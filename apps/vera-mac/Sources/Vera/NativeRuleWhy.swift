@@ -53,7 +53,11 @@ struct NativeRuleWhy: Codable, Hashable, Sendable {
 
         init(_ kind: Kind, _ text: String) {
             self.kind = kind
-            self.text = String(text.prefix(Self.limit))
+            self.text = kind == .path && !Self.isPlainPath(text) ? "" : String(text.prefix(Self.limit))
+        }
+
+        static func isPlainPath(_ text: String) -> Bool {
+            !text.contains("://") && !text.contains("@") && !text.contains("=") && !text.contains("?")
         }
     }
 
@@ -134,12 +138,18 @@ extension NativeRuleResolver {
         if let winner = resolution?.decidedBy, winner.effect.restricts {
             return NativeRuleWhy(kind: .rule, action: query.action, handsOff: handsOff, rule: .init(winner))
         }
-        if let restriction = NativeRuleMatcher.untargetedRestriction(records, query: query, context: context, at: now) {
-            return NativeRuleWhy(kind: .rule, action: query.action, handsOff: handsOff, rule: .init(restriction))
+        let allowed = resolution?.decidedBy.effect == .allow
+        let settled = choice(for: query.action)
+        let wouldAct = allowed || (resolution == nil && (settled == .act || (settled == .actIfPreapproved && NativeRequestPreapproval.grants(requestText))))
+        if decision == .ask, wouldAct,
+           let restriction = NativeRuleMatcher.untargetedRestriction(records, query: query, context: context, at: now) {
+            return NativeRuleWhy(kind: .rule, action: query.action, handsOff: false, rule: .init(restriction))
         }
+        if wouldAct { return NativeRuleWhy(kind: .unsaved, action: query.action, handsOff: handsOff) }
         if let allow = NativeRuleMatcher.unmatchedAllow(records, query: query, context: context, at: now, honoringLimitedUse: honoringLimitedUse),
            let target = allow.target {
-            let differed = query.parts.first { !allow.matches($0, at: now) }?.targets.first { $0.kind == target.kind }?.value
+            let other = query.parts.first { !allow.matches($0, at: now) }?.targets.first { $0.kind == target.kind }?.value
+            let differed = target.kind == .commandPrefix ? other.map { $0.split(whereSeparator: \.isWhitespace).prefix(NativeCommandPrefix.words).joined(separator: " ") } : other
             return NativeRuleWhy(kind: .outside, action: query.action, handsOff: handsOff, choice: choice(for: query.action),
                                  source: source(for: query.action), rule: .init(allow), subject: differed)
         }

@@ -55,6 +55,12 @@ enum RefusalCopy {
         }
     }
 
+    static func asksAnyway(_ trigger: NativeRuleWhy.Trigger?, full: Bool) -> String {
+        let clause = triggered(trigger, full: full)
+        guard clause.hasPrefix(", and ") else { return "This asks you first for now." }
+        return "T" + clause.dropFirst(", and t".count) + ", so it asks you first."
+    }
+
     static func setTo(_ why: NativeRuleWhy) -> String {
         let choice = (why.choice ?? (why.handsOff ? .handOff : .ask)).title
         let place = why.source == .chat ? " in this chat" : ""
@@ -64,6 +70,7 @@ enum RefusalCopy {
     static func line(_ why: NativeRuleWhy, places: RulePlaces, full: Bool = false) -> CompanionLine {
         switch why.kind {
         case .unsaved:
+            guard why.handsOff || why.choice != nil else { return .literal(asksAnyway(why.trigger, full: full)) }
             return .literal(setTo(why) + triggered(why.trigger, full: full) + ".")
         case .outside:
             let rule = why.rule.map { RuleRows.sentence($0.record, tools: places.tools) } ?? ""

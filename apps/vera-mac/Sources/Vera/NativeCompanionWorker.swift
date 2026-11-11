@@ -558,7 +558,7 @@ private struct NativeCompanionRun {
     }
 
     func sentence(_ why: NativeRuleWhy) -> String {
-        RefusalCopy.plain(why, places: places, name: context.companion.name)
+        RefusalCopy.plain(why, places: places, name: nil)
     }
 
     func unasked(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) -> String? {
@@ -723,7 +723,7 @@ private struct NativeCompanionRun {
         checkpoint.answer(call, NativeCompanionWorker.message(RefusalCopy.forModel(reason)))
         let effects = NativeCompanionWorker.effectsLine(checkpoint)
         let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
-                                                                                  companion: context.companion.name) + effects)
+                                                                                  companion: nil) + effects)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
                                                 summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason)
     }
