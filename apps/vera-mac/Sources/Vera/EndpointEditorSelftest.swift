@@ -131,6 +131,42 @@ extension SelfTest {
         try require(keyed.nativeSettings.profiles.isEmpty && !hasEndpoint(keyDisk.contents) && keyStore.values[keyedID] == nil,
                     "Clearing the key and skipping drops the endpoint and removes its stored key")
 
+        let deniedDisk = EndpointEditorFixtureDisk()
+        let deniedStore = NativeCredentialFixtureStore()
+        let denied = ConfigStore(credentialStore: deniedStore, readConfiguration: { deniedDisk.contents },
+                                 nativeMCP: NativeMCPManager(servers: []),
+                                 writeConfiguration: { deniedDisk.contents = $0; deniedDisk.writes.append($0) })
+        host(NativeEndpointEditor(addsOnEntry: true), config: denied)
+        let deniedID = denied.nativeSettings.activeProfileID ?? ""
+        denied.activeProfileBinding(\.baseURL).wrappedValue = "https://openrouter.ai/api/v1"
+        denied.activeProfileBinding(\.selectedModel).wrappedValue = "qwen/qwen3.8-flash"
+        denied.apiKeyBinding().wrappedValue = "synthetic-key"
+        try denied.save()
+        deniedStore.denied = [deniedID]
+        _ = try? denied.piConnectSelectedProfile()
+        deniedStore.denied = []
+        try require(denied.activeNativeAPIKey.isEmpty && deniedStore.values[deniedID] == "synthetic-key",
+                    "A key that could not be read looks empty while it is still stored")
+        denied.activeProfileBinding(\.baseURL).wrappedValue = ""
+        try denied.save()
+        try require(!hasEndpoint(deniedDisk.contents) && deniedStore.values[deniedID] == nil,
+                    "A save that leaves the blank endpoint off disk also removes a stored key it could not read")
+
+        let clearedDisk = EndpointEditorFixtureDisk()
+        let clearedStore = NativeCredentialFixtureStore()
+        let cleared = ConfigStore(credentialStore: clearedStore, readConfiguration: { clearedDisk.contents },
+                                  nativeMCP: NativeMCPManager(servers: []),
+                                  writeConfiguration: { clearedDisk.contents = $0; clearedDisk.writes.append($0) })
+        host(NativeEndpointEditor(addsOnEntry: true), config: cleared)
+        let clearedID = cleared.nativeSettings.activeProfileID ?? ""
+        cleared.apiKeyBinding().wrappedValue = "synthetic-key"
+        try cleared.save()
+        cleared.apiKeyBinding().wrappedValue = ""
+        try cleared.save()
+        try require(!hasEndpoint(clearedDisk.contents) && clearedStore.values[clearedID] == nil
+                    && cleared.nativeSettings.profiles.count == 1,
+                    "Clearing the key and saving from elsewhere removes the stored key and keeps the endpoint on screen only")
+
         let savedDisk = EndpointEditorFixtureDisk()
         savedDisk.contents = ["native_chat": ["profiles": [["id": "saved", "name": "Home", "baseURL": "https://models.example/v1",
                                                              "discoveredModels": [String](), "selectedModel": ""]],

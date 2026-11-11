@@ -274,6 +274,7 @@ final class ConfigStore: ObservableObject {
 
     func save() throws {
         piCommitValid = false
+        if let id = untouchedEntryProfileID { queueEntryCredentialRemoval(id) }
         let piCredentialsChanged = Set(pendingCredentials.keys).union(legacyCredentials.keys)
         do {
             if blockedLegacyMigrationID != nil { throw NativeCredentialError.read }
@@ -635,6 +636,10 @@ final class ConfigStore: ObservableObject {
         }
         nativeSettings = settingsWithoutUntouchedEntryProfile
         entryProfileID = nil
+        queueEntryCredentialRemoval(id)
+    }
+
+    private func queueEntryCredentialRemoval(_ id: String) {
         if (savedCredentials[id] ?? "").isEmpty, !unavailableCredentials.contains(id) {
             pendingCredentials.removeValue(forKey: id)
         } else {
