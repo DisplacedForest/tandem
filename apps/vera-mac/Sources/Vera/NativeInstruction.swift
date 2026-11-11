@@ -96,9 +96,9 @@ enum NativeInstruction {
         if !commands.isEmpty {
             guard commands.count == 1, targets.count == 1, names.isEmpty, !plain.contains(where: \.isNewline),
                   let tail = rest(plain.trimmingCharacters(in: .whitespaces), after: wanted) else { return false }
-            var typed = [spaced(tail)]
-            if tail.hasSuffix("`.") || (!tail.contains("`") && tail.hasSuffix(".")) { typed.append(spaced(String(tail.dropLast()))) }
-            return typed.contains(canonical(commands[0].value)) && NativeRequestPreapproval.settled("", original: lowered)
+            let stopped = tail.hasSuffix("`.") || (!tail.contains("`") && tail.hasSuffix("."))
+            let typed = spaced(stopped ? String(tail.dropLast()) : tail)
+            return typed == canonical(commands[0].value) && NativeRequestPreapproval.settled("", original: lowered)
         }
         for (position, sentence) in all.enumerated() {
             guard rest(sentence, after: wanted) != nil else { continue }
