@@ -405,6 +405,7 @@ enum SelfTest {
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
         do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
+        do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }

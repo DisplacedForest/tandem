@@ -41,7 +41,7 @@ enum RulesCopy {
             strings.append(item.title)
             strings.append(item.reason)
         }
-        return strings
+        return strings + RulesAdvancedCopy.screenStrings(name: name)
     }
 }
 
@@ -110,6 +110,11 @@ struct RulesSettingsTab: View {
     @State private var infoFor: NativeActionClass?
     @State private var rows: [RuleRow] = []
     @State private var widening: RuleRow?
+    @State private var advanced: RulesAdvancedState
+
+    init(advanced: RulesAdvancedState = RulesAdvancedState()) {
+        _advanced = State(initialValue: advanced)
+    }
 
     private func refresh() { rows = store.ruleRows() }
 
@@ -125,12 +130,6 @@ struct RulesSettingsTab: View {
 
     private func detail(for action: NativeActionClass) -> String {
         RulesCopy.info(for: action, choice: config.nativeSettings.rules.choice(for: action))
-    }
-
-    private func floorDetail(_ item: NativeFloorItem) -> String {
-        let rules = config.nativeSettings.rules
-        guard let action = item.actionClass, rules.isLifted(item) else { return item.reason }
-        return "Lifted: \(rules.choice(for: action).title)"
     }
 
     var body: some View {
@@ -193,16 +192,14 @@ struct RulesSettingsTab: View {
                 }
             }
             Section(RulesCopy.floorSectionTitle) {
-                ForEach(NativeFloorItem.allCases, id: \.self) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                        Text(floorDetail(item)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    }
-                    .padding(.vertical, 2)
+                ForEach(RulesAdvancedCopy.leftToYou(config.nativeSettings.rules), id: \.self) { item in
+                    RulesLeftToYouRow(item: item, state: $advanced)
                 }
             }
+            RulesAdvancedSection(state: $advanced)
         }
         .formStyle(.grouped)
+        .onDisappear { advanced.leave() }
         .onAppear {
             store.sweepRuleRecords()
             refresh()
