@@ -72,31 +72,59 @@ struct NativeTypedWords: Hashable, Sendable {
         joins(character) || "!#$%&'*/=?^`{|}~".contains(character)
     }
 
-    static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
-        let needle = value.lowercased()
-        guard !needle.isEmpty else { return false }
-        let haystack = text.lowercased()
+    static func spans(_ text: String, _ value: String, strict: Bool = false, exact: Bool = false) -> [Range<String.Index>] {
+        let needle = exact ? value : value.lowercased()
+        guard !needle.isEmpty else { return [] }
+        let haystack = exact ? text : text.lowercased()
+        guard haystack.count == text.count else { return [] }
+        var found: [Range<String.Index>] = []
         var start = haystack.startIndex
-        while let range = haystack.range(of: needle, range: start..<haystack.endIndex) {
+        while start < haystack.endIndex, let range = haystack.range(of: needle, range: start..<haystack.endIndex) {
             let before = range.lowerBound == haystack.startIndex ? nil : haystack[haystack.index(before: range.lowerBound)]
             let after = range.upperBound == haystack.endIndex ? nil : haystack[range.upperBound]
-            let trailing = after.map { joins($0) && !ends(haystack, at: range.upperBound) } ?? false
-            if !(strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false)) && !trailing { return true }
+            let trailing = exact ? !closes(haystack, at: range.upperBound)
+                : strict ? !finishes(haystack, at: range.upperBound)
+                : (after.map { joins($0) && !ends(haystack, at: range.upperBound) } ?? false)
+            let leading = exact ? !starts(haystack, at: range.lowerBound)
+                : (strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false))
+            if !leading && !trailing { found.append(range) }
             start = haystack.index(after: range.lowerBound)
         }
-        return false
+        guard !exact else { return found }
+        return found.map { range in
+            let lower = text.index(text.startIndex, offsetBy: haystack.distance(from: haystack.startIndex, to: range.lowerBound))
+            let upper = text.index(lower, offsetBy: haystack.distance(from: range.lowerBound, to: range.upperBound))
+            return lower..<upper
+        }
+    }
+
+    static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
+        !spans(text, value, strict: strict).isEmpty
+    }
+
+    static func finishes(_ text: String, at index: String.Index) -> Bool {
+        var cursor = index
+        while cursor < text.endIndex, text[cursor] == "`" { cursor = text.index(after: cursor) }
+        if cursor < text.endIndex, ".,;:!?".contains(text[cursor]) { cursor = text.index(after: cursor) }
+        return cursor == text.endIndex || text[cursor].isWhitespace
+    }
+
+    static func starts(_ text: String, at index: String.Index) -> Bool {
+        index == text.startIndex || text[text.index(before: index)].isWhitespace
+    }
+
+    static func closes(_ text: String, at index: String.Index) -> Bool {
+        guard index < text.endIndex else { return true }
+        if text[index].isWhitespace { return true }
+        guard ".,;:!?".contains(text[index]) else { return false }
+        let next = text.index(after: index)
+        return next == text.endIndex || text[next].isWhitespace
     }
 
     static func fused(_ text: String, before index: String.Index) -> Bool {
         var cursor = index
-        var marks = 0
-        while cursor > text.startIndex, text[text.index(before: cursor)] == "`" {
-            cursor = text.index(before: cursor)
-            marks += 1
-        }
-        guard cursor > text.startIndex else { return false }
-        let previous = text[text.index(before: cursor)]
-        return marks > 0 ? !previous.isWhitespace : leads(previous)
+        while cursor > text.startIndex, text[text.index(before: cursor)] == "`" { cursor = text.index(before: cursor) }
+        return cursor > text.startIndex && !text[text.index(before: cursor)].isWhitespace
     }
 
     static func ends(_ text: String, at index: String.Index) -> Bool {

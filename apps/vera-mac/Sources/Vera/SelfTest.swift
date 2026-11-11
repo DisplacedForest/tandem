@@ -415,6 +415,7 @@ enum SelfTest {
         do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
         do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
+        do { try await runInstructions() } catch { print("SELFTEST ERROR: instructions \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
         do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }
@@ -2648,6 +2649,46 @@ enum SelfTest {
         try rejects(["urgent"], "not a declared string property")
         try rejects(["to", "to"], "same field twice")
         try rejects(["to"], method: "GET", "requires the POST method")
+        func spoken(_ verbs: Any, sendsTo: Any? = ["to"], method: String = "POST", confirmation: String = "none") throws -> NativeToolDeclaration {
+            var object: [String: Any] = [
+                "name": "send_note", "title": "Send a note", "description": "Send a note",
+                "parameters": ["type": "object", "properties": ["to": ["type": "string"]], "required": [], "additionalProperties": false],
+                "endpoint": "https://mail.example/send", "method": method, "confirmation": confirmation, "verbs": verbs,
+            ]
+            if let sendsTo { object["sends_to"] = sendsTo }
+            return try NativeCapabilityTools.parse(object: object, source: "send_note.json")
+        }
+        let spokenListed = try spoken(["send", "email", "write to"])
+        let spokenDefinition = NativeCapabilityTools.definition(spokenListed, base: { nil })
+        try require(spokenListed.verbs == ["send", "email", "write to"] && spokenDefinition.verbs == spokenListed.verbs && !spokenDefinition.namesNothing,
+                    "Listed action words reach a tool that says where it sends")
+        let spokenFixed = NativeCapabilityTools.definition(try spoken(["post"], sendsTo: [String]()), base: { nil })
+        try require(spokenFixed.verbs == ["post"] && spokenFixed.namesNothing, "A tool that always sends to the same place needs nothing named")
+        let spokenBare = try spoken(["post"], sendsTo: nil)
+        let spokenBareDefinition = NativeCapabilityTools.definition(spokenBare, base: { nil })
+        try require(spokenBare.verbs == ["post"] && spokenBareDefinition.verbs.isEmpty && !spokenBareDefinition.namesNothing,
+                    "A tool that never said where it sends can't run on an instruction")
+        let spokenGet = NativeCapabilityTools.definition(try spoken(["refresh"], sendsTo: nil, method: "GET", confirmation: "required"), base: { nil })
+        try require(spokenGet.verbs.isEmpty, "A tool that changes something with no recipient can't run on an instruction")
+        try require(try declaration(["to"]).verbs.isEmpty, "No verbs line leaves the tool without action words")
+        let badVerbs: [(Any, String, String)] = [
+            ("send", "POST", "must be a list"),
+            ([String](), "POST", "must be a list"),
+            (Array(repeating: "send", count: 9), "POST", "must be a list"),
+            (["Send"], "POST", "lowercase letters"),
+            (["send!"], "POST", "lowercase letters"),
+            (["write  to"], "POST", "lowercase letters"),
+            ([" send"], "POST", "lowercase letters"),
+            ([String(repeating: "a", count: 25)], "POST", "lowercase letters"),
+            ([7], "POST", "must be a list"),
+            (["send", "send"], "POST", "same word twice"),
+            (["fetch"], "GET", "only reads"),
+        ]
+        for (value, method, fragment) in badVerbs {
+            var reason: String?
+            do { _ = try spoken(value, sendsTo: method == "GET" ? nil : ["to"], method: method) } catch let error as NativeToolDeclarationError { reason = error.reason }
+            try require(reason?.contains(fragment) == true, "A verbs line is refused: \(fragment) got \(reason ?? "no error")")
+        }
         let unlisted = bundled.filter { $0.method == .post && !$0.reads && $0.sendsTo == nil }.map(\.name)
         try require(Set(unlisted).isSubset(of: bundledSendersWithoutDestination),
                     "Every bundled posting tool says where it sends, or is on the known list: \(unlisted)")
