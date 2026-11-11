@@ -287,7 +287,7 @@ enum NativeCompanionWorker {
     typealias RuleDecision = (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String], why: NativeRuleWhy?)
 
     static func instructionClaim(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue],
-                                 action: NativeActionClass) -> NativeInstructionClaim? {
+                                 action: NativeActionClass, listed: Bool = true) -> NativeInstructionClaim? {
         guard !definition.demandsConfirmation else { return nil }
         if definition.id == NativeCommandTools.toolID {
             guard action == .commands, case .string(let command)? = arguments["command"], NativeCommandPrefix.isSimple(command),
@@ -295,6 +295,7 @@ enum NativeCompanionWorker {
             return NativeInstructionClaim(verbs: NativeCommandTools.verbs)
         }
         if definition.id == NativeFolderTools.toolID {
+            guard listed else { return NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) } }
             return NativeFolderTools.instructionClaim(action, targets: ruleQuery(definition, arguments, action: action).targets,
                                                       roots: definition.folderRoots?() ?? [])
         }
@@ -303,7 +304,7 @@ enum NativeCompanionWorker {
     }
 
     static func instructionSignature(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass) -> String? {
-        guard let claim = instructionClaim(definition, arguments, action: action) else { return nil }
+        guard let claim = instructionClaim(definition, arguments, action: action, listed: false) else { return nil }
         return NativeInstruction.signature(action: action, toolID: definition.id, targets: ruleQuery(definition, arguments, action: action).targets,
                                            names: claim.names)
     }

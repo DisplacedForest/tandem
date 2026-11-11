@@ -841,6 +841,17 @@ extension SelfTest {
                             "Work started by hand runs the typed edit once when nothing beside it is named: \(done.state)")
             }
         }
+        let locked = grant.path + "/locked"
+        try FileManager.default.createDirectory(atPath: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+        let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { _ in .ask })
+        if let write = tools.first(where: { $0.name == NativeFolderTools.writeName }), (try? NativeFolderTools.entries(locked)) == nil {
+            let arguments: [String: NativeJSONValue] = ["path": .string(locked + "/notes.md"), "content": .string("new")]
+            try require(NativeCompanionWorker.instructionClaim(write, arguments, action: .fileEdits) == nil
+                            && NativeCompanionWorker.instructionSignature(write, arguments, action: .fileEdits) != nil,
+                        "A folder that can't be listed gives no instruction, yet a spent one is still recognised")
+        }
     }
 
     private static func companionAdmittedFolderWrites() async throws {

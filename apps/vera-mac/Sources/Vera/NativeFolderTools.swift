@@ -246,7 +246,7 @@ enum NativeFolderTools {
 
     static func beside(_ path: String, top: String?, listing: (String) throws -> [String] = entries) -> [String]? {
         let target = URL(fileURLWithPath: path).standardizedFileURL
-        let own = target.path.lowercased()
+        let own = target.path
         var folders = [target.deletingLastPathComponent().path]
         if let top {
             let standard = URL(fileURLWithPath: top).standardizedFileURL.path
@@ -255,7 +255,10 @@ enum NativeFolderTools {
         var names: [String] = []
         for folder in folders {
             guard let found = try? listing(folder) else { return nil }
-            for name in found where URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path.lowercased() != own {
+            let paths = found.map { URL(fileURLWithPath: folder).appendingPathComponent($0).standardizedFileURL.path }
+            let twins = paths.filter { $0.lowercased() == own.lowercased() }
+            let mine = paths.contains(own) ? own : twins.count == 1 ? twins[0] : nil
+            for (name, path) in zip(found, paths) where path != mine {
                 if !names.contains(name) { names.append(name) }
             }
         }
