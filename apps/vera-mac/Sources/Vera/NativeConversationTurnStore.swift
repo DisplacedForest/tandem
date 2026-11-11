@@ -467,7 +467,7 @@ extension ChatStore {
         }
         if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && message.artifacts.isEmpty { revertPreferenceCapture(turn) }
         recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
-                              revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
+                              sources: message.sources, revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         resolveTurnConfirmation(messageID, approved: false)
         clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)

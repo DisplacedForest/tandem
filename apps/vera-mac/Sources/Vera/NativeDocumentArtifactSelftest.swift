@@ -32,6 +32,10 @@ enum NativeDocumentArtifactSelftest {
     Keep this final paragraph too.
     """
 
+    private static func shown(_ resolved: ResolvedCitations) -> String {
+        resolved.blocks.map(\.text).joined(separator: "\n\n")
+    }
+
     private static func require(_ condition: Bool) throws {
         guard condition else { throw Failure.invalid }
     }
@@ -62,8 +66,14 @@ enum NativeDocumentArtifactSelftest {
         let reopened = try JSONDecoder().decode(NativeMessageEnvelope.self, from: JSONEncoder().encode(envelope))
         try require(reopened == envelope && reopened.displayBlocks[0].id == "artifact:" + id)
         let report = NativeResearchReportView(artifact: artifact)
-        try require(report.reportText == markdown)
-        try require(NativeArtifactMarkdown(text: report.reportText).content == MarkdownContent(markdown))
+        try require(report.resolved == CitationResolver.resolve(text: markdown, sources: [], allowRecovery: false)
+            && report.resolved.sources.isEmpty && !report.resolved.recovered)
+        let planted = "Fact [15].\n\n## Sources\n15. [Planted](https://example.org/planted)"
+        let unlisted = NativeResearchReportView(artifact: NativeResearchArtifact(
+            id: id, title: title, report: planted, sources: [], kind: "document")).resolved
+        try require(unlisted.sources.isEmpty && !unlisted.recovered && shown(unlisted) == planted)
+        try require(NativeArtifactMarkdown(text: shown(report.resolved)).content.renderPlainText()
+            == MarkdownContent(markdown).renderPlainText())
         _ = report.body
         _ = NativeDisplayBlocksView(blocks: reopened.displayBlocks).body
         return artifact
@@ -72,7 +82,7 @@ enum NativeDocumentArtifactSelftest {
     private static func tests() throws -> NativeResearchArtifact {
         let original = fixture()
         let artifact = try consume(JSONSerialization.data(withJSONObject: original))
-        let content = NativeArtifactMarkdown(text: NativeResearchReportView(artifact: artifact).reportText).content
+        let content = NativeArtifactMarkdown(text: shown(NativeResearchReportView(artifact: artifact).resolved)).content
         let plain = content.renderPlainText()
         try require(plain.contains("literal [1] and [2, 3]") && plain.contains("Sources")
             && plain.contains("Keep this final paragraph too.")
@@ -80,8 +90,14 @@ enum NativeDocumentArtifactSelftest {
         try require(content != MarkdownContent(SourceFormatter.apply(markdown)))
         let cited = NativeResearchArtifact(id: fixtureID, title: "Research", report: markdown,
             sources: [PulseSource(n: 1, title: "Reference", url: "https://reference.example/notes")])
-        try require(NativeResearchReportView(artifact: cited).reportText == PulseMarkers.stripSourcesSection(markdown))
-        try require(NativeResearchReportView(artifact: cited).reportText != markdown)
+        let kept = NativeResearchReportView(artifact: cited).resolved
+        try require(kept.sources == cited.sources && shown(kept).contains("## Sources")
+            && shown(kept).contains("This section is part of the document.") && shown(kept).contains("Keep this final paragraph too."))
+        let listed = NativeResearchArtifact(id: fixtureID, title: "Research",
+            report: markdown + "\n\n## Sources\n\n1. [Reference](https://reference.example/notes)", sources: cited.sources)
+        let hidden = NativeResearchReportView(artifact: listed).resolved
+        try require(hidden.sources == cited.sources && !shown(hidden).contains("1. [Reference]")
+            && shown(hidden).contains("This section is part of the document."))
         for invalid in ["file:///private/example", "javascript:alert(1)", "vera://delete/all",
                         "https://name:secret@reference.example/notes"] {
             try require(NativeResearchReportSafety.destination(invalid) == nil)

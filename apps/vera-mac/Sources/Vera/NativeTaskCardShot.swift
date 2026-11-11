@@ -9,11 +9,12 @@ enum NativeTaskCardShot {
             report: """
             The best fit depends on the wall assembly, available space, and installation requirements. [1]
 
-            Compare the total installed cost, not just the material price. Measure the walls and note any areas where moisture control needs attention. [1]
+            Compare the total installed cost, not just the material price. Measure the walls and note any areas where moisture control needs attention. [2]
 
-            Before choosing a material, confirm the target thermal performance and the thickness the wall can accommodate.
+            Before choosing a material, confirm the target thermal performance and the thickness the wall can accommodate. [1, 2]
             """,
-            sources: [PulseSource(n: 1, title: "Installation reference", url: "local")])
+            sources: [PulseSource(n: 1, title: "Insulating a detached workshop", url: "https://example.org/workshop-insulation"),
+                      PulseSource(n: 2, title: "Comparing insulation costs", url: "https://example.com/insulation-costs")])
     }
 
     static var document: NativeResearchArtifact {
@@ -103,6 +104,7 @@ struct NativeTaskCardShotSurface: View {
             result.status = .completed
             result.milestone = "The report is ready."
             result.canCancel = false
+            result.sources = NativeTaskCardShot.report.sources
         case "task-card-stopped":
             result.status = .stopped
             result.milestone = "Stopped with three sources saved."
@@ -123,7 +125,8 @@ struct NativeTaskCardShotSurface: View {
             result.workerType = "companion"
             result.status = .completed
             result.milestone = ""
-            result.answer = "Tomorrow in Chicago looks **sunny**, with a high of 61 and a low of 45.\n\n- Light wind from the west\n- No rain expected"
+            result.answer = "Tomorrow in Chicago looks **sunny**, with a high of 61 and a low of 45. [1]\n\n- Light wind from the west\n- No rain expected"
+            result.sources = [PulseSource(n: 1, title: "Chicago forecast", url: "https://example.org/chicago-forecast")]
             result.canCancel = false
         case "task-card-offline":
             break

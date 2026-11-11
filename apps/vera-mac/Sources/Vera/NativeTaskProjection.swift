@@ -111,26 +111,29 @@ enum NativeTaskProjection {
             }
         case .completed where dot:
             guard let result = snapshot.result, result.query == reference.request.objective,
-                  result.kind == "companion_report", result.sources.isEmpty,
+                  result.kind == "companion_report",
                   result.report.unicodeScalars.count <= 40000,
                   (result.summary ?? "").unicodeScalars.count <= 2000,
                   (result.title ?? "").unicodeScalars.count <= 200,
                   [nil, NativeCompanionShape.answer, NativeCompanionShape.document].contains(result.shape) else {
                 throw NativeTaskHTTPError.invalidResponse
             }
+            let companionSources = try displaySources(result.sources)
             card.status = .completed
+            card.sources = companionSources
             if result.shape == NativeCompanionShape.answer {
                 let answer = result.report.trimmingCharacters(in: .whitespacesAndNewlines)
                 card.milestone = answer.isEmpty ? "Finished." : ""
                 card.answer = answer.isEmpty ? nil : answer
                 return (card, nil)
             }
-            let summary = (result.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = CitationResolver.scan(result.summary ?? "", known: Set(companionSources.map(\.n))).text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             card.milestone = summary.isEmpty ? "Finished." : String(summary.prefix(280))
             guard !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (card, nil) }
             return (card, NativeResearchArtifact(
                 id: snapshot.id, title: reference.request.displayTitle,
-                report: result.report, sources: [], kind: "document"))
+                report: result.report, sources: companionSources, kind: "document"))
         case .completed:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -165,7 +168,7 @@ enum NativeTaskProjection {
     static func answerDocument(_ card: NativeTaskCardPresentation) -> NativeResearchArtifact? {
         guard card.isCompanion, card.status == .completed,
               let answer = card.answer?.trimmingCharacters(in: .whitespacesAndNewlines), !answer.isEmpty else { return nil }
-        return NativeResearchArtifact(id: card.id, title: card.title, report: answer, sources: [], kind: "document")
+        return NativeResearchArtifact(id: card.id, title: card.title, report: answer, sources: card.sources, kind: "document")
     }
 
     static func documentProgress(_ checkpoint: NativeTaskCheckpoint) -> String? {
