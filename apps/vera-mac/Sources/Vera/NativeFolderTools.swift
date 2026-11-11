@@ -255,10 +255,7 @@ enum NativeFolderTools {
         var names: [String] = []
         for folder in folders {
             guard let found = try? listing(folder) else { return nil }
-            let paths = found.map { URL(fileURLWithPath: folder).appendingPathComponent($0).standardizedFileURL.path }
-            let twins = paths.filter { $0.lowercased() == own.lowercased() }
-            let mine = paths.contains(own) ? own : twins.count == 1 ? twins[0] : nil
-            for (name, path) in zip(found, paths) where path != mine {
+            for name in found where URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path != own {
                 if !names.contains(name) { names.append(name) }
             }
         }

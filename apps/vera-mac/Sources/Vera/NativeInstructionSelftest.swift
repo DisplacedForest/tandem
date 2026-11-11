@@ -470,9 +470,12 @@ extension SelfTest {
         try require(try onDisk("Save this as notes.md", top + "/notes.md", listing: { _ in throw Unlistable() }) == .ask,
                     "A folder that can't be listed asks")
         try require(NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "readme.md", "b.txt"] }) == ["README.md", "b.txt"]
-                        && NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "b.txt"] }) == ["b.txt"]
+                        && NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "b.txt"] }) == ["README.md", "b.txt"]
                         && NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "Readme.md"] }) == ["README.md", "Readme.md"],
                     "Only the file being changed is left out, never another file whose name differs by case")
+        try require(edits("Update README to match readme.md", beside: NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md"] }) ?? [],
+                          file: try target(.folder, "/shared/readme.md")) == .ask,
+                    "Creating a file beside one whose name differs only by case asks when the message names the other")
         try FileManager.default.removeItem(atPath: top + "/README.md")
         try require(try onDisk(updateReadme, top + "/draft.md") == .act(.instruction), "Without a README there the same message runs once")
 
