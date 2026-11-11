@@ -333,9 +333,13 @@ extension SelfTest {
         let turnUses = NativeInstructionUses()
         let wrapped = ChatStore.ruled(mail, rules: asking, store: nil, conversationID: chat, requestText: told, typed: typedTold, uses: turnUses)
         try require(wrapped.confirmationFor?(call) == false, "The instructed send shows no card")
+        let checked = wrapped.instructionFor?(call)?.signature
+        try require(checked != nil, "The instructed send is offered for the check")
         let sink = NativeToolReasonSink()
         _ = try await NativeToolCallContext.$confirmed.withValue(false) {
-            try await NativeToolCallContext.$reason.withValue(sink) { try await wrapped.execute(call) }
+            try await NativeToolCallContext.$reason.withValue(sink) {
+                try await NativeInstructionCheck.$cleared.withValue(checked) { try await wrapped.execute(call) }
+            }
         }
         try require(sent.count == 1 && sink.value == .instruction, "It runs once without a card and reports why")
         try require(wrapped.confirmationFor?(call) == true, "The same send now needs the card")
@@ -359,7 +363,7 @@ extension SelfTest {
             [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
         ])
         let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [loopTool]),
-                                  confirm: { (_: NativeToolActivity) async -> Bool in false })
+                                  confirm: { (_: NativeToolActivity) async -> Bool in false }, instructionCheck: { _, _ in true }, said: told)
         var final: NativeToolTurnSnapshot?
         for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: told)], model: "local-model",
                                               enabledToolIDs: ["fixture-notes"]) {
@@ -378,7 +382,11 @@ extension SelfTest {
         let commandUses = NativeInstructionUses()
         let pdf = command("Run `make pdf`", "make pdf", uses: commandUses)
         try require(pdf.decision == .act(.instruction), "A typed command in code marks runs once: \(pdf.decision)")
-        try require(pdf.confirm?() == true && command("Run `make pdf`", "make pdf", uses: commandUses).decision == .ask,
+        let pdfSignature = ChatStore.commandInstruction(commands, conversationID: chat, requestText: "Run `make pdf`", typed: NativeTypedWords(typed: "Run `make pdf`"),
+                                                        uses: commandUses, command: "make pdf", action: .commands,
+                                                        subjects: NativeCommandTools.ruleSubjects(command: "make pdf"), about: "")?.signature
+        try require(NativeInstructionCheck.$cleared.withValue(pdfSignature) { pdf.confirm?() } == true
+                        && command("Run `make pdf`", "make pdf", uses: commandUses).decision == .ask,
                     "Running it spends the instruction")
         try require(command("Run the tests", "make test").decision == .ask, "A command the person didn't type asks")
         try require(command("Run `make pdf && rm x`", "make pdf && rm x").decision == .ask, "A command with more than one step asks even typed in full")
@@ -389,17 +397,23 @@ extension SelfTest {
         let grant = try FolderGrant.make(url: base)
         let recorder = NativeCommandRunRecorder()
         let typedRun = "Run `echo hi`"
+        let runUsesShared = NativeInstructionUses()
         let live = ChatStore.commandLive(commands, store: nil, conversationID: chat, requestText: typedRun, typed: NativeTypedWords(typed: typedRun),
-                                         uses: NativeInstructionUses())
+                                         uses: runUsesShared)
         let runner = NativeCommandTools.definitions(grants: { [grant] }, decision: .ask, reason: { _ in nil }, record: { recorder.add($0) },
-                                                    live: live.live, liveTargets: live.liveTargets)
+                                                    live: live.live, liveTargets: live.liveTargets,
+                                                    instruction: { command, action, subjects, about in
+                                                        ChatStore.commandInstruction(commands, conversationID: chat, requestText: typedRun,
+                                                                                     typed: NativeTypedWords(typed: typedRun), uses: runUsesShared,
+                                                                                     command: command, action: action, subjects: subjects, about: about)
+                                                    })
         let runTransport = ScriptedNativeToolTransport(rounds: [
             [NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "run", name: NativeCommandTools.runName,
                                                                                   arguments: "{\"command\":\"echo hi\"}")], finishReason: "tool_calls")],
             [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
         ])
         let runLoop = NativeToolLoop(transport: runTransport, registry: NativeToolRegistry(definitions: runner),
-                                     confirm: { (_: NativeToolActivity) async -> Bool in false })
+                                     confirm: { (_: NativeToolActivity) async -> Bool in false }, instructionCheck: { _, _ in true }, said: typedRun)
         for try await _ in runLoop.stream(messages: [NativeChatMessage(role: "user", content: typedRun)], model: "local-model",
                                           enabledToolIDs: [NativeCommandTools.toolID]) {}
         let ran = recorder.recorded

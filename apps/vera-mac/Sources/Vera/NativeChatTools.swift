@@ -232,6 +232,7 @@ struct NativeToolDefinition: Sendable {
     var folderRoots: (@Sendable () -> [String])? = nil
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
+    var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
 
     var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
 
@@ -636,6 +637,9 @@ struct NativeToolLoop: Sendable {
     let authorize: @Sendable () async -> Bool
     let willExecute: @Sendable (NativeToolActivity) async -> Bool
     let confirm: @Sendable (NativeToolActivity) async -> Bool
+    let instructionCheck: NativeInstructionAnswerer?
+    let instructionTimeout: Duration
+    let said: String
 
     init(
         transport: any NativeChatTransport,
@@ -645,7 +649,10 @@ struct NativeToolLoop: Sendable {
         synthesisTimeout: Duration = .seconds(20),
         authorize: @escaping @Sendable () async -> Bool = { true },
         willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in true },
-        confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false }
+        confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false },
+        instructionCheck: NativeInstructionAnswerer? = nil,
+        instructionTimeout: Duration = NativeInstructionCheck.timeout,
+        said: String = ""
     ) {
         self.transport = transport
         self.registry = registry
@@ -655,6 +662,9 @@ struct NativeToolLoop: Sendable {
         self.authorize = authorize
         self.willExecute = willExecute
         self.confirm = confirm
+        self.instructionCheck = instructionCheck
+        self.instructionTimeout = instructionTimeout
+        self.said = said
     }
 
     func stream(
@@ -780,7 +790,19 @@ struct NativeToolLoop: Sendable {
                                         stopped = true
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
-                                    let needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
+                                    var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
+                                    var cleared: String?
+                                    if !needsConfirmation, let pending = definition.instructionFor?(arguments) {
+                                        try await checkAuthorization()
+                                        let yes = await confirmsInstruction(pending)
+                                        try await checkAuthorization()
+                                        if yes {
+                                            cleared = pending.signature
+                                        } else {
+                                            pending.refuse()
+                                            needsConfirmation = true
+                                        }
+                                    }
                                     if let index = activities.firstIndex(where: { $0.id == call.id }), activities[index].confirmationRequired != needsConfirmation {
                                         activities[index].confirmationRequired = needsConfirmation
                                         continuation.yield(NativeToolTurnSnapshot(content: content, activities: activities))
@@ -809,12 +831,16 @@ struct NativeToolLoop: Sendable {
                                         }
                                     }
                                     defer { gate.close() }
+                                    let approved = needsConfirmation
+                                    let clearing = cleared
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
-                                        try await NativeToolCallContext.$confirmed.withValue(needsConfirmation) {
+                                        try await NativeToolCallContext.$confirmed.withValue(approved) {
                                             try await NativeToolCallContext.$reason.withValue(reasonSink) {
-                                                try await Self.execute(
-                                                    definition, arguments: arguments, activity: activity,
-                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                try await NativeInstructionCheck.$cleared.withValue(clearing) {
+                                                    try await Self.execute(
+                                                        definition, arguments: arguments, activity: activity,
+                                                        timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                }
                                             }
                                         }
                                     }
@@ -903,6 +929,13 @@ struct NativeToolLoop: Sendable {
             throw NativeChatClient.ClientError.server("This answer stopped because its context or permissions changed. Please send it again.")
         }
         try Task.checkCancellation()
+    }
+
+    private func confirmsInstruction(_ pending: NativeInstructionPending) async -> Bool {
+        guard let instructionCheck else { return false }
+        let said = self.said
+        let about = pending.about
+        return await NativeInstructionCheck.bounded(instructionTimeout) { await instructionCheck(said, about) }
     }
 
     private func checkAuthorization() async throws {

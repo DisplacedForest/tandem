@@ -247,6 +247,15 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     let config: NativeChatConfig
     var session: URLSession = .shared
     var admission: NativeInferenceAdmission? = nil
+    var replyCap: Int? = nil
+    var thinkingOff = false
+
+    func briefly(cap: Int) -> NativeChatClient {
+        var copy = self
+        copy.replyCap = cap
+        copy.thinkingOff = true
+        return copy
+    }
 
     static func foreground(config: NativeChatConfig) -> NativeChatClient {
         NativeChatClient(config: config, admission: .configured())
@@ -303,6 +312,14 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             payload["chat_template_kwargs"] = kwargs
         } else if let kwargs = config.chatTemplateKwargsObject() {
             payload["chat_template_kwargs"] = kwargs
+        }
+        if let replyCap { payload["max_tokens"] = replyCap }
+        if thinkingOff {
+            if payload["reasoning_effort"] != nil { payload["reasoning_effort"] = "low" }
+            if var kwargs = payload["chat_template_kwargs"] as? [String: Any], kwargs["enable_thinking"] != nil {
+                kwargs["enable_thinking"] = false
+                payload["chat_template_kwargs"] = kwargs
+            }
         }
         var request = URLRequest(url: config.completionsURL)
         request.httpMethod = "POST"

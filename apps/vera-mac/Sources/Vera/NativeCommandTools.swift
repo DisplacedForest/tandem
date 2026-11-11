@@ -161,6 +161,7 @@ enum NativeCommandTools {
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
                             live: @escaping @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { _, _ in nil },
                             liveTargets: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
+                            instruction: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]], String) -> NativeInstructionPending?)? = nil,
                             declined: @escaping @Sendable (String) -> Bool = { _ in false },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
@@ -280,6 +281,16 @@ enum NativeCommandTools {
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
             return planned(command, arguments.folderString("directory")).decision.requiresConfirmation
+        }
+        if let instruction {
+            let original = definition
+            definition.instructionFor = { arguments in
+                guard case .string(let command)? = arguments["command"] else { return nil }
+                let assessed = planned(command, arguments.folderString("directory"))
+                guard assessed.decision == .act(.instruction) else { return nil }
+                return instruction(command, assessed.action, ruleSubjects(command: command),
+                                   NativeInstructionCheck.about(original, arguments: arguments, targets: []))
+            }
         }
         definition.governed = true
         return [definition]

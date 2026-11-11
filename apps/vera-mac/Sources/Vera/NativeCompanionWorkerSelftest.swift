@@ -34,6 +34,8 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
     private(set) var offeredTools: [[String]] = []
     private var classified: [String] = []
     private var classifierReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"keep\": false}") }
+    private var checked: [(attempt: String, content: String)] = []
+    private var checkReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"run\": false}") }
     let script: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion
 
     init(_ script: @escaping @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion) {
@@ -43,6 +45,8 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
     var callCount: Int { lock.withLock { requests.count } }
     var classifierCalls: [String] { lock.withLock { classified } }
     func classifier(_ reply: @escaping @Sendable () throws -> NativeTaskGenerationCompletion) { lock.withLock { classifierReply = reply } }
+    var instructionChecks: [(attempt: String, content: String)] { lock.withLock { checked } }
+    func checks(_ reply: @escaping @Sendable () throws -> NativeTaskGenerationCompletion) { lock.withLock { checkReply = reply } }
     var allRequests: [[NativeTaskGenerationMessage]] { lock.withLock { requests } }
     var allOffered: [[String]] { lock.withLock { offeredTools } }
 
@@ -52,6 +56,13 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
             let reply = lock.withLock { () -> @Sendable () throws -> NativeTaskGenerationCompletion in
                 classified.append(messages.last?.content ?? "")
                 return classifierReply
+            }
+            return try reply()
+        }
+        if messages.first?.content == NativeInstructionCheck.systemPrompt {
+            let reply = lock.withLock { () -> @Sendable () throws -> NativeTaskGenerationCompletion in
+                checked.append((attempt, messages.last?.content ?? ""))
+                return checkReply
             }
             return try reply()
         }
@@ -770,6 +781,7 @@ extension SelfTest {
             return made
         }
         let once = try harness(repeats: false)
+        once.model.checks { .text("{\"run\": true}") }
         let onceID = try once.create("Send the notes to ana@greenhouse.test")
         let onceDone = try await once.runUntilSettled()
         try require(onceDone.state == .completed && sent.count == 1 && (try once.effects(onceID)).filter { $0.state == .completed }.count == 1,
@@ -777,6 +789,7 @@ extension SelfTest {
 
         sent.reset()
         let twice = try harness(repeats: true)
+        twice.model.checks { .text("{\"run\": true}") }
         let twiceID = try twice.create("Send the notes to ana@greenhouse.test")
         let twiceDone = try await twice.runUntilSettled()
         try require(twiceDone.state == .needsDecision && sent.count == 1 && (try twice.effects(twiceID)).filter { $0.state == .completed }.count == 1,
@@ -818,6 +831,7 @@ extension SelfTest {
                 }
                 return NativeCompanionScriptedModel.text("Updated it.")
             }
+            harness.model.checks { .text("{\"run\": true}") }
             let rules = harness.rules
             let thread = harness.thread
             let grants = harness.grants
