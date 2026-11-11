@@ -250,7 +250,7 @@ final class NativeTaskLocalEngine: Sendable {
     }
 
     static func workers(database: DatabaseQueue, search: NativeResearchSearch,
-                        identity: @escaping @Sendable () -> NativeWorkerIdentity,
+                        identity: @escaping @Sendable (NativeTaskRecord) -> NativeWorkerIdentity,
                         companion: NativeCompanionWorkerRelay? = nil) -> NativeTaskLocalEngine {
         NativeTaskLocalEngine(database: database, workers: { exchange in
             ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),

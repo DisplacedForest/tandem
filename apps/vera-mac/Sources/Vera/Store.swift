@@ -14,8 +14,8 @@ final class ChatStore: ObservableObject {
     @Published private(set) var veraThreadID: String?
     var lastFocusedConversationID: String?
     var drafts: [String: String] = [:]
-    static let veraThreadOriginType = "assistant"
-    static let veraThreadOriginID = "vera"
+    nonisolated static let veraThreadOriginType = "assistant"
+    nonisolated static let veraThreadOriginID = "vera"
     @Published var section: AppSection = .chat {
         didSet { if oldValue == .vera, section != .vera { markCompanionSeen() } }
     }
@@ -287,7 +287,7 @@ final class ChatStore: ObservableObject {
         if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
             localEngine = NativeTaskLocalEngine.workers(database: local.database,
                 search: .live(base: { NativeWebSearch.resolvedBase() }),
-                identity: { [database = local.database] in NativePreferenceStore.identity(identity.current, database: database) },
+                identity: NativeWorkerOrigin.resolver(identity, database: local.database),
                 companion: companionRelay)
         } else {
             localEngine = nil
