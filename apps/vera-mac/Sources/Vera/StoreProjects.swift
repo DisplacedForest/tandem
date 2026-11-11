@@ -94,6 +94,11 @@ extension ChatStore {
         refreshProjectGrants(id)
     }
 
+    func projectFolders(_ id: String, edited: [FolderGrant], opened: Set<String>) -> [FolderGrant] {
+        let current = Set(project(id)?.grants.map(\.id) ?? [])
+        return edited.filter { !opened.contains($0.id) || current.contains($0.id) }
+    }
+
     @discardableResult
     func removeProjectFolder(_ id: String, grantID: String) -> Bool {
         let saved = updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }

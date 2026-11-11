@@ -12,6 +12,8 @@ struct SharedFolderRow: Identifiable, Equatable, Sendable {
     let sentence: CompanionLine
     let readOnly: Bool
     let kind: Kind
+    let folder: String
+    let place: String
 
     func spoken(name: String?) -> String { sentence.plain(name: name) }
 
@@ -66,7 +68,7 @@ enum SharedFolderRows {
     }
 
     static func chatSentence(_ title: String) -> CompanionLine {
-        .literal("Shared with \(title)")
+        .literal("Shared with the chat \(title)")
     }
 
     static let companionSentence = CompanionLine.parts([.text("Shared with "), .name, .text("'s thread")])
@@ -83,12 +85,14 @@ enum SharedFolderRows {
     }
 
     static func rows(conversations: [Conversation], projects: [ProjectRecord], companionThreadID: String?, name: String?) -> [SharedFolderRow] {
-        var pending: [(grant: FolderGrant, sentence: CompanionLine, kind: SharedFolderRow.Kind, id: String)] = []
+        var pending: [(grant: FolderGrant, sentence: CompanionLine, kind: SharedFolderRow.Kind, id: String, place: String)] = []
         for conversation in conversations {
-            let sentence = conversation.id == companionThreadID ? companionSentence : chatSentence(conversation.title)
+            let companion = conversation.id == companionThreadID
+            let sentence = companion ? companionSentence : chatSentence(conversation.title)
+            let place = companion ? companionSentence.plain(name: name) : conversation.title
             for grant in conversation.grants {
                 pending.append((grant, marked(sentence, readOnly: grant.readOnly),
-                                .chat(conversationID: conversation.id, grantID: grant.id), "chat|\(conversation.id)|\(grant.id)"))
+                                .chat(conversationID: conversation.id, grantID: grant.id), "chat|\(conversation.id)|\(grant.id)", place))
             }
         }
         for project in projects {
@@ -96,7 +100,7 @@ enum SharedFolderRows {
             let sentence = projectSentence(project.name, chats: chats)
             for grant in project.grants {
                 pending.append((grant, marked(sentence, readOnly: grant.readOnly),
-                                .project(projectID: project.id, grantID: grant.id), "project|\(project.id)|\(grant.id)"))
+                                .project(projectID: project.id, grantID: grant.id), "project|\(project.id)|\(grant.id)", project.name))
             }
         }
         var names: [String: String] = [:]
@@ -104,12 +108,15 @@ enum SharedFolderRows {
         let titles = titles(for: names)
         let rows = pending.map { entry in
             SharedFolderRow(id: entry.id, title: titles[entry.grant.path] ?? folderName(entry.grant), path: entry.grant.path,
-                            sentence: entry.sentence, readOnly: entry.grant.readOnly, kind: entry.kind)
+                            sentence: entry.sentence, readOnly: entry.grant.readOnly, kind: entry.kind,
+                            folder: folderName(entry.grant), place: entry.place)
         }
         return rows.sorted { first, second in
+            let byFolder = first.folder.localizedStandardCompare(second.folder)
+            if byFolder != .orderedSame { return byFolder == .orderedAscending }
             let byTitle = first.title.localizedStandardCompare(second.title)
             if byTitle != .orderedSame { return byTitle == .orderedAscending }
-            let byPlace = first.spoken(name: name).localizedStandardCompare(second.spoken(name: name))
+            let byPlace = first.place.localizedStandardCompare(second.place)
             if byPlace != .orderedSame { return byPlace == .orderedAscending }
             return first.id < second.id
         }

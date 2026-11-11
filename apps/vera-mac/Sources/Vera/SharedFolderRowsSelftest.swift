@@ -81,7 +81,7 @@ extension SelfTest {
         let greenhouse = chat("c-greenhouse", "Greenhouse notes", [seedlings])
         let single = rows([greenhouse])
         try require(single.count == 1 && single[0].title == "Seedlings" && single[0].path == "/garden/Seedlings"
-                    && single[0].sentence == .literal("Shared with Greenhouse notes")
+                    && single[0].sentence == .literal("Shared with the chat Greenhouse notes")
                     && single[0].kind == .chat(conversationID: "c-greenhouse", grantID: "g-seedlings") && !single[0].readOnly,
                     "A chat's folder is one row naming the folder and the chat: \(single)")
         try require(rows([chat("c-empty", "Nothing here", [])]).isEmpty, "Nothing shared means no rows")
@@ -119,7 +119,7 @@ extension SelfTest {
         let receipts = FolderGrant(id: "g-receipts", path: "/archive/Receipts", readOnly: true)
         let readOnly = rows([chat("c-receipts", "Receipts", [receipts])], [project("p-ro", "Archive", [FolderGrant(id: "g-ro", path: "/archive/Old", readOnly: true)])])
         try require(readOnly.count == 2 && readOnly.allSatisfy(\.readOnly)
-                    && readOnly.map { $0.spoken(name: nil) }.sorted() == ["Shared with Receipts. Read only.", "Shared with the project Archive, no chats yet. Read only."],
+                    && readOnly.map { $0.spoken(name: nil) }.sorted() == ["Shared with the chat Receipts. Read only.", "Shared with the project Archive, no chats yet. Read only."],
                     "A read only folder says so after its sentence: \(readOnly.map { $0.spoken(name: nil) })")
         let readOnlyThread = rows([chat(thread, "Ada", [FolderGrant(path: "/home/Letters", readOnly: true)])], name: nil)
         try require(readOnlyThread.first?.spoken(name: nil) == "Shared with your companion's thread. Read only.", "The companion's read only folder says so too")
@@ -157,8 +157,14 @@ extension SelfTest {
         let unsorted = rows([chat("c-z", "Zinnias", [FolderGrant(id: "g-b1", path: "/b/Beds")]), chat("c-a", "Asters", [FolderGrant(id: "g-b2", path: "/b/Beds")]),
                              chat("c-m", "Middle", [FolderGrant(id: "g-a", path: "/a/Annuals")])],
                             [project("p-b", "Borders", [FolderGrant(id: "g-b3", path: "/b/Beds")])])
-        try require(unsorted.map { $0.spoken(name: "Ada") } == ["Shared with Middle", "Shared with Asters", "Shared with the project Borders, no chats yet", "Shared with Zinnias"],
+        try require(unsorted.map { $0.spoken(name: "Ada") } == ["Shared with the chat Middle", "Shared with the chat Asters", "Shared with the project Borders, no chats yet", "Shared with the chat Zinnias"],
                     "Rows sort by folder name, then by place: \(unsorted.map { $0.spoken(name: "Ada") })")
+        let grouped = rows([chat("c-g1", "Cedar", [FolderGrant(id: "g-d1", path: "/Alpha/Documents"), FolderGrant(id: "g-d2", path: "/Zulu/Documents"),
+                                                   FolderGrant(id: "g-e", path: "/work/Expenses")])],
+                           [project("p-g", "Apples", [FolderGrant(id: "g-d3", path: "/Alpha/Documents")])])
+        try require(grouped.map(\.title) == ["Alpha/Documents", "Alpha/Documents", "Zulu/Documents", "Expenses"]
+                    && grouped.map(\.place) == ["Apples", "Cedar", "Cedar", "Cedar"],
+                    "Folders with the same name stay together and a place sorts by its own name: \(grouped.map(\.title)) \(grouped.map(\.place))")
         let again = rows([chat("c-m", "Middle", [FolderGrant(id: "g-a", path: "/a/Annuals")]), chat("c-a", "Asters", [FolderGrant(id: "g-b2", path: "/b/Beds")]),
                           chat("c-z", "Zinnias", [FolderGrant(id: "g-b1", path: "/b/Beds")])],
                          [project("p-b", "Borders", [FolderGrant(id: "g-b3", path: "/b/Beds")])])
@@ -171,7 +177,7 @@ extension SelfTest {
                                [project("p-hostile", text, [FolderGrant(path: "/y/\(text)")])])
             for name in ["Ada", nil] as [String?] {
                 try require(literal.allSatisfy { $0.title.hasSuffix(text) }, "A folder name is shown exactly: \(literal.map(\.title))")
-                try require(literal.contains { $0.spoken(name: name) == "Shared with \(text)" }
+                try require(literal.contains { $0.spoken(name: name) == "Shared with the chat \(text)" }
                             && literal.contains { $0.spoken(name: name) == "Shared with the project \(text), no chats yet" },
                             "Chat and project names are shown exactly: \(literal.map { $0.spoken(name: name) })")
             }
@@ -265,6 +271,15 @@ extension SelfTest {
         try require(paths("s-member-a") == [ownBeds.path] && paths("s-member-b").isEmpty && toolPaths("s-member-a") == [ownBeds.path] && toolPaths("s-member-b").isEmpty,
                     "Every chat in the project loses the folder and a chat's own folder stays")
         try require(store.project(project.id)?.grants.isEmpty == true && row(projectRow.id) == nil, "The project no longer shares it")
+        let sheds = FolderGrant(id: "s-sheds", path: try folder("Sheds"))
+        let kept = store.projectFolders(project.id, edited: [plans, sheds], opened: ["s-plans"])
+        try require(kept.map(\.id) == ["s-sheds"], "An editor opened before the stop drops the stopped folder and keeps a new one")
+        try require(store.saveProjectEdits(project.id, name: project.name, instructions: "", grants: kept)
+                    && store.project(project.id)?.grants.map(\.id) == ["s-sheds"] && paths("s-member-b") == [sheds.path],
+                    "Saving that editor doesn't share the stopped folder again")
+        try require(store.projectFolders(project.id, edited: [sheds], opened: []).map(\.id) == ["s-sheds"]
+                    && store.projectFolders(project.id, edited: [], opened: ["s-sheds"]).isEmpty,
+                    "A folder added in the editor is kept and one removed in the editor stays removed")
 
         let packets = try folder("Packets")
         try add("s-twin-a", "Twin A", [FolderGrant(id: "s-packets-a", path: packets)])
