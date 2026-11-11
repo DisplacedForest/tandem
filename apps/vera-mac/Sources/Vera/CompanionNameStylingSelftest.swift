@@ -95,6 +95,19 @@ extension SelfTest {
                         "Another quick panel error replaces the styled one")
             store.companionError = nil
             store.adoptAssistantName(name)
+            store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "disk full")
+            store.companionDraft = "hello"
+            _ = store.sendCompanion()
+            store.saveDotProfile { _ in }
+            try require(store.chatConfigurationError == nil && store.companionConfigurationError == nil && store.companionError == nil,
+                        "A save that works clears the earlier save error everywhere it showed")
+            store.reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: "disk full")
+            store.saveDotProfile { _ in }
+            try require(store.chatConfigurationErrorLine == .namedThenText(CompanionErrorCopy.threadLead, "disk full"),
+                        "A save that works leaves a different companion error alone")
+            store.chatConfigurationError = "Messages couldn't load: offline"
+            store.saveDotProfile { _ in }
+            try require(store.chatConfigurationError == "Messages couldn't load: offline", "A save that works leaves an unrelated error alone")
             store.reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: "disk full")
             store.chatConfigurationError = nil
             try require(store.companionConfigurationError == nil && store.chatConfigurationErrorLine == nil, "Clearing the error clears the styled line")

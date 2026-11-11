@@ -100,6 +100,11 @@ final class ChatStore: ObservableObject {
         return companionPanelError?.line ?? .literal(companionError)
     }
 
+    func resolveCompanionConfigurationError(_ lead: String) {
+        if companionConfigurationError?.lead == lead { chatConfigurationError = nil }
+        if companionPanelError?.lead == lead { companionError = nil }
+    }
+
     private func reportCompanionPanelError(fallback: String) {
         guard chatConfigurationError != nil, let error = companionConfigurationError else {
             companionError = chatConfigurationError ?? fallback
@@ -780,6 +785,7 @@ final class ChatStore: ObservableObject {
             thread.isPersisted = true
             conversations.append(thread)
             veraThreadID = thread.id
+            resolveCompanionConfigurationError(CompanionErrorCopy.threadLead)
         } catch {
             veraThreadID = nil
             reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: error.localizedDescription)

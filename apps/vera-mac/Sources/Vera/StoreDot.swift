@@ -32,6 +32,7 @@ extension ChatStore {
             nativeDotProfileStore = store
             do {
                 dotProfile = try store.load() ?? NativeDotProfile()
+                resolveCompanionConfigurationError(CompanionErrorCopy.loadLead)
             } catch {
                 dotProfile = NativeDotProfile(connectedToolIDs: [], state: .paused, setupCompleted: true)
                 reportCompanionConfigurationError(CompanionErrorCopy.loadLead, description: error.localizedDescription,
@@ -56,6 +57,7 @@ extension ChatStore {
             return
         }
         dotProfile = next
+        resolveCompanionConfigurationError(CompanionErrorCopy.saveLead)
     }
 
     func completeDotSetup(goal: String, connectedToolIDs: Set<String>?) {
@@ -207,7 +209,10 @@ extension ChatStore {
         reloadArtifacts()
         suspendsTurnScheduling = false
         scheduleConversationTurns()
-        do { try nativeDotProfileStore?.reset() } catch {
+        do {
+            try nativeDotProfileStore?.reset()
+            resolveCompanionConfigurationError(CompanionErrorCopy.clearLead)
+        } catch {
             reportCompanionConfigurationError(CompanionErrorCopy.clearLead, description: error.localizedDescription)
         }
         dotProfile = NativeDotProfile()
