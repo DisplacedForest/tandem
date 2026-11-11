@@ -111,7 +111,8 @@ enum ArtifactShotFixture {
 
     static func chatImage(variant: String) -> AnyView {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("tandem-chat-image-shot-\(UUID().uuidString.lowercased())", isDirectory: true)
+            .appendingPathComponent("tandem-chat-image-shot", isDirectory: true)
+        try? FileManager.default.removeItem(at: directory)
         let attachments = NativeAttachmentStore(directory: directory)
         guard let attachment = try? attachments.save(data: gradientPNG(), preferredName: "a-small-glass-greenhouse-at-dusk-1024x640.png"),
               let source = attachment.fileName.flatMap(attachments.url(for:)) else { return AnyView(EmptyView()) }

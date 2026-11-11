@@ -130,6 +130,23 @@ enum ArtifactExportSelftest {
         try check(strandedNotice.canChooseLocation, "A removed folder offers another location")
         try check(!exists(removedFolder), "A removed folder is not created")
 
+        let fleeting = originals.appendingPathComponent("fleeting.png")
+        try bytes.write(to: fleeting)
+        var racing = ArtifactExporter()
+        racing.stage = { from, to in
+            try FileManager.default.removeItem(at: from)
+            try FileManager.default.copyItem(at: from, to: to)
+        }
+        let fleetingDestination = saved.appendingPathComponent("Fleeting.png")
+        let fleetingNotice = racing.run(fileAttempt(fleeting, to: fleetingDestination))
+        try expectFailure(fleetingNotice, .sourceMissing, "An original that disappears during the copy reads as missing")
+        try check(!fleetingNotice.canChooseLocation && !exists(fleetingDestination), "A vanished original offers only dismissal and creates no file")
+        var failing = ArtifactExporter()
+        failing.stage = { _, _ in throw CocoaError(.fileWriteOutOfSpace) }
+        let fullNotice = failing.run(fileAttempt(source, to: saved.appendingPathComponent("Full.png")))
+        try expectFailure(fullNotice, .noSpace, "A full disk during the copy reads as not enough space")
+        try check(fullNotice.canChooseLocation, "A full disk offers another location")
+
         var offered: [(String, URL?)] = []
         var chosen: URL?
         let flow = ArtifactExportFlow(exporter: exporter, choose: { name, directory in

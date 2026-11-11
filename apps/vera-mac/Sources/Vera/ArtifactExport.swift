@@ -95,6 +95,7 @@ enum ArtifactExportNotice: Equatable, Identifiable {
 struct ArtifactExporter {
     var read: (ArtifactVersion) -> Result<Data, ArtifactExportProblem> = { _ in .failure(.sourceMissing) }
     var write: (Data, URL) throws -> Void = ArtifactExporter.atomicWrite
+    var stage: (URL, URL) throws -> Void = { try FileManager.default.copyItem(at: $0, to: $1) }
 
     static func atomicWrite(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
@@ -120,11 +121,15 @@ struct ArtifactExporter {
     }
 
     private func copy(_ attempt: ArtifactExportAttempt, from source: URL) -> ArtifactExportNotice {
-        do {
-            try FileHandle(forReadingFrom: source).close()
-        } catch {
-            return .failed(attempt, Self.sourceProblem(for: error))
+        func unreadable() -> ArtifactExportProblem? {
+            do {
+                try FileHandle(forReadingFrom: source).close()
+                return nil
+            } catch {
+                return Self.sourceProblem(for: error)
+            }
         }
+        if let problem = unreadable() { return .failed(attempt, problem) }
         let manager = FileManager.default
         let destination = attempt.destination
         do {
@@ -132,7 +137,12 @@ struct ArtifactExporter {
                 for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
             defer { try? manager.removeItem(at: staging) }
             let staged = staging.appendingPathComponent(source.lastPathComponent)
-            try manager.copyItem(at: source, to: staged)
+            do {
+                try stage(source, staged)
+            } catch {
+                if let problem = unreadable() { return .failed(attempt, problem) }
+                throw error
+            }
             if manager.fileExists(atPath: destination.path) {
                 _ = try manager.replaceItemAt(destination, withItemAt: staged)
             } else {
