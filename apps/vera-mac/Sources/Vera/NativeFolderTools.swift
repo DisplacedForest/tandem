@@ -213,6 +213,7 @@ enum NativeFolderTools {
             var targeted = definition
             targeted.governed = true
             targeted.ruleSubjects = declared(paths)
+            targeted.folderRoots = { access().roots.map(\.path) }
             if let liveTargets, let action = definition.action {
                 let fallback = definition.confirmation == .required
                 let subjectsFor = declared(paths)
@@ -244,6 +245,43 @@ enum NativeFolderTools {
             }
         }
         return wrapped
+    }
+
+    static func entries(_ folder: String) throws -> [String] {
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder, isDirectory: &directory), directory.boolValue else { return [] }
+        return try FileManager.default.contentsOfDirectory(atPath: folder)
+    }
+
+    static func beside(_ path: String, top: String?, listing: (String) throws -> [String] = entries) -> [String]? {
+        let target = URL(fileURLWithPath: path).standardizedFileURL
+        let own = target.path
+        var folders = [target.deletingLastPathComponent().path]
+        if let top {
+            let standard = URL(fileURLWithPath: top).standardizedFileURL.path
+            if !folders.contains(standard) { folders.append(standard) }
+        }
+        var names: [String] = []
+        for folder in folders {
+            guard let found = try? listing(folder) else { return nil }
+            for name in found where URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path != own {
+                if !names.contains(name) { names.append(name) }
+            }
+        }
+        return names
+    }
+
+    static func instructionClaim(_ action: NativeActionClass, targets: [NativeRuleTarget], roots: [String],
+                                 listing: (String) throws -> [String] = entries) -> NativeInstructionClaim? {
+        guard let verbs = verbs[action] else { return nil }
+        let files = targets.filter { $0.kind == .folder }
+        guard files.count == 1 else { return NativeInstructionClaim(verbs: verbs) }
+        let path = files[0].value
+        let top = roots.map { URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path }
+            .filter { NativeFolderAccess.contains(root: $0, path: path) }
+            .max { $0.count < $1.count }
+        guard let found = beside(path, top: top, listing: listing) else { return nil }
+        return NativeInstructionClaim(verbs: verbs, beside: found)
     }
 
     static let creatingKey = "path+"

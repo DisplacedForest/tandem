@@ -279,26 +279,30 @@ extension ChatStore {
 
     nonisolated static func folderResolver(_ rules: NativeRuleSource, conversationID: String, requestText: String, typed: NativeTypedWords,
                                            uses: NativeInstructionUses?, action: NativeActionClass,
-                                           subjects: [[NativeRuleTarget]]) -> NativeRuleResolver {
+                                           subjects: [[NativeRuleTarget]], roots: [String] = [],
+                                           listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeRuleResolver {
         var resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeFolderTools.toolID, subjects: subjects)
         resolver.uses = uses
-        resolver.asked = NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) }
+        resolver.asked = NativeFolderTools.instructionClaim(action, targets: subjects.flatMap { $0 }, roots: roots, listing: listing)
         return resolver
     }
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
-                                           action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+                                           action: NativeActionClass, subjects: [[NativeRuleTarget]], roots: [String] = [],
+                                           listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeRuleVerdict {
         instructedVerdict(folderResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                                         action: action, subjects: subjects),
+                                         action: action, subjects: subjects, roots: roots, listing: listing),
                           action: action, rules: rules, store: store)
     }
 
     nonisolated static func folderInstruction(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                               requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
-                                              action: NativeActionClass, subjects: [[NativeRuleTarget]], about: String) -> NativeInstructionPending? {
+                                              action: NativeActionClass, subjects: [[NativeRuleTarget]], about: String,
+                                              roots: [String] = [],
+                                              listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeInstructionPending? {
         pending(folderResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                               action: action, subjects: subjects),
+                               action: action, subjects: subjects, roots: roots, listing: listing),
                 action: action, store: store, about: about)
     }
 

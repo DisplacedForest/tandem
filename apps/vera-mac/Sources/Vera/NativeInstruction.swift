@@ -4,6 +4,7 @@ struct NativeInstructionClaim: Hashable, Sendable {
     var verbs: [String]
     var names: [String] = []
     var nothing = false
+    var beside: [String] = []
 }
 
 final class NativeInstructionUses: @unchecked Sendable {
@@ -119,7 +120,7 @@ enum NativeInstruction {
         return made.isEmpty ? nil : made
     }
 
-    static func asks(_ raw: String, verbs: [String], targets: [NativeRuleTarget], names: [String]) -> Bool {
+    static func asks(_ raw: String, verbs: [String], targets: [NativeRuleTarget], names: [String], beside: [String] = []) -> Bool {
         let wanted = verbs.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !wanted.isEmpty else { return false }
         let folded = raw.replacingOccurrences(of: "\u{2019}", with: "'")
@@ -167,7 +168,22 @@ enum NativeInstruction {
             remainder[remainder.count - 1] = " "
         }
         guard alone(Array(remainder.suffix(tail.count))) else { return false }
-        return NativeRequestPreapproval.settled(String(remainder).lowercased(), original: NativeRequestPreapproval.normalized(message))
+        guard NativeRequestPreapproval.settled(String(remainder).lowercased(), original: NativeRequestPreapproval.normalized(message)) else { return false }
+        let words = String(remainder).split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
+        return !collides(words, with: beside)
+    }
+
+    static func forms(_ name: String) -> [String] {
+        var whole = name.lowercased()
+        if whole.hasPrefix(".") { whole.removeFirst() }
+        let stem = whole.lastIndex(of: ".").map { String(whole[..<$0]) } ?? whole
+        let first = String(whole.prefix { $0 != "." })
+        return [whole, stem, first].filter { !$0.isEmpty }
+    }
+
+    static func collides(_ words: [String], with beside: [String]) -> Bool {
+        let names = Set(beside.flatMap(forms))
+        return words.contains { names.contains($0.lowercased()) }
     }
 
     static func alone(_ remainder: [Character]) -> Bool {
@@ -195,7 +211,7 @@ extension NativeRuleResolver {
         }
         guard !NativeRuleMatcher.restrictsUntargeted(records, query: query, context: context, at: now) else { return nil }
         guard !typed.said.isEmpty, NativeTypedWords.own(typed.said) == typed.said.replacingOccurrences(of: "\u{2019}", with: "'") else { return nil }
-        guard NativeInstruction.asks(typed.current, verbs: asked.verbs, targets: targets, names: asked.names) else { return nil }
+        guard NativeInstruction.asks(typed.current, verbs: asked.verbs, targets: targets, names: asked.names, beside: asked.beside) else { return nil }
         let signature = NativeInstruction.signature(action: query.action, toolID: query.toolID, targets: targets, names: asked.names)
         if uses?.used(signature) == true { return nil }
         return signature

@@ -2440,14 +2440,17 @@ final class ChatStore: ObservableObject {
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
             let records = nativeRuleRecordStore
+            let shared = nativeGrantSource
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
                 live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
-                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1,
+                                                        roots: NativeFolderAccess(grants: shared.grants(for: id)).roots.map(\.path)) },
                 instruction: {
                     ChatStore.folderInstruction(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses,
-                                                action: $0, subjects: $1, about: $2)
+                                                action: $0, subjects: $1, about: $2,
+                                                roots: NativeFolderAccess(grants: shared.grants(for: id)).roots.map(\.path))
                 },
                 alwaysAvailable: true))
         }

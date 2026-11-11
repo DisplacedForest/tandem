@@ -268,6 +268,7 @@ extension SelfTest {
         try await companionActWrite()
         try await companionTypedRecipients()
         try await companionInstructedSends()
+        try await companionInstructedFileNamesBeside()
         try await companionOneUseGrant()
         try await companionToolOwnChecks()
         try await companionAdmittedFolderWrites()
@@ -810,6 +811,61 @@ extension SelfTest {
         try require(NativeCompanionWorker.ruleDecision(mail, ["to": .string("ana@greenhouse.test")], resolver: authority.resolver, honoringLimitedUse: true,
                                                        uses: NativeInstructionUses()).decision == .ask,
                     "With nothing typed, as for scheduled or self-started work, nothing is instructed")
+    }
+
+    private static func companionInstructedFileNamesBeside() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-beside-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let draft = grant.path + "/draft.md"
+        let readme = grant.path + "/README.md"
+        let assignment = "Update README to match draft.md"
+        for present in [true, false] {
+            try Data("old".utf8).write(to: URL(fileURLWithPath: draft))
+            if present { try Data().write(to: URL(fileURLWithPath: readme)) } else { try? FileManager.default.removeItem(atPath: readme) }
+            var harness = try NativeCompanionHarness(rules: [.fileEdits: .ask]) { messages in
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeFolderTools.writeName, "{\"path\":\"\(draft)\",\"content\":\"new\"}")
+                }
+                return NativeCompanionScriptedModel.text("Updated it.")
+            }
+            harness.model.checks { .text("{\"run\": true}") }
+            let rules = harness.rules
+            let thread = harness.thread
+            let grants = harness.grants
+            let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
+                rules.resolver(for: thread.current, requestText: "").decision(for: action)
+            })
+            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            harness.environment.authority = { conversation, request in
+                NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
+                                                                        typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
+                                               grantsRevision: grants.revision)
+            }
+            _ = try harness.create(assignment)
+            let done = try await harness.runUntilSettled()
+            let content = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
+            if present {
+                try require(done.state == .needsDecision && content == "old",
+                            "Work started by hand asks when another word names a file beside the one being changed: \(done.state)")
+            } else {
+                try require(done.state == .completed && content == "new",
+                            "Work started by hand runs the typed edit once when nothing beside it is named: \(done.state)")
+            }
+        }
+        let locked = grant.path + "/locked"
+        try FileManager.default.createDirectory(atPath: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+        let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { _ in .ask })
+        if let write = tools.first(where: { $0.name == NativeFolderTools.writeName }), (try? NativeFolderTools.entries(locked)) == nil {
+            let arguments: [String: NativeJSONValue] = ["path": .string(locked + "/notes.md"), "content": .string("new")]
+            try require(NativeCompanionWorker.instructionClaim(write, arguments, action: .fileEdits) == nil
+                            && NativeCompanionWorker.instructionSignature(write, arguments, action: .fileEdits) != nil,
+                        "A folder that can't be listed gives no instruction, yet a spent one is still recognised")
+        }
     }
 
     private static func companionAdmittedFolderWrites() async throws {

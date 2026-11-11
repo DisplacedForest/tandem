@@ -432,6 +432,67 @@ extension SelfTest {
         try require(folderDecision("Delete old.txt", .trash, old) == .act(.instruction), "A typed delete runs once")
         try require(folderDecision("Save this as notes.md", .trash, notes) == .ask, "A save never stands in for a delete")
 
+        let sharedDraft = try target(.folder, "/shared/draft.md")
+        func edits(_ typed: String, beside: [String], file: NativeRuleTarget) -> NativeRuleDecision {
+            resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: typed),
+                     claim: NativeInstructionClaim(verbs: NativeFolderTools.verbs[.fileEdits] ?? [], beside: beside), targets: [file]).decision(for: .fileEdits)
+        }
+        func trashes(_ typed: String, beside: [String]) -> NativeRuleDecision {
+            resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed),
+                     claim: NativeInstructionClaim(verbs: NativeFolderTools.verbs[.trash] ?? [], beside: beside), targets: [loose]).decision(for: .trash)
+        }
+        let updateReadme = "Update README to match draft.md"
+        for names in [["README.md"], ["readme"], ["README.tar.gz"]] {
+            try require(edits(updateReadme, beside: names, file: sharedDraft) == .ask, "Another word that names a file beside the target asks: \(names)")
+        }
+        try require(edits(updateReadme, beside: ["notes.txt"], file: sharedDraft) == .act(.instruction),
+                    "Names beside the target that the message doesn't use still let it run")
+        try require(edits("Update env to match draft.md", beside: [".env"], file: sharedDraft) == .ask, "A name with a leading dot is matched without it")
+        try require(edits("Update README's intro to match draft.md", beside: ["README.md"], file: sharedDraft) == .ask,
+                    "A name followed by an apostrophe is still matched")
+        try require(edits("Update the reader's intro to match draft.md", beside: ["README.md"], file: sharedDraft) == .act(.instruction),
+                    "An ordinary word with an apostrophe still runs")
+        for names in [["Backup"], ["backup.zip"], ["backup"]] {
+            try require(trashes("Delete notes.txt and backup", beside: names) == .ask, "A plain word that names a file beside the target asks: \(names)")
+        }
+        try require(trashes("Delete notes.txt and backup", beside: []) == .act(.instruction), "With nothing named beside it the delete runs")
+        try require(trashes("Please delete notes.txt", beside: ["please.txt"]) == .ask && trashes("Delete notes.txt", beside: ["DELETE"]) == .ask,
+                    "The action word and an opening word are checked too")
+        try require(NativeInstruction.collides(["readme"], with: ["README.md"]) && NativeInstruction.collides(["README.tar"], with: ["readme.tar.gz"])
+                        && NativeInstruction.collides(["Readme"], with: ["readme.tar.gz"]) && NativeInstruction.collides(["notes.MD"], with: ["Notes.md"])
+                        && NativeInstruction.collides(["env"], with: [".env"]) && !NativeInstruction.collides(["tar"], with: ["readme.tar.gz"])
+                        && !NativeInstruction.collides(["md"], with: ["README.md"]) && !NativeInstruction.collides(["", "notes"], with: [".", "readme"]),
+                    "A word matches a whole name, the name without its last extension, or the part before the first dot, ignoring case")
+
+        let sharedTop = base.appendingPathComponent("shared")
+        try FileManager.default.createDirectory(at: sharedTop.appendingPathComponent("docs"), withIntermediateDirectories: true)
+        let top = try FolderGrant.make(url: sharedTop).path
+        try Data().write(to: URL(fileURLWithPath: top + "/README.md"))
+        try Data().write(to: URL(fileURLWithPath: top + "/draft.md"))
+        try Data().write(to: URL(fileURLWithPath: top + "/docs/draft.md"))
+        try Data().write(to: URL(fileURLWithPath: top + "/notes.md"))
+        func onDisk(_ typed: String, _ path: String, listing: (String) throws -> [String] = NativeFolderTools.entries) throws -> NativeRuleDecision {
+            ChatStore.folderDecision(folder, conversationID: chat, requestText: typed, typed: NativeTypedWords(typed: typed),
+                                     uses: NativeInstructionUses(), action: .fileEdits, subjects: [[try target(.folder, path)]], roots: [top],
+                                     listing: listing).decision
+        }
+        try require(try onDisk(updateReadme, top + "/draft.md") == .ask, "A README next to the file being changed makes the instruction ask")
+        try require(try onDisk(updateReadme, top + "/docs/draft.md") == .ask, "A README at the top of the shared folder makes the instruction ask")
+        try require(try onDisk("Save this as notes.md", top + "/notes.md") == .act(.instruction), "The file being changed never counts against itself")
+        try require(try onDisk("Save this as plan.md", top + "/later/plan.md") == .act(.instruction), "A file in a folder that isn't there yet still runs")
+        struct Unlistable: Error {}
+        try require(try onDisk("Save this as notes.md", top + "/notes.md", listing: { _ in throw Unlistable() }) == .ask,
+                    "A folder that can't be listed asks")
+        try require(NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "readme.md", "b.txt"] }) == ["README.md", "b.txt"]
+                        && NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "b.txt"] }) == ["README.md", "b.txt"]
+                        && NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md", "Readme.md"] }) == ["README.md", "Readme.md"],
+                    "Only the file being changed is left out, never another file whose name differs by case")
+        try require(edits("Update README to match readme.md", beside: NativeFolderTools.beside("/shared/readme.md", top: nil, listing: { _ in ["README.md"] }) ?? [],
+                          file: try target(.folder, "/shared/readme.md")) == .ask,
+                    "Creating a file beside one whose name differs only by case asks when the message names the other")
+        try FileManager.default.removeItem(atPath: top + "/README.md")
+        try require(try onDisk(updateReadme, top + "/draft.md") == .act(.instruction), "Without a README there the same message runs once")
+
         let plain = NativeToolActivity(id: "a1", toolID: "fixture-notes", name: "send_notes", title: "Send the notes", round: 0, request: "{}",
                                        result: "{}", state: .succeeded, confirmationRequired: false)
         let plainData = try JSONEncoder().encode(plain)
