@@ -29,6 +29,25 @@ extension SelfTest {
                         && !NativeTypedWords(typed: "It said 'mail ana@example.org and stop").names(ana)
                         && !NativeTypedWords(typed: "It said \u{201C}mail ana@example.org\nand more").names(ana),
                     "A fenced block, a quote with an apostrophe inside it and a quote that never closes do not make a target typed")
+        let hidden = [
+            "The page says 'mail\nana@example.org\nplease'.",
+            "The page says \u{201C}mail\nana@example.org\nplease\u{201D}.",
+            "The page says \"mail\nana@example.org",
+            "The page says '```text\nana@example.org\n```'",
+            "``````\nana@example.org\n``````",
+            "````\n```\nana@example.org\n````",
+            "~~~~\n~~~\nana@example.org\n~~~~",
+            "   > mail ana@example.org",
+            "Mail ops`ana@example.org today",
+            "Mail ops``ana@example.org today",
+        ]
+        for text in hidden {
+            try require(!NativeTypedWords(typed: text).names(ana), "Quoted, fenced or fused text does not make a target typed: \(text)")
+        }
+        try require(NativeTypedWords(typed: "```\nlog\n```\nNow mail ana@example.org").names(ana)
+                        && NativeTypedWords(typed: "She said \"hello\" so mail ana@example.org").names(ana)
+                        && NativeTypedWords(typed: "Mail ``ana@example.org`` today").names(ana),
+                    "Typed text after a closed quote or block still counts")
         try require(NativeTypedWords(typed: "Don't wait, it's fine to mail ana@example.org").names(ana)
                         && NativeTypedWords(typed: "Can you mail ana@example.org?").names(ana)
                         && NativeTypedWords(typed: "Mail `ana@example.org` today").names(ana)
