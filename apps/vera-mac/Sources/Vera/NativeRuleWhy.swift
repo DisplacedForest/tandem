@@ -8,6 +8,7 @@ struct NativeRuleWhy: Codable, Hashable, Sendable {
         case held
         case tool
         case folder
+        case unnamed
     }
 
     enum Source: String, Codable, Sendable {
@@ -139,6 +140,10 @@ extension NativeRuleResolver {
         }
         if let winner = resolution?.decidedBy, winner.effect.restricts {
             return NativeRuleWhy(kind: .rule, action: query.action, handsOff: handsOff, rule: .init(winner))
+        }
+        if decision == .ask, let target = unnamed(in: query, honoringLimitedUse: honoringLimitedUse),
+           case .act = settle(query, honoringLimitedUse: honoringLimitedUse).decision {
+            return NativeRuleWhy(kind: .unnamed, action: query.action, handsOff: false, subject: target.value)
         }
         let allowed = resolution?.decidedBy.effect == .allow
         let settled = choice(for: query.action)

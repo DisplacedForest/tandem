@@ -409,6 +409,8 @@ enum SelfTest {
         do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
         do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
+        do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
+        do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
         do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }
@@ -2605,6 +2607,48 @@ enum SelfTest {
         """)
     }
 
+    static let bundledSendersWithoutDestination: Set<String> = ["propose_action", "author_skill"]
+
+    private static func capabilitySendsTo(_ bundled: [NativeToolDeclaration]) throws {
+        let require = NativeTaskFixture.require
+        func declaration(_ sendsTo: Any?, method: String = "POST", properties: [String: Any]? = nil) throws -> NativeToolDeclaration {
+            var object: [String: Any] = [
+                "name": "send_note", "title": "Send a note", "description": "Send a note",
+                "parameters": ["type": "object", "properties": properties ?? ["to": ["type": "string"], "body": ["type": "string"], "urgent": ["type": "boolean"]],
+                               "required": [], "additionalProperties": false],
+                "endpoint": "https://mail.example/send", "method": method, "confirmation": "none",
+            ]
+            if let sendsTo { object["sends_to"] = sendsTo }
+            return try NativeCapabilityTools.parse(object: object, source: "send_note.json")
+        }
+        func rejects(_ sendsTo: Any?, method: String = "POST", _ fragment: String) throws {
+            var reason: String?
+            do { _ = try declaration(sendsTo, method: method) } catch let error as NativeToolDeclarationError { reason = error.reason }
+            try require(reason?.contains(fragment) == true, "A sends_to line is refused: \(fragment) got \(reason ?? "no error")")
+        }
+        let listed = try declaration(["to"])
+        let targets = listed.recipients(["to": .string(" A@example.com; b@example.com ,\nA@example.com")])
+        try require(listed.sendsTo == ["to"] && targets.map(\.value) == ["a@example.com", "b@example.com"] && targets.allSatisfy { $0.kind == .recipient },
+                    "Listed fields give each address once, trimmed and lowercased: \(targets.map(\.value))")
+        let listedDefinition = NativeCapabilityTools.definition(listed, base: { nil })
+        try require(!listedDefinition.fixedDestination && listedDefinition.ruleSubjects?(["to": .string("A@example.com")]) == [[targets[0]]],
+                    "A listed field makes the address what the rules see")
+        let fixed = NativeCapabilityTools.definition(try declaration([String]()), base: { nil })
+        try require(fixed.fixedDestination && fixed.ruleSubjects == nil, "An empty list marks a tool that always sends to the same place")
+        let absent = try declaration(nil)
+        let absentDefinition = NativeCapabilityTools.definition(absent, base: { nil })
+        try require(absent.sendsTo == nil && !absentDefinition.fixedDestination && absentDefinition.ruleSubjects == nil,
+                    "No sends_to line leaves the tool with no known destination")
+        try rejects("to", "must be a list")
+        try rejects(["missing"], "not a declared string property")
+        try rejects(["urgent"], "not a declared string property")
+        try rejects(["to", "to"], "same field twice")
+        try rejects(["to"], method: "GET", "requires the POST method")
+        let unlisted = bundled.filter { $0.method == .post && !$0.reads && $0.sendsTo == nil }.map(\.name)
+        try require(Set(unlisted).isSubset(of: bundledSendersWithoutDestination),
+                    "Every bundled posting tool says where it sends, or is on the known list: \(unlisted)")
+    }
+
     private static func runNativeCapabilityTools() async {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("vera-tools-\(UUID().uuidString)", isDirectory: true)
@@ -2653,6 +2697,7 @@ enum SelfTest {
                   bundled.allSatisfy(\.needsAPIBase) else {
                 print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
             }
+            try capabilitySendsTo(bundled)
 
             let client = SelfTestHTTPToolClient()
             let base: @Sendable () -> URL? = { URL(string: "https://api.example") }

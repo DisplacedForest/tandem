@@ -35,7 +35,9 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
                     return NativeCompanionWorkerAuthority(resolver: NativeRuleResolver(global: closed, conversation: NativeConversationRules(),
                                                                                        requestText: request, revision: -1), grantsRevision: -1)
                 }
-                return NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request), grantsRevision: grants.revision)
+                return NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
+                                                                               typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
+                                                      grantsRevision: grants.revision)
             },
             ledger: NativeEffectLedgerStore(database: database),
             tasks: NativeTaskStore(database: database))

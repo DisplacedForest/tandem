@@ -201,6 +201,7 @@ extension SelfTest {
         let samples = RefusalCopy.samples()
         try require(Set(samples.map(\.kind)) == Set(NativeRuleWhy.Kind.allCases) && samples.count == NativeRuleWhy.Kind.allCases.count,
                     "Every reason has exactly one sample")
+        try require(NativeRuleWhy.Kind.allCases.count == 7, "There are exactly seven reasons, so a new one needs its sample, sentence and docs")
         for sample in samples {
             let sentence = RefusalCopy.plain(sample)
             let unquoted = sentence.replacingOccurrences(of: "\"[^\"]*\"", with: "", options: .regularExpression)

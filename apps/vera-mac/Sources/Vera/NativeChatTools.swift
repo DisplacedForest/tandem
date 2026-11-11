@@ -224,6 +224,7 @@ struct NativeToolDefinition: Sendable {
     var governed = false
     var proposes = false
     var alwaysAsks = false
+    var fixedDestination = false
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
 
