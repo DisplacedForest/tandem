@@ -148,6 +148,32 @@ extension SelfTest {
         try require(await run(allowing, confirmed: false) == nil && allowCount.count == 1, "A saved allow runs with no card")
         try require(asks(ruled(allowed, source(records: [allowRecord]), conversation: other)) == true, "A chat-scoped allow stays in its chat")
 
+        let strictCount2 = NativeChatRulesCounter()
+        let stricter = tool("fixture-stricter", action: .networkSends, counter: strictCount2)
+        let wholeKind = NativeRuleRecord(scope: .conversation(chat), action: .networkSends, effect: .allow, statement: "Always allow sending in this chat")
+        let loose = source(records: [wholeKind])
+        let looseRan = await run(ruled(stricter, loose), confirmed: false)
+        try require(asks(ruled(stricter, loose)) == false && looseRan == nil && strictCount2.count == 1,
+                    "An allow for a whole kind runs with no card while the chat has no stricter choice")
+        let tight = source(records: [wholeKind])
+        tight.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let refused = await run(ruled(stricter, tight), confirmed: true)
+        try require(refused?.contains("in this chat") == true && strictCount2.count == 1,
+                    "A chat set to leave sends to you stops the tool when it runs, and says the chat's own choice is why: \(refused ?? "ran")")
+        let tightenedLater = source(records: [wholeKind])
+        let planned = ruled(stricter, tightenedLater)
+        try require(asks(planned) == false, "Planned with no stricter choice")
+        tightenedLater.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let lateRefusal = await run(planned, confirmed: false)
+        try require(lateRefusal != nil && strictCount2.count == 1,
+                    "A chat tightened after planning is honoured when the tool runs")
+        let toolAllowTight = source(records: [NativeRuleRecord(scope: .conversation(chat), action: .networkSends, toolID: stricter.id, effect: .allow,
+                                                               statement: "Always post to the garden log here")])
+        toolAllowTight.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let toolRan = await run(ruled(stricter, toolAllowTight), confirmed: false)
+        try require(toolRan == nil && strictCount2.count == 2,
+                    "An allow for this one tool still runs in a chat with a stricter choice")
+
         let repository = try LocalChatRepository(inMemory: true)
         let records = NativeRuleRecordStore(database: repository.database)
         let durable = NativeRuleSource()

@@ -48,6 +48,14 @@ extension SelfTest {
                         && saved.rules.currentRecords.map(\.id) == stored.map(\.id),
                     "A saved everywhere allow under an ask default is admitted and the write happens")
 
+        var tightChat = try NativeCompanionHarness(rules: [.networkSends: .ask], script: script)
+        _ = try tightChat.saveRecords([allow])
+        tightChat.rules.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: tightChat.thread.current)
+        _ = try tightChat.create()
+        _ = try await tightChat.runUntilSettled()
+        try require(tightChat.service.count("water_bed") == 0,
+                    "Background work in a chat set to leave sends to you is not loosened by an allow for the whole kind")
+
         func setupFailure(_ body: () throws -> Void) -> String? {
             do { try body() } catch NativeTaskFixture.Failure.assertion(let message) { return message } catch { return nil }
             return nil

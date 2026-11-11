@@ -208,7 +208,7 @@ struct ConversationRulesEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
                 Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can be stricter than your settings, never looser.")
+                Text("A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
