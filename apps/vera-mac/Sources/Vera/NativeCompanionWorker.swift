@@ -663,12 +663,12 @@ private struct NativeCompanionRun {
         if !checkpoint.effects.isEmpty {
             text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" }.joined(separator: "\n")
         }
-        return text
+        return CompanionSavedText.sanitized(text)
     }
 
     func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String, action: NativeActionClass?) throws -> NativeTaskStepResult {
         checkpoint.note(title, "handed to you")
-        let text = NativeCompanionWorker.handOffText(title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint)
+        let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint))
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
     }
 
@@ -1011,7 +1011,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
-                let text = "Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
+                let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
                 return try await conclude(&checkpoint, text: text)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
@@ -1069,7 +1069,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
-                let text = "Stopped at your request. It could not be confirmed whether this happened: \(title)."
+                let text = CompanionSavedText.sanitized("Stopped at your request. It could not be confirmed whether this happened: \(title).")
                 return try await conclude(&checkpoint, text: text)
             default:
                 if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {

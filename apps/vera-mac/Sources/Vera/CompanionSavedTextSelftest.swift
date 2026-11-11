@@ -333,8 +333,9 @@ extension SelfTest {
         let stopReport = try blind.result(stopped)
         let stopTitle = "Water a bed: " + hostileJoined
         try require(stopped.state == .completed
-                    && (stopReport["report"] as? String ?? "").hasPrefix("Stopped at your request. It could not be confirmed whether this happened: " + stopTitle + "."),
-                    "Stopping writes the name-free report and keeps the outside title exactly: \(stopReport["report"] as? String ?? "")")
+                    && (stopReport["report"] as? String ?? "").hasPrefix("Stopped at your request. It could not be confirmed whether this happened: " + CompanionSavedText.sanitized(stopTitle) + ".")
+                    && stopTitle != CompanionSavedText.sanitized(stopTitle) && !hasMarkerScalar(stopReport["report"] as? String ?? "\u{E000}"),
+                    "Stopping writes the name-free report and keeps the outside title, minus the marker characters: \(stopReport["report"] as? String ?? "")")
         reports["stop"] = stopReport.merging(["outside": stopTitle]) { old, _ in old }
 
         let declineText = CompanionSavedTextFixture.tokensJoined
@@ -370,7 +371,9 @@ extension SelfTest {
         for (label, report) in reports {
             let outside = report["outside"] as? String ?? ""
             for key in ["report", "summary"] {
-                let text = (report[key] as? String ?? "").replacingOccurrences(of: outside.isEmpty ? "\u{0}" : outside, with: "")
+                let whole = report[key] as? String ?? ""
+                let text = whole.replacingOccurrences(of: outside.isEmpty ? "\u{0}" : CompanionSavedText.sanitized(outside), with: "")
+                try require(!hasMarkerScalar(whole), "The \(label) \(key) holds no marker character, even from an outside title: \(whole)")
                 try require(!text.contains("Ada") && !text.lowercased().contains("your companion") && !text.contains("{name}") && !hasMarkerScalar(text),
                             "The \(label) \(key) carries no name, token or marker of its own: \(text)")
             }
@@ -487,6 +490,22 @@ extension SelfTest {
                                       checkInKey: "asked")
         try require(store.scheduleRunNote(asked).plain(name: "Ada") == "Ada wants to create a folder in Seeds.",
                     "A finished run that asked keeps reading its question")
+        let orphanSchedule = try NativeSchedule(id: "notes-orphan", owner: .conversation, workerType: "research", title: "Orphan",
+                                                instruction: "Check the beds.", cadence: .everyHours(6), timeZone: zone)
+        store.schedules = [orphanSchedule]
+        store.nativeTaskReferences = []
+        for key in [String?.none, "asked"] {
+            let orphan = NativeScheduleRun(id: "notes-orphan-\(key ?? "none")", scheduleID: orphanSchedule.id, scheduledFor: Date(), outcome: .completed,
+                                           detail: CompanionSavedTextFixture.approvalQuestion, taskReferenceID: UUID().uuidString, checkInKey: key)
+            try require(!store.scheduleRunIsCompanionWork(orphan), "The orphan fixture has no task and a research schedule")
+            try require(store.scheduleRunNote(orphan).plain(name: "Ada") == "Ada wants to create a folder in Seeds."
+                            && !hasMarkerScalar(store.scheduleRunNote(orphan).plain(name: nil)),
+                        "A saved question still reads with the name after its task is gone and its schedule was changed")
+        }
+        let orphanOutside = NativeScheduleRun(id: "notes-orphan-outside", scheduleID: orphanSchedule.id, scheduledFor: Date(), outcome: .completed,
+                                              detail: "The service said " + CompanionSavedText.marker + " is paused.")
+        try require(store.scheduleRunNote(orphanOutside) == .literal("The service said " + CompanionSavedText.marker + " is paused."),
+                    "Text that does not start with the marker is never filled on that path")
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("saved-text-fire-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -600,8 +619,8 @@ extension SelfTest {
             result.removeValue(forKey: "outside")
             let reference = try CompanionSavedTextFixture.reference(state: "completed", result: result.merging(["query": CompanionSavedTextFixture.assignment]) { _, new in new })
             let observation = ChatStore.refinementObservation(reference.snapshot) ?? ""
-            let own = outside.isEmpty ? observation : observation.replacingOccurrences(of: outside, with: "")
-            try require(!observation.isEmpty && !hasMarkerScalar(own) && !own.contains("{name}") && !own.contains("Ada"),
+            let own = outside.isEmpty ? observation : observation.replacingOccurrences(of: CompanionSavedText.sanitized(outside), with: "")
+            try require(!observation.isEmpty && !hasMarkerScalar(observation) && !own.contains("{name}") && !own.contains("Ada"),
                         "The refinement observation from the \(label) report carries no marker or name: \(observation)")
         }
         let expected: [(String?, String??, String)] = [("Ada", nil, "Ada"), ("Ada", .some("Moss"), "Moss"), (nil, nil, "Your companion")]
@@ -639,7 +658,7 @@ extension SelfTest {
         guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
         let waiting = try CompanionSavedTextFixture.reference(state: "needs_decision", conversationID: thread, decision: CompanionSavedTextFixture.approvalDecision())
         var finished: [NativeTaskReference] = []
-        for key in ["handoff", "declined", "limit"] {
+        for key in ["handoff", "declined", "limit", "stop"] {
             guard var result = reports[key] else { continue }
             result.removeValue(forKey: "outside")
             finished.append(try CompanionSavedTextFixture.reference(state: "completed", conversationID: thread, result: result))
@@ -720,7 +739,29 @@ extension SelfTest {
         _ = try repository.recordArtifact(ArtifactDraft(kind: .document, title: "Old note", conversationID: nil, originTitle: "Ada", messageID: nil,
                                                         sourceKey: "saved-text-old", data: Data("# Old".utf8), mime: "text/markdown", fileExtension: "md"),
                                           revising: nil)
+        let impostor = Conversation(id: "saved-text-impostor", title: CompanionSavedText.marker, messages: [], updatedAt: Date())
+        let mixed = Conversation(id: "saved-text-mixed", title: "Plan " + CompanionSavedText.marker, messages: [], updatedAt: Date())
+        for conversation in [impostor, mixed] {
+            try repository.saveConversation(conversation)
+            store.conversations.append(conversation)
+        }
+        store.recordTaskArtifacts([NativeDisplayBlock.artifact(NativeResearchArtifact(id: "lib-impostor", title: "Impostor note", report: "# I", sources: []))],
+                                  conversationID: impostor.id, messageID: UUID().uuidString)
+        store.recordTaskArtifacts([NativeDisplayBlock.artifact(NativeResearchArtifact(id: "lib-mixed", title: "Mixed note", report: "# M", sources: []))],
+                                  conversationID: mixed.id, messageID: UUID().uuidString)
         store.reloadArtifacts()
+        for (title, expected) in [("Impostor note", "companion"), ("Mixed note", "Plan companion")] {
+            guard let item = store.artifactRecords.first(where: { $0.title == title }) else { throw NativeTaskFixture.Failure.assertion("The \(title) item exists") }
+            try require(item.originTitle == expected && store.artifactOriginLabel(item) == expected
+                            && store.artifactOriginLine(item) == .literal(expected),
+                        "A chat titled with the marker cannot pass as the companion or show the marker: \(item.originTitle ?? "nil")")
+        }
+        store.syncArtifactOrigin(conversationID: impostor.id, title: "Garden")
+        try require(store.artifactRecords.first(where: { $0.title == "Impostor note" })?.originTitle == "Garden",
+                    "Renaming that chat still updates its item's origin")
+        store.syncArtifactOrigin(conversationID: mixed.id, title: CompanionSavedText.marker)
+        try require(store.artifactRecords.first(where: { $0.title == "Mixed note" })?.originTitle == "companion",
+                    "Renaming an ordinary chat to the marker cannot make its item the companion's")
         func record(_ title: String) throws -> ArtifactRecord {
             guard let found = store.artifactRecords.first(where: { $0.title == title }) else {
                 throw NativeTaskFixture.Failure.assertion("The \(title) item exists")

@@ -61,12 +61,14 @@ extension ChatStore {
 
     func artifactOriginTitle(conversationID: String?) -> String? {
         if isVeraThread(conversationID) { return CompanionSavedText.marker }
-        return conversations.first(where: { $0.id == conversationID })?.title
+        return conversations.first(where: { $0.id == conversationID }).map { (conversation: Conversation) -> String in
+            CompanionSavedText.sanitized(conversation.title)
+        }
     }
 
     func syncArtifactOrigin(conversationID: String, title: String) {
         guard let artifactRepository, !isVeraThread(conversationID) else { return }
-        try? artifactRepository.updateArtifactOrigin(conversationID: conversationID, title: title)
+        try? artifactRepository.updateArtifactOrigin(conversationID: conversationID, title: CompanionSavedText.sanitized(title))
         reloadArtifacts()
     }
 
