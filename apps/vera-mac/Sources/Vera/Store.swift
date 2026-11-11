@@ -63,7 +63,12 @@ final class ChatStore: ObservableObject {
     @Published var attachmentError: String?
     @Published var companionDraft = ""
     @Published var companionAttachments: [Attachment] = []
-    @Published var companionError: String?
+    @Published var companionError: String? {
+        didSet {
+            if let error = companionPanelError, error.plain(name: companionName) != companionError { companionPanelError = nil }
+        }
+    }
+    @Published private(set) var companionPanelError: CompanionConfigurationError?
     @Published var companionFocusTick = 0
     static let companionSeenKey = "companion_last_seen_reply"
     var companionDefaults: UserDefaults = .standard
@@ -92,8 +97,16 @@ final class ChatStore: ObservableObject {
 
     var companionErrorLine: CompanionLine? {
         guard let companionError else { return nil }
-        if let error = companionConfigurationError, error.plain(name: companionName) == companionError { return error.line }
-        return .literal(companionError)
+        return companionPanelError?.line ?? .literal(companionError)
+    }
+
+    private func reportCompanionPanelError(fallback: String) {
+        guard chatConfigurationError != nil, let error = companionConfigurationError else {
+            companionError = chatConfigurationError ?? fallback
+            return
+        }
+        companionPanelError = error
+        companionError = error.plain(name: companionName)
     }
 
     func reportCompanionConfigurationError(_ lead: String, description: String, tail: String = "") {
@@ -103,14 +116,13 @@ final class ChatStore: ObservableObject {
     }
 
     private func renameCompanionConfigurationError(from old: String?) {
-        guard let error = companionConfigurationError, old != companionName else { return }
-        let before = error.plain(name: old)
-        let after = error.plain(name: companionName)
-        guard chatConfigurationError == before else { return }
-        companionConfigurationError = nil
-        chatConfigurationError = after
-        companionConfigurationError = error
-        if companionError == before { companionError = after }
+        guard old != companionName else { return }
+        if let error = companionConfigurationError, chatConfigurationError == error.plain(name: old) {
+            chatConfigurationError = error.plain(name: companionName)
+        }
+        if let error = companionPanelError, companionError == error.plain(name: old) {
+            companionError = error.plain(name: companionName)
+        }
     }
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
@@ -2013,7 +2025,7 @@ final class ChatStore: ObservableObject {
     func sendCompanion() -> Bool {
         prepareCompanionThread(askForName: false)
         guard let veraThreadID else {
-            companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
+            reportCompanionPanelError(fallback: repositoryInitializationError ?? "Local history couldn't open")
             return false
         }
         let text = companionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2033,7 +2045,7 @@ final class ChatStore: ObservableObject {
         }
         markCompanionSeen()
         guard sendText(text, attachments: atts, routeNote: note, conversationID: veraThreadID, fromComposer: true) else {
-            companionError = chatConfigurationError ?? "The message couldn't send."
+            reportCompanionPanelError(fallback: "The message couldn't send.")
             return false
         }
         companionDraft = ""

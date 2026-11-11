@@ -166,7 +166,7 @@ struct SidebarRow: View {
 
 // MARK: - Chat pane
 
-private struct ChatPane: View {
+struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     var workCollapsed = false
     @EnvironmentObject var config: ConfigStore
@@ -295,6 +295,18 @@ private struct ChatPane: View {
                 .frame(maxWidth: ConversationMetrics.columnWidth)
                 .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
                 .accessibilityElement(children: .contain)
+            }
+            if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.textSecondary)
+                    CompanionLineText(line: error.line).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+                .frame(maxWidth: ConversationMetrics.columnWidth)
+                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
+                .accessibilityElement(children: .combine)
             }
             if let convo = conversation, !convo.messages.isEmpty {
                 ScrollViewReader { proxy in

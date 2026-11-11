@@ -67,8 +67,11 @@ extension SelfTest {
             try require(store.chatConfigurationErrorLine == saved, "Real text draws the styled line")
             try require(store.companionOpeningErrorLine == saved, "The opening view draws the styled line")
             try require(store.focusedChatConfigurationError == nil, "An ordinary chat is not shown the companion's error")
-            store.companionError = store.chatConfigurationError
-            try require(store.companionErrorLine == saved, "The quick panel draws the same styled line")
+            store.companionAttachments = []
+            store.companionDraft = "hello"
+            _ = store.sendCompanion()
+            try require(store.companionError == store.chatConfigurationError && store.companionErrorLine == saved,
+                        "A failed quick panel send shows the same styled line")
             store.adoptAssistantName("Moss")
             try require(store.chatConfigurationError == "Moss's settings couldn't be saved: disk full" && store.chatConfigurationErrorLine == saved,
                         "A rename carries into the error and keeps it styled")
@@ -78,13 +81,19 @@ extension SelfTest {
             try require(store.chatConfigurationError == "Your companion's settings couldn't be saved: disk full" && store.chatConfigurationErrorLine == saved,
                         "Removing the name carries into the error")
             store.adoptAssistantName(name)
-            store.companionError = nil
             store.chatConfigurationError = "Messages couldn't load: offline"
             try require(store.companionConfigurationError == nil, "An unrelated error replaces the companion's")
             try require(store.chatConfigurationErrorLine == .literal("Messages couldn't load: offline"), "An unrelated error draws as plain text")
             try require(store.focusedChatConfigurationError == "Messages couldn't load: offline", "An ordinary chat still shows an ordinary error")
+            try require(store.companionErrorLine == saved, "The quick panel keeps its own styled line after the shared error is replaced")
             store.adoptAssistantName("Moss")
             try require(store.chatConfigurationError == "Messages couldn't load: offline", "A rename leaves an unrelated error alone")
+            try require(store.companionError == "Moss's settings couldn't be saved: disk full" && store.companionErrorLine == saved,
+                        "A rename still reaches the quick panel's line after the shared error is replaced")
+            store.companionError = "Folders can be added from the main window."
+            try require(store.companionPanelError == nil && store.companionErrorLine == .literal("Folders can be added from the main window."),
+                        "Another quick panel error replaces the styled one")
+            store.companionError = nil
             store.adoptAssistantName(name)
             store.reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: "disk full")
             store.chatConfigurationError = nil

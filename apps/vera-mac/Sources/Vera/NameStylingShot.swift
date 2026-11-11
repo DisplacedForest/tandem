@@ -4,7 +4,8 @@ import SwiftUI
 @MainActor
 enum NameStylingShot {
     static let views: Set<String> = ["name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
-                                     "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused"]
+                                     "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused",
+                                     "name-thread-error"]
 
     static func render(to path: String, view: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
@@ -41,6 +42,12 @@ enum NameStylingShot {
         case "name-artifacts-filter":
             size = NSSize(width: 1000, height: 600)
             root = AnyView(ArtifactsView(conversationFilter: store.veraThreadID))
+        case "name-thread-error":
+            size = NSSize(width: 900, height: 620)
+            store.section = .vera
+            store.openVeraThread()
+            store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
+            root = AnyView(ChatPane())
         case "name-surfaces-chat":
             size = NSSize(width: 720, height: 360)
             store.newConversation()
