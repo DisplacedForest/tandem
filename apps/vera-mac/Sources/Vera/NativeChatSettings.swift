@@ -373,13 +373,13 @@ enum NativeChatToolCatalog {
                 name: "Files in shared folders",
                 summary: "Reads, searches, writes, edits and moves files inside folders you share with a chat, and can move them to the Trash under your rules. Nothing is deleted outright.",
                 available: true,
-                setup: "Share a folder from the composer to turn these on for that chat."),
+                setup: "Share a folder from the message box to turn these on for that chat."),
             NativeChatToolDescriptor(
                 id: NativeCommandTools.toolID,
                 name: "Commands in shared folders",
                 summary: "Runs shell commands with a shared folder as the working directory. Your rules decide whether each command runs, asks first, or is handed to you.",
                 available: true,
-                setup: "Share a folder from the composer to turn this on for that chat. Set what asks first in the Rules tab."),
+                setup: "Share a folder from the message box to turn this on for that chat. Set what asks first in the Rules tab."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Background work",

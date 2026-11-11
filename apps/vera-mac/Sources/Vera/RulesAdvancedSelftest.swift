@@ -87,7 +87,7 @@ extension SelfTest {
         failing.leaveToMe(.credentialEntry, store: other)
         try require(other.nativeRules.holds(.credentialEntry) && other.rulesNotice != nil, "Putting it back applies now even when it can't be saved")
 
-        let banned = ["floor", "lift", "lifted", "unlock", "grant", "granted", "grants", "granting", "kind", "class", "record", "scope", "effect", "revoke"]
+        let banned = ["floor", "lift", "lifted", "unlock", "grant", "granted", "grants", "granting", "composer", "kind", "class", "record", "scope", "effect", "revoke"]
         for name in [Optional("Ada"), nil] {
             for text in RulesAdvancedCopy.screenStrings(name: name) {
                 for fragment in ["Ver" + "a", "Tandem", "{name}", " her ", " she "] {
@@ -97,6 +97,12 @@ extension SelfTest {
                 for word in banned {
                     try require(!words.contains(word), "Advanced copy never says \(word): \(text)")
                 }
+            }
+        }
+        for tool in NativeChatToolCatalog.tools(veraAPIConfigured: false) {
+            for text in [tool.name, tool.summary, tool.setup] {
+                let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+                try require(words.isDisjoint(with: ["grant", "granted", "grants", "granting", "composer"]), "Tools settings copy uses plain words: \(text)")
             }
         }
         try require(CompanionSentence.plain(RulesAdvancedCopy.allowTemplate, name: nil) == "Let your companion do this", "The unnamed allow button")
