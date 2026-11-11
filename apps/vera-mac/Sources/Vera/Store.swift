@@ -297,6 +297,7 @@ final class ChatStore: ObservableObject {
         }
         reloadArtifacts()
         reloadProjects()
+        sweepRuleRecords()
         for conversation in conversations where !conversation.messages.isEmpty {
             reconcileTaskArtifacts(conversationID: conversation.id)
         }
@@ -1725,6 +1726,7 @@ final class ChatStore: ObservableObject {
         discardedConversationIDs.insert(id)
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         try repository?.deleteConversation(id)
+        removeRules(for: .conversation(id))
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }
         }

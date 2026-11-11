@@ -18,7 +18,7 @@ enum Shot {
             NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
             return
         }
-        if view == "rules" || view == "rules-dark" || view == "rules-info" || view == "rules-unnamed" {
+        if view == "rules" || view.hasPrefix("rules-") {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
         }
