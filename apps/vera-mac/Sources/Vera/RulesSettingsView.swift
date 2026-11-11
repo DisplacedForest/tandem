@@ -112,7 +112,15 @@ struct RulesSettingsTab: View {
     @State private var widening: RuleRow?
     @State private var advanced: RulesAdvancedState
 
-    init(advanced: RulesAdvancedState = RulesAdvancedState()) {
+    private let startsClosed: Bool
+
+    init() {
+        startsClosed = true
+        _advanced = State(initialValue: RulesAdvancedState())
+    }
+
+    init(showing advanced: RulesAdvancedState) {
+        startsClosed = false
         _advanced = State(initialValue: advanced)
     }
 
@@ -201,6 +209,7 @@ struct RulesSettingsTab: View {
         .formStyle(.grouped)
         .onDisappear { advanced.leave() }
         .onAppear {
+            if startsClosed { advanced.leave() }
             store.sweepRuleRecords()
             refresh()
         }

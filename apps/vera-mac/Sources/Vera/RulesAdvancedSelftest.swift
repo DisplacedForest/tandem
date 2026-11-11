@@ -73,6 +73,17 @@ extension SelfTest {
         config.leaveToMe(.payments, store: store)
         try require(config.nativeSettings.rules.holds(.payments) && store.nativeRules.holds(.payments), "Leaving it to you holds payments again everywhere")
         try require(store.rulesRevision != beforeLeave, "The rule source revision changes after leaving it to you")
+        let relocked = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents },
+                                   nativeMCP: NativeMCPManager(servers: []), writeConfiguration: { _ in })
+        try require(relocked.nativeSettings.rules.holds(.payments), "Leaving it to you survives a relaunch")
+        struct Unwritable: Error {}
+        let failing = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] },
+                                  nativeMCP: NativeMCPManager(servers: []), writeConfiguration: { _ in throw Unwritable() })
+        let other = ChatStore()
+        failing.letThrough(.credentialEntry, store: other)
+        try require(other.nativeRules.isLifted(.credentialEntry) && other.rulesNotice != nil, "A change that can't be saved still applies now and says so")
+        failing.leaveToMe(.credentialEntry, store: other)
+        try require(other.nativeRules.holds(.credentialEntry) && other.rulesNotice != nil, "Putting it back applies now even when it can't be saved")
 
         let banned = ["floor", "lift", "lifted", "unlock", "grant", "kind", "class", "record", "scope", "effect", "revoke"]
         for name in [Optional("Ada"), nil] {

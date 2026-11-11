@@ -33,7 +33,7 @@ enum RulesShot {
         if variant == "rules-advanced-on" || variant == "rules-advanced-mixed" { config.letThrough(.payments, store: store) }
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let root = HStack(alignment: .top, spacing: 16) {
-            RulesSettingsTab(advanced: advanced).frame(width: 860, height: size.height)
+            RulesSettingsTab(showing: advanced).frame(width: 860, height: size.height)
             if let asked {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(RulesAdvancedCopy.question(asked, name: companion)).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
