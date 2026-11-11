@@ -1468,6 +1468,22 @@ extension SelfTest {
                 throw NativeTaskFixture.Failure.assertion("A fetched page stays an object")
             }
             try require(repeated["n"] == .number(1) && again.sources?.map(\.n) == [1, 2, 3], "The redirect's number survives a reload")
+            let searcher = companionWebTools().1.first { $0.id == NativeWebTools.searchToolID }
+            guard let searcher else { throw NativeTaskFixture.Failure.assertion("The fake web tools include search") }
+            func found(_ count: Int, from start: Int) -> NativeJSONValue {
+                .object(["results": .array((start..<(start + count)).map {
+                    .object(["url": .string("https://later.example/\($0)"), "title": .string("Later \($0)")])
+                })])
+            }
+            _ = again.numbered(found(1, from: 0), definition: searcher)
+            try require(again.sources?.map(\.n) == [1, 2, 3, 4], "A redirect takes no number of its own, so the next source is 4")
+            _ = again.numbered(found(12, from: 1), definition: searcher)
+            try require(again.sources?.map(\.n) == Array(1...14) && again.sources?.count == 14,
+                        "Fourteen sources fit alongside a redirect: \(again.sources?.map(\.n) ?? [])")
+            guard case .object(let late) = again.numbered(landed, definition: fetcher, requested: "https://weather.example/rain") else {
+                throw NativeTaskFixture.Failure.assertion("A fetched page stays an object")
+            }
+            try require(late["n"] == .number(1) && again.sources?.count == 14, "A redirect still resolves when every number is taken")
         } else {
             throw NativeTaskFixture.Failure.assertion("The fake web tools include a page reader")
         }
