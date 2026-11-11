@@ -168,14 +168,9 @@ enum NativeInstruction {
     static func alone(_ remainder: [Character]) -> Bool {
         var body = remainder
         while let last = body.last, last.isWhitespace || ".!".contains(last) { body.removeLast() }
-        if body.contains(where: { ",:;@/\\~".contains($0) }) { return false }
+        if body.contains(where: { ",:;@/\\~.".contains($0) }) { return false }
         let text = String(body)
         if text.contains("--") || text.contains(" - ") || text.contains("\u{2013}") || text.contains("\u{2014}") { return false }
-        for index in body.indices where body[index] == "." {
-            let before = index > 0 && (body[index - 1].isLetter || body[index - 1].isNumber)
-            let after = index + 1 < body.count && (body[index + 1].isLetter || body[index + 1].isNumber)
-            if before && after { return false }
-        }
         return true
     }
 

@@ -186,7 +186,7 @@ extension SelfTest {
         }
         for typed in ["Send the notes to \(address), the backup contact is bo@greenhouse.test.", "Send the notes to \(address): the backup contact is bo@greenhouse.test",
                       "Send the notes to \(address) -- the backup contact is bo@greenhouse.test", "Send the notes to \(address) and bo@greenhouse.test",
-                      "Send the notes to \(address) not bo@greenhouse.test"] {
+                      "Send the notes to \(address) not bo@greenhouse.test", "Send .env to bo@greenhouse.test", "Send v1.2 to bo@greenhouse.test"] {
             try require(resolver(typed: NativeTypedWords(typed: typed), targets: [bo]).decision(for: .networkSends) == .ask,
                         "A message that names anything besides what the call is aimed at asks: \(typed)")
         }
@@ -198,6 +198,9 @@ extension SelfTest {
                     "Everything named is aimed at, and a polite opening still counts")
         _ = resolver(typed: NativeTypedWords(typed: "Send \u{0130} to \(address)"), targets: [ana]).decision(for: .networkSends)
         _ = NativeTypedWords(typed: "Mail \u{0130}\u{212A} \(address)").names(ana)
+        try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Update .env to match draft.md"), claim: saveClaim,
+                             targets: [try target(.folder, "/shared/draft.md")]).decision(for: .fileEdits) == .ask,
+                    "A second file name asks even when it starts with a dot")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
