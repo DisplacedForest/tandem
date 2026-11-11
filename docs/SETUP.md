@@ -506,8 +506,9 @@ service:
   set.
 - `method`: `GET` sends the arguments as query parameters; `POST` sends them as a JSON
   body.
-- `confirmation`: `"required"` always asks in the chat before the request fires, whatever
-  your rules say. With `"none"`, a `GET` runs immediately and a `POST` follows the **Send on
+- `confirmation`: `"required"` always asks before the request fires, whatever your rules
+  say. That holds in a chat and in background work you started: the step waits on a card
+  with no Always allow choice. With `"none"`, a `GET` runs immediately and a `POST` follows the **Send on
   your behalf** rule, which asks first by default: **Do it without asking** runs it with no
   card, **Do it when I say go ahead** runs it when your message says so, and **Leave it to
   me** stops it. A `GET` marked `"required"` is treated as a change instead of a lookup: it

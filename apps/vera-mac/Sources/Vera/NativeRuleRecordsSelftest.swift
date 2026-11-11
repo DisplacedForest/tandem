@@ -895,7 +895,7 @@ enum NativeRuleRecordsSelftest {
                     && move.ruleSubjects?(intoLocked).count == 2, "File tools declare one subject for every affected path")
 
         var send = NativeToolDefinition(id: "mail", name: "send_mail", title: "Send mail", description: "Send mail",
-                                        parameters: .object(["type": .string("object")]), confirmation: .required,
+                                        parameters: .object(["type": .string("object")]), confirmation: .none,
                                         isAvailable: { true }, execute: { _ in .null })
         send.effect = .write
         send.action = .networkSends

@@ -225,7 +225,7 @@ struct NativeToolDefinition: Sendable {
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
 
-    var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil }
+    var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
 
     var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 

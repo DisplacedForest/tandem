@@ -140,7 +140,7 @@ struct NativeCompanionHarness {
         })
         status.effect = .read
         var water = NativeToolDefinition(id: "garden", name: "water_bed", title: "Water a bed", description: "Water one bed",
-                                         parameters: object, confirmation: .required, isAvailable: { true }, execute: { _ in
+                                         parameters: object, confirmation: .none, isAvailable: { true }, execute: { _ in
             throw NativeToolError.failed("keyed adapter")
         })
         water.effect = .write
@@ -175,7 +175,7 @@ struct NativeCompanionHarness {
             }
         }
         var weeds = NativeToolDefinition(id: "garden", name: "pull_weeds", title: "Pull weeds", description: "Clear a bed",
-                                         parameters: object, confirmation: .required, isAvailable: { true }, execute: { _ in
+                                         parameters: object, confirmation: .none, isAvailable: { true }, execute: { _ in
             service.bump("pull_weeds")
             return .object(["cleared": .bool(true)])
         })
@@ -577,10 +577,10 @@ extension SelfTest {
     private static func companionToolOwnChecks() async throws {
         let require = NativeTaskFixture.require
         let posted = NativeChatRulesCounter()
-        func post() -> NativeToolDefinition {
+        func post(_ confirmation: NativeToolConfirmation = .none) -> NativeToolDefinition {
             var definition = NativeToolDefinition(
                 id: "fixture-post", name: "post_line", title: "Post a line", description: "Fixture",
-                parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write, action: .networkSends,
+                parameters: .object(["type": .string("object")]), confirmation: confirmation, effect: .write, action: .networkSends,
                 isAvailable: { true }, execute: { _ in posted.hit(); return .object(["ok": .bool(true)]) })
             definition.preflight = { arguments in
                 guard arguments["line"] != nil else { throw NativeToolError.invalidArguments("A line is required") }
@@ -620,7 +620,8 @@ extension SelfTest {
         let waitingThread = waiting.thread
         let gatedTools = [gated]
         waiting.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: waitingThread.current, tools: gatedTools) }
-        let waitingRecords = waiting.records
+        let saves = NativeChatRulesCounter()
+        waiting.environment.saveRules = { _ in saves.hit(); return true }
         let waitingID = try waiting.create("Post the line")
         let asked = try await waiting.runUntilSettled()
         try require(asked.state == .needsDecision && posted.count == 0, "The post waits for an answer under an ask rule")
@@ -628,8 +629,56 @@ extension SelfTest {
         try waiting.reply(asked, "allow_always", digest: try waiting.decision(asked)["digest"] as? String)
         let after = try await waiting.runUntilSettled()
         try require(after.state == .completed && posted.count == 0, "An approved card whose call now fails the tool's own checks does not run")
-        try require(try waitingRecords.all().isEmpty && (try waiting.effects(waitingID)).allSatisfy { $0.state == .proposed || $0.state == .expired },
+        try require(saves.count == 0 && (try waiting.effects(waitingID)).allSatisfy { $0.state == .proposed || $0.state == .expired },
                     "It saves no standing allow and admits nothing")
+
+        posted.reset()
+        var strict = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
+            let results = NativeCompanionScriptedModel.toolResults(messages)
+            if results.isEmpty { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Beans\"}") }
+            if results.count == 1 { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Peas\"}", id: "call-2") }
+            return NativeCompanionScriptedModel.text("Posted both lines.")
+        }
+        let strictThread = strict.thread
+        let demanding = [post(.required)]
+        strict.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: strictThread.current, tools: demanding) }
+        let strictSaves = NativeChatRulesCounter()
+        strict.environment.saveRules = { _ in strictSaves.hit(); return true }
+        _ = try strict.create("Post the lines")
+        let first = try await strict.runUntilSettled()
+        let choices = try strict.decision(first)["choices"] as? [String] ?? []
+        try require(first.state == .needsDecision && posted.count == 0,
+                    "A tool that demands confirmation waits for an answer in background work even when its kind acts")
+        try require(choices.contains("approve") && choices.contains("decline") && choices.contains("never")
+                        && !choices.contains("allow_always") && !choices.contains("allow_here") && !choices.contains("allow_schedule"),
+                    "Its card offers approve, decline and never, and no standing allow")
+        try strict.reply(first, "approve", digest: try strict.decision(first)["digest"] as? String)
+        let second = try await strict.runUntilSettled()
+        try require(second.state == .needsDecision && posted.count == 1 && strictSaves.count == 0,
+                    "Approving runs it once, saves nothing, and the next call asks again")
+        try strict.reply(second, "approve", digest: try strict.decision(second)["digest"] as? String)
+        try require(try await strict.runUntilSettled().state == .completed && posted.count == 2, "Approving the second card runs the second call")
+
+        posted.reset()
+        var handed = try NativeCompanionHarness(rules: [.networkSends: .handOff]) { messages in
+            if NativeCompanionScriptedModel.toolResults(messages).isEmpty { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Beans\"}") }
+            return NativeCompanionScriptedModel.text("Left the post to you.")
+        }
+        let handedThread = handed.thread
+        handed.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: handedThread.current, tools: demanding) }
+        let handedID = try handed.create("Post the line")
+        try require(try await handed.runUntilSettled().state == .completed && posted.count == 0 && (try handed.effects(handedID)).isEmpty,
+                    "A demanding tool whose kind is left to the person is refused with no card")
+
+        var free = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
+            if NativeCompanionScriptedModel.toolResults(messages).isEmpty { return NativeCompanionScriptedModel.call("post_line", "{\"line\":\"Beans\"}") }
+            return NativeCompanionScriptedModel.text("Posted the line.")
+        }
+        let freeThread = free.thread
+        let relaxed = [post()]
+        free.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: freeThread.current, tools: relaxed) }
+        _ = try free.create("Post the line")
+        try require(try await free.runUntilSettled().state == .completed && posted.count == 1, "A tool that doesn't demand confirmation still acts under an act rule with no card")
     }
 
     private static func companionAdmittedFolderWrites() async throws {
