@@ -501,7 +501,7 @@ struct WorkflowRunShot: View {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     VeraMark(size: 18)
-                    Text("Vera").font(.system(size: 14, weight: .semibold))
+                    Text("Tandem").font(.system(size: 14, weight: .semibold))
                     Spacer()
                 }
                 .padding(.horizontal, 14).frame(height: 42)

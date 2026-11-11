@@ -123,6 +123,7 @@ enum NativeTurnCurrency: Sendable, Equatable {
 protocol NativeConversationTurnRepository: Sendable {
     func conversationTurns() throws -> [NativeConversationTurn]
     func conversationTurnChangeToken() throws -> [Int64]
+    func typedMessageIDs(conversationID: String) throws -> Set<UUID>
     func conversationTurnHeaders() throws -> [NativeConversationTurnHeader]
     func pollConversationTurns(watching: Set<UUID>) throws -> [NativeConversationTurn]
     func acceptTurn(_ turn: NativeConversationTurn, conversation: Conversation, user: Message, reply: Message) throws
@@ -180,8 +181,8 @@ extension LocalChatRepository: NativeConversationTurnRepository {
             }
             turn.state = .interrupted
             let failure = turn.mayHaveEffect
-                ? "Vera closed before this answer finished. An action already sent may have completed; check it before trying again."
-                : "Vera closed before this answer finished. You can retry it."
+                ? "Tandem closed before this answer finished. An action already sent may have completed; check it before trying again."
+                : "Tandem closed before this answer finished. You can retry it."
             try db.execute(sql: "UPDATE messages SET state='interrupted', failure=? WHERE id=?",
                 arguments: [failure, turn.assistantMessageID.uuidString])
             try writeTurn(turn, db: db)
@@ -212,6 +213,16 @@ extension LocalChatRepository: NativeConversationTurnRepository {
             try Self.recoverConversationTurns(db)
             return try String.fetchAll(db, sql: "SELECT record_json FROM native_conversation_turns ORDER BY created_at, rowid")
                 .map { try JSONDecoder().decode(NativeConversationTurn.self, from: Data($0.utf8)) }
+        }
+    }
+
+    func typedMessageIDs(conversationID: String) throws -> Set<UUID> {
+        try database.read { db in
+            let ids = try String.fetchAll(db, sql: """
+                SELECT user_message_id FROM native_conversation_turns
+                WHERE conversation_id=? AND user_message_id IS NOT NULL AND json_extract(record_json, '$.preferenceEligible') = 1
+                """, arguments: [conversationID])
+            return Set(ids.compactMap(UUID.init(uuidString:)))
         }
     }
 

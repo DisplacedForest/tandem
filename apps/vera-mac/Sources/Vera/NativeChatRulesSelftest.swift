@@ -82,14 +82,17 @@ extension SelfTest {
                     "A write under ask never runs without an approved card")
         try require(await run(asking, confirmed: true) == nil && sendCount.count == 2, "A write under ask runs once after the card")
 
-        let handOffMessage = NativeRuleResolver.handOffMessage(.networkSends)
+        func handedOff(_ action: NativeActionClass) -> String {
+            RefusalCopy.forModel(NativeRuleWhy(kind: .unsaved, action: action, handsOff: true, choice: .handOff, source: .settings))
+        }
+        let handOffMessage = handedOff(.networkSends)
         let handing = ruled(send, source(rules(.handOff, for: .networkSends)))
         try require(asks(handing) == false, "A write under hand off shows no card")
         for confirmed in [false, true] {
             try require(await run(handing, confirmed: confirmed) == handOffMessage && sendCount.count == 2,
                         "A write under hand off is refused and never runs: confirmed \(confirmed)")
         }
-        try require(handOffMessage.contains(NativeActionClass.networkSends.title.lowercased()), "The hand off message names the kind")
+        try require(handOffMessage.contains(NativeActionClass.networkSends.title), "The hand off message names the kind")
 
         let plainCount = NativeChatRulesCounter()
         let plain = tool("fixture-plain", counter: plainCount)
@@ -101,7 +104,7 @@ extension SelfTest {
         try require(asks(plainActs) == false, "An undeclared write follows other changes")
         try require(await run(plainActs, confirmed: false) == nil && plainCount.count == 1, "An undeclared write runs when other changes act")
         try require(await run(ruled(plain, source(rules(.handOff, for: .otherChanges))), confirmed: true)
-                    == NativeRuleResolver.handOffMessage(.otherChanges) && plainCount.count == 1,
+                    == handedOff(.otherChanges) && plainCount.count == 1,
                     "An undeclared write is handed off under other changes")
 
         let strictCount = NativeChatRulesCounter()
@@ -144,6 +147,32 @@ extension SelfTest {
         try require(asks(allowing) == false, "A saved allow removes the card for an ask kind")
         try require(await run(allowing, confirmed: false) == nil && allowCount.count == 1, "A saved allow runs with no card")
         try require(asks(ruled(allowed, source(records: [allowRecord]), conversation: other)) == true, "A chat-scoped allow stays in its chat")
+
+        let strictCount2 = NativeChatRulesCounter()
+        let stricter = tool("fixture-stricter", action: .networkSends, counter: strictCount2)
+        let wholeKind = NativeRuleRecord(scope: .conversation(chat), action: .networkSends, effect: .allow, statement: "Always allow sending in this chat")
+        let loose = source(records: [wholeKind])
+        let looseRan = await run(ruled(stricter, loose), confirmed: false)
+        try require(asks(ruled(stricter, loose)) == false && looseRan == nil && strictCount2.count == 1,
+                    "An allow for a whole kind runs with no card while the chat has no stricter choice")
+        let tight = source(records: [wholeKind])
+        tight.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let refused = await run(ruled(stricter, tight), confirmed: true)
+        try require(refused?.contains("in this chat") == true && strictCount2.count == 1,
+                    "A chat set to leave sends to you stops the tool when it runs, and says the chat's own choice is why: \(refused ?? "ran")")
+        let tightenedLater = source(records: [wholeKind])
+        let planned = ruled(stricter, tightenedLater)
+        try require(asks(planned) == false, "Planned with no stricter choice")
+        tightenedLater.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let lateRefusal = await run(planned, confirmed: false)
+        try require(lateRefusal != nil && strictCount2.count == 1,
+                    "A chat tightened after planning is honoured when the tool runs")
+        let toolAllowTight = source(records: [NativeRuleRecord(scope: .conversation(chat), action: .networkSends, toolID: stricter.id, effect: .allow,
+                                                               statement: "Always post to the garden log here")])
+        toolAllowTight.set(NativeConversationRules(choices: [.networkSends: .handOff]), for: chat)
+        let toolRan = await run(ruled(stricter, toolAllowTight), confirmed: false)
+        try require(toolRan == nil && strictCount2.count == 2,
+                    "An allow for this one tool still runs in a chat with a stricter choice")
 
         let repository = try LocalChatRepository(inMemory: true)
         let records = NativeRuleRecordStore(database: repository.database)
@@ -315,7 +344,7 @@ extension SelfTest {
         try require(asks(ruled(create, reminderHandOff), createArguments) == false, "A handed off reminder shows no card")
         let createHanded = await run(ruled(create, reminderHandOff), createArguments, confirmed: true)
         let completeHanded = await run(ruled(complete, reminderHandOff), completeArguments, confirmed: true)
-        try require(createHanded == NativeRuleResolver.handOffMessage(.reminders) && completeHanded == NativeRuleResolver.handOffMessage(.reminders)
+        try require(createHanded == handedOff(.reminders) && completeHanded == handedOff(.reminders)
                     && reminders.createCalls == 1 && reminders.completeCalls == 1, "Handed off reminders are refused and nothing is written")
         try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID), "Background work never gets the reminder tools")
         let always = NativeToolDefinition(id: "fixture-always", name: "always_ask", title: "Publish the newsletter", description: "",
@@ -324,7 +353,7 @@ extension SelfTest {
         let alwaysRuled = ruled(always, source(rules(.act, for: .networkSends)))
         let alwaysActivity = NativeToolActivity(id: "a1", toolID: always.id, name: always.name, title: always.title, round: 1, request: "{}",
                                                 result: nil, state: .pending, confirmationRequired: true)
-        let alwaysSubject = ChatStore.cardSubject(for: alwaysActivity, definitions: [alwaysRuled], typedText: "")
+        let alwaysSubject = ChatStore.cardSubject(for: alwaysActivity, definitions: [alwaysRuled])
         var alwaysRequest = NativeToolConfirmationRequest(activity: alwaysActivity)
         alwaysRequest.subject = alwaysSubject
         alwaysRequest.choices = alwaysSubject.map { NativeCardChoices.offered($0, place: .chat(conversationID: "c1")) } ?? []
@@ -338,13 +367,13 @@ extension SelfTest {
         let createActivity = NativeToolActivity(id: "r1", toolID: create.id, name: create.name, title: create.title, round: 1,
                                                 request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", result: nil, state: .pending,
                                                 confirmationRequired: true)
-        let createSubject = ChatStore.cardSubject(for: createActivity, definitions: [ruled(create, source(rules(.ask, for: .reminders)))], typedText: "")
+        let createSubject = ChatStore.cardSubject(for: createActivity, definitions: [ruled(create, source(rules(.ask, for: .reminders)))])
         var createRequest = NativeToolConfirmationRequest(activity: createActivity)
         createRequest.subject = createSubject
         let completeActivity = NativeToolActivity(id: "r2", toolID: complete.id, name: complete.name, title: complete.title, round: 1,
                                                   request: "{\"id\":\"open\"}", result: nil, state: .pending, confirmationRequired: true)
         var completeRequest = NativeToolConfirmationRequest(activity: completeActivity)
-        completeRequest.subject = ChatStore.cardSubject(for: completeActivity, definitions: [ruled(complete, source(rules(.ask, for: .reminders)))], typedText: "")
+        completeRequest.subject = ChatStore.cardSubject(for: completeActivity, definitions: [ruled(complete, source(rules(.ask, for: .reminders)))])
         try require(NativeToolConfirmationBar.sentence(for: createRequest, actor: "Tandem") == "Tandem wants to add a reminder."
                     && NativeToolConfirmationBar.sentence(for: completeRequest, actor: "Tandem") == "Tandem wants to mark a reminder as done.",
                     "A reminder card says what it wants to do in plain words")
@@ -364,7 +393,7 @@ extension SelfTest {
                 parameters: .object(["type": .string("object"), "properties": .object(["line": .object(["type": .string("string")])]),
                                      "required": .array([.string("line")])]),
                 confirmation: .none, action: .networkSends, isAvailable: { true },
-                execute: { _ in counter.hit(); return .object(["posted": .bool(true)]) })
+                execute: { _ in counter.hit(); return .object(["posted": .bool(true)]) }, fixedDestination: true)
             let store = ChatStore(nativeConfig: config, nativeTransport: ScriptedNativeToolTransport(rounds: rounds),
                                   repository: try! LocalChatRepository(inMemory: true), nativeEnabledToolIDs: [send.id], nativeRules: rules,
                                   nativeToolRegistry: NativeToolRegistry(definitions: [send]), artifactPersistenceEnabled: false)

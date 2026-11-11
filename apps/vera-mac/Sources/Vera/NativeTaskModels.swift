@@ -153,6 +153,8 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
+    var typedRequest: String { mode == "manual" ? assignment : "" }
+
     init(assignment: String, mode: String, goal: String = "", connectedToolIDs: [String]? = nil, scheduleID: String? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -499,6 +501,7 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var title: String? = nil
     var summary: String? = nil
     var shape: String? = nil
+    var why: NativeRuleWhy? = nil
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

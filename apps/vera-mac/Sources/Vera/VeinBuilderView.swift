@@ -46,7 +46,7 @@ struct VeinBuilderView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if model.transcript.isEmpty {
-                        Text("Describe what you want Vera to watch. She drafts a vein you can edit, test, and create.")
+                        Text("Describe what you want Tandem to watch. Tandem drafts a vein you can edit, test, and create.")
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(model.transcript) { entry in transcriptRow(entry) }
@@ -61,7 +61,7 @@ struct VeinBuilderView: View {
             }
             Divider().overlay(Theme.hairline)
             HStack(spacing: 8) {
-                TextField("What should Vera watch?", text: $input, axis: .vertical)
+                TextField("What should Tandem watch?", text: $input, axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...4)
                     .onSubmit(sendInput)
                 Button(action: sendInput) {
@@ -88,7 +88,7 @@ struct VeinBuilderView: View {
             .padding(.vertical, 2)
         } else {
             VStack(alignment: entry.role == "user" ? .trailing : .leading, spacing: 2) {
-                Text(entry.role == "user" ? "You" : "Vera")
+                Text(entry.role == "user" ? "You" : "Tandem")
                     .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 Text(entry.content).font(.system(size: 13))
                     .textSelection(.enabled)
@@ -178,7 +178,7 @@ struct VeinBuilderView: View {
         } else if draft.hasBar {
             SectionBox(title: "The bar") {
                 labeledField("Keep a finding when it", draftBinding(\.judgeBar))
-                Text("Vera keeps only findings that clear this bar, and writes a card for each.")
+                Text("Tandem keeps only findings that clear this bar, and writes a card for each.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }

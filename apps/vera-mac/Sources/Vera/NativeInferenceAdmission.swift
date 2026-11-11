@@ -22,7 +22,7 @@ struct NativeInferenceAdmission: Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .unavailable: return "Vera can't coordinate the model request right now. Check the engine connection and try again."
+            case .unavailable: return "Tandem can't coordinate the model request right now. Check the engine connection and try again."
             case .expired: return "The model reservation expired. Please try again."
             case .deadline: return "The model request reached its time limit."
             case .malformed: return "The engine returned an invalid model reservation."

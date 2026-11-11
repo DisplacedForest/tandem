@@ -74,7 +74,7 @@ enum NativeProviderSmoke {
               let url = URL(string: profile.baseURL), url.scheme == "https", url.host == "openrouter.ai",
               url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "api/v1",
               url.port == nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
-            throw Failure(reason: "Save and select the OpenRouter endpoint in Vera Settings > Endpoints")
+            throw Failure(reason: "Save and select the OpenRouter endpoint in Tandem Settings > Endpoints")
         }
         return profile
     }

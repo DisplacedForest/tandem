@@ -270,8 +270,11 @@ extension SelfTest {
         let activities = final?.activities ?? []
         try require(activities.count == 3 && activities[0].state == .succeeded && activities[2].state == .succeeded, "Writes and edits run without asking")
         let refusal = activities[1].result?.replacingOccurrences(of: "\\/", with: "/") ?? ""
-        try require(activities[1].state == .failed && refusal.contains(outside.path + "/secret.txt") && refusal.contains("outside every folder"),
-                    "An outside path is refused with the path in the tool result: \(refusal)")
+        let outsideWhy = NativeRuleWhy.folder(.fileEdits, path: outside.path + "/secret.txt")
+        let refusalError = (try? JSONSerialization.jsonObject(with: Data((activities[1].result ?? "").utf8)) as? [String: Any])?["error"] as? String
+        try require(activities[1].state == .failed && activities[1].why == outsideWhy && refusal.contains(outside.path + "/secret.txt")
+                    && refusalError == RefusalCopy.forModel(outsideWhy),
+                    "An outside path is refused with the path and the folder reason in the tool result: \(refusal)")
         let first = recorded.changes(for: "w1")
         let third = recorded.changes(for: "w3")
         try require(first.count == 1 && first[0].kind == .created && third.count == 1 && third[0].before == "hello\n" && third[0].after == "goodbye\n",
@@ -282,7 +285,7 @@ extension SelfTest {
         let (revoked, _) = try await NativeWebToolsSelftest.loop(always, rounds: [
             NativeWebToolsSelftest.call("r1", NativeFolderTools.readName, "{\"path\":\"\(root)/notes/one.txt\"}"), NativeWebToolsSelftest.reply("ok"),
         ], enabled: [NativeFolderTools.toolID])
-        try require(revoked?.activities.first?.state == .failed && revoked?.activities.first?.result?.contains("No folder has been granted") == true,
+        try require(revoked?.activities.first?.state == .failed && revoked?.activities.first?.result?.contains("No folder has been shared") == true,
                     "A call after revocation fails with a refusal the model can read")
         let late = NativeFileChangeLedger()
         late.record(NativeFileChange(path: root + "/late.txt", kind: .created, after: "x"))

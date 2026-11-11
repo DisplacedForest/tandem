@@ -21,7 +21,7 @@ enum FilePicker {
         p.canChooseFiles = false
         p.canCreateDirectories = true
         p.message = "Choose a folder this chat may read and change"
-        p.prompt = "Grant"
+        p.prompt = "Share"
         completion(p.runModal() == .OK ? p.urls.first : nil)
     }
 }

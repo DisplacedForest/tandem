@@ -119,7 +119,7 @@ struct AgenticActivityView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Activity").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "Everything Vera did on her own in the last day: scheduled runs and autonomous actions.", size: 13)
+                InfoTip(text: "Everything Tandem did automatically in the last day: scheduled runs and autonomous actions.", size: 13)
                 if case .ready = activity.phase {
                     Text("\(activity.events.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -157,7 +157,7 @@ struct AgenticActivityView: View {
             }
         case .unconfigured:
             statusCard(icon: "gearshape", title: "vera-api isn't configured",
-                       note: "Set the vera-api URL in Settings to see what Vera does on her own.")
+                       note: "Set the vera-api URL in Settings to see what Tandem does automatically.")
         case .unreachable:
             statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
                        note: "Couldn't load activity from \(activity.baseDescription).", retry: true)

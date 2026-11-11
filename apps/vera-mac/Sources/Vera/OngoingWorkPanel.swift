@@ -66,7 +66,7 @@ enum OngoingWork {
         let artifact = display?.artifact
         let shown = presentation(status: status, document: document, hasArtifact: artifact != nil)
         return OngoingWorkItem(reference: reference, title: reference.request.displayTitle,
-                               state: shown.state, glyph: shown.glyph, artifact: artifact)
+                               state: display?.card.listState(shown.state) ?? shown.state, glyph: shown.glyph, artifact: artifact)
     }
 
     static func items(_ references: [NativeTaskReference], conversationID: String?) -> [OngoingWorkItem] {

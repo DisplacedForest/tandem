@@ -18,7 +18,7 @@ enum Shot {
             NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
             return
         }
-        if view == "rules" || view == "rules-dark" || view == "rules-info" || view == "rules-unnamed" {
+        if view == "rules" || view.hasPrefix("rules-") {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
         }
@@ -28,6 +28,10 @@ enum Shot {
         }
         if view.hasPrefix("session-") {
             NativeSessionShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
+        if view.hasPrefix("refusal-") {
+            RefusalShot.render(view: view, to: path, appearance: appearance)
             return
         }
         if view.hasPrefix("card-") {
@@ -49,6 +53,10 @@ enum Shot {
         unsetenv("VERA_ASSISTANT_NAME")
         if CompanionNameShot.views.contains(view) {
             CompanionNameShot.render(to: path, appearance: appearance)
+            return
+        }
+        if NameStylingShot.views.contains(view) {
+            NameStylingShot.render(to: path, view: view, appearance: appearance)
             return
         }
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
@@ -518,7 +526,7 @@ enum Shot {
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
-            case "scheduled", "scheduled-paused": section = .scheduled
+            case "scheduled", "scheduled-paused", "scheduled-caught-up": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
@@ -528,7 +536,9 @@ enum Shot {
             default: section = .chat
             }
             store.section = section
-            if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
+            if view == "scheduled" || view == "scheduled-paused" || view == "scheduled-caught-up" {
+                NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused", caughtUp: view == "scheduled-caught-up")
+            }
             content = AnyView(
                 ShotView(store: store, section: section,
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed" || view == "companion-connection",
@@ -561,7 +571,8 @@ enum Shot {
             )
         }
 
-        let renderer = ImageRenderer(content: content.environment(\.colorScheme, scheme))
+        let renderer = ImageRenderer(content: content.environment(\.colorScheme, scheme)
+            .environment(\.companionName, store.companionDisplayName))
         renderer.scale = 2.0
         guard let nsImage = renderer.nsImage,
               let tiff = nsImage.tiffRepresentation,
@@ -1145,12 +1156,12 @@ struct NativeSettingsShotView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("PROMPT LIBRARY").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
-                Text("Personas, user context, and reusable prompts are stored in Vera's local database with revision history.")
+                Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text(NativeChatSettings.defaultSystemPrompt)
                     .font(.system(size: 13)).padding(12).frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                     .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
-                HStack { Text("Saved in Vera's local database."); Spacer(); Text("Preview · History · Export") }
+                HStack { Text("Saved in Tandem's local database."); Spacer(); Text("Preview · History · Export") }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         } else if tab == "Tools" {

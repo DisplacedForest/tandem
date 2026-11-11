@@ -11,17 +11,22 @@ struct DotSettingsView: View {
     @State private var revokedPrefixes: Set<String> = []
     @State private var options: [NativeDotServiceOption] = []
     @State private var problem: String?
+    @State private var resetFailed: Bool
+
+    init(showsResetFailure: Bool = false) {
+        _resetFailed = State(initialValue: showsResetFailure)
+    }
     @State private var confirmingReset = false
     @State private var removal = NativeDotRemovalSummary()
 
-    private var displayName: String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? store.companion.leading : trimmed
+    private var displayName: String? {
+        CompanionSentence.savedName(name) ?? store.companionDisplayName
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(displayName).font(.system(size: 17, weight: .semibold)).padding(.bottom, 14)
+            CompanionNamedText(template: CompanionSentence.placeholder).font(.system(size: 17, weight: .semibold))
+                .environment(\.companionName, displayName).padding(.bottom, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, revokedPrefixes: $revokedPrefixes, options: options)
@@ -31,6 +36,10 @@ struct DotSettingsView: View {
                 .padding(.trailing, 6)
             }
             .frame(minHeight: 300, maxHeight: 520)
+            if resetFailed, let failed = store.resetFailure {
+                Label { CompanionLineText(line: failed.line) } icon: { Image(systemName: "exclamationmark.triangle") }
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 10)
+            }
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 10)
             }
@@ -44,10 +53,11 @@ struct DotSettingsView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear(perform: load)
+        .onDisappear { store.acknowledgeResetFailure() }
         .confirmationDialog("Start over with \(store.companion.inline)?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
-                store.resetDot()
-                dismiss()
+                resetFailed = !store.resetDot()
+                if !resetFailed { dismiss() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -75,7 +85,7 @@ struct DotSettingsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Start over")
-                    Text(DotProfileCopy.startOver(store.companion.inline))
+                    CompanionNamedText(template: DotProfileCopy.startOver)
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

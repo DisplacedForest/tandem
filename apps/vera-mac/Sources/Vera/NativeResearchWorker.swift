@@ -165,9 +165,9 @@ enum NativeResearchWorker {
     }
 
     static func make(exchange: NativeTaskGenerationExchange, search: NativeResearchSearch,
-                     identity: @escaping @Sendable () -> NativeWorkerIdentity) -> NativeTaskWorker {
+                     identity: @escaping @Sendable (NativeTaskRecord) -> NativeWorkerIdentity) -> NativeTaskWorker {
         NativeTaskWorker(timeoutSeconds: stepTimeoutSeconds) { task in
-            try await step(task, exchange: exchange, search: search, identity: identity())
+            try await step(task, exchange: exchange, search: search, identity: identity(task))
         }
     }
 

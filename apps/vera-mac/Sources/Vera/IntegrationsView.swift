@@ -15,12 +15,17 @@ enum IntegrationsTab: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum IntegrationsText {
-    static let scopeOrder: [(key: String, title: String)] = [
-        ("focused", "Focused chats"), ("assistant", "Vera"), ("worker", "Background work"),
-    ]
+    static let scopeKeys = ["focused", "assistant", "worker"]
 
-    static func scopes(_ scopes: Set<String>) -> String {
-        scopeOrder.filter { scopes.contains($0.key) }.map(\.title).joined(separator: ", ")
+    static func scopeOrder(_ companion: CompanionSubject) -> [(key: String, title: String)] {
+        [("focused", "Focused chats"), ("assistant", companion.leading), ("worker", "Background work")]
+    }
+
+    static func scopes(_ scopes: Set<String>) -> CompanionLine {
+        let titles = scopeOrder(CompanionSubject(nil)).filter { scopes.contains($0.key) }
+            .map { (scope: (key: String, title: String)) -> String in scope.key == "assistant" ? CompanionSentence.placeholder : scope.title }
+        let text = titles.joined(separator: ", ")
+        return scopes.contains("assistant") ? .named(text) : .literal(text)
     }
 
     static func authentication(_ authentication: NativeMCPServerConfiguration.Authentication) -> String {
@@ -302,7 +307,7 @@ private struct IntegrationsDestination: View {
                 VStack(alignment: .leading, spacing: 6) {
                     IntegrationsSecureField(placeholder: "Temporary access token", text: Binding(
                         get: { temporaryTokens[server.id] ?? "" }, set: { temporaryTokens[server.id] = $0 }))
-                    Text("Used only for this connection. Forgotten on disconnect or after one hour. Enter it again after reopening Vera.")
+                    Text("Used only for this connection. Forgotten on disconnect or after one hour. Enter it again after reopening Tandem.")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -317,7 +322,7 @@ private struct IntegrationsDestination: View {
                 }
             }
             IntegrationsSection(title: "Available in") {
-                Text(IntegrationsText.scopes(configuration.scopes)).font(.system(size: 13))
+                CompanionLineText(line: IntegrationsText.scopes(configuration.scopes)).font(.system(size: 13))
             }
             if let consentError {
                 IntegrationsNotice(text: consentError)
@@ -335,7 +340,7 @@ private struct IntegrationsDestination: View {
             if let source = configuration.sourceURL {
                 IntegrationsLink(title: "Publisher's page", url: source)
             }
-            Text("Only reads you approve are available, and a service cannot grant itself more. Connections end when Vera quits.")
+            Text("Only reads you approve are available, and a service cannot give itself more. Connections end when Tandem quits.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -494,7 +499,7 @@ struct IntegrationsInstallSheet: View {
         let row = catalogue.configurationRow(
             for: entry,
             readTools: entry.readTools.filter { reads.contains($0) },
-            scopes: IntegrationsText.scopeOrder.map(\.key).filter { scopes.contains($0) })
+            scopes: IntegrationsText.scopeKeys.filter { scopes.contains($0) })
         do {
             try config.addNativeMCPServer(row)
             onInstalled(((row["id"] as? String) ?? "").lowercased())
@@ -615,7 +620,7 @@ struct IntegrationsManageSheet: View {
         row["read_tools"] = reads.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
-        row["scopes"] = IntegrationsText.scopeOrder.map(\.key).filter { scopes.contains($0) }
+        row["scopes"] = IntegrationsText.scopeKeys.filter { scopes.contains($0) }
         row["timeout_seconds"] = seconds
         if authentication == .oauth && !hasSignInDetails {
             error = IntegrationsText.accountSignInNote
@@ -643,11 +648,12 @@ struct IntegrationsManageSheet: View {
 }
 
 private struct IntegrationsScopeToggles: View {
+    @EnvironmentObject var store: ChatStore
     @Binding var scopes: Set<String>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(IntegrationsText.scopeOrder, id: \.key) { scope in
+            ForEach(IntegrationsText.scopeOrder(store.companion), id: \.key) { scope in
                 Toggle(scope.title, isOn: Binding(get: { scopes.contains(scope.key) }, set: {
                     if $0 { scopes.insert(scope.key) } else { scopes.remove(scope.key) }
                 }))

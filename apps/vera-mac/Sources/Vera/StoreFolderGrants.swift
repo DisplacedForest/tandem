@@ -79,7 +79,7 @@ extension ChatStore {
     var folderToolsSupported: Bool { activeCapabilityResolution?.profile.supportsTools ?? false }
 
     var folderToolsUnsupportedReason: String? {
-        guard let resolution = activeCapabilityResolution else { return "No model is set up, so a granted folder couldn't be used yet." }
+        guard let resolution = activeCapabilityResolution else { return "No model is set up, so a shared folder couldn't be used yet." }
         guard !resolution.profile.supportsTools else { return nil }
         let model = currentNativeConfig?.model ?? "This model"
         return "\(model) can't call tools, so it can't read or change files. Pick a model with tool calling in Settings, Model, or adjust this model's capabilities there."
@@ -111,8 +111,8 @@ extension ChatStore {
         let declines = turnDeclineSource
         let turnID = turn.id
         let scope = Self.scopedBlockID("", turn: turn)
-        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
-        let closures = Self.commandLive(rules, store: records, conversationID: conversationID, requestText: text)
+        let typed = typedWords(for: turn)
+        let closures = Self.commandLive(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed)
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: scope + $0) }, record: record,
                                               live: closures.live, liveTargets: closures.liveTargets,
@@ -121,35 +121,35 @@ extension ChatStore {
     }
 
     nonisolated static func commandDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
-                                            requestText: String, command: String, action: NativeActionClass,
+                                            requestText: String, typed: NativeTypedWords = .none, command: String, action: NativeActionClass,
                                             subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
-        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, subjects: subjects)
+        let resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeCommandTools.toolID, subjects: subjects)
         let honoring = store != nil && resolver.durable
-        let decided = action == .commands ? resolver.decide(forCommand: command, honoringLimitedUse: honoring)
-            : resolver.decide(for: action, honoringLimitedUse: honoring)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+        let decided = resolver.judge(action, command: action == .commands ? command : nil, honoringLimitedUse: honoring)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
-    nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String)
+    nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String,
+                                        typed: NativeTypedWords = .none)
         -> (live: @Sendable (String, NativeActionClass) -> NativeRuleDecision?,
             liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?) {
         let live: @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { command, action in
-            let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, targets: [])
+            let resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeCommandTools.toolID, targets: [])
             return action == .commands ? resolver.decision(forCommand: command) : resolver.decision(for: action)
         }
         let liveTargets: @Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict? = { command, action, subjects in
-            commandDecision(rules, store: store, conversationID: conversationID, requestText: requestText,
+            commandDecision(rules, store: store, conversationID: conversationID, requestText: requestText, typed: typed,
                             command: command, action: action, subjects: subjects)
         }
         return (live, liveTargets)
     }
 
     nonisolated static func toolDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
-                                         requestText: String, toolID: String, action: NativeActionClass,
+                                         requestText: String, typed: NativeTypedWords = .none, toolID: String, action: NativeActionClass,
                                          subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
-        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(toolID, subjects: subjects)
-        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+        let resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(toolID, subjects: subjects)
+        let decided = resolver.judge(action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
     nonisolated static func followsRules(_ definition: NativeToolDefinition) -> Bool {
@@ -157,13 +157,15 @@ extension ChatStore {
     }
 
     nonisolated static func ruled(_ definition: NativeToolDefinition, rules: NativeRuleSource, store: NativeRuleRecordStore?,
-                                  conversationID: String, requestText: String) -> NativeToolDefinition {
+                                  conversationID: String, requestText: String, typed: NativeTypedWords = .none) -> NativeToolDefinition {
         guard followsRules(definition) else { return definition }
         let original = definition
         let decide: @Sendable ([String: NativeJSONValue]) -> (NativeActionClass, NativeRuleVerdict) = { arguments in
             let action = original.actionClass(for: arguments) ?? .otherChanges
-            return (action, toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, toolID: original.id,
-                                         action: action, subjects: original.ruleSubjects?(arguments) ?? []))
+            var verdict = toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, typed: typed, toolID: original.id,
+                                       action: action, subjects: original.ruleSubjects?(arguments) ?? [])
+            if case .act = verdict.decision, original.demandsConfirmation { verdict.why = NativeRuleWhy.tool(action) }
+            return (action, verdict)
         }
         var wrapped = definition
         wrapped.governed = true
@@ -188,17 +190,18 @@ extension ChatStore {
     }
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
-                                           requestText: String, action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
-        let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, subjects: subjects)
-        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+                                           requestText: String, typed: NativeTypedWords = .none, action: NativeActionClass,
+                                           subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+        let resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeFolderTools.toolID, subjects: subjects)
+        let decided = resolver.judge(action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
     nonisolated static func verdict(_ decision: NativeRuleDecision, authorizing: [String], resolver: NativeRuleResolver,
-                                    rules: NativeRuleSource, store: NativeRuleRecordStore?) -> NativeRuleVerdict {
-        guard case .act = decision, resolver.durable, let store else { return NativeRuleVerdict(decision) }
+                                    rules: NativeRuleSource, store: NativeRuleRecordStore?, why: NativeRuleWhy? = nil) -> NativeRuleVerdict {
+        guard case .act = decision, resolver.durable, let store else { return NativeRuleVerdict(decision, why: why) }
         let revision = resolver.revision
-        return NativeRuleVerdict(decision, confirm: {
+        return NativeRuleVerdict(decision, why: why, confirm: {
             let confirmed = (try? store.confirm(revision: revision, authorizing: authorizing)) == .authorized
             if confirmed, !authorizing.isEmpty { reloadRules(rules, from: store) }
             return confirmed
@@ -243,11 +246,27 @@ extension ChatStore {
         conversations.first(where: { $0.id == conversationID })?.rules ?? NativeConversationRules()
     }
 
-    func ruleResolver(for conversationID: String, requestText: String) -> NativeRuleResolver {
+    func ruleResolver(for conversationID: String, requestText: String, typed: NativeTypedWords = .none) -> NativeRuleResolver {
         let projectID = conversations.first(where: { $0.id == conversationID })?.projectID
-        return NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText,
-                                  records: nativeRuleSource.currentRecords,
-                                  context: NativeRuleContext(conversationID: conversationID, projectID: projectID))
+        var resolver = NativeRuleResolver(global: nativeRules, conversation: conversationRules(for: conversationID), requestText: requestText,
+                                          records: nativeRuleSource.currentRecords,
+                                          context: NativeRuleContext(conversationID: conversationID, projectID: projectID))
+        resolver.typed = typed
+        return resolver
+    }
+
+    func typedWords(for turn: NativeConversationTurn) -> NativeTypedWords {
+        guard turn.companionEvent == nil else { return .none }
+        var marked = (try? turnRepository?.typedMessageIDs(conversationID: turn.conversationID)) ?? []
+        if turn.preferenceEligible == true { marked.insert(turn.userMessageID) }
+        return Self.typedWords(history: turn.history, current: turn.userMessageID, marked: marked)
+    }
+
+    nonisolated static func typedWords(history: [NativeTurnHistoryMessage], current: UUID, marked: Set<UUID>) -> NativeTypedWords {
+        let end = history.firstIndex { $0.id == current } ?? history.count
+        let earlier = history[..<end].filter { $0.role == "user" && marked.contains($0.id) }.map(\.text)
+        let own = end < history.count && marked.contains(current) ? history[end].text : nil
+        return NativeTypedWords(typed: own, earlier: earlier)
     }
 
     func syncRuleSource() {
@@ -259,6 +278,14 @@ extension ChatStore {
         guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].rules.tighten(choice, for: action, global: nativeRules)
         persistRules(index)
+        announceRuleChange()
+    }
+
+    func clearConversationRule(for action: NativeActionClass, conversationID: String) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].rules.choices[action] != nil else { return }
+        conversations[index].rules.choices[action] = nil
+        persistRules(index)
+        announceRuleChange()
     }
 
     private func persistRules(_ index: Int) {
@@ -275,7 +302,7 @@ extension ChatStore {
     func grantFolder(_ url: URL) {
         if selectedID == nil || !conversations.contains(where: { $0.id == selectedID }) { newConversation() }
         guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else {
-            grantError = "Open a chat first, then grant the folder."
+            grantError = "Open a chat first, then share the folder."
             return
         }
         grantError = nil
@@ -286,7 +313,7 @@ extension ChatStore {
         }
         if conversations[index].grants.contains(where: { $0.path == grant.path }) { return }
         if let inside = conversations[index].grants.first(where: { NativeFolderAccess.contains(root: $0.path, path: grant.path) }) {
-            grantError = "\(grant.name) is already inside the granted folder \(inside.name)."
+            grantError = "\(grant.name) is already inside the shared folder \(inside.name)."
             return
         }
         conversations[index].grants.removeAll { NativeFolderAccess.contains(root: grant.path, path: $0.path) }
@@ -309,7 +336,7 @@ extension ChatStore {
             conversations[index].isPersisted = true
             try repository.saveConversation(conversations[index])
         } catch {
-            grantError = "The folder grant couldn't be saved: \(error.localizedDescription)"
+            grantError = "The shared folder couldn't be saved: \(error.localizedDescription)"
         }
     }
 

@@ -35,6 +35,16 @@ struct CompanionAppearanceDraft: Equatable {
     }
 }
 
+struct CompanionDraftEnvironment: ViewModifier {
+    let draft: CompanionAppearanceDraft
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.companionName, draft.subject.name)
+            .environment(\.companionAppearance, draft.appearance)
+    }
+}
+
 struct CompanionAppearancePicker: View {
     @ObservedObject var config: ConfigStore
     private let store: any CompanionAppearanceStore
@@ -89,9 +99,10 @@ struct CompanionAppearancePicker: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Customize \(draft.subject.inline)")
+            CompanionNamedText(template: "Customize {name}")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+                .modifier(CompanionDraftEnvironment(draft: draft))
             VStack(alignment: .leading, spacing: 8) {
                 label("Name")
                 if renderSafe {
@@ -130,9 +141,10 @@ struct CompanionAppearancePicker: View {
             Spacer(minLength: 0)
             CompanionAvatarView(appearance: draft.appearance, state: .ready, size: 160, name: draft.subject.name,
                                 renderSafe: renderSafe)
-            Text(draft.subject.leading)
+            CompanionNamedText(template: CompanionSentence.placeholder)
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+                .modifier(CompanionDraftEnvironment(draft: draft))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .padding(.horizontal, 16)

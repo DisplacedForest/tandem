@@ -770,13 +770,37 @@ final class ConfigStore: ObservableObject {
             set: { value in self.applyMemorySetting(to: store) { $0[keyPath: keyPath] = value } })
     }
 
-    func applyRule(_ choice: NativeRuleChoice, for action: NativeActionClass, store: ChatStore) {
+    @discardableResult
+    func applyRule(_ choice: NativeRuleChoice, for action: NativeActionClass, store: ChatStore) -> Bool {
+        changeRules(store: store) { $0.set(choice, for: action) }
+    }
+
+    func letThrough(_ item: NativeFloorItem, store: ChatStore) {
+        guard item.isLiftable, !nativeSettings.rules.isLifted(item) else { return }
+        changeRules(store: store) { $0.lift(item) }
+    }
+
+    func leaveToMe(_ item: NativeFloorItem, store: ChatStore) {
+        guard nativeSettings.rules.isLifted(item) else { return }
+        changeRules(store: store) { $0.restore(item) }
+    }
+
+    func setChoice(_ choice: NativeRuleChoice, for item: NativeFloorItem, store: ChatStore) {
+        guard let action = item.actionClass, nativeSettings.rules.isLifted(item) else { return }
+        guard choice != .handOff else { leaveToMe(item, store: store); return }
+        guard nativeSettings.rules.choice(for: action) != choice else { return }
+        changeRules(store: store) { $0.set(choice, for: action) }
+    }
+
+    @discardableResult
+    private func changeRules(store: ChatStore, _ update: (inout NativeRules) -> Void) -> Bool {
         var settings = nativeSettings
-        settings.rules.set(choice, for: action)
+        update(&settings.rules)
         nativeSettings = settings
         let saved = (try? save()) != nil
         store.updateNativeRules(settings.rules)
         store.rulesNotice = saved ? nil : "This change applies now, but it couldn't be saved for the next launch."
+        return saved
     }
 
     func applyMemorySetting(to store: ChatStore, _ update: (inout NativeMemorySettings) -> Void) {
