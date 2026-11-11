@@ -166,7 +166,7 @@ extension ChatStore {
             let host = URL(string: declaration.endpoint)?.host ?? ""
             let spoken = declaration.name.replacingOccurrences(of: "_", with: " ")
             entries.removeAll { $0.id == declaration.id }
-            entries.append((id: declaration.id, title: declaration.title, hints: [host, spoken, declaration.endpoint].filter { !$0.isEmpty }))
+            entries.append((id: declaration.id, title: declaration.title, hints: [host, spoken].filter { !$0.isEmpty }))
         }
         places.tools = RuleRows.toolNames(entries)
         for record in records where !places.contains(record.scope) && ruleScopeExists(record.scope) != false {

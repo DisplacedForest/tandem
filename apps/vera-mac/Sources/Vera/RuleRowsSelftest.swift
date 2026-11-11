@@ -65,6 +65,10 @@ extension SelfTest {
                                            (id: "b", title: "mail", hints: ["mail.example", "archive mail"])])
         try require(sameHost["a"] != sameHost["b"] && sameHost["a"] == "Mail (mail.example, send mail)",
                     "Two tools with the same title on the same server are told apart by their own names")
+        let bare = RuleRows.toolNames([(id: "a", title: "Mail", hints: []), (id: "b", title: "Mail", hints: ["mail.example"]),
+                                       (id: "c", title: "Mail", hints: ["mail.example"])])
+        try require(Set(bare.values).count == 3 && bare["a"] == "Mail (1)" && RuleRows.toolNames([]).isEmpty,
+                    "Tools that can't be told apart by anything they declare are numbered, and nothing crashes on an empty list")
         let twinA = record(action: .networkSends, tool: "a", target: workshop, statement: "x")
         let twinB = record(action: .networkSends, tool: "b", target: workshop, statement: "x")
         try require(RuleRows.sentence(twinA, tools: twins) != RuleRows.sentence(twinB, tools: twins),

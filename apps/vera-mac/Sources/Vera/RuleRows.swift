@@ -92,13 +92,15 @@ enum RuleRows {
                 if let only = group.first { names[only.id] = plain(only.title) }
                 continue
             }
-            for depth in 0..<3 {
-                let labels = group.map { entry in plain(entry.hints.prefix(depth + 1).joined(separator: ", ")) }
-                guard Set(labels.map { $0.lowercased() }).count == group.count || depth == 2 else { continue }
-                for (entry, label) in zip(group, labels) {
-                    names[entry.id] = label.isEmpty ? plain(entry.title) : "\(plain(entry.title)) (\(label))"
-                }
-                break
+            let ordered = group.sorted { $0.id < $1.id }
+            var labels: [String] = []
+            for depth in 1...2 {
+                labels = ordered.map { entry in plain(entry.hints.prefix(depth).joined(separator: ", ")) }
+                if Set(labels.map { $0.lowercased() }).count == ordered.count, !labels.contains("") { break }
+                labels = []
+            }
+            for (index, entry) in ordered.enumerated() {
+                names[entry.id] = "\(plain(entry.title)) (\(labels.isEmpty ? String(index + 1) : labels[index]))"
             }
         }
         return names
