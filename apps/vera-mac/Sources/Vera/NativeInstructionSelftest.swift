@@ -120,6 +120,12 @@ extension SelfTest {
                         && command("Run make pdf.", runs: "make pdf") && command("Run `make pdf`.", runs: "make pdf"),
                     "A full stop that ends the message is not part of the path or command")
         let loose = try target(.folder, "/shared/notes.txt")
+        for typed in ["Delete notes.txt and backupⓐ", "Delete notes.txt and backup!", "please,please delete notes.txt",
+                      "Delete notes.txt and backup.", "Please, please delete notes.txt"] {
+            try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed), claim: trashClaim,
+                                 targets: [loose], tool: "move_to_trash").decision(for: .trash) == .ask,
+                        "Symbols, an unmatched closing mark or commas between opening words ask: \(typed)")
+        }
         for typed in ["Delete /shared/prefix:notes.txt", "Delete x,notes.txt", "Delete my-notes.txt", "Delete ~notes.txt", "Delete other/notes.txt",
                       "Delete /shared/archive(notes.txt)", "Delete /shared/archive(/shared/notes.txt)", "Delete `` /shared/notes.txt` ``",
                       "Delete (notes.txt)", "Delete `notes.txt`x", "Delete `/shared/notes.txt,`", "Delete `, notes.txt`", "Delete `old notes.txt`", "Delete `x/notes.txt`", "Delete notes.txt and `other.txt`", "Delete `notes.txt.`", "Delete `notes.txt;` now", "Delete x`notes.txt`", "Delete ``notes.txt``", "Delete `notes.txt` and `other.txt`"] {
@@ -211,8 +217,8 @@ extension SelfTest {
                         "More than one closing mark at the end is not sentence punctuation: \(typed)")
         }
         try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt now."), claim: trashClaim, targets: [loose])
-                        .decision(for: .trash) == .act(.instruction),
-                    "One closing full stop is sentence punctuation")
+                        .decision(for: .trash) == .ask,
+                    "A closing full stop after an ordinary word asks")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
@@ -222,6 +228,7 @@ extension SelfTest {
                                     targets: [try target(.folder, "/shared/notes.md")]).decision(for: .fileEdits) == .act(.instruction)
                         && resolver(typed: NativeTypedWords(typed: "Send the notes to ana@example.com"), targets: [try target(.recipient, "ana@example.com")])
                             .decision(for: .networkSends) == .act(.instruction)
+                        && command("Run `make pdf`", runs: "make pdf")
                         && resolver(typed: NativeTypedWords(typed: "Summarise the thread and send it to ana@example.com"),
                                     targets: [try target(.recipient, "ana@example.com")]).decision(for: .networkSends) == .ask,
                     "The examples in the setup guide behave as it says")
@@ -246,7 +253,10 @@ extension SelfTest {
         }
         let posting = resolver(rules(.ask, for: .otherChanges), typed: NativeTypedWords(typed: "Post the notes."),
                                claim: NativeInstructionClaim(verbs: ["post"], nothing: true), targets: [])
-        try require(posting.decision(for: .otherChanges) == .act(.instruction),
+        try require(posting.decision(for: .otherChanges) == .ask,
+                    "A closing full stop without a named target asks")
+        try require(resolver(rules(.ask, for: .otherChanges), typed: NativeTypedWords(typed: "Post the notes"),
+                             claim: NativeInstructionClaim(verbs: ["post"], nothing: true), targets: []).decision(for: .otherChanges) == .act(.instruction),
                     "A tool that always goes to the same place runs once when the person typed the action")
 
         try require(resolver(rules(.handOff), typed: typedTold, targets: [ana]).decision(for: .networkSends) == .handOff,
@@ -264,7 +274,9 @@ extension SelfTest {
                     "Payments that aren't turned on stay with the person")
         var opened = NativeRules.defaults
         opened.lift(.payments, choice: .ask)
-        try require(resolver(opened, typed: payTyped, claim: payClaim, targets: []).decision(for: payments) == .act(.instruction),
+        try require(resolver(opened, typed: payTyped, claim: payClaim, targets: []).decision(for: payments) == .ask,
+                    "A payment instruction with an unmatched closing full stop asks")
+        try require(resolver(opened, typed: NativeTypedWords(typed: "Pay the invoice"), claim: payClaim, targets: []).decision(for: payments) == .act(.instruction),
                     "Once payments are turned on and set to ask, the typed instruction runs once")
         var broken = resolver(typed: typedTold, targets: [ana])
         broken.failed = true

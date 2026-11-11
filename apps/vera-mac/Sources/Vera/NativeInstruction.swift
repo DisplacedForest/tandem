@@ -47,16 +47,15 @@ enum NativeInstruction {
         let lowered = sentence.lowercased()
         guard lowered.count == sentence.count else { return nil }
         var offset = 0
+        var comma = false
         while true {
             let current = String(lowered.dropFirst(offset))
             if let verb = verbs.first(where: { current == $0 || current.hasPrefix($0 + " ") }) {
                 return String(sentence.dropFirst(offset + verb.count)).trimmingCharacters(in: .whitespaces)
             }
-            guard let opener = NativeRequestPreapproval.openers.first(where: { current.hasPrefix($0 + " ") || current.hasPrefix($0 + ",") }) else { return nil }
-            var next = offset + opener.count
-            let characters = Array(lowered)
-            while next < characters.count, characters[next].isWhitespace || characters[next] == "," { next += 1 }
-            offset = next
+            guard !comma, let opener = NativeRequestPreapproval.openers.first(where: { current.hasPrefix($0 + " ") || current.hasPrefix($0 + ", ") }) else { return nil }
+            comma = current.hasPrefix(opener + ", ")
+            offset += opener.count + (comma ? 2 : 1)
         }
     }
 
@@ -163,15 +162,19 @@ enum NativeInstruction {
             let upper = message.distance(from: message.startIndex, to: cut.upperBound)
             for index in lower..<upper { remainder[index] = " " }
         }
+        if let last = remainder.last, ".!".contains(last) {
+            guard cuts.contains(where: { $0.upperBound == message.index(before: message.endIndex) }) else { return false }
+            remainder[remainder.count - 1] = " "
+        }
         guard alone(Array(remainder.suffix(tail.count))) else { return false }
         return NativeRequestPreapproval.settled(String(remainder).lowercased(), original: NativeRequestPreapproval.normalized(message))
     }
 
     static func alone(_ remainder: [Character]) -> Bool {
-        var body = remainder
-        while let last = body.last, last.isWhitespace { body.removeLast() }
-        if let last = body.last, ".!".contains(last) { body.removeLast() }
-        return body.allSatisfy { $0.isLetter || $0 == " " || $0 == "'" }
+        remainder.allSatisfy {
+            guard let value = $0.asciiValue else { return false }
+            return (65...90).contains(value) || (97...122).contains(value) || $0 == " " || $0 == "'"
+        }
     }
 
     static func signature(action: NativeActionClass, toolID: String?, targets: [NativeRuleTarget], names: [String]) -> String {
