@@ -186,8 +186,8 @@ enum CompanionLine: Equatable, Sendable {
 enum CompanionSavedText {
     static let questionLead = CompanionSentence.placeholder + " wants to "
 
-    static func question(_ saved: String) -> CompanionLine {
-        guard saved.hasPrefix(questionLead) else { return .literal(saved) }
+    static func question(_ saved: String, companionWork: Bool) -> CompanionLine {
+        guard companionWork, saved.hasPrefix(questionLead) else { return .literal(saved) }
         return .parts([.name, .text(String(saved.dropFirst(CompanionSentence.placeholder.count)))])
     }
 }

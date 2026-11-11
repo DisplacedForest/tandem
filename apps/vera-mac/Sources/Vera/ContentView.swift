@@ -1045,6 +1045,12 @@ struct NativeToolConfirmationBar: View {
         NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
+    static func closingLine(for request: NativeToolConfirmationRequest, actor: String) -> CompanionLine? {
+        guard let closing = closing(for: request) else { return nil }
+        let line = CompanionLine.named(closing)
+        return actor == CompanionSentence.placeholder ? line : .literal(line.plain(name: nil))
+    }
+
     static func sentenceLine(for request: NativeToolConfirmationRequest, prompt: String?, actor: String) -> CompanionLine {
         if let first = prompt?.components(separatedBy: "\n").first { return .literal(first) }
         let rest = sentence(for: request, actor: "")
@@ -1097,8 +1103,8 @@ struct NativeToolConfirmationBar: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(block)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                if prompt == nil, let closing = Self.closing(for: request) {
-                                    CompanionNamedText(template: closing)
+                                if prompt == nil, let closing = Self.closingLine(for: request, actor: actor) {
+                                    CompanionLineText(line: closing)
                                 }
                             }
                             .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)

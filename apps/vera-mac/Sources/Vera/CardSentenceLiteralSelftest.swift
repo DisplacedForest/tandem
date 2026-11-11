@@ -173,7 +173,7 @@ extension SelfTest {
         try require(twoLines == .literal("First \(placeholder)") && nameParts(twoLines) == 0, "Only the first prompt line shows, verbatim")
 
         let savedCommand = "\(placeholder) wants to do this: Run a command: echo \(placeholder) {Name}."
-        let savedLine = CompanionSavedText.question(savedCommand)
+        let savedLine = CompanionSavedText.question(savedCommand, companionWork: true)
         try require(savedLine.parts == [.name, .text(" wants to do this: Run a command: echo \(placeholder) {Name}.")],
                     "A saved question has one leading name part and a verbatim tail")
         try require(savedLine.plain(name: "Ada") == "Ada wants to do this: Run a command: echo \(placeholder) {Name}."
@@ -181,7 +181,7 @@ extension SelfTest {
                     "The second token in a saved question survives")
         for text in hostile {
             let tail = " wants to open \(text)."
-            let line = CompanionSavedText.question(placeholder + tail)
+            let line = CompanionSavedText.question(placeholder + tail, companionWork: true)
             try require(line.parts == [.name, .text(tail)] && insideText(line, text), "A saved question keeps \(text) in its tail")
             for name in names {
                 try require(line.plain(name: name) == subject(name) + tail, "A saved question reads \(text) unchanged for \(name ?? "no name")")
@@ -201,7 +201,7 @@ extension SelfTest {
             "\u{E000}companion\u{E001} wants to run this.",
         ]
         for text in literalSaved {
-            let line = CompanionSavedText.question(text)
+            let line = CompanionSavedText.question(text, companionWork: true)
             try require(line == .literal(text) && nameParts(line) == 0 && line.parts == [.text(text)],
                         "Saved text that is not a question stays literal: \(text)")
             for name in names {
@@ -209,7 +209,7 @@ extension SelfTest {
             }
         }
         let oldRow = "\(placeholder) wants to create a folder in b."
-        let oldLine = CompanionSavedText.question(oldRow)
+        let oldLine = CompanionSavedText.question(oldRow, companionWork: true)
         try require(oldLine.plain(name: "Ada") == "Ada wants to create a folder in b."
                     && oldLine.plain(name: nil) == "Your companion wants to create a folder in b."
                     && oldLine.plain(name: "Ada") == CompanionSentence.plain(oldRow, name: "Ada")
@@ -218,72 +218,119 @@ extension SelfTest {
 
         let hostileQuestion = "\(placeholder) wants to send a message to \(joined)."
         let hostileTail = " wants to send a message to \(joined)."
-        let asking = NativeTaskCardPresentation(id: "t", title: "Work", status: .needsInput, milestone: hostileQuestion, workerType: "companion")
-        try require(asking.milestoneLine.parts == [.name, .text(hostileTail)] && insideText(asking.milestoneLine, placeholder),
-                    "A task card that needs an answer shows the saved question with its tail verbatim")
-        for name in names {
-            try require(asking.milestoneLine.plain(name: name) == subject(name) + hostileTail, "The task question tail reads unchanged for \(name ?? "no name")")
-        }
-        let others: [NativeTaskCardPresentation.Status] = [.preparing, .queued, .working, .stopping, .stopped, .completed, .failed]
-        for status in others {
-            var card = asking
-            card.status = status
-            try require(card.milestoneLine == .literal(hostileQuestion) && nameParts(card.milestoneLine) == 0,
-                        "A task card milestone outside a question is all literal: \(status.rawValue)")
+        for text in [hostileQuestion, "\(placeholder) wants to remain literal.", oldRow, savedCommand] {
+            let line = CompanionSavedText.question(text, companionWork: false)
+            try require(line == .literal(text) && nameParts(line) == 0 && line.parts == [.text(text)],
+                        "Saved text outside companion work stays literal: \(text)")
             for name in names {
-                try require(card.milestoneLine.plain(name: name) == hostileQuestion, "A literal milestone reads unchanged: \(status.rawValue)")
+                try require(line.plain(name: name) == text, "Saved text outside companion work reads unchanged for \(name ?? "no name"): \(text)")
             }
         }
-
         for name in names {
-            let read = CompanionSavedText.question(hostileQuestion).plain(name: name)
+            let read = CompanionSavedText.question(hostileQuestion, companionWork: true).plain(name: name)
             try require(read == subject(name) + hostileTail, "The saved-question reader keeps the hostile tail for \(name ?? "no name")")
+        }
+
+        let statuses: [NativeTaskCardPresentation.Status] = [.preparing, .queued, .working, .stopping, .stopped, .completed, .needsInput, .failed]
+        let cardWorkers: [String?] = ["companion", "research", "document", nil]
+        for worker in cardWorkers {
+            for status in statuses {
+                let card = NativeTaskCardPresentation(id: "t", title: "Work", status: status, milestone: hostileQuestion, workerType: worker)
+                let line = card.milestoneLine
+                if worker == "companion" && status == .needsInput {
+                    try require(line.parts == [.name, .text(hostileTail)] && insideText(line, placeholder),
+                                "A companion task card that needs an answer shows the saved question with its tail verbatim")
+                    for name in names {
+                        try require(line.plain(name: name) == subject(name) + hostileTail,
+                                    "The companion task question tail reads unchanged for \(name ?? "no name")")
+                    }
+                } else {
+                    try require(line == .literal(hostileQuestion) && nameParts(line) == 0,
+                                "A task card milestone is all literal for \(worker ?? "no worker type") \(status.rawValue)")
+                    for name in names {
+                        try require(line.plain(name: name) == hostileQuestion,
+                                    "A literal milestone reads unchanged for \(worker ?? "no worker type") \(status.rawValue) \(name ?? "no name")")
+                    }
+                }
+            }
         }
 
         let overview = ChatStore()
         let overviewConversation = Conversation(id: "card-literal-overview", title: "Card literal", messages: [], updatedAt: Date())
         overview.conversations.insert(overviewConversation, at: 0)
         overview.selectedID = overviewConversation.id
-        let decisionReference = try OngoingWorkFixture.reference(conversationID: overviewConversation.id, title: "Hostile question",
-                                                                 state: "needs_decision",
-                                                                 decision: ["id": "hostile", "prompt": hostileQuestion, "choices": ["retry"]])
-        overview.nativeTaskReferences = [decisionReference]
-        let decisionCard = try NativeTaskProjection.display(reference: decisionReference, snapshot: decisionReference.snapshot).card
-        try require(decisionCard.status == .needsInput && decisionCard.milestone == hostileQuestion, "The fixture task asks the hostile question")
-        let taskItem = CompanionOverviewModel.taskItem(card: decisionCard, reference: decisionReference, decision: nil, hasArtifact: false, date: Date())
-        overview.schedules = CompanionOverviewFixture.schedules()
-        let questionRun = NativeScheduleRun(id: "card-literal-question", scheduleID: "overview-morning", scheduledFor: Date(),
+        let decision: [String: Any] = ["id": "hostile", "prompt": hostileQuestion, "choices": ["retry"]]
+        let companionReference = try OngoingWorkFixture.reference(conversationID: overviewConversation.id, title: "Companion question",
+                                                                  workerType: "companion", state: "needs_decision", decision: decision)
+        let researchReference = try OngoingWorkFixture.reference(conversationID: overviewConversation.id, title: "Research question",
+                                                                 workerType: "research", state: "needs_decision", decision: decision)
+        overview.nativeTaskReferences = [companionReference, researchReference]
+        func taskItem(_ reference: NativeTaskReference, companion: Bool) throws -> CompanionActivityItem {
+            let card = try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card
+            try require(card.status == .needsInput && card.milestone == hostileQuestion && card.isCompanion == companion,
+                        "The fixture task asks the hostile question as \(companion ? "companion work" : "research")")
+            return CompanionOverviewModel.taskItem(card: card, reference: reference, decision: nil, hasArtifact: false, date: Date())
+        }
+        let companionTaskItem = try taskItem(companionReference, companion: true)
+        let researchTaskItem = try taskItem(researchReference, companion: false)
+        let fixtureSchedules = CompanionOverviewFixture.schedules()
+        try require(fixtureSchedules.map(\.workerType) == ["research", "document"], "The overview fixture schedules are research and a document")
+        let companionSchedule = try NativeSchedule(id: "card-literal-companion", owner: .dot, workerType: "companion", title: "Companion check",
+                                                   instruction: "Check the hostile folder.", cadence: .everyHours(6),
+                                                   timeZone: TimeZone(identifier: "UTC")!)
+        try require(companionSchedule.isCompanionWork && !fixtureSchedules.contains { (schedule: NativeSchedule) -> Bool in schedule.isCompanionWork },
+                    "Only the built schedule is companion work")
+        overview.schedules = fixtureSchedules + [companionSchedule]
+        let companionRun = NativeScheduleRun(id: "card-literal-companion-question", scheduleID: companionSchedule.id, scheduledFor: Date(),
+                                             outcome: .waiting, detail: hostileQuestion)
+        let researchRun = NativeScheduleRun(id: "card-literal-research-question", scheduleID: fixtureSchedules[0].id, scheduledFor: Date(),
                                             outcome: .waiting, detail: hostileQuestion)
-        let literalRun = NativeScheduleRun(id: "card-literal-error", scheduleID: "overview-morning", scheduledFor: Date(),
+        let documentRun = NativeScheduleRun(id: "card-literal-document-question", scheduleID: fixtureSchedules[1].id, scheduledFor: Date(),
+                                            outcome: .waiting, detail: hostileQuestion)
+        let literalRun = NativeScheduleRun(id: "card-literal-error", scheduleID: companionSchedule.id, scheduledFor: Date(),
                                            outcome: .failed, detail: "The model said \(joined) failed.")
-        overview.scheduleRuns = ["overview-morning": [questionRun, literalRun]]
-        let questionItem = CompanionOverviewModel.runItem(questionRun, schedule: overview.schedules[0])
-        let literalItem = CompanionOverviewModel.runItem(literalRun, schedule: overview.schedules[0])
+        overview.scheduleRuns = [companionSchedule.id: [companionRun, literalRun], fixtureSchedules[0].id: [researchRun],
+                                 fixtureSchedules[1].id: [documentRun]]
+        let companionRunItem = CompanionOverviewModel.runItem(companionRun, schedule: companionSchedule)
+        let researchRunItem = CompanionOverviewModel.runItem(researchRun, schedule: fixtureSchedules[0])
+        let documentRunItem = CompanionOverviewModel.runItem(documentRun, schedule: fixtureSchedules[1])
+        let literalRunItem = CompanionOverviewModel.runItem(literalRun, schedule: companionSchedule)
         for name in names {
             overview.adoptAssistantName(name)
-            try require(overview.companionActivityDetail(taskItem).outcome == subject(name) + hostileTail,
-                        "Companion activity detail for a task question keeps the hostile tail for \(name ?? "no name")")
-            try require(overview.companionActivityDetail(questionItem).outcome == subject(name) + hostileTail,
-                        "Companion activity detail for a scheduled question keeps the hostile tail for \(name ?? "no name")")
-            try require(overview.companionActivityDetail(literalItem).outcome == "The model said \(joined) failed.",
-                        "Companion activity detail for other saved text is unchanged for \(name ?? "no name")")
+            let label = name ?? "no name"
+            try require(overview.companionActivityDetail(companionTaskItem).outcome == subject(name) + hostileTail,
+                        "Activity detail for a companion task question fills the name and keeps the hostile tail for \(label)")
+            try require(overview.companionActivityDetail(researchTaskItem).outcome == hostileQuestion,
+                        "Activity detail for a research task question is the whole question unchanged for \(label)")
+            try require(overview.companionActivityDetail(companionRunItem).outcome == subject(name) + hostileTail,
+                        "Activity detail for a companion scheduled question fills the name and keeps the hostile tail for \(label)")
+            try require(overview.companionActivityDetail(researchRunItem).outcome == hostileQuestion
+                        && overview.companionActivityDetail(documentRunItem).outcome == hostileQuestion,
+                        "Activity detail for research and document scheduled questions is unchanged for \(label)")
+            try require(overview.companionActivityDetail(literalRunItem).outcome == "The model said \(joined) failed.",
+                        "Activity detail for other saved text is unchanged for \(label)")
         }
 
-        for name in names {
+        func checkIn(name: String?, workerType: String) throws -> String? {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let repository = try LocalChatRepository(url: directory.appendingPathComponent("chat.sqlite"))
             let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
             let origin = try NativeTaskFixture.origin(repository)
-            let taskRequest = try NativeResearchTaskRequest(objective: "Hostile check-in", deliverables: ["A short summary"])
+            let taskRequest = try NativeResearchTaskRequest(objective: "Hostile check-in",
+                                                            deliverables: workerType == "companion" ? [] : ["A short summary"],
+                                                            workerType: workerType)
             let reference = try repository.prepareTaskReference(origin: origin, engine: engine, request: taskRequest, profile: nil)
-            let waiting = try NativeTaskDisplayFixture.snapshot(reference, id: UUID().uuidString, state: "needs_decision",
-                                                                decision: ["id": "hostile", "prompt": hostileQuestion, "choices": ["retry"]])
+            var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: UUID().uuidString,
+                                                                                            state: "needs_decision"))) as? [String: Any] ?? [:]
+            object["worker_type"] = workerType
+            object["decision"] = decision
+            let waiting = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
             _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: waiting)
             _ = try repository.projectTask(id: reference.id, snapshot: waiting)
             let scheduleStore = NativeScheduleStore(database: repository.database)
-            var schedule = try NativeSchedule(owner: .conversation, workerType: "research", title: "Hostile check",
-                                              instruction: "Check the hostile folder.", cadence: .everyHours(6),
+            var schedule = try NativeSchedule(owner: workerType == "companion" ? .dot : .conversation, workerType: workerType,
+                                              title: "Hostile check", instruction: "Check the hostile folder.", cadence: .everyHours(6),
                                               timeZone: TimeZone(identifier: "UTC")!)
             schedule.advance(after: Date(), from: nil)
             try scheduleStore.save(schedule)
@@ -298,11 +345,64 @@ extension SelfTest {
             store.reloadSchedules()
             store.postScheduleCheckIns()
             let messages = try repository.messages(conversationID: origin.conversationID)
-            try require(messages.count == before + 1, "One scheduled check-in is posted for \(name ?? "no name")")
-            let expected = "The scheduled research \"Hostile check\" stopped to ask: " + subject(name) + hostileTail
-            try require(messages.last?.text == expected,
-                        "The scheduled check-in quotes the question with its hostile tail unchanged for \(name ?? "no name"): \(messages.last?.text ?? "")")
+            try require(messages.count == before + 1, "One scheduled check-in is posted for \(workerType) \(name ?? "no name")")
+            return messages.last?.text
         }
+        for name in names {
+            let label = name ?? "no name"
+            let research = try checkIn(name: name, workerType: "research")
+            try require(research == "The scheduled research \"Hostile check\" stopped to ask: " + hostileQuestion,
+                        "A research check-in quotes the whole question unchanged for \(label): \(research ?? "")")
+            let document = try checkIn(name: name, workerType: "document")
+            try require(document == "The scheduled document \"Hostile check\" stopped to ask: " + hostileQuestion,
+                        "A document check-in quotes the whole question unchanged for \(label): \(document ?? "")")
+            let companion = try checkIn(name: name, workerType: "companion")
+            try require(companion == "The scheduled research \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
+                        "A companion check-in fills the name and keeps the hostile tail for \(label): \(companion ?? "")")
+        }
+
+        func scheduleRequest(_ resultsTo: String) throws -> NativeToolConfirmationRequest {
+            let arguments: [String: Any] = ["title": "Daily check", "worker_type": "document", "instruction": "Write a short note about \(joined)",
+                                            "results_to": resultsTo, "repeat": "every_hours", "hours": 6]
+            let data = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
+            var built = NativeToolConfirmationRequest(activity: NativeToolActivity(
+                id: "schedule-\(resultsTo)", toolID: NativeScheduleTools.toolID, name: NativeScheduleTools.toolName, title: "Schedule work",
+                round: 1, request: String(decoding: data, as: UTF8.self), result: nil, state: .pending, confirmationRequired: true))
+            built.subject = NativeCardSubject(action: .otherChanges, toolID: NativeScheduleTools.toolID, toolTitle: "Schedule work",
+                                              phrase: NativeScheduleTools.wants)
+            return built
+        }
+        let toCompanion = try scheduleRequest("assistant")
+        try require(NativeScheduleTools.draft(inRequest: toCompanion.request)?.owner == .dot, "The schedule request sends results to the companion")
+        guard let companionClosing = NativeToolConfirmationBar.closingLine(for: toCompanion, actor: placeholder),
+              let ordinaryClosing = NativeToolConfirmationBar.closingLine(for: toCompanion, actor: "Tandem") else {
+            throw NativeTaskFixture.Failure.assertion("A schedule card has a closing line")
+        }
+        try require(nameParts(companionClosing) == 1 && companionClosing.plain(name: "Ada") == "Results go to Ada's thread."
+                    && companionClosing.plain(name: nil) == "Results go to your companion's thread.",
+                    "The companion conversation's schedule card names where results go")
+        try require(nameParts(ordinaryClosing) == 0 && ordinaryClosing == .literal("Results go to your companion's thread."),
+                    "An ordinary chat's schedule closing line is literal")
+        for name in names {
+            try require(ordinaryClosing.plain(name: name) == "Results go to your companion's thread." && !ordinaryClosing.plain(name: name).contains("Ada"),
+                        "An ordinary chat's schedule closing line never names the companion for \(name ?? "no name")")
+        }
+        let ownChat = try scheduleRequest("own_chat")
+        for actor in [placeholder, "Tandem"] {
+            guard let closing = NativeToolConfirmationBar.closingLine(for: ownChat, actor: actor) else {
+                throw NativeTaskFixture.Failure.assertion("A schedule card to its own chat has a closing line")
+            }
+            for name in names {
+                try require(nameParts(closing) == 0 && closing.plain(name: name) == "Results go to its own chat.",
+                            "Results to its own chat never name the companion for \(actor) \(name ?? "no name")")
+            }
+        }
+        let ordinarySentence = NativeToolConfirmationBar.sentenceLine(for: toCompanion, prompt: nil, actor: "Tandem")
+        let scheduleBlock = NativeToolConfirmationBar.literal(for: toCompanion) ?? ""
+        try require(nameParts(ordinarySentence) == 0 && scheduleBlock.contains("Daily check") && bytes(scheduleBlock, joined),
+                    "The ordinary chat schedule card keeps its block verbatim")
+        let wholeCard = [ordinarySentence.plain(name: "Ada"), scheduleBlock, ordinaryClosing.plain(name: "Ada")].joined(separator: "\n")
+        try require(!wholeCard.contains("Ada"), "The whole ordinary chat schedule card never shows the companion's name: \(wholeCard)")
 
         let manager = FileManager.default
         let base = manager.temporaryDirectory.appendingPathComponent("card-literal-\(UUID().uuidString)", isDirectory: true)
@@ -350,6 +450,6 @@ extension SelfTest {
         try require(ran.directory == shownLines[1] && ran.stdout == joined && ran.exitCode == 0,
                     "The command ran in the folder the card showed and printed the hostile text unchanged: \(ran.directory) \(ran.stdout)")
 
-        print("  card sentence literal OK (companion and ordinary chat cards, folder, send, command, tool title and phrase, literal blocks, profile prompt, saved questions, old rows, task milestones, activity detail, scheduled check-in, what runs is what was shown)")
+        print("  card sentence literal OK (companion and ordinary chat cards, folder, send, command, tool title and phrase, literal blocks, profile prompt, saved questions only in companion work, old rows, task milestones by worker type, activity detail for tasks and runs, scheduled check-ins for research, documents and companion work, schedule closing line, what runs is what was shown)")
     }
 }

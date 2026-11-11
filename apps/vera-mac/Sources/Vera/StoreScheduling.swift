@@ -75,7 +75,7 @@ extension ChatStore {
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.question(decision.prompt).plain(name: companionName))",
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.question(decision.prompt, companionWork: schedule.isCompanionWork).plain(name: companionName))",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,

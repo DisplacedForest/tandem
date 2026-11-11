@@ -259,6 +259,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
     var cadenceSummary: String { cadence.summary(timeZone: timeZone) }
     var isDocument: Bool { workerType == "document" }
+    var isCompanionWork: Bool { workerType == "companion" }
     var workTitle: String { isDocument ? "Document" : "Research" }
 
     func deliverables() -> [String] {
