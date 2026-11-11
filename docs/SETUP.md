@@ -443,6 +443,8 @@ Chats you've made stricter than your defaults show up in the same list. Removing
 
 Deleting a chat, project or schedule removes the rules that only applied there. Rules that apply everywhere stay, even when the chat you saved them from is gone.
 
+Below that, **Shared folders** lists every folder you've shared with a chat, with your companion's thread or with a project, and where it's shared. Sharing is what lets files there be edited and commands run there; the rules above decide whether you're asked first. **Stop sharing** takes a folder back from that one place right away. A folder shared in two places shows twice, so you can stop one and keep the other. The section only appears while something is shared.
+
 Each default's explanation sits behind the info button on its row. Editing files also covers saving images Tandem generates.
 
 #### Why something wasn't done
@@ -457,7 +459,7 @@ When an action is left to you or isn't run, the chat says why in one sentence. T
 - It reaches a path outside the folders shared with that chat. Share the folder to allow it.
 - It sends to an address you didn't type yourself, so it asks first.
 
-When a send is aimed at an address you didn't type yourself, for example one that came from a web page, a message or a tool's output, Tandem asks first even if **Send on your behalf** is set to run without asking. Allowing that address from the menu on the confirmation's Allow button stops it asking for that address. **Do it when I say go ahead** only counts words you typed in the message box, not a suggested option you clicked.
+When a send is aimed at an address you didn't type yourself, for example one that came from a web page, a message or a tool's output, Tandem asks first even if **Send on your behalf** is set to run without asking. Allowing that address from the menu on the confirmation's Allow button stops it asking for that address.
 
 Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. Nothing is ever changed from inside the chat. Work your companion does in the background stops at the same point and shows **Needs you** with the step it stopped at and the reason. The model is told the same reason, so what it says matches what you see.
 

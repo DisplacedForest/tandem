@@ -62,6 +62,8 @@ final class ConfigStore: ObservableObject {
     private var pendingCredentials: [String: String] = [:]
     private var legacyCredentials: [String: String] = [:]
     private var blockedLegacyMigrationID: String?
+    private var entryProfileID: String?
+    private var entryCredentialRemovalID: String?
 
     static let visionBridgeCredentialID = "vision-bridge"
     static let memoryCredentialID = "memory-endpoint"
@@ -265,6 +267,7 @@ final class ConfigStore: ObservableObject {
         if !unavailableCredentials.contains(id), value == (savedCredentials[id] ?? "") {
             pendingCredentials.removeValue(forKey: id)
         } else { pendingCredentials[id] = value }
+        if id == entryCredentialRemovalID { entryCredentialRemovalID = nil }
         legacyCredentials.removeValue(forKey: id)
         if id == blockedLegacyMigrationID { blockedLegacyMigrationID = nil }
     }
@@ -273,6 +276,12 @@ final class ConfigStore: ObservableObject {
 
     func save() throws {
         piCommitValid = false
+        if let id = entryCredentialRemovalID, untouchedEntryProfileID != id,
+           nativeSettings.profiles.contains(where: { $0.id == id }) {
+            if pendingCredentials[id] == "" { pendingCredentials.removeValue(forKey: id) }
+            entryCredentialRemovalID = nil
+        }
+        if let id = untouchedEntryProfileID { queueEntryCredentialRemoval(id) }
         let piCredentialsChanged = Set(pendingCredentials.keys).union(legacyCredentials.keys)
         do {
             if blockedLegacyMigrationID != nil { throw NativeCredentialError.read }
@@ -283,6 +292,7 @@ final class ConfigStore: ObservableObject {
                 piCredentialIdentities[id] = value.isEmpty ? nil : piHash(Data(value.utf8))
                 unavailableCredentials.remove(id)
                 pendingCredentials.removeValue(forKey: id)
+                if id == entryCredentialRemovalID { entryCredentialRemovalID = nil }
             }
             for id in legacyCredentials.keys.sorted() {
                 guard let value = legacyCredentials[id] else { continue }
@@ -296,7 +306,8 @@ final class ConfigStore: ObservableObject {
             credentialError = (error as? NativeCredentialError)?.localizedDescription ?? NativeCredentialError.write.localizedDescription
             throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
-        var merged = nativeSettings.merging(into: raw)
+        let persisted = settingsWithoutUntouchedEntryProfile
+        var merged = persisted.merging(into: raw)
         if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil,
            let snapshot = migratedMemoryEndpointSnapshot,
            nativeSettings.memoryEndpoint.baseURL == snapshot.baseURL,
@@ -310,7 +321,7 @@ final class ConfigStore: ObservableObject {
             migratedMemoryEndpointSnapshot = nil
         }
         var revisions = raw["pi_profile_revisions"] as? [String: String] ?? [:]
-        for profile in nativeSettings.profiles {
+        for profile in persisted.profiles {
             let previous = piCommittedSettings.profiles.first { $0.id == profile.id }
             if revisions[profile.id] == nil || previous?.baseURL != profile.baseURL || previous?.selectedModel != profile.selectedModel || piCredentialsChanged.contains(profile.id) || piCommittedCredentials[profile.id] != savedCredentials[profile.id] {
                 revisions[profile.id] = UUID().uuidString.lowercased()
@@ -318,7 +329,7 @@ final class ConfigStore: ObservableObject {
         }
         merged["pi_profile_revisions"] = revisions
         try writeConfiguration(merged)
-        piCommittedSettings = nativeSettings
+        piCommittedSettings = persisted
         piCommittedCredentials = savedCredentials
         piCommitValid = true
         raw = merged
@@ -603,6 +614,48 @@ final class ConfigStore: ObservableObject {
         nativeSettings = updated
     }
 
+    func addNativeProfileOnEntry() {
+        guard nativeSettings.profiles.isEmpty else { return }
+        addNativeProfile()
+        entryProfileID = nativeSettings.activeProfileID
+    }
+
+    private var untouchedEntryProfileID: String? {
+        guard let id = entryProfileID,
+              let profile = nativeSettings.profiles.first(where: { $0.id == id }),
+              profile.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              profile.name == NativeEndpointProfile.empty().name,
+              (nativeAPIKeys[id] ?? "").isEmpty else { return nil }
+        return id
+    }
+
+    private var settingsWithoutUntouchedEntryProfile: NativeChatSettings {
+        guard let id = untouchedEntryProfileID else { return nativeSettings }
+        var updated = nativeSettings
+        updated.profiles.removeAll { $0.id == id }
+        if updated.activeProfileID == id { updated.activeProfileID = updated.profiles.first?.id }
+        return updated
+    }
+
+    func discardUntouchedEntryProfile() {
+        guard let id = untouchedEntryProfileID else {
+            entryProfileID = nil
+            return
+        }
+        nativeSettings = settingsWithoutUntouchedEntryProfile
+        entryProfileID = nil
+        queueEntryCredentialRemoval(id)
+    }
+
+    private func queueEntryCredentialRemoval(_ id: String) {
+        if (savedCredentials[id] ?? "").isEmpty, !unavailableCredentials.contains(id) {
+            pendingCredentials.removeValue(forKey: id)
+        } else {
+            if pendingCredentials[id] == nil { entryCredentialRemovalID = id }
+            pendingCredentials[id] = ""
+        }
+    }
+
     func updateActiveNativeProfile(_ update: (inout NativeEndpointProfile) -> Void) {
         var updated = nativeSettings
         updated.updateActiveProfile(update)
@@ -825,6 +878,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func skipOnboarding() {
+        discardUntouchedEntryProfile()
         var updated = nativeSettings
         updated.onboardingState = .skipped
         nativeSettings = updated

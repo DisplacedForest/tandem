@@ -387,6 +387,7 @@ enum SelfTest {
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
         do { try runCompanionAttention() } catch { print("SELFTEST ERROR: companion attention \(error)"); exit(1) }
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
+        do { try runEndpointEditor() } catch { print("SELFTEST ERROR: endpoint editor \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
         do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
@@ -412,6 +413,8 @@ enum SelfTest {
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
         do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
+        do { try runSharedFolderRows() } catch { print("SELFTEST ERROR: shared folder rows \(error)"); exit(1) }
+        do { try runSharedFolderRowsStore() } catch { print("SELFTEST ERROR: shared folder rows store \(error)"); exit(1) }
         do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
         do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
