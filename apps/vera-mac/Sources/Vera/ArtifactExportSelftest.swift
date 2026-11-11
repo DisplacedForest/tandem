@@ -54,22 +54,27 @@ enum ArtifactExportSelftest {
         try bytes.write(to: source)
         let exporter = ArtifactExporter()
         func fileAttempt(_ source: URL, to destination: URL) -> ArtifactExportAttempt {
-            ArtifactExportAttempt(id: UUID(), title: title, source: .file(source), destination: destination)
+            ArtifactExportAttempt(id: UUID(), title: title, source: .image(source), destination: destination)
         }
         func expectFailure(_ notice: ArtifactExportNotice, _ problem: ArtifactExportProblem, _ what: String) throws {
             guard case .failed(let attempt, let found) = notice, found == problem else {
                 throw Failure(description: "\(what), got \(notice)")
             }
             try check(notice.message == ArtifactExportNotice.failed(attempt, problem).message
-                      && notice.message.hasPrefix("Couldn't save \"\(title)\". ")
+                      && notice.message.hasPrefix("Couldn't save this image. ") && !notice.message.contains(title)
                       && !notice.message.contains("/"), "\(what) reads only the plain message: \(notice.message)")
         }
 
         let fresh = saved.appendingPathComponent("Dusk.png")
         let freshAttempt = fileAttempt(source, to: fresh)
         let freshNotice = exporter.run(freshAttempt)
-        try check(freshNotice == .saved(id: freshAttempt.id, title: title, fileName: "Dusk.png"), "A copied image is saved, got \(freshNotice)")
-        try check(freshNotice.message == "Saved \"\(title)\" as \"Dusk.png\".", "A copy under another name names the image")
+        try check(freshNotice == .savedImage(id: freshAttempt.id, fileName: "Dusk.png"), "A copied image is saved, got \(freshNotice)")
+        try check(freshNotice.message == "Saved \"Dusk.png\"." && freshNotice.isSaved && !freshNotice.canChooseLocation,
+                  "A saved image says what it is called on disk")
+        let longName = String(repeating: "a", count: ArtifactExportNotice.imageNameLimit - 3) + ".png"
+        try check(ArtifactExportNotice.savedImage(id: UUID(), fileName: String(longName.dropFirst())).message == "Saved \"\(longName.dropFirst())\"."
+                  && ArtifactExportNotice.savedImage(id: UUID(), fileName: longName).message == "Saved this image.",
+                  "A file name too long for one line is left out")
         try check((try? Data(contentsOf: fresh)) == bytes, "The copy has the original bytes")
         try check((try? Data(contentsOf: source)) == bytes, "Copying leaves the original alone")
 
@@ -77,7 +82,7 @@ enum ArtifactExportSelftest {
         try Data("older picture".utf8).write(to: existing)
         let replaceAttempt = fileAttempt(source, to: existing)
         let replaced = exporter.run(replaceAttempt)
-        try check(replaced == .saved(id: replaceAttempt.id, title: title, fileName: title), "Saving over a file is saved, got \(replaced)")
+        try check(replaced == .savedImage(id: replaceAttempt.id, fileName: title), "Saving over a file is saved, got \(replaced)")
         try check(replaced.message == "Saved \"\(title)\".", "A copy under its own name says it once")
         try check((try? Data(contentsOf: existing)) == bytes, "Saving over a file replaces it with the original bytes")
         try check(try manager.contentsOfDirectory(atPath: saved.path).sorted() == ["Dusk.png", title].sorted(),
@@ -141,7 +146,7 @@ enum ArtifactExportSelftest {
         guard let lockedAttempt = sealedNotice.attempt else { throw Failure(description: "A refused save keeps its attempt") }
         chosen = saved.appendingPathComponent("Elsewhere.png")
         let elsewhere = flow.chooseAnother(lockedAttempt)
-        try check(elsewhere == .saved(id: lockedAttempt.id, title: title, fileName: "Elsewhere.png"), "Saving elsewhere copies the same image, got \(String(describing: elsewhere))")
+        try check(elsewhere == .savedImage(id: lockedAttempt.id, fileName: "Elsewhere.png"), "Saving elsewhere copies the same image, got \(String(describing: elsewhere))")
         try check(offered.last?.0 == "New.png" && samePath(offered.last?.1, sealedFolder), "Saving elsewhere opens at the refused folder with the same name")
         try check((try? Data(contentsOf: saved.appendingPathComponent("Elsewhere.png"))) == bytes, "The copy saved elsewhere has the original bytes")
         guard let strandedAttempt = strandedNotice.attempt else { throw Failure(description: "A stranded save keeps its attempt") }

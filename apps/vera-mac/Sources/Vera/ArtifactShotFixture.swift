@@ -118,11 +118,11 @@ enum ArtifactShotFixture {
         let notice: ArtifactExportNotice
         if variant == "chats-image-save-failed" {
             let attempt = ArtifactExportAttempt(
-                id: UUID(), title: attachment.name, source: .file(source),
+                id: UUID(), title: attachment.name, source: .image(source),
                 destination: directory.appendingPathComponent(attachment.name))
             notice = .failed(attempt, .notAllowed)
         } else {
-            notice = .saved(id: UUID(), title: attachment.name, fileName: attachment.name)
+            notice = .savedImage(id: UUID(), fileName: attachment.name)
         }
         return AnyView(GeneratedImageView(attachment: attachment, store: attachments, initialNotice: notice)
             .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))

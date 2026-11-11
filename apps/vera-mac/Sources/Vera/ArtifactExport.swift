@@ -13,7 +13,7 @@ enum ArtifactExportProblem: Error, Equatable, Sendable, CaseIterable {
 struct ArtifactExportAttempt: Equatable, Identifiable, Sendable {
     enum Source: Equatable, Sendable {
         case version(artifactID: String, ArtifactVersion)
-        case file(URL)
+        case image(URL)
     }
 
     let id: UUID
@@ -35,11 +35,15 @@ struct ArtifactExportAttempt: Equatable, Identifiable, Sendable {
 
 enum ArtifactExportNotice: Equatable, Identifiable {
     case saved(id: UUID, title: String, fileName: String)
+    case savedImage(id: UUID, fileName: String)
     case failed(ArtifactExportAttempt, ArtifactExportProblem)
+
+    static let imageNameLimit = 45
 
     var id: UUID {
         switch self {
         case .saved(let id, _, _): return id
+        case .savedImage(let id, _): return id
         case .failed(let attempt, _): return attempt.id
         }
     }
@@ -50,8 +54,11 @@ enum ArtifactExportNotice: Equatable, Identifiable {
             let stem = (fileName as NSString).deletingPathExtension
             if stem == title || fileName == title { return "Saved \"\(fileName)\"." }
             return "Saved \"\(title)\" as \"\(fileName)\"."
+        case .savedImage(_, let fileName):
+            return fileName.count <= Self.imageNameLimit ? "Saved \"\(fileName)\"." : "Saved this image."
         case .failed(let attempt, let problem):
-            let lead = "Couldn't save \"\(attempt.title)\"."
+            var lead = "Couldn't save \"\(attempt.title)\"."
+            if case .image = attempt.source { lead = "Couldn't save this image." }
             switch problem {
             case .sourceMissing: return "\(lead) The original is no longer on this Mac."
             case .sourceUnreadable: return "\(lead) The original couldn't be read."
@@ -78,8 +85,10 @@ enum ArtifactExportNotice: Equatable, Identifiable {
     }
 
     var isSaved: Bool {
-        if case .saved = self { return true }
-        return false
+        switch self {
+        case .saved, .savedImage: return true
+        case .failed: return false
+        }
     }
 }
 
@@ -95,7 +104,7 @@ struct ArtifactExporter {
         let version: ArtifactVersion
         switch attempt.source {
         case .version(_, let value): version = value
-        case .file(let source): return copy(attempt, from: source)
+        case .image(let source): return copy(attempt, from: source)
         }
         let data: Data
         switch read(version) {
@@ -132,7 +141,7 @@ struct ArtifactExporter {
         } catch {
             return .failed(attempt, Self.problem(for: error))
         }
-        return .saved(id: attempt.id, title: attempt.title, fileName: destination.lastPathComponent)
+        return .savedImage(id: attempt.id, fileName: destination.lastPathComponent)
     }
 
     static func problem(for error: Error) -> ArtifactExportProblem {
@@ -186,7 +195,7 @@ struct ArtifactExportFlow {
 
     func begin(file source: URL, title: String, fileName: String) -> ArtifactExportNotice? {
         guard let destination = choose(fileName, nil) else { return nil }
-        return run(ArtifactExportAttempt(id: UUID(), title: title, source: .file(source), destination: destination))
+        return run(ArtifactExportAttempt(id: UUID(), title: title, source: .image(source), destination: destination))
     }
 
     func chooseAnother(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
@@ -199,7 +208,7 @@ struct ArtifactExportFlow {
     }
 
     private func run(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
-        if case .file(let source) = attempt.source, Self.sameFile(source, attempt.destination) { return nil }
+        if case .image(let source) = attempt.source, Self.sameFile(source, attempt.destination) { return nil }
         return exporter.run(attempt)
     }
 
