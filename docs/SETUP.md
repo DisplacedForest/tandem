@@ -461,7 +461,7 @@ When an action is left to you or isn't run, the chat says why in one sentence. T
 
 When a send is aimed at an address you didn't type yourself, for example one that came from a web page, a message or a tool's output, Tandem asks first even if **Send on your behalf** is set to run without asking. Allowing that address from the menu on the confirmation's Allow button stops it asking for that address.
 
-Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. Nothing is ever changed from inside the chat. Work your companion does in the background stops at the same point and shows **Needs you** with the step it stopped at and the reason. The model is told the same reason, so what it says matches what you see.
+Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. Nothing is ever changed from inside the chat. Work your companion does in the background stops at the same point and shows **Needs you**: the card says the step was not run, shows the step for you to do, gives the reason and says what earlier steps in that work did. A stop isn't saved to Library. The model is told the same reason, so what it says matches what you see.
 
 ### Preferences
 

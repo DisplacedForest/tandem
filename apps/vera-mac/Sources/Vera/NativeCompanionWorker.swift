@@ -449,12 +449,39 @@ enum NativeCompanionWorker {
         return line
     }
 
+    static func earlierLine(_ checkpoint: NativeCompanionCheckpoint) -> String? {
+        let line = effectsLine(checkpoint)
+        guard line != " Nothing was changed." else { return nil }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func stepLiteral(_ definition: NativeToolDefinition?, _ arguments: [String: NativeJSONValue]?, title: String) -> String {
+        var literal = ""
+        if let definition, let arguments {
+            let lines = details(definition.title, argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)))
+            literal = lines.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : definition.title + "\n" + lines
+            if definition.id == NativeCommandTools.toolID, case .string(let command)? = arguments["command"] {
+                if case .string(let directory)? = arguments["directory"] { literal = command + "\nin " + directory } else { literal = command }
+            }
+        }
+        if literal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { literal = title }
+        var kept = String.UnicodeScalarView()
+        kept.append(contentsOf: CompanionSavedText.sanitized(literal).unicodeScalars.prefix(NativeTaskStop.stepScalars))
+        return String(kept)
+    }
+
+    static func stop(_ reason: String, _ definition: NativeToolDefinition?, _ arguments: [String: NativeJSONValue]?, title: String,
+                     earlier: String?) -> NativeTaskStop {
+        NativeTaskStop(reason: reason, step: stepLiteral(definition, arguments, title: title), earlier: earlier)
+    }
+
     static func remainingLimit(_ checkpoint: NativeCompanionCheckpoint, cap: Int, budget: NativeCompanionWorkerBudget) -> Int {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
-                       summary shown: String? = nil, why: NativeRuleWhy? = nil) throws -> NativeTaskStepResult {
+                       summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil) throws -> NativeTaskStepResult {
         let body = CompanionSavedText.sanitized(String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters)))
         let firstParagraph = shown.map(CompanionSavedText.sanitized)
             ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
@@ -467,6 +494,7 @@ enum NativeCompanionWorker {
                                      "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
         if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
         if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
+        if let stop { result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stop)) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
             result: try NativeTaskStore.canonical(result), event: "completed")
     }
@@ -712,7 +740,7 @@ private struct NativeCompanionRun {
         return try await conclude(&checkpoint, text: fallback)
     }
 
-    func conclude(_ checkpoint: inout NativeCompanionCheckpoint, text: String) async throws -> NativeTaskStepResult {
+    func conclude(_ checkpoint: inout NativeCompanionCheckpoint, text: String, stop: NativeTaskStop? = nil) async throws -> NativeTaskStepResult {
         if checkpoint.keep == nil {
             checkpoint.keep = try await classify(checkpoint)
         }
@@ -725,7 +753,7 @@ private struct NativeCompanionRun {
             let room = max(0, NativeCompanionWorker.reportCharacters - notRun.count - 2)
             body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + notRun
         }
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep)
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep, stop: stop)
     }
 
     func classify(_ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
@@ -764,8 +792,11 @@ private struct NativeCompanionRun {
         let effects = NativeCompanionWorker.effectsLine(checkpoint)
         let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
                                                                                   companion: nil) + effects)
+        let asked = definition(named: call.name)
+        let stop = NativeCompanionWorker.stop(NativeTaskStop.left, asked, asked.flatMap { try? $0.validatedArguments(call.arguments) },
+                                              title: title, earlier: NativeCompanionWorker.earlierLine(checkpoint))
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
-                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason)
+                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason, stop: stop)
     }
 
     func answerOutstanding(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
@@ -1113,7 +1144,9 @@ private struct NativeCompanionRun {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
-                return try await conclude(&checkpoint, text: text)
+                let stop = NativeCompanionWorker.stop(NativeTaskStop.declined, asked, askedArguments, title: title,
+                                                      earlier: NativeCompanionWorker.earlierLine(checkpoint))
+                return try await conclude(&checkpoint, text: text, stop: stop)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
                 var again = pending
@@ -1167,12 +1200,15 @@ private struct NativeCompanionRun {
                 checkpoint.answer(call, NativeCompanionWorker.message("The person checked and this did not happen. Propose it again only if it is still needed; it will need the usual approval."))
                 return nil
             case "stop":
+                let asked = definition(named: call.name)
+                let stop = NativeCompanionWorker.stop(NativeTaskStop.unconfirmed, asked, asked.flatMap { try? $0.validatedArguments(call.arguments) },
+                                                      title: title, earlier: NativeCompanionWorker.earlierLine(checkpoint))
                 checkpoint.note(title, "unconfirmed")
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped at your request. It could not be confirmed whether this happened: \(title).")
-                return try await conclude(&checkpoint, text: text)
+                return try await conclude(&checkpoint, text: text, stop: stop)
             default:
                 if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
                     checkpoint.note(title, "unconfirmed")
