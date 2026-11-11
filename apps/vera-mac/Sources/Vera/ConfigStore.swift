@@ -62,6 +62,7 @@ final class ConfigStore: ObservableObject {
     private var pendingCredentials: [String: String] = [:]
     private var legacyCredentials: [String: String] = [:]
     private var blockedLegacyMigrationID: String?
+    private var entryProfileID: String?
 
     static let visionBridgeCredentialID = "vision-bridge"
     static let memoryCredentialID = "memory-endpoint"
@@ -603,6 +604,26 @@ final class ConfigStore: ObservableObject {
         nativeSettings = updated
     }
 
+    func addNativeProfileOnEntry() {
+        guard nativeSettings.profiles.isEmpty else { return }
+        addNativeProfile()
+        entryProfileID = nativeSettings.activeProfileID
+    }
+
+    func discardUntouchedEntryProfile() {
+        guard let id = entryProfileID else { return }
+        entryProfileID = nil
+        guard let profile = nativeSettings.profiles.first(where: { $0.id == id }),
+              profile.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              profile.name == NativeEndpointProfile.empty().name,
+              (nativeAPIKeys[id] ?? "").isEmpty else { return }
+        var updated = nativeSettings
+        updated.profiles.removeAll { $0.id == id }
+        if updated.activeProfileID == id { updated.activeProfileID = updated.profiles.first?.id }
+        nativeSettings = updated
+        pendingCredentials.removeValue(forKey: id)
+    }
+
     func updateActiveNativeProfile(_ update: (inout NativeEndpointProfile) -> Void) {
         var updated = nativeSettings
         updated.updateActiveProfile(update)
@@ -801,6 +822,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func skipOnboarding() {
+        discardUntouchedEntryProfile()
         var updated = nativeSettings
         updated.onboardingState = .skipped
         nativeSettings = updated

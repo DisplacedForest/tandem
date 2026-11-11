@@ -27,7 +27,7 @@ struct SettingsView: View {
 
 // MARK: - Tabs
 
-private struct ConnectionTab: View {
+struct ConnectionTab: View {
     @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
@@ -89,6 +89,7 @@ private struct NativeToolsTab: View {
 
 struct NativeEndpointEditor: View {
     @EnvironmentObject var config: ConfigStore
+    var addsOnEntry = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -131,7 +132,7 @@ struct NativeEndpointEditor: View {
             }
         }
         .onAppear {
-            if config.nativeSettings.profiles.isEmpty { config.addNativeProfile() }
+            if addsOnEntry { config.addNativeProfileOnEntry() }
         }
     }
 }

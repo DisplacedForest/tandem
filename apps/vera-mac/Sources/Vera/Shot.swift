@@ -314,6 +314,9 @@ enum Shot {
                     .environment(\.colorScheme, .dark)
                     .foregroundStyle(Theme.textPrimary)
             )
+        } else if view == "settings-endpoints-empty" {
+            EndpointsShot.render(to: path, appearance: appearance)
+            return
         } else if view == "settings" {
             content = AnyView(
                 SettingsShotView()
