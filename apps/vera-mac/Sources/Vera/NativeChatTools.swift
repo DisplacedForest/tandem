@@ -229,6 +229,7 @@ struct NativeToolDefinition: Sendable {
     var verbs: [String] = []
     var namesNothing = false
     var instructionNames: (@Sendable ([String: NativeJSONValue]) -> [String])? = nil
+    var folderRoots: (@Sendable () -> [String])? = nil
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
