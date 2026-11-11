@@ -38,6 +38,11 @@ struct CardAnswers: Equatable {
         return answers
     }
 
+    static func offer() -> CardAnswers {
+        CardAnswers(allowMenu: [CardMenuItem(id: RuleOfferAnswer.allowEverywhere.rawValue, title: RuleOfferCopy.allowEverywhere)],
+                    declineMenu: [CardMenuItem(id: RuleOfferAnswer.neverOffer.rawValue, title: RuleOfferCopy.neverOffer)])
+    }
+
     static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
         var answers = CardAnswers()
         if let scope = shown(covers) {
@@ -109,11 +114,14 @@ struct CardSplitButton: View {
     let kind: ConversationButtonStyle.Kind
     var isDefault = false
     var enabled = true
+    var context: String? = nil
     let items: [CardMenuItem]
     let onPrimary: () -> Void
     let onItem: (String) -> Void
 
     private var ink: Color { kind == .primary ? Theme.onSage : Theme.warmTextPrimary }
+
+    static func spoken(_ text: String, context: String?) -> String { context.map { text + ", " + $0 } ?? text }
 
     private var label: some View {
         Text(title)
@@ -126,8 +134,10 @@ struct CardSplitButton: View {
         HStack(spacing: 0) {
             if isDefault {
                 Button(action: onPrimary) { label }.buttonStyle(CardSegmentStyle()).keyboardShortcut(.defaultAction)
+                    .accessibilityLabel(Self.spoken(title, context: context))
             } else {
                 Button(action: onPrimary) { label }.buttonStyle(CardSegmentStyle())
+                    .accessibilityLabel(Self.spoken(title, context: context))
             }
             if !items.isEmpty {
                 Rectangle().fill(kind == .primary ? Theme.onSage.opacity(0.35) : Theme.cardStroke).frame(width: 1, height: 16)
@@ -139,7 +149,7 @@ struct CardSplitButton: View {
                             Text(item.title)
                             if let note = item.note { Text(note) }
                         }
-                        .accessibilityLabel(item.spoken)
+                        .accessibilityLabel(Self.spoken(item.spoken, context: context))
                     }
                 } label: {
                     Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(ink)
@@ -149,7 +159,7 @@ struct CardSplitButton: View {
                 .buttonStyle(CardSegmentStyle())
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .accessibilityLabel("More ways to \(title.lowercased())")
+                .accessibilityLabel(Self.spoken("More ways to \(title.lowercased())", context: context))
             }
         }
         .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
@@ -166,6 +176,7 @@ struct CardAnswerRow: View {
     var even = false
     var allowApprove = true
     var allowDecline = true
+    var context: String? = nil
     let onAllow: () -> Void
     let onDecline: () -> Void
     let onItem: (String) -> Void
@@ -173,10 +184,10 @@ struct CardAnswerRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
-            CardSplitButton(title: answers.declineTitle, kind: .secondary, enabled: allowDecline, items: answers.declineMenu,
+            CardSplitButton(title: answers.declineTitle, kind: .secondary, enabled: allowDecline, context: context, items: answers.declineMenu,
                             onPrimary: onDecline, onItem: onItem)
             CardSplitButton(title: answers.allowTitle, kind: even ? .secondary : .primary, isDefault: defaultApproval, enabled: allowApprove,
-                            items: answers.allowMenu, onPrimary: onAllow, onItem: onItem)
+                            context: context, items: answers.allowMenu, onPrimary: onAllow, onItem: onItem)
         }
     }
 }

@@ -404,6 +404,10 @@ enum SelfTest {
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
         do { try runNativeCardChoices() } catch { print("SELFTEST ERROR: native card choices \(error)"); exit(1) }
         do { try await runNativeCardChoiceStore() } catch { print("SELFTEST ERROR: native card choice store \(error)"); exit(1) }
+        do { try runRuleOfferModel() } catch { print("SELFTEST ERROR: rule offer model \(error)"); exit(1) }
+        do { try runRuleOfferCopy() } catch { print("SELFTEST ERROR: rule offer copy \(error)"); exit(1) }
+        do { try await runRuleOfferStore() } catch { print("SELFTEST ERROR: rule offer store \(error)"); exit(1) }
+        do { try await runRuleOfferRelaunch() } catch { print("SELFTEST ERROR: rule offer relaunch \(error)"); exit(1) }
         do { try await runNativeChatRules() } catch { print("SELFTEST ERROR: native chat rules \(error)"); exit(1) }
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
         do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }

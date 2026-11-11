@@ -324,6 +324,9 @@ struct ChatPane: View {
                                                store.resolveTurnConfirmation(msg.id, decision: decision,
                                                    requestID: confirmation?.id, token: confirmationToken)
                                            },
+                                           onRuleOffer: { blockID, answer in
+                                               store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config)
+                                           },
                                            companionThread: store.isVeraThread(convo.id))
                                     .background(
                                         RoundedRectangle(cornerRadius: 10)
@@ -778,6 +781,7 @@ struct MessageRow: View {
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
     var onToolDecision: ((NativeCardChoiceKind) -> Void)? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
     var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -820,7 +824,8 @@ struct MessageRow: View {
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
                             onSaveAnswer: store.saveNativeTaskAnswer,
-                            highlightedTaskID: store.highlightedTaskID)
+                            highlightedTaskID: store.highlightedTaskID,
+                            onRuleOffer: onRuleOffer)
                     }
                     if nativeActions && store.isQueuedAnswer(message.id) {
                         NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
