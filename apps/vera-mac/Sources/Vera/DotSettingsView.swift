@@ -11,6 +11,11 @@ struct DotSettingsView: View {
     @State private var revokedPrefixes: Set<String> = []
     @State private var options: [NativeDotServiceOption] = []
     @State private var problem: String?
+    @State private var resetFailed: Bool
+
+    init(showsResetFailure: Bool = false) {
+        _resetFailed = State(initialValue: showsResetFailure)
+    }
     @State private var confirmingReset = false
     @State private var removal = NativeDotRemovalSummary()
 
@@ -31,7 +36,7 @@ struct DotSettingsView: View {
                 .padding(.trailing, 6)
             }
             .frame(minHeight: 300, maxHeight: 520)
-            if let failed = store.companionConfigurationError, failed.lead == CompanionErrorCopy.resetLead {
+            if resetFailed, let failed = store.resetFailure {
                 Label { CompanionLineText(line: failed.line) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 10)
             }
@@ -48,9 +53,11 @@ struct DotSettingsView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear(perform: load)
+        .onDisappear { store.acknowledgeResetFailure() }
         .confirmationDialog("Start over with \(store.companion.inline)?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
-                if store.resetDot() { dismiss() }
+                resetFailed = !store.resetDot()
+                if !resetFailed { dismiss() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -178,6 +178,16 @@ extension ChatStore {
         return summary
     }
 
+    var resetFailure: CompanionConfigurationError? {
+        companionConfigurationError.flatMap { (error: CompanionConfigurationError) -> CompanionConfigurationError? in
+            error.lead == CompanionErrorCopy.resetLead ? error : nil
+        }
+    }
+
+    func acknowledgeResetFailure() {
+        resolveCompanionConfigurationError(CompanionErrorCopy.resetLead)
+    }
+
     func keepCompanionArtifacts(threadID: String) throws {
         if let companionArtifactKeeper { return try companionArtifactKeeper(threadID) }
         _ = try artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keepAsCompanion)

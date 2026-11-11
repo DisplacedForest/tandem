@@ -30,7 +30,7 @@ enum NameStylingShot {
         case "name-dot-settings-reset-failed":
             size = NSSize(width: 560, height: 760)
             store.reportCompanionConfigurationError(CompanionErrorCopy.resetLead, description: "The disk is full.", tail: CompanionErrorCopy.resetTail)
-            root = AnyView(DotSettingsView())
+            root = AnyView(DotSettingsView(showsResetFailure: true))
         case "name-appearance-draft":
             size = NSSize(width: 680, height: 470)
             let fixture = CompanionAppearanceFixtureStore()

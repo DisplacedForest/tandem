@@ -248,6 +248,22 @@ extension SelfTest {
         store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
         try require(store.companionConfigurationError != nil && store.companionConfigurationError?.lead != CompanionErrorCopy.resetLead,
                     "A failed settings save does not show as a failed start over")
+        try require(store.resetFailure == nil, "A failed settings save is not a start over failure")
+        store.acknowledgeResetFailure()
+        try require(store.companionConfigurationError?.lead == CompanionErrorCopy.saveLead, "Closing the sheet leaves an unrelated error alone")
+        store.chatConfigurationError = nil
+        struct Full: LocalizedError { var errorDescription: String? { "The disk is full." } }
+        store.companionArtifactKeeper = { _ in throw Full() }
+        try require(!store.resetDot() && store.resetFailure != nil, "A failed start over is there to show while its sheet is open")
+        store.acknowledgeResetFailure()
+        try require(store.resetFailure == nil && store.chatConfigurationError == nil && store.companionConfigurationError == nil,
+                    "Closing the sheet after a failed start over puts the failure away")
+        store.saveDotProfile { $0.goal = "Tend the beds." }
+        try require(store.resetFailure == nil && store.dotProfile.goal == "Tend the beds.",
+                    "Opening settings again later, and saving, shows no old start over failure")
+        try require(!store.resetDot() && store.resetFailure != nil, "Trying again while it still can't save shows the failure again")
+        store.companionArtifactKeeper = nil
+        try require(store.resetDot() && store.resetFailure == nil, "A start over that works clears it")
     }
 
     private static func libraryKeepSections() async throws {
