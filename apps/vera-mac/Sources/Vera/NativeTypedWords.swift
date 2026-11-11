@@ -19,14 +19,13 @@ struct NativeTypedWords: Hashable, Sendable {
         self.earlier = earlier.suffix(Self.limit).map(Self.own)
     }
 
+    static let quoteMarks: Set<Character> = ["\"", "\u{201C}", "\u{201D}", "\u{201E}", "\u{00AB}", "\u{00BB}", "\u{2039}", "\u{203A}"]
+
     static func own(_ raw: String) -> String {
-        var characters = Array(raw.replacingOccurrences(of: "\u{2019}", with: "'").replacingOccurrences(of: "\u{2018}", with: "'"))
+        let characters = Array(raw.replacingOccurrences(of: "\u{2019}", with: "'").replacingOccurrences(of: "\u{2018}", with: "'"))
         let count = characters.count
         func wordy(_ index: Int) -> Bool {
             index >= 0 && index < count && (characters[index].isLetter || characters[index].isNumber)
-        }
-        func blank(_ range: ClosedRange<Int>) {
-            for index in range where !characters[index].isNewline { characters[index] = " " }
         }
         func lineStart(_ index: Int) -> Bool {
             var cursor = index - 1
@@ -36,54 +35,18 @@ struct NativeTypedWords: Hashable, Sendable {
             }
             return true
         }
-        var index = 0
-        while index < count {
+        func opens(_ index: Int) -> Bool {
             let character = characters[index]
-            if character == ">", lineStart(index) {
-                var end = index
-                while end + 1 < count, !characters[end + 1].isNewline { end += 1 }
-                blank(index...end)
-                index = end + 1
-            } else if character == "`" || character == "~" {
-                var run = index
-                while run < count, characters[run] == character { run += 1 }
-                let length = run - index
-                guard length >= 3 else { index = run; continue }
-                var end = count - 1
-                var cursor = run
-                while cursor < count {
-                    guard characters[cursor] == character else { cursor += 1; continue }
-                    var close = cursor
-                    while close < count, characters[close] == character { close += 1 }
-                    if close - cursor >= length { end = close - 1; break }
-                    cursor = close
-                }
-                blank(index...end)
-                index = end + 1
-            } else if character == "\"" || character == "\u{201C}" {
-                let closer: Character = character == "\"" ? "\"" : "\u{201D}"
-                var end = count - 1
-                var cursor = index + 1
-                while cursor < count {
-                    if characters[cursor] == closer { end = cursor; break }
-                    cursor += 1
-                }
-                blank(index...end)
-                index = end + 1
-            } else if character == "'", !wordy(index - 1), index + 1 < count, !characters[index + 1].isWhitespace {
-                var end = count - 1
-                var cursor = count - 1
-                while cursor > index {
-                    if characters[cursor] == "'", !wordy(cursor + 1) { end = cursor; break }
-                    cursor -= 1
-                }
-                blank(index...end)
-                index = end + 1
-            } else {
-                index += 1
+            if quoteMarks.contains(character) { return true }
+            if character == "'" { return !(wordy(index - 1) && wordy(index + 1)) }
+            if character == ">" { return lineStart(index) }
+            if character == "`" || character == "~" {
+                return index + 2 < count && characters[index + 1] == character && characters[index + 2] == character
             }
+            return false
         }
-        return String(characters)
+        guard let first = characters.indices.first(where: opens) else { return String(characters) }
+        return String(characters[..<first])
     }
 
     var isEmpty: Bool { current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && earlier.isEmpty }

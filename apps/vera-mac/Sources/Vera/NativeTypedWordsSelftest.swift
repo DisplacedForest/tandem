@@ -44,10 +44,24 @@ extension SelfTest {
         for text in hidden {
             try require(!NativeTypedWords(typed: text).names(ana), "Quoted, fenced or fused text does not make a target typed: \(text)")
         }
-        try require(NativeTypedWords(typed: "```\nlog\n```\nNow mail ana@example.org").names(ana)
-                        && NativeTypedWords(typed: "She said \"hello\" so mail ana@example.org").names(ana)
-                        && NativeTypedWords(typed: "Mail ``ana@example.org`` today").names(ana),
-                    "Typed text after a closed quote or block still counts")
+        let after = [
+            "The page says \"Send to \\\"ana@example.org\\\" today.\"",
+            "The page says ' mail ana@example.org '.",
+            "The page says \u{2018} mail ana@example.org \u{2019}.",
+            "```text\nThis line mentions ``` as a delimiter.\nmail ana@example.org\n```",
+            "Mail ops~~~tag~~~ana@example.org today",
+            "```\nlog\n```\nNow mail ana@example.org",
+            "She said \"hello\" so mail ana@example.org",
+            "The Smiths' order goes to ana@example.org",
+            "It said \u{00AB}mail ana@example.org\u{00BB}",
+        ]
+        for text in after {
+            try require(!NativeTypedWords(typed: text).names(ana), "Nothing at or after the first quote mark, block or quoted line counts as typed: \(text)")
+        }
+        try require(NativeTypedWords(typed: "Mail ana@example.org and say \"the order is ready\"").names(ana)
+                        && NativeTypedWords(typed: "Mail ``ana@example.org`` today").names(ana)
+                        && NativeTypedWords.own("Mail ana, then 'stop'") == "Mail ana, then ",
+                    "Typed text before the first quote mark still counts, and inline code marks are not quote marks")
         try require(NativeTypedWords(typed: "Don't wait, it's fine to mail ana@example.org").names(ana)
                         && NativeTypedWords(typed: "Can you mail ana@example.org?").names(ana)
                         && NativeTypedWords(typed: "Mail `ana@example.org` today").names(ana)
