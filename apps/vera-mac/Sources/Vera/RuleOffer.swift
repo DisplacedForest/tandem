@@ -29,7 +29,7 @@ enum RuleOffer {
 
     static func counts(_ why: NativeRuleWhy?) -> Bool {
         guard let why, why.kind == .unsaved, why.source == .settings, !why.handsOff,
-              why.choice == .ask || why.choice == .actIfPreapproved else { return false }
+              why.choice == .ask else { return false }
         return offerable(why.action)
     }
 
@@ -63,7 +63,7 @@ enum RuleOffer {
     static func stillAsks(_ action: NativeActionClass, global: NativeRules, chat: NativeConversationRules) -> Bool {
         guard offerable(action), !global.holds(action) else { return false }
         let base = global.choice(for: action)
-        guard base == .ask || base == .actIfPreapproved else { return false }
+        guard base == .ask else { return false }
         if let tightened = chat.choices[action], tightened.strictness > base.strictness { return false }
         return true
     }

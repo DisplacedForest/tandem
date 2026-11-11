@@ -314,10 +314,20 @@ extension SelfTest {
         let relaxed = NativeRules(choices: [.fileEdits: .act, .commands: .act, .trash: .act, .networkSends: .act, .riskyCommands: .act, .serviceChanges: .act, .otherChanges: .act])
         let quiet = NativeDotContext.headerSummary(resolver: NativeRuleResolver(global: relaxed, conversation: NativeConversationRules(), requestText: ""))
         try require(quiet == "Acts without asking", "Nothing asking reads plainly: \(quiet)")
-        let mixed = NativeRules(choices: [.fileEdits: .actIfPreapproved, .commands: .ask, .trash: .ask, .networkSends: .act, .riskyCommands: .act, .serviceChanges: .act, .otherChanges: .act])
+        let mixed = NativeRules(choices: [.fileEdits: .handOff, .commands: .ask, .trash: .ask, .networkSends: .act, .riskyCommands: .act, .serviceChanges: .act, .otherChanges: .act])
         let mixedSummary = NativeDotContext.headerSummary(resolver: NativeRuleResolver(global: mixed, conversation: NativeConversationRules(), requestText: ""))
-        try require(mixedSummary == "Asks first for commands and Trash. Needs your go-ahead in the request for file edits.", "Mixed rules read plainly: \(mixedSummary)")
+        try require(mixedSummary == "Asks first for commands and Trash. Hands off file edits.", "Mixed rules read plainly: \(mixedSummary)")
         let raw = NativeActionClass.allCases.map(\.rawValue) + NativeRuleChoice.allCases.map(\.rawValue)
+        for choice in NativeRuleChoice.allCases {
+            var each = NativeRules.defaults
+            for action in NativeActionClass.configurable { each.set(choice, for: action) }
+            let eachResolver = NativeRuleResolver(global: each, conversation: NativeConversationRules(), requestText: "")
+            for text in [NativeDotContext.render(name: "Ada", goal: "Plant tomatoes", resolver: eachResolver), NativeDotContext.headerSummary(resolver: eachResolver)] {
+                let lowered = text.lowercased()
+                try require(!lowered.contains("pre-approv") && !lowered.contains("preapprov") && !lowered.contains("go ahead") && !lowered.contains("go-ahead"),
+                            "The rules text for the model never mentions a go ahead: \(text)")
+            }
+        }
         for text in [summary, quiet, mixedSummary] {
             try require(!raw.contains { $0.contains("_") && text.contains($0) } && !text.contains("_"), "The header summary carries no internal names: \(text)")
         }

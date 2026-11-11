@@ -304,10 +304,15 @@ extension SelfTest {
             return made
         }
         let goAhead = "Run the tests. Go ahead."
-        let preapproved = ChatStore.commandDecision(source(rules(.actIfPreapproved, for: .commands)), conversationID: chat, requestText: goAhead,
+        let goAheadAsks = ChatStore.commandDecision(source(rules(.ask, for: .commands)), conversationID: chat, requestText: goAhead,
                                                     typed: NativeTypedWords(typed: goAhead), uses: NativeInstructionUses(),
                                                     command: "make test", action: .commands, subjects: [])
-        try require(preapproved.decision == .act(.requestPreapproval), "Go ahead still works as before: \(preapproved.decision)")
+        try require(goAheadAsks.decision == .ask, "Go ahead on its own asks under Ask first: \(goAheadAsks.decision)")
+        let runTyped = "Run make test"
+        let typedCommand = ChatStore.commandDecision(source(rules(.ask, for: .commands)), conversationID: chat, requestText: runTyped,
+                                                 typed: NativeTypedWords(typed: runTyped), uses: NativeInstructionUses(),
+                                                 command: "make test", action: .commands, subjects: [])
+        try require(typedCommand.decision == .act(.instruction), "A typed command still runs once under Ask first: \(typedCommand.decision)")
 
         let sent = NativeChatRulesCounter()
         func sender(_ confirmation: NativeToolConfirmation) -> NativeToolDefinition {
@@ -424,6 +429,12 @@ extension SelfTest {
         try require(decoded == plain && decoded.ranBecause == nil && markedBack.ranBecause == .instruction,
                     "Old saved steps still load and the reason survives saving")
         try require(NativeRuleReason.instruction.title == "Ran because you asked for this", "The reason reads plainly")
+        let earlier = NativeCommandRun(id: "r1", command: "make test", directory: "/tmp", outcome: .ran, reason: .rule, exitCode: 0)
+        let earlierText = String(decoding: try JSONEncoder().encode(earlier), as: UTF8.self)
+        let oldText = earlierText.replacingOccurrences(of: "\"reason\":\"rule\"", with: "\"reason\":\"request_preapproval\"")
+        let oldRun = try JSONDecoder().decode(NativeCommandRun.self, from: Data(oldText.utf8))
+        try require(oldText != earlierText && oldRun.reason == .requestPreapproval && oldRun.decisionLine == "Ran because your request pre-approved it",
+                    "An old saved command step still loads and keeps its line: \(String(describing: oldRun.decisionLine))")
 
         print("  instructions OK (matcher table, sentences, resolver twins, nothing named, never overrides, single use, go ahead, tool card, reply steps, commands, command card reason, folder saves and deletes, old steps)")
     }

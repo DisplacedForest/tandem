@@ -214,7 +214,6 @@ extension SelfTest {
                     "Rows run everywhere, project, chat, schedule, task, newest first: \(listed.map(\.sentence))")
         try require(!listed.contains { $0.id == revoked.id || $0.id == unknown.id }, "Removed rules and rules for unknown places never show")
         try require(RuleRows.chatSentence(.commands, .handOff) == "Always leave commands to me"
-                    && RuleRows.chatSentence(.networkSends, .actIfPreapproved) == "Always wait for my go-ahead before sending"
                     && RuleRows.chatSentence(.trash, .ask) == "Always ask before moving files to the Trash"
                     && NativeActionClass.configurable.allSatisfy { action in
                         NativeRuleChoice.allCases.allSatisfy { choice in

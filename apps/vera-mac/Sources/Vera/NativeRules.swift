@@ -96,14 +96,27 @@ enum NativeFloorItem: String, CaseIterable, Hashable, Sendable {
 
 enum NativeRuleChoice: String, Codable, CaseIterable, Hashable, Sendable {
     case act
-    case actIfPreapproved = "act_if_preapproved"
     case ask
     case handOff = "hand_off"
+
+    static let retiredAsk = "act_if_preapproved"
+
+    static func saved(_ raw: String) -> NativeRuleChoice? {
+        raw == retiredAsk ? .ask : NativeRuleChoice(rawValue: raw)
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        guard let choice = Self.saved(raw) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown rule choice")
+        }
+        self = choice
+    }
 
     var title: String {
         switch self {
         case .act: return "Do it without asking"
-        case .actIfPreapproved: return "Do it when I say go ahead"
         case .ask: return "Ask first"
         case .handOff: return "Leave it to me"
         }
@@ -112,7 +125,6 @@ enum NativeRuleChoice: String, Codable, CaseIterable, Hashable, Sendable {
     var strictness: Int {
         switch self {
         case .act: return 0
-        case .actIfPreapproved: return 1
         case .ask: return 2
         case .handOff: return 3
         }
@@ -148,12 +160,12 @@ struct NativeRules: Codable, Equatable, Hashable, Sendable {
         let raw = (try? container.decode([String: String].self)) ?? [:]
         var parsed: [NativeActionClass: NativeRuleChoice] = [:]
         for (key, value) in raw {
-            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
+            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice.saved(value) else { continue }
             if action.floorItem == nil { parsed[action] = choice }
         }
         for item in NativeFloorItem.allCases {
             guard let action = item.actionClass, let value = raw[Self.liftedPrefix + item.rawValue],
-                  let choice = NativeRuleChoice(rawValue: value) else { continue }
+                  let choice = NativeRuleChoice.saved(value) else { continue }
             parsed[action] = choice
         }
         if raw[Self.defaultsKey] == nil, parsed[.networkSends] == .handOff { parsed.removeValue(forKey: .networkSends) }
@@ -227,7 +239,7 @@ struct NativeConversationRules: Codable, Equatable, Hashable, Sendable {
         let raw = (try? container.decodeIfPresent([String: String].self, forKey: .choices)) ?? [:]
         var parsed: [NativeActionClass: NativeRuleChoice] = [:]
         for (key, value) in raw {
-            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice(rawValue: value) else { continue }
+            guard let action = NativeActionClass(rawValue: key), let choice = NativeRuleChoice.saved(value) else { continue }
             parsed[action] = choice
         }
         choices = parsed
@@ -291,41 +303,18 @@ enum NativeCommandPrefix {
 }
 
 enum NativeRequestPreapproval {
-    static let phrases = [
-        "no need to ask", "don't ask", "do not ask", "dont ask", "without asking", "go ahead",
-        "you have my approval", "you have my permission", "pre-approved", "preapproved", "pre approved",
-        "just do it", "don't check with me", "do not check with me", "no confirmation needed", "skip the confirmation",
-    ]
-
     static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
                             "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "revoke", "revoked", "rescind", "rescinded", "retracted", "reverse", "strike that", "belay", "void", "nullify", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
-
-    static let quoteCharacters: Set<Character> = ["\"", "'", "`", "“", "”", "‘", "’", "«", "»", ">", ":"]
 
     static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
     static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as",
                           "permission", "approval", "authorization", "authorisation", "consent", "express", "expresses", "analyze", "analyse", "analysis", "grammar", "grammatical", "parse", "syntax", "language", "linguistic", "imperative", "verb", "noun", "following"]
-    static let subjects: Set<String> = ["i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "its", "our", "their", "the", "a", "an", "this", "that", "these", "those", "someone", "somebody", "everyone", "anyone", "nobody"]
     static let speech = ["says", "said", "saying", "replied", "replies", "answered", "answers", "told", "tells", "wrote", "writes", "texted", "messaged", "asked", "asks", "mentioned", "mentions", "suggested", "suggests", "noted", "quoted", "quotes", "responded", "responds", "whispered", "whispers", "shouted", "shouts", "yelled", "muttered", "insisted", "added", "remarked"]
 
     static func normalized(_ text: String) -> String {
         text.lowercased()
             .replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
             .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
-    }
-
-
-    static func quoted(_ text: String) -> Bool {
-        let characters = Array(text)
-        for (index, character) in characters.enumerated() where quoteCharacters.contains(character) {
-            if character == "'" || character == "’" {
-                let before = index > 0 && characters[index - 1].isLetter
-                let after = index + 1 < characters.count && characters[index + 1].isLetter
-                if before && after { continue }
-            }
-            return true
-        }
-        return false
     }
 
     static func words(_ text: String) -> [String] {
@@ -342,15 +331,6 @@ enum NativeRequestPreapproval {
         }
     }
 
-    static func sentenceGrants(_ sentence: String) -> Bool {
-        var rest = sentence.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        while true {
-            if phrases.contains(rest) { return true }
-            guard let opener = openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
-            rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        }
-    }
-
     static func settled(_ remainder: String, original: String) -> Bool {
         if negated(remainder) { return false }
         if original.contains("?") { return false }
@@ -358,17 +338,6 @@ enum NativeRequestPreapproval {
         if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
         if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
         return true
-    }
-
-    static func grants(_ text: String) -> Bool {
-        let lowered = normalized(text)
-        guard phrases.contains(where: { lowered.contains($0) }) else { return false }
-        var remainder = lowered
-        for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
-        if quoted(remainder) { return false }
-        guard settled(remainder, original: lowered) else { return false }
-        let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
-        return sentences.contains { sentenceGrants($0) }
     }
 }
 
@@ -1026,7 +995,6 @@ struct NativeRuleResolver: Sendable {
     private func baseDecision(for action: NativeActionClass) -> NativeRuleDecision {
         switch choice(for: action) {
         case .act: return .act(.rule)
-        case .actIfPreapproved: return NativeRequestPreapproval.grants(requestText) ? .act(.requestPreapproval) : .ask
         case .ask: return .ask
         case .handOff: return .handOff
         }

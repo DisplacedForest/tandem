@@ -109,13 +109,13 @@ extension SelfTest {
                         && askingWhy?.source == .settings, "Under Ask first the reason is the ordinary setting: \(String(describing: askingWhy))")
 
         let goAhead = "Send it. Go ahead."
-        let preUnnamed = resolver(.actIfPreapproved, typed: NativeTypedWords(typed: goAhead), request: goAhead, targets: [try target("orders@greenhouse.test")])
-        try require(preUnnamed.decision(for: .networkSends) == .ask && preUnnamed.explain(for: .networkSends)?.kind == .unnamed,
-                    "Go ahead does not cover an address the person never typed")
+        let preUnnamed = resolver(.ask, typed: NativeTypedWords(typed: goAhead), request: goAhead, targets: [try target("orders@greenhouse.test")])
+        try require(preUnnamed.decision(for: .networkSends) == .ask && preUnnamed.explain(for: .networkSends)?.choice == .ask,
+                    "Go ahead under Ask first still asks for an address the person never typed")
         let shop = try target("orders@greenhouse.test")
         let goAheadNamed = "Send it to orders@greenhouse.test. Go ahead."
-        let preNamed = resolver(.actIfPreapproved, typed: NativeTypedWords(typed: goAheadNamed), request: goAheadNamed, targets: [shop])
-        try require(acts(preNamed.decision(for: .networkSends)), "Go ahead with the address typed acts")
+        let preNamed = resolver(.ask, typed: NativeTypedWords(typed: goAheadNamed), request: goAheadNamed, targets: [shop])
+        try require(preNamed.decision(for: .networkSends) == .ask, "Go ahead with the address typed still asks under Ask first: \(preNamed.decision(for: .networkSends))")
 
         let bare = resolver(typed: .none, targets: [])
         try require(acts(bare.decision(for: .networkSends)) && bare.explain(for: .networkSends) == nil,

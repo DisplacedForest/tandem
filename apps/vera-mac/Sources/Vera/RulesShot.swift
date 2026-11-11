@@ -11,10 +11,11 @@ enum RulesShot {
         let variant = view.hasSuffix("-ada") ? String(view.dropLast("-ada".count))
             : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
         let showsMenu = variant == "rules-menu"
+        let showsChoices = variant == "rules-choices"
         let advancedVariant = variant.hasPrefix("rules-advanced")
         let sharedVariant = variant.hasPrefix("rules-shared")
         let showsSharingInfo = variant == "rules-shared-info"
-        let size = NSSize(width: showsHelp || showsMenu || advancedVariant || showsSharingInfo ? 1240 : 860,
+        let size = NSSize(width: showsHelp || showsMenu || showsChoices || advancedVariant || showsSharingInfo ? 1240 : 860,
                           height: advancedVariant ? 1100 : sharedVariant ? 1280 : 980)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rules-shot-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory.appendingPathComponent("Seedlings"), withIntermediateDirectories: true)
@@ -39,7 +40,7 @@ enum RulesShot {
         if variant == "rules-advanced-open" { asked = .allow(.payments) }
         if variant == "rules-advanced-on" || variant == "rules-advanced-mixed" { config.letThrough(.payments, store: store) }
         if variant.hasPrefix("rules-advanced-each") {
-            let settings: [(NativeFloorItem, NativeRuleChoice)] = [(.credentialEntry, .ask), (.payments, .act), (.permanentDeletion, .actIfPreapproved)]
+            let settings: [(NativeFloorItem, NativeRuleChoice)] = [(.credentialEntry, .ask), (.payments, .act), (.permanentDeletion, .handOff)]
             for (item, choice) in settings {
                 config.letThrough(item, store: store)
                 config.setChoice(choice, for: item, store: store)
@@ -75,6 +76,18 @@ enum RulesShot {
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+            }
+            if showsChoices {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Opens from each choice picker").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    ForEach(NativeRuleChoice.allCases, id: \.self) { Text($0.title).font(.system(size: 13)) }
+                }
+                .padding(14)
+                .frame(width: 340, alignment: .leading)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+                .padding(.top, 20)
             }
             if let opened {
                 VStack(alignment: .leading, spacing: 14) {

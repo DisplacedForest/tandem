@@ -124,7 +124,7 @@ extension SelfTest {
         state.askToOpen()
         _ = state.confirm()
         try require(state.isOpen, "Advanced is open for the choice checks")
-        for choice in [NativeRuleChoice.ask, .actIfPreapproved, .handOff] {
+        for choice in [NativeRuleChoice.ask, .handOff] {
             try require(state.choose(choice, for: .payments) && state.question == nil, "Choosing \(choice.rawValue) applies at once with no question")
         }
         try require(!state.choose(.act, for: .payments) && state.question == .withoutAsking(.payments), "Choosing to do it without asking asks once more")
@@ -174,8 +174,8 @@ extension SelfTest {
         let acted = store.rulesRevision
         config.setChoice(.act, for: .payments, store: store)
         try require(store.rulesRevision == acted, "Choosing the same thing again does not move the revision")
-        config.setChoice(.actIfPreapproved, for: .payments, store: store)
-        try require(config.nativeSettings.rules.choice(for: .payments) == .actIfPreapproved && store.rulesRevision != acted, "Choosing to act if approved works")
+        config.setChoice(.ask, for: .payments, store: store)
+        try require(config.nativeSettings.rules.choice(for: .payments) == .ask && store.rulesRevision != acted, "Choosing to ask first works")
         let beforeBack = store.rulesRevision
         config.setChoice(.handOff, for: .payments, store: store)
         try require(config.nativeSettings.rules.holds(.payments) && !config.nativeSettings.rules.isLifted(.payments) && store.nativeRules.holds(.payments)
