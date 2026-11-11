@@ -285,7 +285,7 @@ extension SelfTest {
         let (revoked, _) = try await NativeWebToolsSelftest.loop(always, rounds: [
             NativeWebToolsSelftest.call("r1", NativeFolderTools.readName, "{\"path\":\"\(root)/notes/one.txt\"}"), NativeWebToolsSelftest.reply("ok"),
         ], enabled: [NativeFolderTools.toolID])
-        try require(revoked?.activities.first?.state == .failed && revoked?.activities.first?.result?.contains("No folder has been granted") == true,
+        try require(revoked?.activities.first?.state == .failed && revoked?.activities.first?.result?.contains("No folder has been shared") == true,
                     "A call after revocation fails with a refusal the model can read")
         let late = NativeFileChangeLedger()
         late.record(NativeFileChange(path: root + "/late.txt", kind: .created, after: "x"))

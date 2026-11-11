@@ -63,7 +63,7 @@ extension SelfTest {
         guard let dotContext = store.dotContext(for: veraID, requestText: "what's next?") else {
             throw NativeTaskFixture.Failure.assertion("The Vera thread gets the standing context")
         }
-        try require(dotContext.contains(goal) && dotContext.contains("You are Ada") && dotContext.contains("Run commands in granted folders: hand off to the user.")
+        try require(dotContext.contains(goal) && dotContext.contains("You are Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
                     && dotContext.contains("always handed to the user") && dotContext.contains(NativeDotContext.coordinatorNote)
                     && dotContext.count <= NativeDotContext.limit, "The standing context carries the name, goal, coordinator role and the rules in effect")
         try require(store.dotContext(for: focused.id, requestText: "hi") == nil, "Focused chats never receive the standing context")

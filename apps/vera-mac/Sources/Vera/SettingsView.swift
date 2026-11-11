@@ -940,7 +940,7 @@ struct CompanionShortcutRecorder: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .help("Press it from any app to open a small composer over the companion thread. Escape hides it.")
+            .help("Press it from any app to open a small message box over the companion thread. Escape hides it.")
             .accessibilityLabel("Quick ask shortcut")
             .accessibilityValue(recording ? "Press a shortcut" : config.companionShortcut.displayName)
             .accessibilityHint("Click, then press the keys you want.")

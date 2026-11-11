@@ -340,7 +340,7 @@ private struct IntegrationsDestination: View {
             if let source = configuration.sourceURL {
                 IntegrationsLink(title: "Publisher's page", url: source)
             }
-            Text("Only reads you approve are available, and a service cannot grant itself more. Connections end when Tandem quits.")
+            Text("Only reads you approve are available, and a service cannot give itself more. Connections end when Tandem quits.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
