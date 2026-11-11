@@ -97,21 +97,13 @@ struct NativeTypedWords: Hashable, Sendable {
     }
 
     static func starts(_ text: String, at index: String.Index) -> Bool {
-        var cursor = index
-        while cursor > text.startIndex, text[text.index(before: cursor)] == "`" { cursor = text.index(before: cursor) }
-        guard cursor > text.startIndex else { return true }
-        let previous = text[text.index(before: cursor)]
-        return previous.isWhitespace || previous == "("
+        index == text.startIndex || text[text.index(before: index)].isWhitespace
     }
 
     static func closes(_ text: String, at index: String.Index) -> Bool {
         guard index < text.endIndex else { return true }
         if text[index].isWhitespace { return true }
-        if text[index] == "`" {
-            let next = text.index(after: index)
-            return next == text.endIndex || closes(text, at: next)
-        }
-        guard ".,;:!?)".contains(text[index]) else { return false }
+        guard ".,;:!?".contains(text[index]) else { return false }
         let next = text.index(after: index)
         return next == text.endIndex || text[next].isWhitespace
     }

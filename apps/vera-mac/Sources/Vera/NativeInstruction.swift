@@ -82,24 +82,50 @@ enum NativeInstruction {
         command.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    static func spaced(_ text: String) -> String {
-        canonical(text.replacingOccurrences(of: "`", with: " "))
+    static func unmarked(_ text: String) -> String? {
+        let characters = Array(text)
+        let marks = characters.indices.filter { characters[$0] == "`" }
+        if marks.isEmpty { return text }
+        guard marks.count == 2, marks[1] - marks[0] > 1 else { return nil }
+        let open = marks[0], close = marks[1]
+        guard open == 0 || characters[open - 1].isWhitespace else { return nil }
+        guard !characters[open + 1].isWhitespace, !characters[close - 1].isWhitespace else { return nil }
+        let after = String(characters[(close + 1)...])
+        guard after.isEmpty || after.first?.isWhitespace == true || after == "." || after.hasPrefix(". ") else { return nil }
+        return String(characters[..<open]) + String(characters[(open + 1)..<close]) + after
     }
 
-    static func asks(_ text: String, verbs: [String], targets: [NativeRuleTarget], names: [String]) -> Bool {
+    static func command(_ tail: String) -> String? {
+        let characters = Array(tail)
+        let marks = characters.indices.filter { characters[$0] == "`" }
+        if marks.isEmpty {
+            var plain = tail.trimmingCharacters(in: .whitespaces)
+            if plain.hasSuffix(".") { plain = String(plain.dropLast()) }
+            let made = canonical(plain)
+            return made.isEmpty ? nil : made
+        }
+        guard marks.count == 2, marks[0] == 0, marks[1] > 1 else { return nil }
+        let after = String(characters[(marks[1] + 1)...]).trimmingCharacters(in: .whitespaces)
+        guard after.isEmpty || after == "." else { return nil }
+        let inner = String(characters[1..<marks[1]])
+        guard inner == inner.trimmingCharacters(in: .whitespaces) else { return nil }
+        let made = canonical(inner)
+        return made.isEmpty ? nil : made
+    }
+
+    static func asks(_ raw: String, verbs: [String], targets: [NativeRuleTarget], names: [String]) -> Bool {
         let wanted = verbs.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !wanted.isEmpty else { return false }
-        let plain = text.replacingOccurrences(of: "\u{2019}", with: "'")
-        let lowered = NativeRequestPreapproval.normalized(plain)
-        let all = sentences(plain)
+        let folded = raw.replacingOccurrences(of: "\u{2019}", with: "'")
         let commands = targets.filter { $0.kind == .commandPrefix }
         if !commands.isEmpty {
-            guard commands.count == 1, targets.count == 1, names.isEmpty, !plain.contains(where: \.isNewline),
-                  let tail = rest(plain.trimmingCharacters(in: .whitespaces), after: wanted) else { return false }
-            let stopped = tail.hasSuffix("`.") || (!tail.contains("`") && tail.hasSuffix("."))
-            let typed = spaced(stopped ? String(tail.dropLast()) : tail)
-            return typed == canonical(commands[0].value) && NativeRequestPreapproval.settled("", original: lowered)
+            guard commands.count == 1, targets.count == 1, names.isEmpty, !folded.contains(where: \.isNewline),
+                  let tail = rest(folded.trimmingCharacters(in: .whitespaces), after: wanted), let typed = command(tail) else { return false }
+            return typed == canonical(commands[0].value) && NativeRequestPreapproval.settled("", original: NativeRequestPreapproval.normalized(folded))
         }
+        guard let plain = unmarked(folded) else { return false }
+        let lowered = NativeRequestPreapproval.normalized(plain)
+        let all = sentences(plain)
         for (position, sentence) in all.enumerated() {
             guard rest(sentence, after: wanted) != nil else { continue }
             let others = all.enumerated().filter { $0.offset != position }.map { $0.element.lowercased() }.joined(separator: ". ")

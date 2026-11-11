@@ -104,7 +104,8 @@ extension SelfTest {
                     "A typed command allows exactly that command")
         for (typed, ran) in [("Run make -n", "make"), ("Run echo make", "make"), ("Run make", "make -n"), ("Run make pdf", "make PDF"),
                              ("Run make pdf now", "make pdf"), ("Run make pdf and send it", "make pdf"), ("Run `make clean. all`", "make clean"),
-                             ("Run make clean. Then stop", "make clean"), ("Run make clean\nall", "make clean"), ("Run make pdf.", "make pdf.x"), ("Run `make pdf`.", "make pdf ."), ("Run make pdf.", "make pdf.")] {
+                             ("Run make clean. Then stop", "make clean"), ("Run make clean\nall", "make clean"), ("Run make pdf.", "make pdf.x"), ("Run `make pdf`.", "make pdf ."), ("Run make pdf.", "make pdf."), ("Run `make pdf` .", "make pdf ."), ("Run `make` pdf", "make pdf"),
+                             ("Run ``make pdf``", "make pdf"), ("Run `make pdf", "make pdf"), ("Run make `pdf`", "make pdf"), ("Run ` make pdf `", "make pdf")] {
             try require(!command(typed, runs: ran), "Typing \(typed) does not allow running \(ran)")
         }
         let drafts = try target(.folder, "/shared/drafts")
@@ -119,7 +120,9 @@ extension SelfTest {
                         && command("Run make pdf.", runs: "make pdf") && command("Run `make pdf`.", runs: "make pdf"),
                     "A full stop that ends the message is not part of the path or command")
         let loose = try target(.folder, "/shared/notes.txt")
-        for typed in ["Delete /shared/prefix:notes.txt", "Delete x,notes.txt", "Delete my-notes.txt", "Delete ~notes.txt", "Delete other/notes.txt"] {
+        for typed in ["Delete /shared/prefix:notes.txt", "Delete x,notes.txt", "Delete my-notes.txt", "Delete ~notes.txt", "Delete other/notes.txt",
+                      "Delete /shared/archive(notes.txt)", "Delete /shared/archive(/shared/notes.txt)", "Delete `` /shared/notes.txt` ``",
+                      "Delete (notes.txt)", "Delete `notes.txt`x", "Delete x`notes.txt`", "Delete ``notes.txt``", "Delete `notes.txt` and `other.txt`"] {
             try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed), claim: trashClaim, targets: [loose]).decision(for: .trash) == .ask,
                         "A file name that is only the end of something longer is not that file: \(typed)")
         }
@@ -128,6 +131,8 @@ extension SelfTest {
                         && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete `notes.txt`."), claim: trashClaim, targets: [loose])
                             .decision(for: .trash) == .act(.instruction),
                     "A file name typed on its own, with or without code marks, is that file")
+        try require(command("Run `make pdf` .", runs: "make pdf") && command("  Run   make   pdf  ", runs: "make pdf"),
+                    "The command in code marks is the command, whatever closing punctuation follows")
         let upper = try target(.folder, "/shared/drafts/Notes.txt")
         try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [upper]).decision(for: .trash) == .ask
                         && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt"), claim: trashClaim, targets: [upper])
