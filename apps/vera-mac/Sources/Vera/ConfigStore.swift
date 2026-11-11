@@ -763,6 +763,13 @@ final class ConfigStore: ObservableObject {
         changeRules(store: store) { $0.restore(item) }
     }
 
+    func setChoice(_ choice: NativeRuleChoice, for item: NativeFloorItem, store: ChatStore) {
+        guard let action = item.actionClass, nativeSettings.rules.isLifted(item) else { return }
+        guard choice != .handOff else { leaveToMe(item, store: store); return }
+        guard nativeSettings.rules.choice(for: action) != choice else { return }
+        changeRules(store: store) { $0.set(choice, for: action) }
+    }
+
     private func changeRules(store: ChatStore, _ update: (inout NativeRules) -> Void) {
         var settings = nativeSettings
         update(&settings.rules)
