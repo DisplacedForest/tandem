@@ -79,7 +79,7 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
             request.setValue(identifier, forHTTPHeaderField: NativeMCPBoundedURLProtocol.marker)
             return request
         }, logger: Logger(label: "vera.mcp.transport", factory: { _ in SwiftLogNoOpLogHandler() }))
-        let candidate = Client(name: "Vera", version: "1", configuration: .strict)
+        let candidate = Client(name: "Tandem", version: "1", configuration: .strict)
         client = candidate
         authorizationObserver = authorization?.onInvalidation { [weak guardrail, weak candidate] in
             guardrail?.fail(.authenticationRequired)
