@@ -138,6 +138,16 @@ extension SelfTest {
                         && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt"), claim: trashClaim, targets: [upper])
                             .decision(for: .trash) == .ask,
                     "A file name in different letter case is a different file")
+        let renamed = try target(.folder, "/shared/old notes.txt")
+        let moving = resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Create `old notes.txt` from draft.txt"), claim: saveClaim, targets: [])
+            .tool("fixture-notes", subjects: [[loose], [renamed]])
+        try require(moving.decision(for: .fileEdits) == .ask
+                        && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save notes.md and hello.md"), claim: saveClaim, targets: [])
+                            .tool("fixture-notes", subjects: [[try target(.folder, "/shared/notes.md")], [try target(.folder, "/shared/hello.md")]])
+                            .decision(for: .fileEdits) == .ask
+                        && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Create `old notes.txt`"), claim: saveClaim, targets: [renamed])
+                            .decision(for: .fileEdits) == .act(.instruction),
+                    "An instruction covers a call aimed at one file, never one that touches two")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)

@@ -130,8 +130,9 @@ enum NativeInstruction {
                   let tail = rest(folded.trimmingCharacters(in: .whitespaces), after: wanted), let typed = command(tail) else { return false }
             return typed == canonical(commands[0].value) && NativeRequestPreapproval.settled("", original: NativeRequestPreapproval.normalized(folded))
         }
-        guard let plain = unmarked(folded) else { return false }
+        guard let plain = unmarked(folded), targets.filter({ $0.kind == .folder }).count <= 1 else { return false }
         if let inner = marked(folded) {
+            if inner.contains(where: \.isWhitespace), targets.count + names.count != 1 { return false }
             let whole = targets.contains { target in
                 switch target.kind {
                 case .folder: return inner == target.value || inner == URL(fileURLWithPath: target.value).lastPathComponent
