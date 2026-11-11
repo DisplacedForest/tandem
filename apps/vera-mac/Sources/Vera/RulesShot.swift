@@ -12,7 +12,10 @@ enum RulesShot {
             : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
         let showsMenu = variant == "rules-menu"
         let advancedVariant = variant.hasPrefix("rules-advanced")
-        let size = NSSize(width: showsHelp || showsMenu || advancedVariant ? 1240 : 860, height: advancedVariant ? 1100 : 980)
+        let sharedVariant = variant.hasPrefix("rules-shared")
+        let showsSharingInfo = variant == "rules-shared-info"
+        let size = NSSize(width: showsHelp || showsMenu || advancedVariant || showsSharingInfo ? 1240 : 860,
+                          height: advancedVariant ? 1100 : sharedVariant ? 1280 : 980)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rules-shot-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory.appendingPathComponent("Seedlings"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -23,6 +26,7 @@ enum RulesShot {
         if variant == "rules-saved" || variant == "rules-saved-kind" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
         if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
         if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
+        if variant == "rules-shared" || showsSharingInfo { seedShared(store, root: directory.path) }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         var advanced = RulesAdvancedState()
@@ -58,6 +62,13 @@ enum RulesShot {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
                 .padding(.top, 20)
+            }
+            if showsSharingInfo {
+                SharedFolderInfo()
+                    .background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+                    .padding(.top, 20)
             }
             if showsHelp {
                 RulesChoiceHelp()
@@ -150,6 +161,31 @@ enum RulesShot {
         }
         if let off { store.disableRuleRecord(id: off) }
         store.tightenConversationRule(.ask, for: .fileEdits, conversationID: orders.id)
+    }
+
+    static func seedShared(_ store: ChatStore, root: String) {
+        func folder(_ parts: String...) -> String {
+            let path = parts.reduce(root) { ($0 as NSString).appendingPathComponent($1) }
+            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            return path
+        }
+        let garden = ProjectRecord(id: "rules-shared-garden", name: "Spring garden", instructions: "",
+                                   grants: [FolderGrant(path: folder("Plans", "Garden plans"))], files: [], createdAt: Date(), updatedAt: Date())
+        store.projects = [garden]
+        var greenhouse = Conversation(id: "rules-shared-greenhouse", title: "Greenhouse notes", messages: [], updatedAt: Date())
+        greenhouse.grants = [FolderGrant(path: folder("Work", "Documents")), FolderGrant(path: folder("Seedlings"))]
+        var orders = Conversation(id: "rules-shared-orders", title: "Seed orders", messages: [], updatedAt: Date())
+        orders.grants = [FolderGrant(path: folder("Home", "Documents"))]
+        orders.projectID = garden.id
+        var receipts = Conversation(id: "rules-shared-receipts", title: "Receipts", messages: [], updatedAt: Date())
+        receipts.grants = [FolderGrant(path: folder("Archive", "Receipts"), readOnly: true)]
+        receipts.projectID = garden.id
+        var beds = Conversation(id: "rules-shared-beds", title: "Raised beds", messages: [], updatedAt: Date())
+        beds.projectID = garden.id
+        store.conversations.insert(contentsOf: [greenhouse, orders, receipts, beds], at: 0)
+        if let thread = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == thread }) {
+            store.conversations[index].grants = [FolderGrant(path: folder("Journal"))]
+        }
     }
 
     static func seedLiteral(_ store: ChatStore, root: String) {

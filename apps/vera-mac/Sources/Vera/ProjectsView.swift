@@ -38,6 +38,7 @@ struct ProjectEditor: View {
     @State private var name: String
     @State private var instructions: String
     @State private var grants: [FolderGrant]
+    @State private var opened: Set<String>
     @State private var error: String?
     @State private var managingFiles = false
     @State private var confirmingDelete = false
@@ -47,6 +48,7 @@ struct ProjectEditor: View {
         _name = State(initialValue: project.name)
         _instructions = State(initialValue: project.instructions)
         _grants = State(initialValue: project.grants)
+        _opened = State(initialValue: Set(project.grants.map(\.id)))
     }
 
     var body: some View {
@@ -110,6 +112,9 @@ struct ProjectEditor: View {
         .font(.system(size: 13)).padding(24).frame(width: 520)
         .foregroundStyle(Theme.textPrimary).background(Theme.surface)
         .sheet(isPresented: $managingFiles) { ProjectFilesEditor(projectID: project.id) }
+        .onChange(of: store.project(project.id)?.grants.map(\.id)) {
+            grants = store.projectFolders(project.id, edited: grants, opened: opened)
+        }
         .confirmationDialog("Delete \(project.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 store.clearProjectError()
@@ -122,7 +127,8 @@ struct ProjectEditor: View {
     }
 
     private func save() {
-        if store.saveProjectEdits(project.id, name: name, instructions: instructions, grants: grants) {
+        let kept = store.projectFolders(project.id, edited: grants, opened: opened)
+        if store.saveProjectEdits(project.id, name: name, instructions: instructions, grants: kept) {
             dismiss()
         } else { error = store.projectError }
     }

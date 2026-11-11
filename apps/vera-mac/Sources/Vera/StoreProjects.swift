@@ -34,12 +34,17 @@ extension ChatStore {
         return project(record.id)
     }
 
-    private func updateProject(_ id: String, failure: String, _ change: (inout ProjectRecord) -> Void) {
-        guard let projectRepository, var record = project(id) else { return }
+    @discardableResult
+    private func updateProject(_ id: String, failure: String, _ change: (inout ProjectRecord) -> Void) -> Bool {
+        guard let projectRepository, var record = project(id) else { return false }
         change(&record)
-        do { try projectRepository.saveProject(record) }
-        catch { projectError = "\(failure): \(error.localizedDescription)" }
+        var saved = true
+        do {
+            try projectRepository.saveProject(record)
+            if let index = projects.firstIndex(where: { $0.id == id }) { projects[index] = record }
+        } catch { projectError = "\(failure): \(error.localizedDescription)"; saved = false }
         reloadProjects()
+        return saved
     }
 
     @discardableResult
@@ -91,9 +96,16 @@ extension ChatStore {
         refreshProjectGrants(id)
     }
 
-    func removeProjectFolder(_ id: String, grantID: String) {
-        updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }
+    func projectFolders(_ id: String, edited: [FolderGrant], opened: Set<String>) -> [FolderGrant] {
+        let current = Set(project(id)?.grants.map(\.id) ?? [])
+        return edited.filter { !opened.contains($0.id) || current.contains($0.id) }
+    }
+
+    @discardableResult
+    func removeProjectFolder(_ id: String, grantID: String) -> Bool {
+        let saved = updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }
         refreshProjectGrants(id)
+        return saved
     }
 
     func addProjectFile(_ id: String, url: URL) {
