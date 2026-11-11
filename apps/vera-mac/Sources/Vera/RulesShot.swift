@@ -97,7 +97,10 @@ enum RulesShot {
         records.append(NativeRuleRecord(scope: .conversation(greenhouse.id), action: nil, toolID: command, effect: .forbid,
                                         statement: "Never run commands in this chat", origin: .confirmCard, originConversationID: greenhouse.id))
         if let workshop = NativeRuleTarget.make(.recipient, "workshop@example.com") {
-            records.append(NativeRuleRecord(scope: .conversation(orders.id), action: .networkSends, toolID: "mail", target: workshop, effect: .allow,
+            let mail = "{\"name\":\"mail_send\",\"title\":\"Mail\",\"description\":\"Send an email\",\"parameters\":{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\"}},\"required\":[\"to\"],\"additionalProperties\":false},\"endpoint\":\"https://mail.example/send\",\"method\":\"POST\",\"confirmation\":\"none\"}"
+            let declaration = try? NativeCapabilityTools.parse(data: Data(mail.utf8), source: "mail.json")
+            if let declaration { store.reloadCapabilityTools([declaration]) }
+            records.append(NativeRuleRecord(scope: .conversation(orders.id), action: .networkSends, toolID: declaration?.id ?? "mail", target: workshop, effect: .allow,
                                             statement: "In this chat, allow sending to workshop@example.com", origin: .confirmCard,
                                             originConversationID: orders.id, remainingUses: 2))
         }

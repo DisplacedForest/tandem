@@ -56,11 +56,24 @@ extension SelfTest {
         let sendNever = record(action: .networkSends, tool: "mail", target: workshop, effect: .forbid, statement: "Never send")
         let serviceAllow = record(action: .networkSends, target: garden, statement: "Allow the service")
         let serviceNever = record(action: .networkSends, target: garden, effect: .forbid, statement: "Never the service")
+        let twins = RuleRows.toolNames([(id: "a", title: "Mail", hints: ["mail.example", "mail send"]),
+                                        (id: "b", title: "Mail", hints: ["post.example", "mail post"]),
+                                        (id: "c", title: "Garden log", hints: ["garden.example"])])
+        try require(twins["a"] == "Mail (mail.example)" && twins["b"] == "Mail (post.example)" && twins["c"] == "Garden log",
+                    "Two tools with the same title are told apart by where they send, and a unique title stays plain")
+        let sameHost = RuleRows.toolNames([(id: "a", title: "Mail", hints: ["mail.example", "send mail"]),
+                                           (id: "b", title: "mail", hints: ["mail.example", "archive mail"])])
+        try require(sameHost["a"] != sameHost["b"] && sameHost["a"] == "Mail (mail.example, send mail)",
+                    "Two tools with the same title on the same server are told apart by their own names")
+        let twinA = record(action: .networkSends, tool: "a", target: workshop, statement: "x")
+        let twinB = record(action: .networkSends, tool: "b", target: workshop, statement: "x")
+        try require(RuleRows.sentence(twinA, tools: twins) != RuleRows.sentence(twinB, tools: twins),
+                    "Rules for two same-titled tools sending to one person never read the same")
         let named = ["mail": "Mail", "post": "Garden log"]
         let otherTool = record(action: .networkSends, tool: "post", target: workshop, statement: "In this chat, allow sending")
         try require(RuleRows.sentence(sendAllow, tools: named) != RuleRows.sentence(otherTool, tools: named)
                     && RuleRows.sentence(otherTool, tools: named) == "Always allow sending to workshop@example.com through Garden log"
-                    && RuleRows.sentence(otherTool) == "Always allow sending to workshop@example.com through one tool"
+                    && RuleRows.sentence(otherTool) == "Always allow sending to workshop@example.com through a tool that's no longer here"
                     && !RuleRows.sentence(otherTool).contains("post"),
                     "Two tools allowed to send to the same person read differently, and an unknown tool never shows its identifier")
         try require(RuleRows.sentence(sendAllow, tools: named) == "Always allow sending to workshop@example.com through Mail"
@@ -175,10 +188,13 @@ extension SelfTest {
                     "Rows run everywhere, project, chat, schedule, task, newest first: \(listed.map(\.sentence))")
         try require(!listed.contains { $0.id == revoked.id || $0.id == unknown.id }, "Removed rules and rules for unknown places never show")
         try require(RuleRows.chatSentence(.commands, .handOff) == "Always leave commands to me"
-                    && RuleRows.chatSentence(.networkSends, .actIfPreapproved) == "Always wait for my go-ahead before sending on your behalf"
+                    && RuleRows.chatSentence(.networkSends, .actIfPreapproved) == "Always wait for my go-ahead before sending"
                     && RuleRows.chatSentence(.trash, .ask) == "Always ask before moving files to the Trash"
                     && NativeActionClass.configurable.allSatisfy { action in
-                        NativeRuleChoice.allCases.allSatisfy { !RuleRows.chatSentence(action, $0).contains(":") }
+                        NativeRuleChoice.allCases.allSatisfy { choice in
+                            let sentence = RuleRows.chatSentence(action, choice)
+                            return !sentence.contains(":") && !sentence.lowercased().split(separator: " ").contains { $0 == "you" || $0 == "your" }
+                        }
                     }, "A stricter chat reads as a sentence like every other row")
         try require(listed.count == 7 && listed[6].sentence == "Always ask before file edits" && listed[6].place == "in Greenhouse notes",
                     "A stricter chat adds its own row: \(listed.last?.line ?? "none")")

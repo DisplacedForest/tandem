@@ -160,11 +160,15 @@ extension ChatStore {
         for conversation in conversations where conversation.id != veraThreadID { places.chats[conversation.id] = conversation.title }
         for project in projects { places.projects[project.id] = project.name }
         for schedule in schedules { places.schedules[schedule.id] = schedule.title }
-        for descriptor in NativeChatToolCatalog.tools(veraAPIConfigured: true, imageConfigured: true, searchConfigured: true,
-                                                      declarations: capabilityDeclarations) {
-            places.tools[descriptor.id] = descriptor.name
+        var entries = NativeChatToolCatalog.tools(veraAPIConfigured: true, imageConfigured: true, searchConfigured: true)
+            .map { (id: $0.id, title: $0.name, hints: [String]()) }
+        for declaration in capabilityDeclarations {
+            let host = URL(string: declaration.endpoint)?.host ?? ""
+            let spoken = declaration.name.replacingOccurrences(of: "_", with: " ")
+            entries.removeAll { $0.id == declaration.id }
+            entries.append((id: declaration.id, title: declaration.title, hints: [host, spoken, declaration.endpoint].filter { !$0.isEmpty }))
         }
-        for declaration in capabilityDeclarations { places.tools[declaration.id] = declaration.title }
+        places.tools = RuleRows.toolNames(entries)
         for record in records where !places.contains(record.scope) && ruleScopeExists(record.scope) != false {
             switch record.scope {
             case .conversation(let id): places.chats[id] = storedLabel("conversations", "title", id)

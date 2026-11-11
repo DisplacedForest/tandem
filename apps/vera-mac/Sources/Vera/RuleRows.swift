@@ -79,15 +79,35 @@ enum RuleRows {
         return name.isEmpty ? fallbackTool : name
     }
 
-    static let oneTool = "one tool"
+    static let goneTool = "a tool that's no longer here"
     static let lostChat = "in a chat that couldn't be loaded"
     static let lostProject = "in a project that couldn't be loaded"
     static let lostSchedule = "for a schedule that couldn't be loaded"
 
+    static func toolNames(_ entries: [(id: String, title: String, hints: [String])]) -> [String: String] {
+        var names: [String: String] = [:]
+        let counted = Dictionary(grouping: entries, by: { plain($0.title).lowercased() })
+        for (_, group) in counted {
+            guard group.count > 1 else {
+                if let only = group.first { names[only.id] = plain(only.title) }
+                continue
+            }
+            for depth in 0..<3 {
+                let labels = group.map { entry in plain(entry.hints.prefix(depth + 1).joined(separator: ", ")) }
+                guard Set(labels.map { $0.lowercased() }).count == group.count || depth == 2 else { continue }
+                for (entry, label) in zip(group, labels) {
+                    names[entry.id] = label.isEmpty ? plain(entry.title) : "\(plain(entry.title)) (\(label))"
+                }
+                break
+            }
+        }
+        return names
+    }
+
     static func through(_ record: NativeRuleRecord, tools: [String: String]) -> String {
         guard let id = record.toolID, id != NativeCommandTools.toolID else { return "" }
         let name = plain(tools[id] ?? "")
-        return " through " + (name.isEmpty ? oneTool : name)
+        return " through " + (name.isEmpty ? goneTool : name)
     }
 
     static func sentence(_ record: NativeRuleRecord, tools: [String: String] = [:]) -> String {
@@ -217,9 +237,9 @@ enum RuleRows {
         case .fileEdits: return "file edits"
         case .commands: return "running commands"
         case .trash: return "moving files to the Trash"
-        case .networkSends: return "sending on your behalf"
+        case .networkSends: return "sending"
         case .riskyCommands: return "running risky commands"
-        case .reminders: return "changing your reminders"
+        case .reminders: return "changing reminders"
         case .serviceChanges: return "making changes through connected services"
         case .otherChanges: return "making other changes"
         case .credentialEntry, .payments, .permanentDeletion: return lowered(action.title)
@@ -289,7 +309,7 @@ enum RuleRows {
     }
 
     static func screenStrings(_ rows: [RuleRow], name: String?) -> [String] {
-        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, oneTool,
+        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, goneTool,
                        lostChat, lostProject, lostSchedule]
         for row in rows {
             strings.append(CompanionSentence.plain(row.line, name: name))
