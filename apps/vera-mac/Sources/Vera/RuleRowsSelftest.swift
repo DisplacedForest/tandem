@@ -645,7 +645,7 @@ extension SelfTest {
                                         parameters: .object(["type": .string("object"), "properties": .object(["line": .object(["type": .string("string")])]),
                                                              "required": .array([.string("line")])]),
                                         confirmation: .none, action: .networkSends, isAvailable: { true },
-                                        execute: { _ in posted.hit(); return .object(["posted": .bool(true)]) })
+                                        execute: { _ in posted.hit(); return .object(["posted": .bool(true)]) }, fixedDestination: true)
         let rounds = [[NativeChatStreamSnapshot(content: "", toolCalls: [
             NativeChatToolCall(id: "send-call", name: "garden_log", arguments: "{\"line\":\"Watered the beans\"}"),
         ], finishReason: "tool_calls")], [NativeChatStreamSnapshot(content: "Posted.", toolCalls: [], finishReason: "stop")]]

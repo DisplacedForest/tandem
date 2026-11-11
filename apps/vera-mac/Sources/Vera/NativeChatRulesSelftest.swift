@@ -327,7 +327,7 @@ extension SelfTest {
         let alwaysRuled = ruled(always, source(rules(.act, for: .networkSends)))
         let alwaysActivity = NativeToolActivity(id: "a1", toolID: always.id, name: always.name, title: always.title, round: 1, request: "{}",
                                                 result: nil, state: .pending, confirmationRequired: true)
-        let alwaysSubject = ChatStore.cardSubject(for: alwaysActivity, definitions: [alwaysRuled], typedText: "")
+        let alwaysSubject = ChatStore.cardSubject(for: alwaysActivity, definitions: [alwaysRuled])
         var alwaysRequest = NativeToolConfirmationRequest(activity: alwaysActivity)
         alwaysRequest.subject = alwaysSubject
         alwaysRequest.choices = alwaysSubject.map { NativeCardChoices.offered($0, place: .chat(conversationID: "c1")) } ?? []
@@ -341,13 +341,13 @@ extension SelfTest {
         let createActivity = NativeToolActivity(id: "r1", toolID: create.id, name: create.name, title: create.title, round: 1,
                                                 request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", result: nil, state: .pending,
                                                 confirmationRequired: true)
-        let createSubject = ChatStore.cardSubject(for: createActivity, definitions: [ruled(create, source(rules(.ask, for: .reminders)))], typedText: "")
+        let createSubject = ChatStore.cardSubject(for: createActivity, definitions: [ruled(create, source(rules(.ask, for: .reminders)))])
         var createRequest = NativeToolConfirmationRequest(activity: createActivity)
         createRequest.subject = createSubject
         let completeActivity = NativeToolActivity(id: "r2", toolID: complete.id, name: complete.name, title: complete.title, round: 1,
                                                   request: "{\"id\":\"open\"}", result: nil, state: .pending, confirmationRequired: true)
         var completeRequest = NativeToolConfirmationRequest(activity: completeActivity)
-        completeRequest.subject = ChatStore.cardSubject(for: completeActivity, definitions: [ruled(complete, source(rules(.ask, for: .reminders)))], typedText: "")
+        completeRequest.subject = ChatStore.cardSubject(for: completeActivity, definitions: [ruled(complete, source(rules(.ask, for: .reminders)))])
         try require(NativeToolConfirmationBar.sentence(for: createRequest, actor: "Tandem") == "Tandem wants to add a reminder."
                     && NativeToolConfirmationBar.sentence(for: completeRequest, actor: "Tandem") == "Tandem wants to mark a reminder as done.",
                     "A reminder card says what it wants to do in plain words")
@@ -367,7 +367,7 @@ extension SelfTest {
                 parameters: .object(["type": .string("object"), "properties": .object(["line": .object(["type": .string("string")])]),
                                      "required": .array([.string("line")])]),
                 confirmation: .none, action: .networkSends, isAvailable: { true },
-                execute: { _ in counter.hit(); return .object(["posted": .bool(true)]) })
+                execute: { _ in counter.hit(); return .object(["posted": .bool(true)]) }, fixedDestination: true)
             let store = ChatStore(nativeConfig: config, nativeTransport: ScriptedNativeToolTransport(rounds: rounds),
                                   repository: try! LocalChatRepository(inMemory: true), nativeEnabledToolIDs: [send.id], nativeRules: rules,
                                   nativeToolRegistry: NativeToolRegistry(definitions: [send]), artifactPersistenceEnabled: false)

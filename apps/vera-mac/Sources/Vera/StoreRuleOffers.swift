@@ -15,12 +15,12 @@ extension ChatStore {
     }
 
     nonisolated static func offerWhy(for activity: NativeToolActivity, definitions: [NativeToolDefinition], rules: NativeRuleSource,
-                                     conversationID: String, requestText: String) -> NativeRuleWhy? {
+                                     conversationID: String, typed: NativeTypedWords) -> NativeRuleWhy? {
         guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }), definition.governed,
               let data = activity.request.data(using: .utf8), let arguments = try? NativeJSONValue.piRead(data).piObject,
               definition.proposesFor?(arguments) != true,
               let action = definition.actionClass(for: arguments) else { return nil }
-        let resolver = rules.resolver(for: conversationID, requestText: requestText)
+        let resolver = rules.resolver(for: conversationID, requestText: typed.said, typed: typed)
         if let ruleWhy = definition.ruleWhy { return ruleWhy(arguments, resolver) }
         var command: String?
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
@@ -28,10 +28,10 @@ extension ChatStore {
         return scoped.judge(action, command: action == .commands ? command : nil, honoringLimitedUse: scoped.durable).why
     }
 
-    func noteRuleOfferWhy(_ activity: NativeToolActivity, turn: NativeConversationTurn, definitions: [NativeToolDefinition], typedText: String) {
+    func noteRuleOfferWhy(_ activity: NativeToolActivity, turn: NativeConversationTurn, definitions: [NativeToolDefinition], typed: NativeTypedWords) {
         let key = Self.ruleOfferKey(turn: turn, request: activity.id)
         ruleOfferSession.whys[key] = Self.offerWhy(for: activity, definitions: definitions, rules: nativeRuleSource,
-                                                    conversationID: turn.conversationID, requestText: typedText)
+                                                    conversationID: turn.conversationID, typed: typed)
     }
 
     func recordRuleOfferDecision(_ decision: NativeCardChoiceKind, request: NativeToolConfirmationRequest?, turn: NativeConversationTurn, chosen: Bool) {

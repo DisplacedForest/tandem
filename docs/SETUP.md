@@ -445,7 +445,7 @@ Each default's explanation sits behind the info button on its row. Editing files
 
 #### Why something wasn't done
 
-When an action is left to you or isn't run, the chat says why in one sentence. The step shows **Left to you** or **Not run** in place of a failure, and a command that wasn't run keeps its card with the same sentence. It is always one of six reasons:
+When an action is left to you or isn't run, the chat says why in one sentence. The step shows **Left to you** or **Not run** in place of a failure, and a command that wasn't run keeps its card with the same sentence. It is always one of seven reasons:
 
 - The setting for that kind of action is Ask first or Leave it to me, in Settings or tightened in that chat. For a command it also says what made it risky, such as asking for administrator rights.
 - A rule you saved allows something close but not this, for example commands that start with other words.
@@ -453,6 +453,9 @@ When an action is left to you or isn't run, the chat says why in one sentence. T
 - It is one of the three things always left to you, which you can turn on under Advanced.
 - The tool asks every time, whatever your rules say.
 - It reaches a path outside the folders shared with that chat. Share the folder to allow it.
+- It sends to an address you didn't type yourself, so it asks first.
+
+When a send is aimed at an address you didn't type yourself, for example one that came from a web page, a message or a tool's output, Tandem asks first even if **Send on your behalf** is set to run without asking. Allowing that address from the menu on the confirmation's Allow button stops it asking for that address. **Do it when I say go ahead** only counts words you typed in the message box, not a suggested option you clicked.
 
 Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. Nothing is ever changed from inside the chat. Work your companion does in the background stops at the same point and shows **Needs you** with the step it stopped at and the reason. The model is told the same reason, so what it says matches what you see.
 
@@ -552,6 +555,14 @@ service:
   field, and the string must then contain a JSON object, for example
   `"json_fields": {"filters_json": "filters"}`. This lets a tool accept a nested object
   while the parameters stay within the string and boolean subset.
+- `sends_to`: optional, POST only. Lists the declared string fields that say where a
+  message goes, for example `"sends_to": ["to"]`. A field can hold several addresses
+  separated by commas or semicolons. Leave the list empty, `"sends_to": []`, for a tool
+  that always posts to the same place. With fields listed, the confirmation can remember
+  one recipient, and an address you typed yourself goes through under your **Send on your
+  behalf** setting. With an empty list, the confirmation can remember the tool. With no
+  `sends_to` line, a sending tool can only be allowed one time from its confirmation,
+  though the **Send on your behalf** setting still applies to it as before.
 
 The response comes back to the model as tool data: JSON is preferred, plain text is
 tolerated, and it is held under a size cap. A non-2xx response shows in chat as a failed

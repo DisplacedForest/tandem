@@ -31,6 +31,7 @@ enum RefusalShot {
                                                         rule: .init(allow))))
         }
         list.append(("Post to the garden log", NativeRuleWhy.tool(.networkSends)))
+        list.append(("Send an email", NativeRuleWhy(kind: .unnamed, action: .networkSends, handsOff: false, subject: "orders@workshop.example")))
         return list
     }
 

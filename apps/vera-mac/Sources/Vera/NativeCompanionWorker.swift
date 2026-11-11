@@ -503,7 +503,7 @@ private struct NativeCompanionRun {
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
-                                 alwaysAsks: definition.demandsConfirmation)
+                                 fixed: definition.fixedDestination, alwaysAsks: definition.demandsConfirmation)
     }
 
     func cardPlace(_ authority: NativeCompanionWorkerAuthority) -> NativeCardPlace {
@@ -534,15 +534,15 @@ private struct NativeCompanionRun {
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
-        NativeCompanionWorker.authority(environment.authority(context.threadID, dot.assignment), taskID: task.id, origin: origin)
+        NativeCompanionWorker.authority(environment.authority(context.threadID, dot.typedRequest), taskID: task.id, origin: origin)
     }
 
     var liveRevisions: @Sendable () -> (rules: Int, grants: Int) {
         let environment = self.environment
         let thread = context.threadID
-        let assignment = dot.assignment
+        let request = dot.typedRequest
         return {
-            let current = environment.authority(thread, assignment)
+            let current = environment.authority(thread, request)
             return (current.resolver.revision, current.grantsRevision)
         }
     }

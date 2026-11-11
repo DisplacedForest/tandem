@@ -2227,7 +2227,7 @@ final class ChatStore: ObservableObject {
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
-        turn.dotContext = dotContext(for: id, requestText: text)
+        turn.dotContext = dotContext(for: id, requestText: fromComposer ? text : "")
         if fromComposer { turn.preferenceEligible = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
@@ -2271,7 +2271,7 @@ final class ChatStore: ObservableObject {
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(Array(conversation.messages.prefix(ri - 1)), current: user))
-        turn.dotContext = dotContext(for: conversation.id, requestText: user.text)
+        turn.dotContext = dotContext(for: conversation.id, requestText: "")
         do {
             try turnRepository?.enrollLegacyTurn(turn)
             conversations[ci].messages[ri].state = .streaming
@@ -2428,15 +2428,17 @@ final class ChatStore: ObservableObject {
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
-        let resolver = ruleResolver(for: id, requestText: text)
+        let typed = typedWords(for: turn)
+        let said = typed.said
+        let resolver = ruleResolver(for: id, requestText: said, typed: typed)
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
             let records = nativeRuleRecordStore
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
-                live: { rules.resolver(for: id, requestText: text).decision(for: $0) },
-                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: text, action: $0, subjects: $1) },
+                live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, action: $0, subjects: $1) },
                 alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
@@ -2456,7 +2458,7 @@ final class ChatStore: ObservableObject {
         let turnRules = nativeRuleSource
         let turnRecords = nativeRuleRecordStore
         turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions.map {
-            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: text)
+            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: said, typed: typed)
         })
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
@@ -2470,8 +2472,8 @@ final class ChatStore: ObservableObject {
             },
             confirm: { [weak self, turnRegistry] activity in
                 guard let self else { return false }
-                let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions, typedText: text)
-                await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typedText: text)
+                let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions)
+                await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(

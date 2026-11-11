@@ -542,7 +542,7 @@ extension ChatStore {
         (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
     }
 
-    nonisolated static func cardSubject(for activity: NativeToolActivity, definitions: [NativeToolDefinition], typedText: String) -> NativeCardSubject? {
+    nonisolated static func cardSubject(for activity: NativeToolActivity, definitions: [NativeToolDefinition]) -> NativeCardSubject? {
         guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }),
               let data = activity.request.data(using: .utf8), let arguments = try? NativeJSONValue.piRead(data).piObject,
               let action = definition.actionClass(for: arguments) else { return nil }
@@ -551,7 +551,7 @@ extension ChatStore {
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
                                  governed: definition.governed,
-                                 typedText: typedText, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
+                                 fixed: definition.fixedDestination, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
     }
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil) async -> Bool {
