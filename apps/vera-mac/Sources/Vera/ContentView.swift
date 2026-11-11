@@ -1370,7 +1370,7 @@ struct ComposerField: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .frame(width: ComposerControlGlyph.sendSize, height: ComposerControlGlyph.sendSize)
                 .contentShape(Rectangle())
-                .help("Add files, grant a folder, or insert a saved prompt")
+                .help("Add files, share a folder, or insert a saved prompt")
                 .accessibilityLabel("Add attachments")
                 TextField("Message \(store.conversationAssistantName)", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)

@@ -250,7 +250,7 @@ extension SelfTest {
                      record(.task("rows-blank"), action: .networkSends, tool: "mail"), record(.conversation("rows-braces"), action: .networkSends, tool: "mail")]
         let everyRow = RuleRows.rows(records: every, chatRules: chatRules, places: places, now: now, calendar: calendar)
         try require(everyRow.count == every.count + 1, "Every fixture shape shows a row")
-        let internalWords: Set<String> = ["grant", "kind", "class", "record", "origin", "scope", "prefix", "effect", "revoke"]
+        let internalWords: Set<String> = ["grant", "granted", "grants", "granting", "composer", "kind", "class", "record", "origin", "scope", "prefix", "effect", "revoke"]
         func words(_ text: String) -> Set<String> {
             Set(text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
         }
