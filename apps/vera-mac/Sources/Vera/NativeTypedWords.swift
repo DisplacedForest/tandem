@@ -72,19 +72,25 @@ struct NativeTypedWords: Hashable, Sendable {
         joins(character) || "!#$%&'*/=?^`{|}~".contains(character)
     }
 
-    static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
+    static func spans(_ text: String, _ value: String, strict: Bool = false) -> [Range<String.Index>] {
         let needle = value.lowercased()
-        guard !needle.isEmpty else { return false }
+        guard !needle.isEmpty else { return [] }
         let haystack = text.lowercased()
+        guard haystack.count == text.count else { return [] }
+        var found: [Range<String.Index>] = []
         var start = haystack.startIndex
-        while let range = haystack.range(of: needle, range: start..<haystack.endIndex) {
+        while start < haystack.endIndex, let range = haystack.range(of: needle, range: start..<haystack.endIndex) {
             let before = range.lowerBound == haystack.startIndex ? nil : haystack[haystack.index(before: range.lowerBound)]
             let after = range.upperBound == haystack.endIndex ? nil : haystack[range.upperBound]
             let trailing = after.map { joins($0) && !ends(haystack, at: range.upperBound) } ?? false
-            if !(strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false)) && !trailing { return true }
+            if !(strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false)) && !trailing { found.append(range) }
             start = haystack.index(after: range.lowerBound)
         }
-        return false
+        return found
+    }
+
+    static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
+        !spans(text, value, strict: strict).isEmpty
     }
 
     static func fused(_ text: String, before index: String.Index) -> Bool {

@@ -22,7 +22,7 @@ extension SelfTest {
             ("You can delete old.txt.", ["delete"], ["old.txt"]),
         ]
         for (text, verbs, values) in accepted {
-            try require(NativeInstruction.asks(text, verbs: verbs, values: values), "An instruction that opens with the action counts: \(text)")
+            try require(NativeInstruction.asks(text, verbs: verbs, targets: [], names: values), "An instruction that opens with the action counts: \(text)")
         }
         let rejected: [(String, [String], String)] = [
             ("Don't send the notes to \(address)", ["send"], "a negated one"),
@@ -36,7 +36,7 @@ extension SelfTest {
             ("\(told). Actually wait.", ["send"], "a later sentence that takes it back"),
         ]
         for (text, verbs, label) in rejected {
-            try require(!NativeInstruction.asks(text, verbs: verbs, values: [address]), "An instruction is not counted for \(label): \(text)")
+            try require(!NativeInstruction.asks(text, verbs: verbs, targets: [], names: [address]), "An instruction is not counted for \(label): \(text)")
         }
 
         let split = NativeInstruction.sentences("Save this as notes.md and email \(address). Then stop\nThanks")
@@ -59,6 +59,47 @@ extension SelfTest {
             return made.tool(tool, targets: targets)
         }
         let typedTold = NativeTypedWords(typed: told)
+        let found: [(String, NativeRuleResolver, NativeActionClass)] = [
+            ("an address from another sentence",
+             resolver(typed: NativeTypedWords(typed: "\(told). The backup contact is bo@greenhouse.test."), targets: [bo]), .networkSends),
+            ("a condition after a quote mark",
+             resolver(typed: NativeTypedWords(typed: "Send the notes to \(address) with subject \"Draft\" only if I approve."), targets: [ana]), .networkSends),
+            ("a question mark after a quote mark",
+             resolver(typed: NativeTypedWords(typed: "Send the notes to \(address) titled \"Draft\"?"), targets: [ana]), .networkSends),
+            ("an alias that is also part of a later word",
+             resolver(typed: NativeTypedWords(typed: "Send the update to a after lunch."), targets: [try target(.recipient, "a")]), .networkSends),
+        ]
+        for (label, made, action) in found {
+            try require(made.decision(for: action) == .ask, "An instruction does not count for \(label)")
+        }
+        let saveClaim = NativeInstructionClaim(verbs: NativeFolderTools.verbs[.fileEdits] ?? [])
+        let trashClaim = NativeInstructionClaim(verbs: NativeFolderTools.verbs[.trash] ?? [])
+        let draft = try target(.folder, "/shared/drafts/notes.txt")
+        let finalCopy = try target(.folder, "/shared/final/notes.txt")
+        let deleteDraft = NativeTypedWords(typed: "Delete /shared/drafts/notes.txt")
+        try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [draft]).decision(for: .trash) == .act(.instruction)
+                        && resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [finalCopy]).decision(for: .trash) == .ask,
+                    "A typed path allows that file and not another file with the same name")
+        let copyNotes = NativeTypedWords(typed: "Copy notes.md to backup.md")
+        try require(resolver(rules(.ask, for: .fileEdits), typed: copyNotes, claim: saveClaim, targets: [try target(.folder, "/shared/notes.md")])
+                        .decision(for: .fileEdits) == .ask,
+                    "Asking for a copy does not allow writing over the file being copied")
+        let runClaim = NativeInstructionClaim(verbs: NativeCommandTools.verbs)
+        let spacedRun = NativeTypedWords(typed: "Run `make pdf`")
+        let runUses = NativeInstructionUses()
+        let tight = resolver(rules(.ask, for: .commands), typed: spacedRun, claim: runClaim, targets: [], uses: runUses, tool: NativeCommandTools.toolID)
+        let tightQuery = tight.query(for: .commands, command: "make pdf")
+        let wideQuery = tight.query(for: .commands, command: "make  pdf")
+        guard let tightSignature = tight.instructed(tightQuery, honoringLimitedUse: false) else {
+            throw NativeTaskFixture.Failure.assertion("A typed plain command is instructed")
+        }
+        try require(tight.instructed(wideQuery, honoringLimitedUse: false) == tightSignature, "Extra spaces in a command do not make it a different use")
+        runUses.take(tightSignature)
+        try require(tight.instructed(wideQuery, honoringLimitedUse: false) == nil, "The same command with extra spaces is spent with the first run")
+        var gateFailed = false
+        do { try NativeRuleResolver.gate(live: .ask, planned: .ask, action: .fileEdits, approved: false) } catch { gateFailed = true }
+        try require(gateFailed, "A live ask with no approval never runs, whatever was planned")
+        try NativeRuleResolver.gate(live: .ask, planned: .ask, action: .fileEdits, approved: true)
         try require(resolver(typed: typedTold, targets: [ana]).decision(for: .networkSends) == .act(.instruction),
                     "A send to the address typed in the instruction runs once without asking")
         let twins: [(String, NativeRuleResolver)] = [

@@ -2,7 +2,7 @@ import Foundation
 
 enum NativeFolderTools {
     static let verbs: [NativeActionClass: [String]] = [
-        .fileEdits: ["save", "write", "create", "edit", "update", "change", "append", "rename", "move", "copy"],
+        .fileEdits: ["save", "write", "create", "edit", "update"],
         .trash: ["delete", "trash", "remove"],
     ]
 

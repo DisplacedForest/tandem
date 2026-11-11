@@ -1164,6 +1164,6 @@ struct NativeRuleResolver: Sendable {
 
     static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool, why: NativeRuleWhy? = nil) throws {
         if live == .handOff { throw NativeRuleRefusal(why: why ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: true)) }
-        if live == .ask, !planned.requiresConfirmation, !approved { throw NativeToolError.failed(changedMessage) }
+        if live == .ask, !approved { throw NativeToolError.failed(changedMessage) }
     }
 }
