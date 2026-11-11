@@ -205,6 +205,7 @@ final class ChatStore: ObservableObject {
     @Published var pendingTaskReveal: String?
     @Published private(set) var composerSend = ComposerSend()
     var taskRevealGeneration = 0
+    var revealedCompanionWorkDecisionIDs: Set<String> = []
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
@@ -808,6 +809,7 @@ final class ChatStore: ObservableObject {
         loadMessagesIfNeeded(veraThreadID)
         prepareCompanionOpening()
         focusTick &+= 1
+        revealWaitingCompanionWorkOnce()
     }
 
     private func stashDraft() {
@@ -838,6 +840,7 @@ final class ChatStore: ObservableObject {
         draft = drafts[id] ?? ""
         loadMessagesIfNeeded(id)
         reconcileTaskArtifacts(conversationID: id)
+        if isVeraThread(id) { revealWaitingCompanionWorkOnce() }
     }
 
     func openChats() {

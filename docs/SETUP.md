@@ -322,7 +322,7 @@ Tandem is the application name. The assistant inside uses the name you chose (th
 
 Quick ask is a small always-on-top panel for talking to the assistant without switching to Tandem. Press the global shortcut, Option Shift Space by default, and the panel opens over whatever app is in front. You can also open it from the menu bar item with **Quick ask**. The menu bar item exists once **Keep running in the menu bar** is on, which happens by itself when a schedule exists.
 
-The panel shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. **Open in Tandem** opens the main window at that thread. Escape or clicking elsewhere hides the panel. The draft is kept when the panel hides and shows again.
+The panel shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. **Open in Tandem** opens the main window at that thread. Escape or clicking elsewhere hides the panel. The draft is kept when the panel hides and shows again. When something is waiting for your approval, including when the companion's own work stops to ask, the panel says so and **Open in Tandem** takes you to the card.
 
 Sending from the panel is the same as sending in that thread. It uses the same model, tools, rules and memory, and the reply streams into the panel. Images and files can be pasted or dropped into the panel. Sharing a folder is not offered there.
 
