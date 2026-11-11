@@ -1,6 +1,6 @@
 # Vera assistant UI prototype
 
-A separate SwiftUI executable for the isolated Pi runtime prototype. New Chat creates a focused conversation. Vera reopens one persistent assistant conversation. Activity shows conversation-scoped tasks, approval replies, and Stop. Outputs reveals existing task files within an explicitly configured workspace. Computers remains unavailable because this prototype has no computer execution backend.
+A separate SwiftUI executable for the isolated Pi runtime prototype. New Chat creates a focused conversation. Assistant reopens one persistent assistant conversation. Activity shows conversation-scoped tasks, approval replies, and Stop. Outputs reveals existing task files within an explicitly configured workspace. Computers remains unavailable because this prototype has no computer execution backend.
 
 The executable has no dependency on the installed Vera application, ConfigStore, Keychain, or its database. It requires a separate data directory, refuses the live Vera directory, and binds saved identity and drafts to one explicit loopback runtime address. The bridge owns transcripts and task state. No existing conversations are imported.
 
