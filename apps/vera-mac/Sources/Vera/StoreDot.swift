@@ -204,7 +204,7 @@ extension ChatStore {
                 }
             }
         }
-        if let threadID { _ = try? artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keep) }
+        if let threadID { _ = try? artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keepAsCompanion) }
         discardVeraThread()
         reloadArtifacts()
         suspendsTurnScheduling = false

@@ -74,15 +74,20 @@ struct ArtifactLibrarySelection: Equatable {
     var filter: ArtifactKindFilter = .all
     var conversationFilter: String?
 
-    func visible(_ records: [ArtifactRecord], companionName: String? = nil) -> [ArtifactRecord] {
+    func visible(_ records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) -> [ArtifactRecord] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return records.filter { record in
             guard filter.matches(record.kind) else { return false }
-            if let conversationFilter, record.conversationID != conversationFilter { return false }
+            if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionThreadID) { return false }
             guard !query.isEmpty else { return true }
             return record.title.localizedCaseInsensitiveContains(query)
                 || (Self.searchableOrigin(record, companionName: companionName)?.localizedCaseInsensitiveContains(query) ?? false)
         }
+    }
+
+    static func matches(_ record: ArtifactRecord, conversation: String, companionThreadID: String?) -> Bool {
+        if record.conversationID == conversation { return true }
+        return conversation == companionThreadID && record.originTitle == CompanionSavedText.marker
     }
 
     static func searchableOrigin(_ record: ArtifactRecord, companionName: String?) -> String? {
@@ -90,45 +95,48 @@ struct ArtifactLibrarySelection: Equatable {
         return companionOriginLabel(name: CompanionSentence.savedName(companionName))
     }
 
-    func selected(in records: [ArtifactRecord], companionName: String? = nil) -> ArtifactRecord? {
+    func selected(in records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) -> ArtifactRecord? {
         guard let selectedID else { return nil }
-        return visible(records, companionName: companionName).first { $0.id == selectedID }
+        return visible(records, companionName: companionName, companionThreadID: companionThreadID).first { $0.id == selectedID }
     }
 
-    func resolved(in records: [ArtifactRecord], companionName: String? = nil) -> ArtifactRecord? {
+    func resolved(in records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) -> ArtifactRecord? {
         var settled = self
-        settled.reconcile(records, companionName: companionName)
-        return settled.selected(in: records, companionName: companionName)
+        settled.reconcile(records, companionName: companionName, companionThreadID: companionThreadID)
+        return settled.selected(in: records, companionName: companionName, companionThreadID: companionThreadID)
     }
 
-    mutating func reconcile(_ records: [ArtifactRecord], companionName: String? = nil) {
-        let shown = visible(records, companionName: companionName)
+    mutating func reconcile(_ records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) {
+        let shown = visible(records, companionName: companionName, companionThreadID: companionThreadID)
         if let selectedID, shown.contains(where: { $0.id == selectedID }) { return }
         selectedID = shown.first?.id
     }
 
-    mutating func open(_ id: String, in records: [ArtifactRecord], companionName: String? = nil) -> Bool {
+    mutating func open(_ id: String, in records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) -> Bool {
         guard let record = records.first(where: { $0.id == id }) else {
-            reconcile(records, companionName: companionName)
+            reconcile(records, companionName: companionName, companionThreadID: companionThreadID)
             return false
         }
         search = ""
         if !filter.matches(record.kind) { filter = .all }
-        if let conversationFilter, record.conversationID != conversationFilter { self.conversationFilter = nil }
+        if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionThreadID) {
+            self.conversationFilter = nil
+        }
         selectedID = record.id
         return true
     }
 
-    mutating func adoptConversation(_ id: String, in records: [ArtifactRecord], companionName: String? = nil) {
+    mutating func adoptConversation(_ id: String, in records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) {
         conversationFilter = id
         search = ""
         filter = .all
-        reconcile(records, companionName: companionName)
+        reconcile(records, companionName: companionName, companionThreadID: companionThreadID)
     }
 
-    mutating func apply(conversation: String?, open id: String?, in records: [ArtifactRecord], companionName: String? = nil) {
-        if let conversation { adoptConversation(conversation, in: records, companionName: companionName) }
-        if let id { _ = open(id, in: records, companionName: companionName) }
+    mutating func apply(conversation: String?, open id: String?, in records: [ArtifactRecord], companionName: String? = nil,
+                        companionThreadID: String? = nil) {
+        if let conversation { adoptConversation(conversation, in: records, companionName: companionName, companionThreadID: companionThreadID) }
+        if let id { _ = open(id, in: records, companionName: companionName, companionThreadID: companionThreadID) }
     }
 
     static let companionFilterTitle = "From {name}"
@@ -193,11 +201,11 @@ struct ArtifactsView: View {
     }
 
     private var filtered: [ArtifactRecord] {
-        state.visible(store.artifactRecords, companionName: store.companionName)
+        state.visible(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID)
     }
 
     private var selected: ArtifactRecord? {
-        state.resolved(in: store.artifactRecords, companionName: store.companionName)
+        state.resolved(in: store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID)
     }
 
     var body: some View {
@@ -217,15 +225,18 @@ struct ArtifactsView: View {
         .onAppear {
             if !renderSafe { store.reloadArtifacts() }
             consumeRequests()
-            state.reconcile(store.artifactRecords, companionName: store.companionName)
+            state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID)
         }
         .onChange(of: store.requestedArtifactID) { _, _ in consumeRequests() }
         .onChange(of: store.pendingLibraryConversationID) { _, _ in consumeRequests() }
-        .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
-        .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
-        .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
-        .onChange(of: store.artifactRecords) { _, records in state.reconcile(records, companionName: store.companionName) }
-        .onChange(of: store.companionName) { _, name in state.reconcile(store.artifactRecords, companionName: name) }
+        .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID) }
+        .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID) }
+        .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID) }
+        .onChange(of: store.artifactRecords) { _, records in state.reconcile(records, companionName: store.companionName, companionThreadID: store.veraThreadID) }
+        .onChange(of: store.veraThreadID) { old, new in
+            if let old, state.conversationFilter == old { state.conversationFilter = new }
+        }
+        .onChange(of: store.companionName) { _, name in state.reconcile(store.artifactRecords, companionName: name, companionThreadID: store.veraThreadID) }
     }
 
     private func consumeRequests() {
@@ -234,7 +245,8 @@ struct ArtifactsView: View {
         guard conversation != nil || id != nil else { return }
         store.pendingLibraryConversationID = nil
         store.requestedArtifactID = nil
-        state.apply(conversation: conversation, open: id, in: store.artifactRecords, companionName: store.companionName)
+        state.apply(conversation: conversation, open: id, in: store.artifactRecords, companionName: store.companionName,
+                    companionThreadID: store.veraThreadID)
     }
 
     private var listColumn: some View {

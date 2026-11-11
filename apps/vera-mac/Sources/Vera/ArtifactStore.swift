@@ -92,7 +92,7 @@ struct ArtifactDraft: Sendable {
     var details: ArtifactDetails = ArtifactDetails()
 }
 
-enum ArtifactConversationDeletion: Sendable { case keep, delete }
+enum ArtifactConversationDeletion: Sendable { case keep, keepAsCompanion, delete }
 
 protocol ArtifactRepository: Sendable {
     func listArtifacts() throws -> [ArtifactRecord]
@@ -303,6 +303,11 @@ extension LocalChatRepository: ArtifactRepository {
                 try db.execute(
                     sql: "UPDATE artifacts SET conversation_id = NULL WHERE conversation_id = ?",
                     arguments: [conversationID])
+                return []
+            case .keepAsCompanion:
+                try db.execute(
+                    sql: "UPDATE artifacts SET conversation_id = NULL, origin_title = ? WHERE conversation_id = ?",
+                    arguments: [CompanionSavedText.marker, conversationID])
                 return []
             case .delete:
                 let fileNames = try String.fetchAll(
