@@ -138,6 +138,18 @@ extension SelfTest {
                         && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt"), claim: trashClaim, targets: [upper])
                             .decision(for: .trash) == .ask,
                     "A file name in different letter case is a different file")
+        let hello = try target(.folder, "/shared/hello.md")
+        try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
+                        .decision(for: .fileEdits) == .act(.instruction)
+                        && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Can you save another note as second.md?"), claim: saveClaim,
+                                    targets: [try target(.folder, "/shared/second.md")]).decision(for: .fileEdits) == .ask
+                        && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save this as notes.md"), claim: saveClaim,
+                                    targets: [try target(.folder, "/shared/notes.md")]).decision(for: .fileEdits) == .act(.instruction)
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to ana@example.com"), targets: [try target(.recipient, "ana@example.com")])
+                            .decision(for: .networkSends) == .act(.instruction)
+                        && resolver(typed: NativeTypedWords(typed: "Summarise the thread and send it to ana@example.com"),
+                                    targets: [try target(.recipient, "ana@example.com")]).decision(for: .networkSends) == .ask,
+                    "The examples in the setup guide behave as it says")
         var gateFailed = false
         do { try NativeRuleResolver.gate(live: .ask, planned: .ask, action: .fileEdits, approved: false) } catch { gateFailed = true }
         try require(gateFailed, "A live ask with no approval never runs, whatever was planned")
