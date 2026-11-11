@@ -15,7 +15,7 @@ extension SelfTest {
             (try fixture.reference(conversationID: here, title: "Stopping", state: "running", cancelRequested: true), .running, "Stopping research"),
             (try fixture.reference(conversationID: here, title: "Stopped", state: "canceled"), .problem, "Research stopped"),
             (try fixture.reference(conversationID: here, title: "Failed", state: "failed"), .problem, "Couldn't finish"),
-            (try fixture.reference(conversationID: here, title: "Decision", state: "needs_decision", decision: fixture.decision), .waiting, "Needs your input"),
+            (try fixture.reference(conversationID: here, title: "Decision", state: "needs_decision", decision: fixture.decision), .waiting, "Needs your answer"),
             (try fixture.reference(conversationID: here, title: "Plan", workerType: "document", state: "completed",
                                    result: fixture.documentResult("Plan")), .done, "Ready to open"),
         ]

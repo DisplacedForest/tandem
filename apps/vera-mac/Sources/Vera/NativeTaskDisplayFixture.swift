@@ -468,7 +468,7 @@ extension NativeTaskDisplayFixture {
         _ = try repository.projectTask(id: approve.id, snapshot: nil)
         let pendingCard = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
             .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
-        try require(pendingCard?.offeredChoices.isEmpty == true && pendingCard?.statusTitle == "Needs your input",
+        try require(pendingCard?.offeredChoices.isEmpty == true && pendingCard?.statusTitle == "Needs your answer",
                     "A saved answer hides the choices")
 
         let approveBody = try JSONSerialization.jsonObject(with: NativeTaskClient.decisionBody(first, digest: digest)) as? [String: Any]
