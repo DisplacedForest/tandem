@@ -150,12 +150,12 @@ enum NativeInstruction {
             var cuts: [Range<String.Index>] = []
             var complete = true
             for target in targets where complete {
-                let found = spans(target, in: sentence)
+                let found = spans(target, in: sentence).filter { span in !cuts.contains { $0.overlaps(span) } }
                 if found.isEmpty { complete = false }
                 cuts += found
             }
             for name in names where complete {
-                let found = NativeTypedWords.spans(sentence, name, strict: true)
+                let found = NativeTypedWords.spans(sentence, name, strict: true).filter { span in !cuts.contains { $0.overlaps(span) } }
                 if found.isEmpty { complete = false }
                 cuts += found
             }

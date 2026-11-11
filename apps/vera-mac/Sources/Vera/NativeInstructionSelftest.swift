@@ -148,6 +148,16 @@ extension SelfTest {
                         && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Create `old notes.txt`"), claim: saveClaim, targets: [renamed])
                             .decision(for: .fileEdits) == .act(.instruction),
                     "An instruction covers a call aimed at one file, never one that touches two")
+        let alias = try target(.recipient, "ana")
+        let longer = try target(.recipient, "ana!archive@greenhouse.test")
+        for typed in ["Send the notes to `ana!archive@greenhouse.test`", "Send the notes to ana!archive@greenhouse.test", "Send the notes to ana#x and ana$y"] {
+            let made = resolver(typed: NativeTypedWords(typed: typed), targets: []).tool("fixture-notes", subjects: [[longer], [alias]])
+            try require(made.decision(for: .networkSends) == .ask, "A shorter name inside a longer address is not a second recipient: \(typed)")
+            try require(!NativeTypedWords(typed: typed).names(alias), "And it is not typed for the unnamed-recipient check either: \(typed)")
+        }
+        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to ana and bo@greenhouse.test!"), targets: [])
+                        .tool("fixture-notes", subjects: [[alias], [bo]]).decision(for: .networkSends) == .act(.instruction),
+                    "Two recipients each named on their own both count, with closing punctuation after the last")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)

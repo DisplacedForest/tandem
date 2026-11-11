@@ -83,6 +83,7 @@ struct NativeTypedWords: Hashable, Sendable {
             let before = range.lowerBound == haystack.startIndex ? nil : haystack[haystack.index(before: range.lowerBound)]
             let after = range.upperBound == haystack.endIndex ? nil : haystack[range.upperBound]
             let trailing = exact ? !closes(haystack, at: range.upperBound)
+                : strict ? !finishes(haystack, at: range.upperBound)
                 : (after.map { joins($0) && !ends(haystack, at: range.upperBound) } ?? false)
             let leading = exact ? !starts(haystack, at: range.lowerBound)
                 : (strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false))
@@ -94,6 +95,20 @@ struct NativeTypedWords: Hashable, Sendable {
 
     static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
         !spans(text, value, strict: strict).isEmpty
+    }
+
+    static func finishes(_ text: String, at index: String.Index) -> Bool {
+        var cursor = index
+        while cursor < text.endIndex, text[cursor] == "`" { cursor = text.index(after: cursor) }
+        guard cursor < text.endIndex else { return true }
+        if cursor != index { return text[cursor].isWhitespace || stops(text, at: cursor) }
+        return !leads(text[cursor]) || stops(text, at: cursor)
+    }
+
+    static func stops(_ text: String, at index: String.Index) -> Bool {
+        guard ".!?".contains(text[index]) else { return false }
+        let next = text.index(after: index)
+        return next == text.endIndex || text[next].isWhitespace
     }
 
     static func starts(_ text: String, at index: String.Index) -> Bool {
