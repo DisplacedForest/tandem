@@ -275,7 +275,7 @@ private struct ScheduleRunRow: View {
                         }
                     }
                     Spacer(minLength: 8)
-                    if let onStop { Button("Stop", action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
+                    if let onStop, question == nil { Button(Self.stopTitle, action: onStop).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                     if let onOpen { Button("Open", action: onOpen).buttonStyle(.borderless).font(.system(size: 12)).fixedSize() }
                 }
                 if isApproval, let literal, !literal.isEmpty, literal.unicodeScalars.count <= 20000 {
@@ -294,8 +294,15 @@ private struct ScheduleRunRow: View {
                                   onAllow: { onChoose?(NativeCardChoiceKind.allowOnce.rawValue) },
                                   onDecline: { onChoose?(NativeCardChoiceKind.decline.rawValue) },
                                   onItem: { onChoose?($0) })
-                } else if !choices.isEmpty {
-                    HStack(spacing: 8) { choiceButtons }
+                } else if let question {
+                    if let decline = question.decline {
+                        CardAnswerRow(answers: question.answers, defaultApproval: false, allowApprove: onChoose != nil,
+                                      allowDecline: decline == CardQuestion.stopID ? onStop != nil : onChoose != nil,
+                                      onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
+                    } else {
+                        Button(question.answers.allowTitle) { answer(question.allow) }
+                            .buttonStyle(.bordered).controlSize(.small).fixedSize().disabled(onChoose == nil)
+                    }
                 }
             }
         }
@@ -305,20 +312,14 @@ private struct ScheduleRunRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder
-    private var choiceButtons: some View {
-        ForEach(choices, id: \.self) { choice in
-            Button(Self.title(for: choice)) { onChoose?(choice) }
-                .buttonStyle(.bordered).controlSize(.small).fixedSize()
-        }
+    static let stopTitle = "Stop"
+
+    private var question: CardQuestion? {
+        isApproval ? nil : CardQuestion.make(choices: choices, stop: onStop == nil ? nil : Self.stopTitle)
     }
 
-    static func title(for choice: String) -> String {
-        switch choice.lowercased() {
-        case "retry": return "Retry"
-        case "stop", "cancel": return "Stop"
-        default: return NativeTaskCardPresentation.choiceTitle(choice) ?? (choice.prefix(1).uppercased() + choice.dropFirst())
-        }
+    private func answer(_ choice: String) {
+        if choice == CardQuestion.stopID { onStop?() } else { onChoose?(choice) }
     }
 }
 

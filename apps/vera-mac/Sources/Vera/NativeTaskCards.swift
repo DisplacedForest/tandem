@@ -80,19 +80,18 @@ struct NativeTaskCardView: View {
                               onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
                               onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
                               onItem: { answer($0) })
-            } else if card.canCancel || !card.offeredChoices.isEmpty {
-                HStack(spacing: 12) {
-                    ForEach(card.offeredChoices, id: \.self) { choice in
-                        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-                            Button(title) { answer(choice) }
-                                .buttonStyle(.bordered)
-                                .disabled(!canAnswer(choice))
-                                .accessibilityLabel("\(title), answer for \(card.title)")
-                        }
-                    }
-                    if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
+            } else if let question = CardQuestion.make(choices: card.offeredChoices, stop: card.canCancel ? (stopTitle ?? card.stopTitle) : nil) {
+                if let decline = question.decline {
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, allowApprove: canAnswer(question.allow), allowDecline: canAnswer(decline),
+                                  onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
+                } else {
+                    Button(question.answers.allowTitle) { answer(question.allow) }
+                        .buttonStyle(.bordered).font(.system(size: 12))
+                        .disabled(!canAnswer(question.allow))
+                        .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
-                .font(.system(size: 12))
+            } else if card.canCancel {
+                Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).font(.system(size: 12))
             }
         }
         .padding(14)
@@ -110,10 +109,12 @@ struct NativeTaskCardView: View {
     }
 
     private func canAnswer(_ choice: String) -> Bool {
-        onDecide != nil || (choice == "retry" && onRetry != nil)
+        if choice == CardQuestion.stopID { return onCancel != nil }
+        return onDecide != nil || (choice == "retry" && onRetry != nil)
     }
 
     private func answer(_ choice: String) {
+        if choice == CardQuestion.stopID { onCancel?(); return }
         if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
     }
 }

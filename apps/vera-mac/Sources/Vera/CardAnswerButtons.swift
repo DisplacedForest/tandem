@@ -57,6 +57,34 @@ struct CardAnswers: Equatable {
     }
 }
 
+struct CardQuestion: Equatable {
+    static let stopID = "card.stop_work"
+
+    var answers: CardAnswers
+    var allow: String
+    var decline: String?
+
+    static func make(choices: [String], stop: String?) -> CardQuestion? {
+        let offered = choices.filter { NativeCardChoices.kind(wire: $0) == nil && NativeTaskCardPresentation.choiceTitle($0) != nil }
+        guard let first = offered.first, let title = NativeTaskCardPresentation.choiceTitle(first) else { return nil }
+        var answers = CardAnswers(allowTitle: title, declineTitle: "")
+        let rest = Array(offered.dropFirst())
+        guard let second = rest.first, let secondTitle = NativeTaskCardPresentation.choiceTitle(second) else {
+            guard let stop else { return CardQuestion(answers: answers, allow: first, decline: nil) }
+            answers.declineTitle = stop
+            return CardQuestion(answers: answers, allow: first, decline: stopID)
+        }
+        answers.declineTitle = secondTitle
+        answers.declineMenu = rest.dropFirst().compactMap { choice in
+            NativeTaskCardPresentation.choiceTitle(choice).map { CardMenuItem(id: choice, title: $0) }
+        }
+        if let stop, !rest.contains("stop") { answers.declineMenu.append(CardMenuItem(id: stopID, title: stop)) }
+        return CardQuestion(answers: answers, allow: first, decline: second)
+    }
+
+    var controls: Int { decline == nil ? 1 : 2 }
+}
+
 struct CardSegmentStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.contentShape(Rectangle()).opacity(configuration.isPressed ? 0.7 : 1)
