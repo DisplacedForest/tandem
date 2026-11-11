@@ -142,35 +142,26 @@ enum NativeInstruction {
             } || names.contains { inner.lowercased() == $0.lowercased() }
             guard whole else { return false }
         }
-        guard targets.allSatisfy({ !spans($0, in: plain).isEmpty }),
-              names.allSatisfy({ !NativeTypedWords.spans(plain, $0, strict: true).isEmpty }) else { return false }
-        let lowered = NativeRequestPreapproval.normalized(plain)
-        let all = sentences(plain)
-        for (position, sentence) in all.enumerated() {
-            guard rest(sentence, after: wanted) != nil else { continue }
-            let others = all.enumerated().filter { $0.offset != position }.map { $0.element.lowercased() }.joined(separator: ". ")
-            var cuts: [Range<String.Index>] = []
-            var complete = true
-            for target in targets where complete {
-                let found = spans(target, in: sentence).filter { span in !cuts.contains { $0.overlaps(span) } }
-                if found.isEmpty { complete = false }
-                cuts += found
-            }
-            for name in names where complete {
-                let found = NativeTypedWords.spans(sentence, name, strict: true).filter { span in !cuts.contains { $0.overlaps(span) } }
-                if found.isEmpty { complete = false }
-                cuts += found
-            }
-            guard complete else { continue }
-            var remainder = Array(sentence)
-            for cut in cuts {
-                let lower = sentence.distance(from: sentence.startIndex, to: cut.lowerBound)
-                let upper = sentence.distance(from: sentence.startIndex, to: cut.upperBound)
-                for index in lower..<upper { remainder[index] = " " }
-            }
-            if NativeRequestPreapproval.settled(String(remainder).lowercased() + ". " + others, original: lowered) { return true }
+        let message = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.contains(where: \.isNewline), sentences(message).count == 1, rest(message, after: wanted) != nil else { return false }
+        var cuts: [Range<String.Index>] = []
+        for target in targets {
+            let found = spans(target, in: message).filter { span in !cuts.contains { $0.overlaps(span) } }
+            if found.isEmpty { return false }
+            cuts += found
         }
-        return false
+        for name in names {
+            let found = NativeTypedWords.spans(message, name, strict: true).filter { span in !cuts.contains { $0.overlaps(span) } }
+            if found.isEmpty { return false }
+            cuts += found
+        }
+        var remainder = Array(message)
+        for cut in cuts {
+            let lower = message.distance(from: message.startIndex, to: cut.lowerBound)
+            let upper = message.distance(from: message.startIndex, to: cut.upperBound)
+            for index in lower..<upper { remainder[index] = " " }
+        }
+        return NativeRequestPreapproval.settled(String(remainder).lowercased(), original: NativeRequestPreapproval.normalized(message))
     }
 
     static func signature(action: NativeActionClass, toolID: String?, targets: [NativeRuleTarget], names: [String]) -> String {

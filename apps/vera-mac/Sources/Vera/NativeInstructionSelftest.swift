@@ -177,6 +177,11 @@ extension SelfTest {
                         && resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test/reports/."), targets: [reports])
                             .decision(for: .networkSends) == .act(.instruction),
                     "Two dots after an address are part of it, one is the end of the sentence")
+        for typed in ["Send the notes to https://api.greenhouse.test/reports/.. The source is https://api.greenhouse.test/reports/.",
+                      "Send the notes to https://api.greenhouse.test/reports/. Thanks.", "Send the notes.\nTo https://api.greenhouse.test/reports/"] {
+            try require(resolver(typed: NativeTypedWords(typed: typed), targets: [reports]).decision(for: .networkSends) == .ask,
+                        "An instruction is one sentence and the whole message: \(typed)")
+        }
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
