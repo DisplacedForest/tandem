@@ -142,28 +142,90 @@ enum CompanionSentence {
     }
 }
 
+enum CompanionLinePart: Equatable, Sendable {
+    case name
+    case text(String)
+}
+
 enum CompanionLine: Equatable, Sendable {
     case named(String)
     case literal(String)
     case namedThenText(String, String)
+    case parts([CompanionLinePart])
+
+    var parts: [CompanionLinePart] {
+        switch self {
+        case .named(let template): Self.templateParts(template)
+        case .namedThenText(let template, let text): Self.templateParts(template) + [.text(text)]
+        case .literal(let text): [.text(text)]
+        case .parts(let parts): parts
+        }
+    }
 
     func plain(name: String?) -> String {
-        switch self {
-        case .named(let template): CompanionSentence.plain(template, name: name)
-        case .namedThenText(let template, let text): CompanionSentence.plain(template, name: name) + text
-        case .literal(let text): text
+        var result = ""
+        for part in parts {
+            switch part {
+            case .name: result += CompanionSentence.subject(name: name, after: result)
+            case .text(let text): result += text
+            }
         }
+        return result
+    }
+
+    private static func templateParts(_ template: String) -> [CompanionLinePart] {
+        var parts: [CompanionLinePart] = []
+        for (index, piece) in CompanionSentence.parts(template).enumerated() {
+            if index > 0 { parts.append(.name) }
+            if !piece.isEmpty { parts.append(.text(String(piece))) }
+        }
+        return parts
+    }
+}
+
+enum CompanionSavedText {
+    static let questionLead = CompanionSentence.placeholder + " wants to "
+
+    static func question(_ saved: String, companionWork: Bool) -> CompanionLine {
+        guard companionWork, saved.hasPrefix(questionLead) else { return .literal(saved) }
+        return .parts([.name, .text(String(saved.dropFirst(CompanionSentence.placeholder.count)))])
     }
 }
 
 struct CompanionLineText: View {
     var line: CompanionLine
+    @Environment(\.companionName) private var name
+    @Environment(\.companionAppearance) private var appearance
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var sentence: Text {
+        var prefix = ""
+        var text = Text(verbatim: "")
+        for part in line.parts {
+            switch part {
+            case .name:
+                let subject = CompanionSentence.subject(name: name, after: prefix)
+                if CompanionSentence.savedName(name) != nil {
+                    text = text + Text(verbatim: subject).bold().foregroundStyle(appearance.color.textColor(for: colorScheme))
+                } else {
+                    text = text + Text(verbatim: subject)
+                }
+                prefix += subject
+            case .text(let literal):
+                text = text + Text(verbatim: literal)
+                prefix += literal
+            }
+        }
+        return text
+    }
 
     var body: some View {
-        switch line {
-        case .named(let template): CompanionNamedText(template: template)
-        case .namedThenText(let template, let text): CompanionNamedText(template: template, suffix: text)
-        case .literal(let text): Text(verbatim: text)
+        if case .literal(let text) = line {
+            Text(verbatim: text)
+        } else {
+            sentence
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(line.plain(name: name))
         }
     }
 }
@@ -171,33 +233,9 @@ struct CompanionLineText: View {
 struct CompanionNamedText: View {
     var template: String
     var suffix = ""
-    @Environment(\.companionName) private var name
-    @Environment(\.companionAppearance) private var appearance
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var sentence: Text {
-        var prefix = ""
-        var text = Text("")
-        for (index, part) in CompanionSentence.parts(template).enumerated() {
-            if index > 0 {
-                let subject = CompanionSentence.subject(name: name, after: prefix)
-                if CompanionSentence.savedName(name) != nil {
-                    text = text + Text(subject).bold().foregroundStyle(appearance.color.textColor(for: colorScheme))
-                } else {
-                    text = text + Text(subject)
-                }
-                prefix += subject
-            }
-            text = text + Text(part)
-            prefix += part
-        }
-        return suffix.isEmpty ? text : text + Text(verbatim: suffix)
-    }
 
     var body: some View {
-        sentence
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(CompanionSentence.plain(template, name: name) + suffix)
+        CompanionLineText(line: suffix.isEmpty ? .named(template) : .namedThenText(template, suffix))
     }
 }
 

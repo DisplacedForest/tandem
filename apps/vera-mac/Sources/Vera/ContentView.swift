@@ -1045,6 +1045,18 @@ struct NativeToolConfirmationBar: View {
         NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
+    static func closingLine(for request: NativeToolConfirmationRequest, actor: String) -> CompanionLine? {
+        guard let closing = closing(for: request) else { return nil }
+        let line = CompanionLine.named(closing)
+        return actor == CompanionSentence.placeholder ? line : .literal(line.plain(name: nil))
+    }
+
+    static func sentenceLine(for request: NativeToolConfirmationRequest, prompt: String?, actor: String) -> CompanionLine {
+        if let first = prompt?.components(separatedBy: "\n").first { return .literal(first) }
+        let rest = sentence(for: request, actor: "")
+        return actor == CompanionSentence.placeholder ? .parts([.name, .text(rest)]) : .literal(actor + rest)
+    }
+
     static func literal(for request: NativeToolConfirmationRequest) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
@@ -1084,15 +1096,15 @@ struct NativeToolConfirmationBar: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
-                    CompanionNamedText(template: prompt?.components(separatedBy: "\n").first ?? Self.sentence(for: request, actor: actor))
+                    CompanionLineText(line: Self.sentenceLine(for: request, prompt: prompt, actor: actor))
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                     if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(block)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                if prompt == nil, let closing = Self.closing(for: request) {
-                                    CompanionNamedText(template: closing)
+                                if prompt == nil, let closing = Self.closingLine(for: request, actor: actor) {
+                                    CompanionLineText(line: closing)
                                 }
                             }
                             .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
