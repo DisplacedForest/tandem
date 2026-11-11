@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 enum NameStylingShot {
-    static let views: Set<String> = ["name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
+    static let views: Set<String> = ["name-dot-settings-reset-failed", "name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
                                      "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused",
                                      "name-thread-error", "name-saved-report", "name-saved-approval", "name-saved-scheduled",
                                      "name-saved-library", "name-library-after-reset", "name-panel-after-reset"]
@@ -26,6 +26,10 @@ enum NameStylingShot {
         switch view {
         case "name-dot-settings":
             size = NSSize(width: 560, height: 700)
+            root = AnyView(DotSettingsView())
+        case "name-dot-settings-reset-failed":
+            size = NSSize(width: 560, height: 760)
+            store.reportCompanionConfigurationError(CompanionErrorCopy.resetLead, description: "The disk is full.", tail: CompanionErrorCopy.resetTail)
             root = AnyView(DotSettingsView())
         case "name-appearance-draft":
             size = NSSize(width: 680, height: 470)

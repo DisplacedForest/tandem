@@ -183,7 +183,8 @@ extension ChatStore {
         _ = try artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keepAsCompanion)
     }
 
-    func resetDot() {
+    @discardableResult
+    func resetDot() -> Bool {
         let threadID = veraThreadID
         if let threadID {
             do {
@@ -193,10 +194,11 @@ extension ChatStore {
                 reloadArtifacts()
                 reportCompanionConfigurationError(CompanionErrorCopy.resetLead, description: error.localizedDescription,
                                                   tail: CompanionErrorCopy.resetTail)
-                return
+                return false
             }
         }
-        let wasShowing = threadID != nil && selectedID == threadID
+        let viewing = section
+        let wasShowing = threadID != nil && selectedID == threadID && (viewing == .vera || viewing == .chat)
         dotResetGeneration += 1
         suspendsTurnScheduling = true
         cancelCompanionWork()
@@ -243,6 +245,8 @@ extension ChatStore {
             openVeraThread()
         } else if selectedID == nil {
             newConversation()
+            section = viewing
         }
+        return true
     }
 }

@@ -31,6 +31,10 @@ struct DotSettingsView: View {
                 .padding(.trailing, 6)
             }
             .frame(minHeight: 300, maxHeight: 520)
+            if let failed = store.companionConfigurationError, failed.lead == CompanionErrorCopy.resetLead {
+                Label { CompanionLineText(line: failed.line) } icon: { Image(systemName: "exclamationmark.triangle") }
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 10)
+            }
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 10)
             }
@@ -46,8 +50,7 @@ struct DotSettingsView: View {
         .onAppear(perform: load)
         .confirmationDialog("Start over with \(store.companion.inline)?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
-                store.resetDot()
-                dismiss()
+                if store.resetDot() { dismiss() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

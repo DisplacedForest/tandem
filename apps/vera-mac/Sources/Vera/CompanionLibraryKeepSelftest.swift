@@ -59,8 +59,12 @@ extension SelfTest {
             try await libraryKeepFailedReset(name: name)
             try await libraryKeepOrder(name: name)
             try await libraryKeepNoCompanion(name: name)
+            try await libraryKeepSheetCondition(name: name)
         }
-        print("  companion library keep OK (filter table, selection with a kept item, companion conversation gone and back, start over marks kept items, old copies, new thread, panel outputs, ordinary chats, second start over, a failed keep removes nothing, keeping runs before removal, no companion conversation)")
+        try await libraryKeepSections()
+        try await libraryKeepCompanionScreens()
+        try await libraryKeepSelectionSurvives()
+        print("  companion library keep OK (filter table, selection with a kept item, companion conversation gone and back, start over marks kept items, old copies, new thread, panel outputs, ordinary chats, second start over, a failed keep removes nothing, keeping runs before removal, no companion conversation, start over reports its outcome, the screen a person was on is kept, the companion's own screens, the Library filter survives a failed creation, the sheet's failure condition)")
     }
 
     private struct KeepFailure: LocalizedError {
@@ -130,7 +134,7 @@ extension SelfTest {
         let frostBefore = try stored(store, repository, "Frost checklist")
         let oldBefore = try stored(store, repository, "Old note")
         store.companionArtifactKeeper = { (_: String) throws -> Void in throw KeepFailure() }
-        store.resetDot()
+        try require(!store.resetDot(), "A failed keep reports that start over did not happen")
         try require(store.veraThreadID == thread && store.conversations.contains { $0.id == thread },
                     "A failed keep leaves the companion's conversation in place for \(label)")
         let frost = try stored(store, repository, "Frost checklist")
@@ -143,8 +147,12 @@ extension SelfTest {
         try require(store.chatConfigurationError == "\(label) couldn't start over: The disk is full. Nothing was removed.",
                     "The failure reads plainly: \(store.chatConfigurationError ?? "nil")")
         try require(store.companionConfigurationError?.lead == CompanionErrorCopy.resetLead, "The failure is kept as the reset error")
+        try require(store.companionConfigurationError?.plain(name: store.companionName)
+                        == "\(label) couldn't start over: The disk is full. Nothing was removed.",
+                    "The sheet's failure line reads the exact message")
         store.companionArtifactKeeper = nil
-        store.resetDot()
+        try require(store.resetDot(), "The retry reports that start over happened")
+        try require(store.companionConfigurationError == nil, "After the retry the sheet has no failure to show")
         guard let fresh = store.veraThreadID, fresh != thread else { throw NativeTaskFixture.Failure.assertion("The retry starts over") }
         for title in ["Frost checklist", "Old note"] {
             let kept = try stored(store, repository, title)
@@ -218,6 +226,126 @@ extension SelfTest {
         try require(store.companionOverviewModel().outputs.map(\.title) == ["Vent schedule"], "Once it is back the panel lists only the new item")
         try require(Set(CompanionLibraryKeepFixture.shown(store, filter: fresh)) == ["Frost checklist", "Vent schedule"],
                     "The companion filter shows the kept and new items but not the deleted chat's")
+    }
+
+    private static func blockCompanionCreation(_ repository: LocalChatRepository) async throws {
+        try await repository.database.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER keep_block_companion BEFORE INSERT ON conversations WHEN NEW.origin_type = 'assistant'
+                BEGIN SELECT RAISE(ABORT, 'The disk is full.'); END
+                """)
+        }
+    }
+
+    private static func allowCompanionCreation(_ repository: LocalChatRepository) async throws {
+        try await repository.database.write { db in try db.execute(sql: "DROP TRIGGER keep_block_companion") }
+    }
+
+    private static func libraryKeepSheetCondition(name: String?) async throws {
+        let require = NativeTaskFixture.require
+        let (store, _, folder) = try await connectedStore(name: name)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
+        try require(store.companionConfigurationError != nil && store.companionConfigurationError?.lead != CompanionErrorCopy.resetLead,
+                    "A failed settings save does not show as a failed start over")
+    }
+
+    private static func libraryKeepSections() async throws {
+        let require = NativeTaskFixture.require
+        for section in [AppSection.artifacts, .scheduled, .memory, .projects, .pulse] {
+            let (store, _, folder) = try await connectedStore(name: "Ada")
+            defer { try? FileManager.default.removeItem(at: folder) }
+            guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
+            store.openVeraThread()
+            store.openCompanionOutputs()
+            if section != .artifacts { store.section = section }
+            try require(store.selectedID == thread && store.section == section, "The companion's conversation is selected while \(section) shows")
+            try require(store.resetDot(), "Start over from \(section) succeeds")
+            try require(store.section == section && store.veraThreadID != nil && store.veraThreadID != thread,
+                        "Start over from \(section) leaves that screen showing: \(store.section)")
+        }
+        let (store, repository, folder) = try await connectedStore(name: "Ada")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        store.openVeraThread()
+        store.openCompanionOutputs()
+        try await blockCompanionCreation(repository)
+        try require(store.resetDot(), "Start over still completes when the replacement cannot be created")
+        try require(store.section == .artifacts && store.veraThreadID == nil,
+                    "A failed replacement leaves the Library showing: \(store.section)")
+    }
+
+    private static func libraryKeepCompanionScreens() async throws {
+        let require = NativeTaskFixture.require
+        do {
+            let (store, _, folder) = try await connectedStore(name: "Ada")
+            defer { try? FileManager.default.removeItem(at: folder) }
+            store.openVeraThread()
+            let thread = store.veraThreadID
+            try require(store.section == .vera && store.selectedID == thread, "The companion's screen is showing")
+            try require(store.resetDot(), "Start over from the companion's screen succeeds")
+            try require(store.section == .vera && store.veraThreadID != thread && store.selectedID == store.veraThreadID,
+                        "Start over from the companion's screen shows the new conversation")
+        }
+        do {
+            let (store, _, folder) = try await connectedStore(name: "Ada")
+            defer { try? FileManager.default.removeItem(at: folder) }
+            store.openVeraThread()
+            let thread = store.veraThreadID
+            store.section = .chat
+            try require(store.selectedID == thread, "The companion's conversation is selected under Chats")
+            try require(store.resetDot(), "Start over from Chats succeeds")
+            try require(store.section == .vera && store.veraThreadID != thread && store.selectedID == store.veraThreadID,
+                        "Start over with the companion selected under Chats opens the new companion conversation, as before: \(store.section)")
+        }
+        do {
+            let (store, repository, folder) = try await connectedStore(name: "Ada")
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let ordinary = Conversation(id: "keep-screens-ordinary", title: "Greenhouse plan", messages: [], updatedAt: Date())
+            try repository.saveConversation(ordinary)
+            store.conversations.append(ordinary)
+            store.section = .chat
+            store.select(ordinary.id)
+            try require(store.selectedID == ordinary.id && store.section == .chat, "An ordinary chat is showing")
+            try require(store.resetDot(), "Start over while an ordinary chat shows succeeds")
+            try require(store.selectedID == ordinary.id && store.section == .chat, "The ordinary chat stays selected under Chats: \(store.section)")
+        }
+    }
+
+    private static func libraryKeepSelectionSurvives() async throws {
+        let require = NativeTaskFixture.require
+        let (store, repository, folder) = try await connectedStore(name: "Ada")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        guard let old = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
+        CompanionLibraryKeepFixture.save(store, title: "Frost checklist", conversationID: old)
+        try CompanionLibraryKeepFixture.saveOldWay(repository, title: "Old note", conversationID: old, copiedName: "Ada")
+        let doomed = Conversation(id: "keep-survive-doomed", title: "Seed swap", messages: [], updatedAt: Date())
+        try repository.saveConversation(doomed)
+        store.conversations.append(doomed)
+        CompanionLibraryKeepFixture.save(store, title: "Swap list", conversationID: doomed.id)
+        store.requestDeleteConversation(doomed.id)
+        store.confirmDeleteConversation(.keep)
+        store.openVeraThread()
+        store.openCompanionOutputs()
+        var state = ArtifactLibrarySelection(conversationFilter: old)
+        func titles() -> Set<String> {
+            Set(state.visible(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID).map(\.title))
+        }
+        try require(titles() == ["Frost checklist", "Old note"], "Before start over the filter shows the companion's items")
+        try await blockCompanionCreation(repository)
+        try require(store.resetDot(), "Start over completes")
+        try require(store.section == .artifacts && store.veraThreadID == nil, "The Library is still showing with no companion conversation")
+        state.companionThreadChanged(from: old, to: store.veraThreadID)
+        state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID)
+        try require(state.conversationFilter == old && state.holdsCompanionFilter, "The selection still holds the companion filter")
+        try require(titles() == ["Frost checklist", "Old note"], "Only the kept items show, not the deleted chat's: \(titles())")
+        try await allowCompanionCreation(repository)
+        store.ensureVeraThread()
+        guard let fresh = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion conversation comes back") }
+        state.companionThreadChanged(from: nil, to: fresh)
+        CompanionLibraryKeepFixture.save(store, title: "Vent schedule", conversationID: fresh)
+        store.reloadArtifacts()
+        try require(state.conversationFilter == fresh && !state.holdsCompanionFilter, "The filter moves to the new companion conversation")
+        try require(titles() == ["Frost checklist", "Old note", "Vent schedule"], "Kept and new items show together: \(titles())")
     }
 
     private static func libraryKeepThreadChange() throws {
@@ -380,7 +508,7 @@ extension SelfTest {
                     "Deleting an ordinary chat with keep leaves its origin exactly as stored: \(swap.originTitle ?? "nil")")
         try requireNoOrdinary("after an ordinary delete")
 
-        store.resetDot()
+        try require(store.resetDot(), "A normal start over reports success")
         guard let second = store.veraThreadID, second != first else {
             throw NativeTaskFixture.Failure.assertion("Start over makes a new companion conversation")
         }
@@ -403,7 +531,7 @@ extension SelfTest {
         try require(CompanionLibraryKeepFixture.shown(store, filter: ordinary.id) == ["Heating options"], "An ordinary chat's filter is unchanged")
         try requireNoOrdinary("after a new item")
 
-        store.resetDot()
+        try require(store.resetDot(), "A second normal start over reports success")
         guard let third = store.veraThreadID, third != second else {
             throw NativeTaskFixture.Failure.assertion("A second start over makes another conversation")
         }
