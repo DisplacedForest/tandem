@@ -189,6 +189,39 @@ extension SelfTest {
                         && runs[0].detail == "Started 10 minutes after the scheduled time.",
                     "A run later than the grace window while Tandem was running still runs, and says how late it started, not that Tandem wasn't running: \(runs.map(\.detail))")
 
+        let fresh = try CatchUpFixture(start: at(19, 9))
+        let freshDaily = try fresh.schedule(.daily(minuteOfDay: 7 * 60), next: at(19, 7), zone: zone)
+        try require(try fresh.store.heartbeat() == nil, "The first-launch fixture has no record of when Tandem last ran")
+        _ = await fresh.scheduler.tick()
+        runs = try fresh.runs(freshDaily.id)
+        try require(fresh.log.count == 1 && runs.count == 1 && runs[0].outcome == .running && runs[0].detail == NativeScheduler.caughtUpNote,
+                    "With no record of when Tandem last ran, a run two hours late catches up with the caught up note: \(runs.map(\.detail))")
+        let freshOnTime = try CatchUpFixture(start: at(19, 7, 2))
+        let freshPrompt = try freshOnTime.schedule(.daily(minuteOfDay: 7 * 60), next: at(19, 7), zone: zone)
+        _ = await freshOnTime.scheduler.tick()
+        runs = try freshOnTime.runs(freshPrompt.id)
+        try require(freshOnTime.log.count == 1 && runs.count == 1 && runs[0].detail == "Started 2 minutes after the scheduled time.",
+                    "With no record and a run inside the grace window, it is a normal run: \(runs.map(\.detail))")
+
+        let asking = try CatchUpFixture(start: at(19, 3, 30))
+        let askingHours = try asking.schedule(.everyHours(1), next: at(19, 4), zone: zone)
+        try asking.store.saveRun(NativeScheduleRun(scheduleID: askingHours.id, scheduledFor: at(19, 3), startedAt: at(19, 3), outcome: .waiting,
+                                                   detail: "Retry this step?", taskReferenceID: "reference-asking"))
+        asking.log.status = .waiting("Retry this step?")
+        try asking.closed(from: at(19, 3, 30), until: at(19, 6, 30))
+        _ = await asking.scheduler.tick()
+        runs = try asking.runs(askingHours.id).filter { $0.scheduledFor >= at(19, 4) }
+        try require(asking.log.count == 1 && runs.count == 3 && runs[0].outcome == .missed && runs[1].outcome == .missed
+                        && runs[2].scheduledFor == at(19, 6) && runs[2].outcome == .running && runs[2].detail == NativeScheduler.caughtUpNote,
+                    "An earlier run waiting on a question does not stop the next occurrence, on time or caught up: \(runs.map(\.detail))")
+
+        let retired = NativeScheduler.missedNote + " " + oldSentence + "."
+        try require(NativeScheduler.retiredMissedNote == retired && NativeScheduler.shownNote(retired) == NativeScheduler.missedNote,
+                    "A missed row saved before this change shows the current missed note")
+        for other in [NativeScheduler.missedNote, NativeScheduler.caughtUpNote, "The model said: " + retired, retired + " ", ""] {
+            try require(NativeScheduler.shownNote(other) == other, "Any other saved note is shown as saved: \(other)")
+        }
+
         let busy = try CatchUpFixture(start: at(19, 3, 30))
         let busyHours = try busy.schedule(.everyHours(1), next: at(19, 4), zone: zone)
         try busy.store.saveRun(NativeScheduleRun(scheduleID: busyHours.id, scheduledFor: at(19, 3), startedAt: at(19, 3), outcome: .running,
@@ -402,7 +435,9 @@ extension SelfTest {
         let files = try FileManager.default.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
-            try require(!text.contains(oldSentence), "\(file.lastPathComponent) no longer carries the old missed sentence")
+            let allowed = file.lastPathComponent == "NativeScheduler.swift" ? 1 : 0
+            try require(text.components(separatedBy: oldSentence).count - 1 == allowed,
+                        "\(file.lastPathComponent) carries the old missed sentence only where saved rows from before are recognised")
         }
         let setup = sources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("docs/SETUP.md")

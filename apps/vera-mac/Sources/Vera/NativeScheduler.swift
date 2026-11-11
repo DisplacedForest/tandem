@@ -29,6 +29,11 @@ actor NativeScheduler {
     static let missedHistoryCap = 24
     static let missedNote = "Tandem wasn't running at the scheduled time."
     static let caughtUpNote = "Caught up after Tandem wasn't running at the scheduled time."
+    static let retiredMissedNote = missedNote + " It will run next time as planned."
+
+    static func shownNote(_ saved: String) -> String {
+        saved == retiredMissedNote ? missedNote : saved
+    }
     static let waitingNote = "Waiting for your answer."
     static let blockedNote = "Open Tandem with the saved model profile so this run can continue."
 
@@ -58,7 +63,8 @@ actor NativeScheduler {
     @discardableResult
     func tick() async -> Bool {
         let tickStart = now()
-        let baseline = (try? store.heartbeat()) ?? tickStart
+        let savedHeartbeat: Date? = (try? store.heartbeat()) ?? nil
+        let baseline = savedHeartbeat ?? tickStart
         var changed = settleRuns()
         var committed = true
         var verified = tickStart
@@ -86,7 +92,7 @@ actor NativeScheduler {
                 }
                 let last = occurrences[occurrences.count - 1]
                 let late = moment.timeIntervalSince(last)
-                let offline = offlineSince.map { last > $0 } ?? false
+                let offline = savedHeartbeat == nil ? late > grace : (offlineSince.map { last > $0 } ?? false)
                 let lastMissed = late > grace || offline
                 let catchingUp = lastMissed && late <= catchUp
                 var next = schedule

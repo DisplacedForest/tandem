@@ -78,8 +78,9 @@ extension ChatStore {
 
     func scheduleRunNote(_ run: NativeScheduleRun) -> CompanionLine {
         let companionWork = scheduleRunIsCompanionWork(run)
-        return CompanionSavedText.line(run.detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
-                                           || run.detail.hasPrefix(CompanionSavedText.marker))
+        let detail = NativeScheduler.shownNote(run.detail)
+        return CompanionSavedText.line(detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
+                                           || detail.hasPrefix(CompanionSavedText.marker))
     }
 
     func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
