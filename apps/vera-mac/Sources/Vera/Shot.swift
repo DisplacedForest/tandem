@@ -80,7 +80,7 @@ enum Shot {
             size = CGSize(width: 340, height: 700)
         } else if view == "companion-thread" {
             size = CGSize(width: 1180, height: 1040)
-        } else if view == "companion" {
+        } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             size = CompanionPanelController.size
         } else if view.hasPrefix("artifacts"), view.hasSuffix("-narrow") {
             size = CGSize(width: 900, height: 760)
@@ -124,9 +124,10 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "companion" {
+        } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             let seeded = CompanionShotFixture.store()
             CompanionNameShot.apply(to: seeded)
+            CompanionShotFixture.seedWaiting(seeded, outer: store, view: view)
             content = AnyView(
                 CompanionPanelView(renderSafe: true)
                     .environment(\.renderSafe, true)
