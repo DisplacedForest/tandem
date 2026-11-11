@@ -142,6 +142,8 @@ enum NativeInstruction {
             } || names.contains { inner.lowercased() == $0.lowercased() }
             guard whole else { return false }
         }
+        guard targets.allSatisfy({ !spans($0, in: plain).isEmpty }),
+              names.allSatisfy({ !NativeTypedWords.spans(plain, $0, strict: true).isEmpty }) else { return false }
         let lowered = NativeRequestPreapproval.normalized(plain)
         let all = sentences(plain)
         for (position, sentence) in all.enumerated() {

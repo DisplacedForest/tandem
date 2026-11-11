@@ -79,7 +79,9 @@ extension SelfTest {
         try require(NativeTypedWords(typed: "Don't wait, it's fine to mail ana@example.org").names(ana)
                         && NativeTypedWords(typed: "Can you mail ana@example.org?").names(ana)
                         && NativeTypedWords(typed: "Mail `ana@example.org` today").names(ana)
-                        && NativeTypedWords(typed: "Mail <ana@example.org>, thanks!").names(ana),
+                        && NativeTypedWords(typed: "Mail ana@example.org, thanks!").names(ana)
+                        && !NativeTypedWords(typed: "Mail <ana@example.org>, thanks!").names(ana)
+                        && !NativeTypedWords(typed: "Mail x(ana@example.org)").names(ana),
                     "Apostrophes in ordinary words, closing punctuation and code marks do not hide a typed address")
         for other in ["ana@example.org!x", "ana@example.org`x", "ana@example.org#tag", "ana@example.org/path", "ana@example.org~"] {
             try require(!NativeTypedWords(typed: "Mail \(other) today").names(ana), "An address that runs on into something longer is not that address: \(other)")

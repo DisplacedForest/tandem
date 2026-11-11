@@ -161,15 +161,22 @@ extension SelfTest {
         let service = try target(.service, "https://api.greenhouse.test")
         for typed in ["Send the notes to https://api.greenhouse.test:8443", "Send the notes to https://api.greenhouse.test/other",
                       "Send the notes to https://api.greenhouse.test.evil.test", "Send the notes to x:https://api.greenhouse.test",
-                      "Send the notes to =https://api.greenhouse.test"] {
+                      "Send the notes to =https://api.greenhouse.test", "Send the notes to https://relay.greenhouse.test/(https://api.greenhouse.test)",
+                      "Send the notes to https://api.greenhouse.test/..",
+                      "Send the notes to (https://api.greenhouse.test)", "Send the notes to <https://api.greenhouse.test>"] {
             try require(resolver(typed: NativeTypedWords(typed: typed), targets: [service]).decision(for: .networkSends) == .ask,
                         "A longer address is not the shorter one it contains: \(typed)")
         }
         try require(resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test, thanks."), targets: [service])
                         .decision(for: .networkSends) == .act(.instruction)
-                        && resolver(typed: NativeTypedWords(typed: "Send the notes to <\(address)>."), targets: [ana]).decision(for: .networkSends) == .act(.instruction)
-                        && resolver(typed: NativeTypedWords(typed: "Send the notes to (\(address))!"), targets: [ana]).decision(for: .networkSends) == .act(.instruction),
-                    "An address followed only by closing punctuation is that address")
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to \(address)!"), targets: [ana]).decision(for: .networkSends) == .act(.instruction),
+                    "An address followed by one closing punctuation mark is that address")
+        let reports = try target(.service, "https://api.greenhouse.test/reports/")
+        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test/reports/.."), targets: [reports])
+                        .decision(for: .networkSends) == .ask
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test/reports/."), targets: [reports])
+                            .decision(for: .networkSends) == .act(.instruction),
+                    "Two dots after an address are part of it, one is the end of the sentence")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)

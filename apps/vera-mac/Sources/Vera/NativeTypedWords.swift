@@ -100,7 +100,7 @@ struct NativeTypedWords: Hashable, Sendable {
     static func finishes(_ text: String, at index: String.Index) -> Bool {
         var cursor = index
         while cursor < text.endIndex, text[cursor] == "`" { cursor = text.index(after: cursor) }
-        while cursor < text.endIndex, ".,;:!?)>".contains(text[cursor]) { cursor = text.index(after: cursor) }
+        if cursor < text.endIndex, ".,;:!?".contains(text[cursor]) { cursor = text.index(after: cursor) }
         return cursor == text.endIndex || text[cursor].isWhitespace
     }
 
@@ -119,10 +119,7 @@ struct NativeTypedWords: Hashable, Sendable {
     static func fused(_ text: String, before index: String.Index) -> Bool {
         var cursor = index
         while cursor > text.startIndex, text[text.index(before: cursor)] == "`" { cursor = text.index(before: cursor) }
-        guard cursor > text.startIndex else { return false }
-        let previous = text[text.index(before: cursor)]
-        if previous.isWhitespace { return false }
-        return cursor != index || !"(<".contains(previous)
+        return cursor > text.startIndex && !text[text.index(before: cursor)].isWhitespace
     }
 
     static func ends(_ text: String, at index: String.Index) -> Bool {
