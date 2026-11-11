@@ -170,7 +170,9 @@ enum RuleRows {
     }
 
     static func sortKey(_ scope: NativeRuleScope, places: RulePlaces) -> String {
-        place(scope, places: places).plain(name: CompanionSentence.placeholder)
+        let line = place(scope, places: places)
+        if case .conversation(let id) = scope, id == places.companionThreadID { return line.plain(name: CompanionSentence.placeholder) }
+        return line.plain(name: nil).replacingOccurrences(of: CompanionSentence.placeholder, with: "name")
     }
 
     static func day(_ date: Date, now: Date, calendar: Calendar) -> String {

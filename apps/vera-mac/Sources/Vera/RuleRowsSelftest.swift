@@ -469,6 +469,29 @@ extension SelfTest {
         let plainExpected = [wideNew, wideOld, project, greenhouse, companion, schedule] + tied
         try require(RuleRows.rows(records: plainChats, chatRules: [], places: places, now: now, calendar: calendar).map(\.id) == plainExpected.map(\.id),
                     "With chat titles that start with a capital, the companion's conversation sorts after them as before")
+        var tokenPlaces = RulePlaces()
+        tokenPlaces.companionThreadID = thread
+        tokenPlaces.chats = ["sort-token": "a{name}", "sort-az": "az", "sort-lookalike": "{name}'s thread"]
+        let tokenChat = record(.conversation("sort-token"), action: .networkSends, tool: "mail")
+        let azChat = record(.conversation("sort-az"), action: .networkSends, tool: "mail")
+        let lookalikeOld = record(.conversation("sort-lookalike"), action: .networkSends, tool: "mail", created: now.addingTimeInterval(-day))
+        let companionNew = record(.conversation(thread), action: .networkSends, tool: "mail", created: now)
+        try require(RuleRows.sortKey(.conversation("sort-token"), places: tokenPlaces) == "in aname"
+                        && RuleRows.sortKey(.conversation("sort-lookalike"), places: tokenPlaces) == "in name's thread"
+                        && RuleRows.sortKey(.conversation(thread), places: tokenPlaces) == "in {name}'s thread"
+                        && RuleRows.sortKey(.conversation("sort-az"), places: tokenPlaces) == "in az",
+                    "Sort keys are the strings rows always sorted by, whatever a chat is titled")
+        let tokenExpected = [tokenChat, azChat, lookalikeOld, companionNew]
+        for input in [[companionNew, azChat, lookalikeOld, tokenChat], [lookalikeOld, tokenChat, companionNew, azChat]] {
+            let ordered = RuleRows.rows(records: input, chatRules: [], places: tokenPlaces, now: now, calendar: calendar)
+            try require(ordered.map(\.id) == tokenExpected.map(\.id),
+                        "Chats titled with the token keep their old order, and one titled like the companion's conversation stays ahead of it: \(ordered.map { $0.line.plain(name: nil) })")
+        }
+        let shownToken = RuleRows.rows(records: [tokenChat, lookalikeOld], chatRules: [], places: tokenPlaces, now: now, calendar: calendar)
+        try require(shownToken.count == 2 && shownToken[0].line.plain(name: "Ada").hasSuffix(", in a{name}")
+                        && shownToken[1].line.plain(name: "Ada").hasSuffix(", in {name}'s thread")
+                        && !shownToken.contains { (row: RuleRow) -> Bool in row.line.plain(name: "Ada").contains("Ada") },
+                    "Those rows still show their titles as written: \(shownToken.map { $0.line.plain(name: "Ada") })")
         print("  rule rows literal OK (outside text as written, name parts, companion's conversation, order)")
     }
 
