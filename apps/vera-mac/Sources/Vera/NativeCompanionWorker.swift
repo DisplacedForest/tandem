@@ -767,7 +767,8 @@ private struct NativeCompanionRun {
             guard completion.toolCalls.isEmpty else { return false }
             return NativeInstructionCheck.parse(completion.content)
         } catch is CancellationError {
-            throw CancellationError()
+            if Task.isCancelled || stopProbe() { throw CancellationError() }
+            return false
         } catch is NativeCompanionStopped {
             throw CancellationError()
         } catch {

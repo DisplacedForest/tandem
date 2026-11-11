@@ -470,6 +470,14 @@ extension SelfTest {
                     "A no leaves the work waiting on a decision with nothing sent: \(noDone.state)")
 
         sent.reset()
+        let dropped = try harness()
+        dropped.model.checks { throw CancellationError() }
+        let droppedID = try dropped.create(assignment)
+        let droppedDone = try await dropped.runUntilSettled()
+        try require(droppedDone.state == .needsDecision && sent.count == 0 && (try dropped.effects(droppedID)).allSatisfy { $0.state != .completed },
+                    "A check that gives up while the work is still going leaves it waiting on a decision: \(droppedDone.state)")
+
+        sent.reset()
         let retry = try harness(retries: true)
         let retryID = try retry.create(assignment)
         let waiting = try await retry.runUntilSettled()
