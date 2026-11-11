@@ -17,7 +17,6 @@ enum RulesCopy {
     static func explanationTemplate(_ choice: NativeRuleChoice) -> String {
         switch choice {
         case .act: return "\(CompanionSentence.placeholder) does it and shows you what happened."
-        case .actIfPreapproved: return "\(CompanionSentence.placeholder) does it only when your message says to, like \"go ahead\". Otherwise you get asked."
         case .ask: return "You get a card to approve or decline."
         case .handOff: return "\(CompanionSentence.placeholder) tells you the step and you do it yourself."
         }

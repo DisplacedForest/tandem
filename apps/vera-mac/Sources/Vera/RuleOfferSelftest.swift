@@ -61,7 +61,7 @@ extension SelfTest {
         try require(run([approve, approve]).0.approvals == 2 && !run([approve, approve]).1.contains(true), "Two approvals don't offer")
         try require(run([approve, approve, .declined(why()), approve]).1 == [false, false, false, false]
                     && run([approve, approve, .declined(why()), approve]).0.approvals == 1, "A decline in between starts the count over")
-        try require(run([approve, approve, .declined(why(choice: .actIfPreapproved)), approve, approve, approve]).1.last == true,
+        try require(run([approve, approve, .declined(why()), approve, approve, approve]).1.last == true,
                     "After a decline, three more approvals offer again")
         try require(run([approve, .standing, approve, .standing, approve]).1.last == true && run([.standing]).0 == RuleOfferState(),
                     "Standing approvals from the menu neither add nor reset")
@@ -77,7 +77,6 @@ extension SelfTest {
                         "A card not shown because of the setting neither adds nor resets: \(odd)")
         }
         try require(!RuleOffer.counts(nil) && run([.approved(nil), .approved(nil), .approved(nil)]).0.approvals == 0, "A card with no reason never counts")
-        try require(RuleOffer.counts(why(choice: .actIfPreapproved)), "A card shown because the setting waits for a go ahead counts")
         let answered = run([approve, approve, .answered, approve, approve, approve])
         try require(answered.0.answered && !answered.1.contains(true), "An answered offer is not raised again in the same chat")
         try require(!run([approve, approve, approve], off: true).1.contains(true), "Offers turned off everywhere never appear")
@@ -94,13 +93,13 @@ extension SelfTest {
                     "Card answers map to approvals, declines and standing choices")
         var asks = NativeRules.defaults
         asks.set(.ask, for: .fileEdits)
-        asks.set(.actIfPreapproved, for: .reminders)
+        asks.set(.ask, for: .reminders)
         try require(RuleOffer.stillAsks(.fileEdits, global: asks, chat: NativeConversationRules())
                     && RuleOffer.stillAsks(.reminders, global: asks, chat: NativeConversationRules())
                     && !RuleOffer.stillAsks(.fileEdits, global: .defaults, chat: NativeConversationRules())
                     && !RuleOffer.stillAsks(.riskyCommands, global: .defaults, chat: NativeConversationRules()),
-                    "Only a setting of ask first or go ahead still asks")
-        try require(!RuleOffer.stillAsks(.reminders, global: asks, chat: NativeConversationRules(choices: [.reminders: .ask]))
+                    "Only a setting of ask first still asks")
+        try require(!RuleOffer.stillAsks(.reminders, global: asks, chat: NativeConversationRules(choices: [.reminders: .handOff]))
                     && !RuleOffer.stillAsks(.fileEdits, global: asks, chat: NativeConversationRules(choices: [.fileEdits: .handOff]))
                     && RuleOffer.stillAsks(.fileEdits, global: asks, chat: NativeConversationRules(choices: [.fileEdits: .ask])),
                     "A chat with its own stricter choice is not offered")

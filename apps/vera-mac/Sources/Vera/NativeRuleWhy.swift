@@ -150,7 +150,7 @@ extension NativeRuleResolver {
         }
         let allowed = resolution?.decidedBy.effect == .allow
         let settled = choice(for: query.action)
-        let wouldAct = allowed || (resolution == nil && (settled == .act || (settled == .actIfPreapproved && NativeRequestPreapproval.grants(requestText))))
+        let wouldAct = allowed || (resolution == nil && settled == .act)
         if decision == .ask, wouldAct,
            let restriction = NativeRuleMatcher.untargetedRestriction(records, query: query, context: context, at: now) {
             return NativeRuleWhy(kind: .rule, action: query.action, handsOff: false, rule: .init(restriction))

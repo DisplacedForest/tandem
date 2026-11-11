@@ -189,7 +189,6 @@ enum NativeDotContext {
     static func wording(_ choice: NativeRuleChoice) -> String {
         switch choice {
         case .act: return "act without asking"
-        case .actIfPreapproved: return "act only when the request pre-approves it, otherwise ask first"
         case .ask: return "ask the user before acting"
         case .handOff: return "hand off to the user"
         }
@@ -224,8 +223,6 @@ enum NativeDotContext {
         var sentences: [String] = []
         let asks = nouns(.ask)
         if !asks.isEmpty { sentences.append("Asks first for \(list(asks)).") }
-        let preapproved = nouns(.actIfPreapproved)
-        if !preapproved.isEmpty { sentences.append("Needs your go-ahead in the request for \(list(preapproved)).") }
         let handed = nouns(.handOff)
         if !handed.isEmpty { sentences.append("Hands off \(list(handed)).") }
         return sentences.isEmpty ? "Acts without asking" : sentences.joined(separator: " ")
