@@ -55,7 +55,8 @@ struct NativeTypedWords: Hashable, Sendable {
             }
             return false
         }
-        let cut = scalars.indices.first(where: opens) ?? count
+        guard let opener = scalars.indices.first(where: opens) else { return raw.replacingOccurrences(of: "\u{2019}", with: "'") }
+        let cut = scalars[..<opener].firstIndex(where: apostrophes.contains) ?? opener
         return String(String.UnicodeScalarView(scalars[..<cut])).replacingOccurrences(of: "\u{2019}", with: "'")
     }
 
