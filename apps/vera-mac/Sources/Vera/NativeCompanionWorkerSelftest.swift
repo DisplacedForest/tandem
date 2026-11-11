@@ -1261,14 +1261,14 @@ extension SelfTest {
         store.skipDotSetup()
         try require(await store.startCompanionAssignment("   ") != nil, "An empty assignment is refused")
         store.setDotState(.paused)
-        try require(await store.startCompanionAssignment("Water the north bed") == "Ada is paused. Resume to give it work.",
+        try require(await store.startCompanionAssignment("Water the north bed")?.plain(name: store.companionName) == "Ada is paused. Resume to give it work.",
                     "A paused companion takes no new work")
         store.setDotState(.active)
         store.ensureVeraThread()
         guard let threadID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
         let before = try repository.messages(conversationID: threadID).count
         let failure = await store.startCompanionAssignment("Water the north bed")
-        try require(failure == nil, "A valid assignment starts: \(failure ?? "")")
+        try require(failure == nil, "A valid assignment starts: \(failure?.plain(name: store.companionName) ?? "")")
         let saved = try repository.messages(conversationID: threadID)
         try require(saved.count == before + 2 && saved[before].role == .user && saved[before].text == "Water the north bed"
                     && saved[before + 1].role == .assistant, "The assignment and its anchor reply land in the companion thread")

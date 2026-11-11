@@ -101,7 +101,7 @@ struct CompanionThreadPanel: View {
                 HStack(spacing: 14) {
                     CompanionAvatar(size: 56)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(current.name).font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
+                        CompanionNamedText(template: CompanionSentence.placeholder).font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                         HStack(spacing: 6) {
                             Circle().fill(current.paused ? Theme.warmTextSecondary : Theme.statusGreen).frame(width: 7, height: 7)
                             Text(stateLine).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)

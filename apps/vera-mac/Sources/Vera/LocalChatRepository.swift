@@ -300,7 +300,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                       var activities = try? JSONDecoder().decode([NativeToolActivity].self, from: data) else { continue }
                 for index in activities.indices where activities[index].state == .pending {
                     activities[index].state = .failed
-                    activities[index].result = "{\"error\":\"The tool call was interrupted when Vera closed\"}"
+                    activities[index].result = "{\"error\":\"The tool call was interrupted when Tandem closed\"}"
                 }
                 let recovered = String(decoding: try JSONEncoder().encode(activities), as: UTF8.self)
                 try db.execute(
@@ -310,7 +310,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try db.execute(sql: """
                 UPDATE messages
                 SET state = 'interrupted',
-                    failure = COALESCE(failure, 'The response was interrupted when Vera closed')
+                    failure = COALESCE(failure, 'The response was interrupted when Tandem closed')
                 WHERE state = 'streaming'
                     AND id NOT IN (SELECT assistant_message_id FROM native_conversation_turns WHERE state IN ('pending', 'running'))
                 """)

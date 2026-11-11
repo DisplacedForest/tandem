@@ -50,6 +50,7 @@ struct SidebarRowLabel<Icon: View>: View {
     var collapsed = false
     var tintsIcon = true
     var rowHeight: CGFloat = SidebarMetrics.rowHeight
+    var titleTemplate: String? = nil
 
     var body: some View {
         HStack(spacing: SidebarMetrics.inset) {
@@ -58,7 +59,7 @@ struct SidebarRowLabel<Icon: View>: View {
                 .foregroundStyle(tintsIcon && selected ? Theme.accent : Theme.textSecondary)
                 .frame(width: SidebarMetrics.iconSlot, height: SidebarMetrics.iconSlot)
             if !collapsed {
-                Text(title).font(.system(size: SidebarMetrics.labelSize, weight: selected ? .medium : .regular))
+                titleText.font(.system(size: SidebarMetrics.labelSize, weight: selected ? .medium : .regular))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
                     .transition(.opacity)
                 Spacer(minLength: 0)
@@ -67,6 +68,14 @@ struct SidebarRowLabel<Icon: View>: View {
         .padding(.horizontal, collapsed ? 0 : SidebarMetrics.inset)
         .frame(height: rowHeight)
         .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
+    }
+
+    @ViewBuilder private var titleText: some View {
+        if let titleTemplate {
+            CompanionNamedText(template: titleTemplate)
+        } else {
+            Text(title)
+        }
     }
 }
 
@@ -325,7 +334,7 @@ struct VeraSidebar: View {
         let selected = store.section == .vera
         return Button { onSelect(.vera) } label: {
             SidebarRowLabel(icon: CompanionAvatar(size: 20), title: store.companion.leading, selected: selected,
-                            tintsIcon: false, rowHeight: 34)
+                            tintsIcon: false, rowHeight: 34, titleTemplate: CompanionSentence.placeholder)
         }
         .buttonStyle(SidebarRowStyle(selected: selected))
         .help(store.companion.leading).accessibilityLabel(store.companion.leading)

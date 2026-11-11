@@ -63,7 +63,12 @@ final class ChatStore: ObservableObject {
     @Published var attachmentError: String?
     @Published var companionDraft = ""
     @Published var companionAttachments: [Attachment] = []
-    @Published var companionError: String?
+    @Published var companionError: String? {
+        didSet {
+            if let error = companionPanelError, error.plain(name: companionName) != companionError { companionPanelError = nil }
+        }
+    }
+    @Published private(set) var companionPanelError: CompanionConfigurationError?
     @Published var companionFocusTick = 0
     static let companionSeenKey = "companion_last_seen_reply"
     var companionDefaults: UserDefaults = .standard
@@ -72,7 +77,58 @@ final class ChatStore: ObservableObject {
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
-    @Published var chatConfigurationError: String?
+    @Published var chatConfigurationError: String? {
+        didSet {
+            if let error = companionConfigurationError, error.plain(name: companionName) != chatConfigurationError {
+                companionConfigurationError = nil
+            }
+        }
+    }
+    @Published private(set) var companionConfigurationError: CompanionConfigurationError?
+
+    var chatConfigurationErrorLine: CompanionLine? {
+        guard let chatConfigurationError else { return nil }
+        return companionConfigurationError?.line ?? .literal(chatConfigurationError)
+    }
+
+    var focusedChatConfigurationError: String? {
+        companionConfigurationError == nil ? chatConfigurationError : nil
+    }
+
+    var companionErrorLine: CompanionLine? {
+        guard let companionError else { return nil }
+        return companionPanelError?.line ?? .literal(companionError)
+    }
+
+    func resolveCompanionConfigurationError(_ lead: String) {
+        if companionConfigurationError?.lead == lead { chatConfigurationError = nil }
+        if companionPanelError?.lead == lead { companionError = nil }
+    }
+
+    private func reportCompanionPanelError(fallback: String) {
+        guard chatConfigurationError != nil, let error = companionConfigurationError else {
+            companionError = chatConfigurationError ?? fallback
+            return
+        }
+        companionPanelError = error
+        companionError = error.plain(name: companionName)
+    }
+
+    func reportCompanionConfigurationError(_ lead: String, description: String, tail: String = "") {
+        let error = CompanionConfigurationError(lead: lead, detail: description + tail)
+        companionConfigurationError = error
+        chatConfigurationError = error.plain(name: companionName)
+    }
+
+    private func renameCompanionConfigurationError(from old: String?) {
+        guard old != companionName else { return }
+        if let error = companionConfigurationError, chatConfigurationError == error.plain(name: old) {
+            chatConfigurationError = error.plain(name: companionName)
+        }
+        if let error = companionPanelError, companionError == error.plain(name: old) {
+            companionError = error.plain(name: companionName)
+        }
+    }
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
     @Published var pendingToolConfirmation: NativeToolConfirmationRequest?
@@ -99,7 +155,9 @@ final class ChatStore: ObservableObject {
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
-    @Published private(set) var companionName: String?
+    @Published private(set) var companionName: String? {
+        didSet { renameCompanionConfigurationError(from: oldValue) }
+    }
     var companion: CompanionSubject { CompanionSubject(companionName) }
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
@@ -727,9 +785,10 @@ final class ChatStore: ObservableObject {
             thread.isPersisted = true
             conversations.append(thread)
             veraThreadID = thread.id
+            resolveCompanionConfigurationError(CompanionErrorCopy.threadLead)
         } catch {
             veraThreadID = nil
-            chatConfigurationError = "The Vera thread couldn't be created: \(error.localizedDescription)"
+            reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: error.localizedDescription)
         }
     }
 
@@ -1752,7 +1811,7 @@ final class ChatStore: ObservableObject {
         case failed(String)
     }
 
-    static let pulseContinuationDatabaseFailure = "Vera couldn't create the local conversation. Try again."
+    static let pulseContinuationDatabaseFailure = "Tandem couldn't create the local conversation. Try again."
 
     func openPulseInChat(_ card: PulseCard, onOpened: (() -> Void)? = nil) {
         if pulseContinuation[card.id] == .opening { return }
@@ -1771,7 +1830,7 @@ final class ChatStore: ObservableObject {
             return
         }
         guard let provider = pulseFeedProvider ?? (client as (any PulseFeedProviding)?) else {
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
             return
         }
         pulseContinuation[card.id] = .opening
@@ -1787,7 +1846,7 @@ final class ChatStore: ObservableObject {
     ) {
         switch result {
         case .unconfigured:
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
         case .transport:
             pulseContinuation[card.id] = .failed("Pulse couldn't be reached. Try again.")
         case .malformed:
@@ -1972,7 +2031,7 @@ final class ChatStore: ObservableObject {
     func sendCompanion() -> Bool {
         prepareCompanionThread(askForName: false)
         guard let veraThreadID else {
-            companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
+            reportCompanionPanelError(fallback: repositoryInitializationError ?? "Local history couldn't open")
             return false
         }
         let text = companionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1992,7 +2051,7 @@ final class ChatStore: ObservableObject {
         }
         markCompanionSeen()
         guard sendText(text, attachments: atts, routeNote: note, conversationID: veraThreadID, fromComposer: true) else {
-            companionError = chatConfigurationError ?? "The message couldn't send."
+            reportCompanionPanelError(fallback: "The message couldn't send.")
             return false
         }
         companionDraft = ""
@@ -2736,8 +2795,8 @@ enum NativeMemorySourceState: Equatable, Sendable {
     var message: String {
         switch self {
         case .ok: ""
-        case .edited: "This message changed after Vera remembered it."
-        case .deleted: "The source message was deleted, so Vera opened the conversation instead."
+        case .edited: "This message changed after Tandem remembered it."
+        case .deleted: "The source message was deleted, so Tandem opened the conversation instead."
         case .excluded: "This conversation is excluded from memory suggestions."
         }
     }

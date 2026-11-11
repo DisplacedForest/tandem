@@ -142,8 +142,35 @@ enum CompanionSentence {
     }
 }
 
+enum CompanionLine: Equatable, Sendable {
+    case named(String)
+    case literal(String)
+    case namedThenText(String, String)
+
+    func plain(name: String?) -> String {
+        switch self {
+        case .named(let template): CompanionSentence.plain(template, name: name)
+        case .namedThenText(let template, let text): CompanionSentence.plain(template, name: name) + text
+        case .literal(let text): text
+        }
+    }
+}
+
+struct CompanionLineText: View {
+    var line: CompanionLine
+
+    var body: some View {
+        switch line {
+        case .named(let template): CompanionNamedText(template: template)
+        case .namedThenText(let template, let text): CompanionNamedText(template: template, suffix: text)
+        case .literal(let text): Text(verbatim: text)
+        }
+    }
+}
+
 struct CompanionNamedText: View {
     var template: String
+    var suffix = ""
     @Environment(\.companionName) private var name
     @Environment(\.companionAppearance) private var appearance
     @Environment(\.colorScheme) private var colorScheme
@@ -164,13 +191,13 @@ struct CompanionNamedText: View {
             text = text + Text(part)
             prefix += part
         }
-        return text
+        return suffix.isEmpty ? text : text + Text(verbatim: suffix)
     }
 
     var body: some View {
         sentence
             .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(CompanionSentence.plain(template, name: name))
+            .accessibilityLabel(CompanionSentence.plain(template, name: name) + suffix)
     }
 }
 

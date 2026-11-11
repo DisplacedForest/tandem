@@ -53,7 +53,7 @@ struct PromptLibraryArea: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Personas, user context, and reusable prompts are stored in Vera's local database with revision history.")
+                Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Menu {
@@ -267,7 +267,7 @@ struct PromptLibraryArea: View {
             scope: scope,
             content: scope == .persona
                 ? NativeChatSettings.defaultSystemPrompt
-                : "Preferences and context about you that Vera should know.")
+                : "Preferences and context about you that Tandem should know.")
         apply { try repository.savePromptProfile(profile) }
         reload()
         select(.profile(profile.id))
@@ -603,10 +603,10 @@ struct PromptLibraryShotView: View {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            Text("Personas, user context, and reusable prompts are stored in Vera's local database with revision history.")
+            Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             group("Personas", PromptScope.persona.explanation, [
-                entry("Vera", "Persona", active: true, selected: false),
+                entry("Default", "Persona", active: true, selected: false),
                 entry("Brief mode", "Persona", active: false, selected: true),
             ])
             group("User context", PromptScope.user.explanation, [

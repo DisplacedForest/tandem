@@ -1,0 +1,91 @@
+import AppKit
+import SwiftUI
+
+@MainActor
+enum NameStylingShot {
+    static let views: Set<String> = ["name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
+                                     "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused",
+                                     "name-thread-error"]
+
+    static func render(to path: String, view: String, appearance: String) {
+        let scheme: ColorScheme = appearance == "light" ? .light : .dark
+        NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
+        let name = CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)
+        let store = view == "name-artifacts-filter" ? ArtifactShotFixture.store(variant: "artifacts").store
+            : ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try? LocalChatRepository(inMemory: true))
+        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
+                                 readConfiguration: { name.map { ["assistant_name": $0] } ?? [:] },
+                                 writeConfiguration: { _ in })
+        NativeDotShotFixture.populate(store, paused: view == "name-surfaces", setupCompleted: true)
+        let colors = CompanionAppearance(shape: .pebble, color: .apricot)
+        let size: NSSize
+        let root: AnyView
+        switch view {
+        case "name-dot-settings":
+            size = NSSize(width: 560, height: 700)
+            root = AnyView(DotSettingsView())
+        case "name-appearance-draft":
+            size = NSSize(width: 680, height: 470)
+            let fixture = CompanionAppearanceFixtureStore()
+            fixture.stored = CompanionAppearance(shape: .fold, color: .periwinkle)
+            root = AnyView(CompanionAppearancePicker(config: config, store: fixture))
+        case "name-not-connected", "name-not-connected-chat":
+            size = NSSize(width: 720, height: 360)
+            if view == "name-not-connected-chat" { store.newConversation() }
+            root = AnyView(EmptyChatView().padding(20))
+        case "name-scheduled-paused":
+            size = NSSize(width: 1000, height: 520)
+            NativeScheduleShotFixture.populate(store, assistantPaused: true)
+            CompanionNameShot.apply(to: store)
+            store.schedules = store.schedules.filter { $0.owner == .dot } + store.schedules.filter { $0.owner != .dot }
+            root = AnyView(ScheduledView(renderSafe: true))
+        case "name-artifacts-filter":
+            size = NSSize(width: 1000, height: 600)
+            root = AnyView(ArtifactsView(conversationFilter: store.veraThreadID))
+        case "name-thread-error":
+            size = NSSize(width: 900, height: 620)
+            store.section = .vera
+            store.openVeraThread()
+            store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
+            root = AnyView(ChatPane())
+        case "name-surfaces-chat":
+            size = NSSize(width: 720, height: 360)
+            store.newConversation()
+            store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
+            root = AnyView(EmptyChatView().padding(20))
+        default:
+            size = NSSize(width: 720, height: 820)
+            store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
+            root = AnyView(
+                VStack(alignment: .leading, spacing: 18) {
+                    CompanionAssignmentField()
+                    PreferencesSettingsView()
+                    CompanionOpeningView(error: store.companionOpeningErrorLine, retry: {}).frame(height: 90)
+                    EmptyChatView().frame(height: 300)
+                }
+                .padding(20)
+            )
+        }
+        let content = root
+            .environmentObject(store).environmentObject(config)
+            .environment(\.companionName, store.companionDisplayName)
+            .environment(\.companionAppearance, colors)
+            .environment(\.colorScheme, scheme)
+            .frame(width: size.width, height: size.height)
+            .background(Theme.bg)
+        let hosting = NSHostingView(rootView: content)
+        hosting.frame = NSRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSApplication.shared.appearance
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        hosting.layoutSubtreeIfNeeded()
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { exit(1) }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
+        do { try data.write(to: URL(fileURLWithPath: path)); print("wrote \(path)"); exit(0) }
+        catch { exit(1) }
+    }
+}

@@ -75,7 +75,7 @@ struct ShotView: View {
                         HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 0) {
                                 if emptyChat && section == .vera {
-                                    CompanionOpeningView(error: needsConnection ? ChatStore.companionNeedsConnection : store.chatConfigurationError,
+                                    CompanionOpeningView(error: needsConnection ? .literal(ChatStore.companionNeedsConnection) : store.chatConfigurationErrorLine,
                                                          needsConnection: needsConnection, retry: {})
                                     shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
                                         .modifier(ShotComposerPill())
@@ -152,7 +152,7 @@ struct ShotView: View {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 VStack(alignment: .leading, spacing: 12) {
                     shotStartRow(icon: "wand.and.stars", title: "Build a new vein",
-                                 note: "Describe a watch in your own words and Vera drafts it.", enabled: true)
+                                 note: "Describe a watch in your own words and Tandem drafts it.", enabled: true)
                     shotStartRow(icon: "square.and.arrow.down", title: "Import from file",
                                  note: "Add a vein someone shared with you. It lands disabled for review.",
                                  enabled: true)
@@ -252,7 +252,7 @@ struct ShotView: View {
                         }.foregroundStyle(.orange)
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                            Text("Unknown block moon_phase. It stays inert until this Vera has it.")
+                            Text("Unknown block moon_phase. It stays inert until the vera-api service has it.")
                                 .font(.system(size: 12))
                         }.foregroundStyle(.orange)
                     }
@@ -686,7 +686,7 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "Everything Vera runs on her own, as one living system.", size: 13)
+                InfoTip(text: "Everything Tandem runs automatically, as one living system.", size: 13)
                 Text("\(graph.flows.count) flows").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 9).padding(.vertical, 3)
@@ -797,7 +797,7 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("Plugins").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "What Vera is connected to: each integration unlocks capabilities across the app.", size: 13)
+                InfoTip(text: "What Tandem is connected to: each integration unlocks capabilities across the app.", size: 13)
                 Text("\(entries.filter(\.enabled).count)/\(entries.count)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())

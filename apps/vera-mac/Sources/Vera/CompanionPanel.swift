@@ -208,7 +208,7 @@ struct CompanionPanelView: View {
             Image(systemName: "sparkle")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.accent)
-            Text(store.companion.leading)
+            CompanionNamedText(template: CompanionSentence.placeholder)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             let unread = store.companionUnreadCount
@@ -245,7 +245,7 @@ struct CompanionPanelView: View {
     private var transcriptContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             if recent.isEmpty {
-                Text("Ask anything. It goes to \(store.companion.thread).")
+                CompanionNamedText(template: "Ask anything. It goes to {name}'s thread.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -322,10 +322,10 @@ struct CompanionPanelView: View {
                     Spacer(minLength: 0)
                 }
             }
-            if let error = store.companionError {
+            if let error = store.companionErrorLine {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                    Text(error).font(.system(size: 11))
+                    CompanionLineText(line: error).font(.system(size: 11))
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
@@ -374,7 +374,7 @@ struct CompanionPanelView: View {
                     }
             }
             if store.companionDraft.isEmpty {
-                Text("Message \(store.companion.inline)…")
+                CompanionNamedText(template: "Message {name}…")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 5).padding(.vertical, 8)

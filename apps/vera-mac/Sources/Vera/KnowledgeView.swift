@@ -31,7 +31,7 @@ struct KnowledgeView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Knowledge").font(.system(size: 26, weight: .bold))
-                Text("Reference collections Vera can ground chat answers in, with citations.")
+                Text("Reference collections Tandem can ground chat answers in, with citations.")
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -646,7 +646,7 @@ struct KnowledgeShotSurface: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Knowledge").font(.system(size: 26, weight: .bold))
-                    Text("Reference collections Vera can ground chat answers in, with citations.")
+                    Text("Reference collections Tandem can ground chat answers in, with citations.")
                         .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

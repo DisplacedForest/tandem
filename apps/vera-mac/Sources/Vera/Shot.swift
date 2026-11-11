@@ -51,6 +51,10 @@ enum Shot {
             CompanionNameShot.render(to: path, appearance: appearance)
             return
         }
+        if NameStylingShot.views.contains(view) {
+            NameStylingShot.render(to: path, view: view, appearance: appearance)
+            return
+        }
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
         CompanionNameShot.apply(to: store)
         let size: CGSize
@@ -558,7 +562,8 @@ enum Shot {
             )
         }
 
-        let renderer = ImageRenderer(content: content.environment(\.colorScheme, scheme))
+        let renderer = ImageRenderer(content: content.environment(\.colorScheme, scheme)
+            .environment(\.companionName, store.companionDisplayName))
         renderer.scale = 2.0
         guard let nsImage = renderer.nsImage,
               let tiff = nsImage.tiffRepresentation,
@@ -1142,12 +1147,12 @@ struct NativeSettingsShotView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("PROMPT LIBRARY").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
-                Text("Personas, user context, and reusable prompts are stored in Vera's local database with revision history.")
+                Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text(NativeChatSettings.defaultSystemPrompt)
                     .font(.system(size: 13)).padding(12).frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                     .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
-                HStack { Text("Saved in Vera's local database."); Spacer(); Text("Preview · History · Export") }
+                HStack { Text("Saved in Tandem's local database."); Spacer(); Text("Preview · History · Export") }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         } else if tab == "Tools" {

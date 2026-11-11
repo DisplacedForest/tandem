@@ -3,7 +3,7 @@ import SwiftUI
 struct CompanionAssignmentField: View {
     @EnvironmentObject var store: ChatStore
     @State private var draft = ""
-    @State private var error: String?
+    @State private var error: CompanionLine?
     @State private var submitting = false
 
     static let staticRendering = ProcessInfo.processInfo.arguments.contains("--shot")
@@ -13,7 +13,7 @@ struct CompanionAssignmentField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Give \(store.companion.inline) work")
+            CompanionNamedText(template: "Give {name} work")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
             HStack(alignment: .center, spacing: 8) {
@@ -44,11 +44,11 @@ struct CompanionAssignmentField: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
             if store.dotProfile.isPaused {
-                Text("\(store.companion.leading) is paused.")
+                CompanionNamedText(template: "{name} is paused.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             } else if let error {
-                Label(error, systemImage: "exclamationmark.triangle")
+                Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             }

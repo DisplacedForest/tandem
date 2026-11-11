@@ -1,5 +1,12 @@
 import Foundation
 
+enum CompanionWorkCopy {
+    static let describe = "Describe what {name} should work on."
+    static let paused = "{name} is paused. Resume to give it work."
+    static let conversation = "{name}'s conversation couldn't be opened."
+    static let couldNotStart = "{name} couldn't start this work."
+}
+
 extension ChatStore {
     static let companionAssignmentLimit = 4000
 
@@ -17,27 +24,27 @@ extension ChatStore {
     }
 
     @discardableResult
-    func startCompanionAssignment(_ text: String) async -> String? {
+    func startCompanionAssignment(_ text: String) async -> CompanionLine? {
         let assignment = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !assignment.isEmpty else { return "Describe what \(companion.inline) should work on." }
-        guard assignment.count <= Self.companionAssignmentLimit else { return "Keep the assignment under \(Self.companionAssignmentLimit) characters." }
-        guard !dotProfile.isPaused else { return "\(companion.leading) is paused. Resume to give it work." }
+        guard !assignment.isEmpty else { return .named(CompanionWorkCopy.describe) }
+        guard assignment.count <= Self.companionAssignmentLimit else { return .literal("Keep the assignment under \(Self.companionAssignmentLimit) characters.") }
+        guard !dotProfile.isPaused else { return .named(CompanionWorkCopy.paused) }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
-            return "Background work isn't available right now."
+            return .literal("Background work isn't available right now.")
         }
-        guard let nativeConfig = currentNativeConfig else { return "No model is set up. Add one in Settings." }
+        guard let nativeConfig = currentNativeConfig else { return .literal("No model is set up. Add one in Settings.") }
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
-        if nativeTaskConfiguration != nil && profile == nil { return "The model profile couldn't be prepared." }
+        if nativeTaskConfiguration != nil && profile == nil { return .literal("The model profile couldn't be prepared.") }
         let request: NativeResearchTaskRequest
         do {
             let payload = try NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: dotProfile.goal,
                                                         connectedToolIDs: dotProfile.connectedToolIDs?.sorted())
             request = try NativeResearchTaskRequest(dot: payload)
         } catch {
-            return error.localizedDescription
+            return .literal(error.localizedDescription)
         }
         ensureVeraThread()
-        guard let conversationID = veraThreadID else { return "\(companion.leading)'s conversation couldn't be opened." }
+        guard let conversationID = veraThreadID else { return .named(CompanionWorkCopy.conversation) }
         let user = Message(role: .user, text: assignment)
         let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
         do {
@@ -45,7 +52,7 @@ extension ChatStore {
             try repository.saveMessage(user, conversationID: conversationID, ordinal: ordinal)
             try repository.saveMessage(reply, conversationID: conversationID, ordinal: ordinal + 1)
         } catch {
-            return "The assignment couldn't be saved: \(error.localizedDescription)"
+            return .literal("The assignment couldn't be saved: \(error.localizedDescription)")
         }
         if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
             if !conversations[index].messages.isEmpty || selectedID == conversationID {
@@ -60,11 +67,11 @@ extension ChatStore {
             let reference = try await service.submit(origin: origin, request: request, profile: profile)
             reloadNativeTaskReferences()
             if reference.deliveryState == NativeTaskDeliveryState.rejected {
-                return reference.lastDeliveryError ?? "\(companion.leading) couldn't start this work."
+                return reference.lastDeliveryError.map(CompanionLine.literal) ?? .named(CompanionWorkCopy.couldNotStart)
             }
             return nil
         } catch {
-            return error.localizedDescription
+            return .literal(error.localizedDescription)
         }
     }
 

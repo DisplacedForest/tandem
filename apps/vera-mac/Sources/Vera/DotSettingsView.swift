@@ -14,14 +14,14 @@ struct DotSettingsView: View {
     @State private var confirmingReset = false
     @State private var removal = NativeDotRemovalSummary()
 
-    private var displayName: String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? store.companion.leading : trimmed
+    private var displayName: String? {
+        CompanionSentence.savedName(name) ?? store.companionDisplayName
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(displayName).font(.system(size: 17, weight: .semibold)).padding(.bottom, 14)
+            CompanionNamedText(template: CompanionSentence.placeholder).font(.system(size: 17, weight: .semibold))
+                .environment(\.companionName, displayName).padding(.bottom, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, revokedPrefixes: $revokedPrefixes, options: options)
@@ -75,7 +75,7 @@ struct DotSettingsView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Start over")
-                    Text(DotProfileCopy.startOver(store.companion.inline))
+                    CompanionNamedText(template: DotProfileCopy.startOver)
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

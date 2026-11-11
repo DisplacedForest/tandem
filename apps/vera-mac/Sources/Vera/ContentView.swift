@@ -166,7 +166,7 @@ struct SidebarRow: View {
 
 // MARK: - Chat pane
 
-private struct ChatPane: View {
+struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     var workCollapsed = false
     @EnvironmentObject var config: ConfigStore
@@ -295,6 +295,18 @@ private struct ChatPane: View {
                 .frame(maxWidth: ConversationMetrics.columnWidth)
                 .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
                 .accessibilityElement(children: .contain)
+            }
+            if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.textSecondary)
+                    CompanionLineText(line: error.line).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+                .frame(maxWidth: ConversationMetrics.columnWidth)
+                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
+                .accessibilityElement(children: .combine)
             }
             if let convo = conversation, !convo.messages.isEmpty {
                 ScrollViewReader { proxy in
@@ -429,7 +441,7 @@ private struct ChatPane: View {
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: ConversationMetrics.columnWidth)
             } else if store.section == .vera || store.isVeraThread(conversation?.id) {
-                CompanionOpeningView(error: store.companionOpeningError,
+                CompanionOpeningView(error: store.companionOpeningErrorLine,
                                      needsConnection: store.repository != nil && !store.pendingProfileAvailable,
                                      canRetry: store.repository != nil) {
                     store.chatConfigurationError = nil
@@ -577,14 +589,22 @@ struct EmptyChatView: View {
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
                 ComposerField()
-                if let error = store.chatConfigurationError {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.focusedChatConfigurationError.map(CompanionLine.literal) {
+                    Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive && project == nil {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else if !store.isLive {
                     Button { config.showOnboarding = true } label: {
-                        Label("\(store.conversationAssistantLead) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label {
+                            if store.isVeraThread(store.selectedID) {
+                                CompanionNamedText(template: "{name} isn't connected. Set up the connection")
+                            } else {
+                                Text("\(store.conversationAssistantLead) isn't connected. Set up the connection")
+                            }
+                        } icon: {
+                            Image(systemName: "bolt.horizontal")
+                        }
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())
