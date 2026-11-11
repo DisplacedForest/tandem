@@ -70,15 +70,15 @@ struct SavedRuleRow: View {
     var onRemove: () -> Void
     @Environment(\.companionName) private var name
 
-    private var spoken: String { CompanionSentence.plain(row.line, name: name) }
+    private var spoken: String { row.line.plain(name: name) }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                CompanionNamedText(template: row.line)
+                CompanionLineText(line: row.line)
                     .foregroundStyle(row.off ? Theme.textSecondary : Theme.textPrimary)
                 if let note = row.note {
-                    CompanionNamedText(template: note)
+                    CompanionLineText(line: note)
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }

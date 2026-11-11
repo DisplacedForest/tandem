@@ -102,20 +102,26 @@ extension SelfTest {
         try require(RuleRows.sentence(askTool).hasPrefix("Always ask before") && RuleRows.sentence(handTool).hasPrefix("Always leave to you"),
                     "Ask and hand off rows lead with what happens: \(RuleRows.sentence(askTool)) / \(RuleRows.sentence(handTool))")
 
-        try require(RuleRows.place(.everywhere, places: places) == "everywhere", "Everywhere reads as everywhere")
-        try require(RuleRows.place(.conversation("rows-greenhouse"), places: places) == "in Greenhouse notes", "A chat place names the chat")
-        try require(RuleRows.place(.conversation(thread), places: places) == "in {name}'s thread", "The companion thread uses the name template")
+        try require(RuleRows.place(.everywhere, places: places) == .literal("everywhere")
+                    && RuleRows.place(.everywhere, places: places).plain(name: "Ada") == "everywhere", "Everywhere reads as everywhere")
+        try require(RuleRows.place(.conversation("rows-greenhouse"), places: places) == .literal("in Greenhouse notes"), "A chat place names the chat")
+        let threadPlace = RuleRows.place(.conversation(thread), places: places)
+        try require(threadPlace == .parts([.text("in "), .name, .text("'s thread")])
+                    && threadPlace.plain(name: "Ada") == "in Ada's thread" && threadPlace.plain(name: nil) == "in your companion's thread",
+                    "The companion thread place names the companion: \(threadPlace.plain(name: nil))")
         let threadRow = row(record(.conversation(thread), action: .networkSends, tool: "garden-log", statement: "In this chat, allow: Post to the garden log"))
-        try require(CompanionSentence.plain(threadRow.line, name: "Ada").contains("in Ada's thread")
-                    && CompanionSentence.plain(threadRow.line, name: nil).contains("in your companion's thread"),
-                    "The companion thread place follows the saved name: \(threadRow.line)")
-        try require(RuleRows.place(.project("rows-garden"), places: places) == "in the Garden project", "A project place names the project")
-        try require(RuleRows.place(.schedule("rows-frost"), places: places) == "for the schedule Frost check", "A schedule place names the schedule")
-        try require(RuleRows.place(.task("rows-book"), places: places) == "for Book the workshop inspection", "A task place names the work")
-        try require(RuleRows.place(.task("rows-blank"), places: places) == "for background work", "A task with no title reads as background work")
+        try require(threadRow.line.plain(name: "Ada").contains("in Ada's thread")
+                    && threadRow.line.plain(name: nil).contains("in your companion's thread"),
+                    "The companion thread place follows the saved name: \(threadRow.line.plain(name: nil))")
+        try require(RuleRows.place(.project("rows-garden"), places: places) == .literal("in the Garden project"), "A project place names the project")
+        try require(RuleRows.place(.schedule("rows-frost"), places: places) == .literal("for the schedule Frost check"), "A schedule place names the schedule")
+        try require(RuleRows.place(.task("rows-book"), places: places) == .literal("for Book the workshop inspection"), "A task place names the work")
+        try require(RuleRows.place(.task("rows-blank"), places: places) == .literal("for background work"), "A task with no title reads as background work")
         let braces = row(record(.conversation("rows-braces"), action: .networkSends, tool: "garden-log", statement: "Allow: Post"))
-        try require(!braces.line.contains(CompanionSentence.placeholder) && !CompanionSentence.plain(braces.line, name: "Ada").contains("Ada"),
-                    "A chat title with the name placeholder is never filled with the companion's name: \(braces.line)")
+        try require(braces.line == .parts([.text("Always allow: Post, "), .text("in Notes about {name}")])
+                    && braces.line.plain(name: "Ada") == "Always allow: Post, in Notes about {name}"
+                    && braces.line.plain(name: nil) == "Always allow: Post, in Notes about {name}",
+                    "A chat title with the name placeholder is shown as written and never filled with the companion's name: \(braces.line.plain(name: "Ada"))")
 
         let clock = try NSRegularExpression(pattern: ":[0-9]{2}")
         func timeless(_ text: String?, _ id: String) throws {
@@ -132,16 +138,24 @@ extension SelfTest {
         let fromThread = record(origin: .confirmCard, from: thread)
         let carried = record(origin: .migration, from: "rows-greenhouse")
         let fromSettings = record(origin: .settings)
-        func source(_ record: NativeRuleRecord) -> String? { RuleRows.source(record, places: places, now: now, calendar: calendar) }
-        try require(source(today) == "From a card in Greenhouse notes, today", "Same day source: \(source(today) ?? "nil")")
-        try require(source(yesterday) == "From a card in Greenhouse notes, yesterday", "Yesterday source: \(source(yesterday) ?? "nil")")
-        try require(source(november) == "From a card in Greenhouse notes, November 3", "Same year source: \(source(november) ?? "nil")")
-        try require(source(lastYear) == "From a card in Greenhouse notes, December 24, 2025", "Earlier year source: \(source(lastYear) ?? "nil")")
-        try require(source(noChat) == "From a card, today" && source(goneChat) == "From a card, today", "A card with no known chat still says when")
-        try require(source(fromThread) == "From a card in {name}'s thread, today", "A card from the companion thread uses the template")
-        try require(source(carried) == "Carried over from an earlier version", "A migrated rule says it was carried over")
-        try require(source(fromSettings) == nil, "A rule set in Settings has no source line")
-        for item in [today, yesterday, november, lastYear, noChat, goneChat, fromThread, carried, fromSettings] { try timeless(source(item), item.id) }
+        func sourceLine(_ record: NativeRuleRecord) -> CompanionLine? { RuleRows.source(record, places: places, now: now, calendar: calendar) }
+        func source(_ record: NativeRuleRecord, name: String? = "Ada") -> String? { sourceLine(record)?.plain(name: name) }
+        try require(sourceLine(today) == .literal("From a card in Greenhouse notes, today"), "Same day source: \(source(today) ?? "nil")")
+        try require(sourceLine(yesterday) == .literal("From a card in Greenhouse notes, yesterday"), "Yesterday source: \(source(yesterday) ?? "nil")")
+        try require(sourceLine(november) == .literal("From a card in Greenhouse notes, November 3"), "Same year source: \(source(november) ?? "nil")")
+        try require(sourceLine(lastYear) == .literal("From a card in Greenhouse notes, December 24, 2025"), "Earlier year source: \(source(lastYear) ?? "nil")")
+        try require(sourceLine(noChat) == .literal("From a card, today") && sourceLine(goneChat) == .literal("From a card, today"),
+                    "A card with no known chat still says when")
+        try require(sourceLine(fromThread) == .parts([.text("From a card in "), .name, .text("'s thread, today")])
+                    && source(fromThread, name: "Ada") == "From a card in Ada's thread, today"
+                    && source(fromThread, name: nil) == "From a card in your companion's thread, today",
+                    "A card from the companion thread names the companion: \(source(fromThread, name: nil) ?? "nil")")
+        try require(sourceLine(carried) == .literal("Carried over from an earlier version"), "A migrated rule says it was carried over")
+        try require(sourceLine(fromSettings) == nil, "A rule set in Settings has no source line")
+        for item in [today, yesterday, november, lastYear, noChat, goneChat, fromThread, carried, fromSettings] {
+            try timeless(source(item, name: "Ada"), item.id)
+            try timeless(source(item, name: nil), item.id)
+        }
 
         func limit(_ record: NativeRuleRecord) -> String? { RuleRows.limit(record, now: now, calendar: calendar) }
         let once = record(action: .networkSends, tool: "mail", uses: 1)
@@ -155,9 +169,11 @@ extension SelfTest {
         try require(limit(tomorrow) == "until tomorrow", "Tomorrow: \(limit(tomorrow) ?? "nil")")
         try require(limit(friday) == "until Friday", "Within the week names the weekday: \(limit(friday) ?? "nil")")
         try require(limit(later) == "until November 30", "Further out names the date: \(limit(later) ?? "nil")")
-        for item in [once, twice, tonight, tomorrow, friday, later] { try timeless(limit(item), item.id); try timeless(row(item).note, item.id) }
+        for item in [once, twice, tonight, tomorrow, friday, later] { try timeless(limit(item), item.id); try timeless(row(item).note?.plain(name: "Ada"), item.id); try timeless(row(item).note?.plain(name: nil), item.id) }
         let switchedOff = row(record(action: .networkSends, tool: "mail", status: .disabled, uses: 1))
-        try require(switchedOff.off && switchedOff.note?.hasPrefix("Switched off") == true, "A switched off rule says so first: \(switchedOff.note ?? "nil")")
+        try require(switchedOff.off && switchedOff.note?.plain(name: "Ada").hasPrefix("Switched off") == true
+                    && switchedOff.note?.plain(name: nil).hasPrefix("Switched off") == true,
+                    "A switched off rule says so first: \(switchedOff.note?.plain(name: nil) ?? "nil")")
 
         let chatAllow = record(.conversation("rows-greenhouse"), action: .networkSends, tool: "mail", target: workshop)
         let projectNever = record(.project("rows-garden"), action: .networkSends, tool: "mail", target: workshop, effect: .forbid)
@@ -206,8 +222,8 @@ extension SelfTest {
                             return !sentence.contains(":") && !sentence.lowercased().split(separator: " ").contains { $0 == "you" || $0 == "your" }
                         }
                     }, "A stricter chat reads as a sentence like every other row")
-        try require(listed.count == 7 && listed[6].sentence == "Always ask before file edits" && listed[6].place == "in Greenhouse notes",
-                    "A stricter chat adds its own row: \(listed.last?.line ?? "none")")
+        try require(listed.count == 7 && listed[6].sentence == "Always ask before file edits" && listed[6].place == .literal("in Greenhouse notes"),
+                    "A stricter chat adds its own row: \(listed.last?.line.plain(name: nil) ?? "none")")
         let again = RuleRows.rows(records: [inChat], chatRules: chatRules, places: places, now: now, calendar: calendar)
         try require(again.last?.id == listed[6].id, "A stricter chat row keeps its id")
 
@@ -242,8 +258,11 @@ extension SelfTest {
             for text in RuleRows.screenStrings(everyRow, name: name) {
                 let hits = words(text).intersection(internalWords)
                 try require(hits.isEmpty, "Saved rule copy uses no internal words: \(hits) in \(text)")
-                try require(!text.contains("Ver" + "a") && !text.contains(CompanionSentence.placeholder), "Saved rule copy names no default and fills the name: \(text)")
+                try require(!text.contains("Ver" + "a") && !text.replacingOccurrences(of: "Notes about {name}", with: "").contains(CompanionSentence.placeholder),
+                            "Saved rule copy names no default and fills the name: \(text)")
             }
+            try require(RuleRows.screenStrings(everyRow, name: name).contains("Always allow: this action, in Notes about {name}"),
+                        "A chat really titled with the name placeholder is listed as written")
             for text in RulesCopy.screenStrings(name: name) {
                 let hits = words(text).intersection(internalWords)
                 try require(hits.isEmpty, "Rules screen copy uses no internal words: \(hits) in \(text)")
@@ -252,7 +271,228 @@ extension SelfTest {
         }
         try require(RulesCopy.info(for: .fileEdits, choice: .act).hasSuffix(RulesCopy.imagesNote), "Editing files explains it covers saved images")
         try require(!RulesCopy.info(for: .commands, choice: .ask).contains(RulesCopy.imagesNote), "Other kinds never mention images")
-        print("  rule rows OK (sentences from targets, places, sources, limits, menus, order, chat rows, left behind, copy)")
+        try await runRuleRowsLiteral()
+        print("  rule rows OK (sentences from targets, places, sources, limits, menus, order, chat rows, left behind, copy, outside text as written)")
+    }
+
+    static func runRuleRowsLiteral() async throws {
+        let require = NativeTaskFixture.require
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 15))!
+        let day: TimeInterval = 86_400
+        let command = NativeCommandTools.toolID
+        let thread = "lit-thread"
+        let hostiles = ["{name}", "{Name}", "{ name }", "\u{E000}companion\u{E001}"]
+        let names: [String?] = ["Ada", nil]
+
+        func holds(_ text: String, _ needle: String) -> Bool {
+            let hay = Array(text.utf8)
+            let want = Array(needle.utf8)
+            guard !want.isEmpty, hay.count >= want.count else { return false }
+            for start in 0...(hay.count - want.count) where Array(hay[start..<(start + want.count)]) == want { return true }
+            return false
+        }
+        func nameParts(_ line: CompanionLine?) -> Int { line?.parts.filter { $0 == .name }.count ?? 0 }
+        func inText(_ line: CompanionLine?, _ needle: String) -> Bool {
+            line?.parts.contains { part -> Bool in
+                if case .text(let text) = part { return holds(text, needle) }
+                return false
+            } ?? false
+        }
+        func record(_ scope: NativeRuleScope = .everywhere, action: NativeActionClass? = nil, tool: String? = nil, target: NativeRuleTarget? = nil,
+                    effect: NativeRuleEffect = .allow, statement: String = "Saved from a card", origin: NativeRuleOrigin = .confirmCard,
+                    from conversation: String? = nil, created: Date? = nil) -> NativeRuleRecord {
+            NativeRuleRecord(scope: scope, action: action, toolID: tool, target: target, effect: effect, statement: statement, origin: origin,
+                             originConversationID: conversation, createdAt: created ?? now)
+        }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rule-rows-literal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        struct Case {
+            let label: String
+            let record: NativeRuleRecord
+            let line: [String]
+            let note: String?
+            let question: [String]
+        }
+
+        for (index, hostile) in hostiles.enumerated() {
+            let folderPath = root.appendingPathComponent("h\(index)", isDirectory: true).appendingPathComponent(hostile, isDirectory: true).path
+            try FileManager.default.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
+            guard let folder = NativeRuleTarget.folder(folderPath), let recipient = NativeRuleTarget.make(.recipient, hostile),
+                  let service = NativeRuleTarget.make(.service, hostile), let prefix = NativeRuleTarget.make(.commandPrefix, "echo " + hostile) else {
+                throw NativeTaskFixture.Failure.assertion("The literal fixtures build their targets for \(hostile)")
+            }
+            let folderName = NativeCardChoices.name(folder.value)
+            try require(folderName == hostile, "A folder's own name survives the folder target: \(folderName)")
+            try require(recipient.value == hostile.lowercased() && service.value == hostile.lowercased(),
+                        "Recipients and services are lowercased and nothing else: \(recipient.value)")
+            try require(prefix.value == NativeCommandPrefix.normalize("echo " + hostile), "A command start keeps its first two words: \(prefix.value)")
+            if hostile == "{ name }" { try require(prefix.value == "echo {", "A spaced token keeps only its first word in a command start: \(prefix.value)") }
+            if hostile == "{Name}" { try require(recipient.value == "{name}", "A recipient is lowercased: \(recipient.value)") }
+
+            var places = RulePlaces()
+            places.companionThreadID = thread
+            places.chats = ["lit-chat": "Notes about " + hostile]
+            places.projects = ["lit-project": hostile]
+            places.schedules = ["lit-schedule": hostile]
+            places.work = ["lit-work": hostile]
+            places.tools = RuleRows.toolNames([(id: "lit-tool", title: hostile, hints: []),
+                                               (id: "lit-twin-a", title: "Mail", hints: [hostile]),
+                                               (id: "lit-twin-b", title: "Mail", hints: ["post.example"])])
+            try require(places.tools["lit-tool"] == hostile && places.tools["lit-twin-a"] == "Mail (\(hostile))",
+                        "Tool titles and the hints that tell tools apart are kept as written: \(places.tools)")
+            let chatNote = "From a card in Notes about \(hostile), today"
+            let cases = [
+                Case(label: "folder", record: record(.conversation("lit-chat"), action: .fileEdits, tool: "lit-tool", target: folder, effect: .forbid,
+                                                     from: "lit-chat"),
+                     line: ["file edits in \(folderName) through \(hostile)", "in Notes about \(hostile)"], note: chatNote,
+                     question: ["file edits in \(folderName) through \(hostile)"]),
+                Case(label: "recipient", record: record(.conversation("lit-chat"), action: .networkSends, tool: "lit-tool", target: recipient,
+                                                        effect: .forbid, from: "lit-chat"),
+                     line: ["sending to \(recipient.value) through \(hostile)"], note: chatNote, question: ["sending to \(recipient.value) through \(hostile)"]),
+                Case(label: "service", record: record(.conversation("lit-chat"), action: .networkSends, target: service, effect: .forbid, from: "lit-chat"),
+                     line: ["sending to \(service.value)"], note: chatNote, question: ["sending to \(service.value)"]),
+                Case(label: "command start", record: record(action: .commands, tool: command, target: prefix),
+                     line: ["commands that start with \(prefix.value)"], note: nil, question: []),
+                Case(label: "chat title and tool title", record: record(.conversation("lit-chat"), action: .networkSends, tool: "lit-statement",
+                                                                        effect: .forbid, statement: "Never allow: \(hostile)", from: "lit-chat"),
+                     line: ["Never allow: \(hostile)", "in Notes about \(hostile)"], note: chatNote, question: ["Never allow: \(hostile)"]),
+                Case(label: "project and tool hint", record: record(.project("lit-project"), action: .networkSends, tool: "lit-twin-a", target: recipient,
+                                                                    effect: .forbid),
+                     line: ["through Mail (\(hostile))", "in the \(hostile) project"], note: nil, question: ["through Mail (\(hostile))"]),
+                Case(label: "schedule", record: record(.schedule("lit-schedule"), action: .networkSends, tool: "lit-tool"),
+                     line: ["for the schedule \(hostile)"], note: nil, question: []),
+                Case(label: "background work", record: record(.task("lit-work"), action: .networkSends, tool: "lit-tool"),
+                     line: ["for \(hostile)"], note: nil, question: []),
+            ]
+            for item in cases {
+                let row = RuleRows.row(item.record, places: places, now: now, calendar: calendar)
+                let label = "\(item.label) with \(hostile.unicodeScalars.map { String($0.value, radix: 16) })"
+                try require(nameParts(row.line) == 0 && nameParts(row.note) == 0, "A \(label) row names no companion")
+                for expected in item.line {
+                    try require(inText(row.line, expected), "A \(label) row keeps \(expected) inside its own text")
+                }
+                if let note = item.note { try require(inText(row.note, note), "A \(label) note keeps the chat title inside its own text") }
+                try require(item.question.isEmpty == (row.widenQuestion == nil), "A \(label) row asks before widening only when it is a never")
+                for expected in item.question {
+                    try require(holds(row.widenQuestion ?? "", expected), "A \(label) widen question keeps \(expected): \(row.widenQuestion ?? "nil")")
+                }
+                for name in names {
+                    let line = row.line.plain(name: name)
+                    let screen = RuleRows.screenStrings([row], name: name)
+                    for expected in item.line {
+                        try require(holds(line, expected), "A \(label) row reads \(expected) as written: \(line)")
+                        try require(screen.contains { holds($0, expected) }, "The \(label) screen copy reads \(expected) as written")
+                    }
+                    if let note = item.note {
+                        let spoken = row.note?.plain(name: name) ?? ""
+                        try require(holds(spoken, note), "A \(label) note reads the chat title as written: \(spoken)")
+                        try require(screen.contains { holds($0, note) }, "The \(label) screen copy reads its note as written")
+                    }
+                    if let question = row.widenQuestion { try require(screen.contains(question), "The \(label) widen question is on screen") }
+                    if name == "Ada" {
+                        let all = [line, row.note?.plain(name: name) ?? "", row.widenQuestion ?? ""] + screen
+                        try require(!all.contains { $0.contains("Ada") }, "A \(label) row never fills outside text with the companion's name")
+                    }
+                }
+            }
+
+            if hostile == "{name}" {
+                let crowded = RuleRows.row(record(.conversation("lit-chat"), action: .fileEdits, tool: "lit-tool", target: folder, effect: .forbid,
+                                                  from: "lit-chat"), places: places, now: now, calendar: calendar)
+                try require(crowded.line.plain(name: "Ada") == "Never allow file edits in {name} through {name}, in Notes about {name}"
+                            && crowded.note?.plain(name: "Ada") == "From a card in Notes about {name}, today"
+                            && crowded.widenQuestion == "Never allow file edits in {name} through {name}, in every chat and in background work?",
+                            "A chat title, folder and tool title all holding the token read as written: \(crowded.line.plain(name: "Ada"))")
+                let crowdedText = [crowded.line.plain(name: "Ada"), crowded.note?.plain(name: "Ada") ?? "", crowded.widenQuestion ?? ""]
+                    + RuleRows.screenStrings([crowded], name: "Ada")
+                try require(!crowdedText.contains { $0.contains("Ada") }, "Ada appears nowhere in a row that is not about the companion's conversation")
+            }
+
+            let both = RuleRows.row(record(.conversation(thread), action: .networkSends, tool: "lit-tool", from: thread),
+                                    places: places, now: now, calendar: calendar)
+            let placeOnly = RuleRows.row(record(.conversation(thread), action: .networkSends, tool: "lit-tool", from: "lit-chat"),
+                                         places: places, now: now, calendar: calendar)
+            let noteOnly = RuleRows.row(record(.conversation("lit-chat"), action: .networkSends, tool: "lit-tool", from: thread),
+                                        places: places, now: now, calendar: calendar)
+            let neither = RuleRows.row(record(.conversation("lit-chat"), action: .networkSends, tool: "lit-tool", from: "lit-chat"),
+                                       places: places, now: now, calendar: calendar)
+            let threadChat = RuleRows.chatRow(conversationID: thread, action: .fileEdits, choice: .ask, places: places)
+            try require(nameParts(both.line) == 1 && nameParts(both.note) == 1, "A rule in and from the companion's conversation names it once in each")
+            try require(nameParts(placeOnly.line) == 1 && nameParts(placeOnly.note) == 0, "A rule in the companion's conversation from another chat names it only in its place")
+            try require(nameParts(noteOnly.line) == 0 && nameParts(noteOnly.note) == 1, "A rule from the companion's conversation for another chat names it only in its note")
+            try require(nameParts(neither.line) == 0 && nameParts(neither.note) == 0, "A rule with nothing about the companion's conversation names nothing")
+            try require(nameParts(threadChat.line) == 1 && threadChat.note == nil, "A stricter companion conversation row names it once")
+            try require(noteOnly.note?.plain(name: "Ada") == "From a card in Ada's thread, today"
+                        && placeOnly.note?.plain(name: "Ada") == chatNote, "Only the app's own phrase about the companion's conversation is filled")
+
+            let own = RuleRows.row(record(.conversation(thread), action: .networkSends, tool: "garden-log",
+                                          statement: "In this chat, allow: Post to the garden log", from: thread),
+                                   places: places, now: now, calendar: calendar)
+            try require(own.line.plain(name: "Ada") == "Always allow: Post to the garden log, in Ada's thread"
+                        && own.line.plain(name: nil) == "Always allow: Post to the garden log, in your companion's thread",
+                        "The companion's conversation row names the companion: \(own.line.plain(name: nil))")
+            try require(own.note?.plain(name: "Ada") == "From a card in Ada's thread, today"
+                        && own.note?.plain(name: nil) == "From a card in your companion's thread, today",
+                        "The companion's conversation card note names the companion: \(own.note?.plain(name: nil) ?? "nil")")
+        }
+
+        var places = RulePlaces()
+        places.companionThreadID = thread
+        places.chats = ["sort-greenhouse": "Greenhouse notes", "sort-zinnia": "zinnia beds", "sort-yard": "yard work"]
+        places.projects = ["sort-garden": "Garden"]
+        places.schedules = ["sort-frost": "Frost check"]
+        places.work = ["sort-book": "Book the workshop inspection"]
+        let wideNew = record(action: .networkSends, tool: "mail", created: now)
+        let wideOld = record(action: .networkSends, tool: "mail", created: now.addingTimeInterval(-day))
+        let project = record(.project("sort-garden"), action: .networkSends, tool: "mail")
+        let greenhouse = record(.conversation("sort-greenhouse"), action: .networkSends, tool: "mail")
+        let yard = record(.conversation("sort-yard"), action: .networkSends, tool: "mail")
+        let companion = record(.conversation(thread), action: .networkSends, tool: "mail")
+        let zinniaNew = record(.conversation("sort-zinnia"), action: .networkSends, tool: "mail", created: now)
+        let zinniaOld = record(.conversation("sort-zinnia"), action: .networkSends, tool: "mail", created: now.addingTimeInterval(-day))
+        let schedule = record(.schedule("sort-frost"), action: .networkSends, tool: "mail")
+        let taskA = record(.task("sort-book"), action: .networkSends, tool: "mail")
+        let taskB = record(.task("sort-book"), action: .networkSends, tool: "mail")
+        let tied = [taskA, taskB].sorted { $0.id < $1.id }
+        let mixed = [taskB, zinniaOld, schedule, companion, wideOld, greenhouse, project, taskA, zinniaNew, yard, wideNew]
+        let sorted = RuleRows.rows(records: mixed, chatRules: [], places: places, now: now, calendar: calendar)
+        let expected = [wideNew, wideOld, project, greenhouse, yard, zinniaNew, zinniaOld, companion, schedule] + tied
+        try require(sorted.map(\.id) == expected.map(\.id),
+                    "Rows sort by kind of place, then place, then newest first, then id, with the companion's conversation where it always sorted: \(sorted.map { $0.line.plain(name: nil) })")
+        try require(RuleRows.rows(records: mixed.reversed(), chatRules: [], places: places, now: now, calendar: calendar).map(\.id) == expected.map(\.id),
+                    "The order does not depend on the order rules were saved in")
+        let plainChats = [taskB, schedule, companion, wideOld, greenhouse, project, taskA, wideNew]
+        let plainExpected = [wideNew, wideOld, project, greenhouse, companion, schedule] + tied
+        try require(RuleRows.rows(records: plainChats, chatRules: [], places: places, now: now, calendar: calendar).map(\.id) == plainExpected.map(\.id),
+                    "With chat titles that start with a capital, the companion's conversation sorts after them as before")
+        var tokenPlaces = RulePlaces()
+        tokenPlaces.companionThreadID = thread
+        tokenPlaces.chats = ["sort-token": "a{name}", "sort-az": "az", "sort-lookalike": "{name}'s thread"]
+        let tokenChat = record(.conversation("sort-token"), action: .networkSends, tool: "mail")
+        let azChat = record(.conversation("sort-az"), action: .networkSends, tool: "mail")
+        let lookalikeOld = record(.conversation("sort-lookalike"), action: .networkSends, tool: "mail", created: now.addingTimeInterval(-day))
+        let companionNew = record(.conversation(thread), action: .networkSends, tool: "mail", created: now)
+        try require(RuleRows.sortKey(.conversation("sort-token"), places: tokenPlaces) == "in aname"
+                        && RuleRows.sortKey(.conversation("sort-lookalike"), places: tokenPlaces) == "in name's thread"
+                        && RuleRows.sortKey(.conversation(thread), places: tokenPlaces) == "in {name}'s thread"
+                        && RuleRows.sortKey(.conversation("sort-az"), places: tokenPlaces) == "in az",
+                    "Sort keys are the strings rows always sorted by, whatever a chat is titled")
+        let tokenExpected = [tokenChat, azChat, lookalikeOld, companionNew]
+        for input in [[companionNew, azChat, lookalikeOld, tokenChat], [lookalikeOld, tokenChat, companionNew, azChat]] {
+            let ordered = RuleRows.rows(records: input, chatRules: [], places: tokenPlaces, now: now, calendar: calendar)
+            try require(ordered.map(\.id) == tokenExpected.map(\.id),
+                        "Chats titled with the token keep their old order, and one titled like the companion's conversation stays ahead of it: \(ordered.map { $0.line.plain(name: nil) })")
+        }
+        let shownToken = RuleRows.rows(records: [tokenChat, lookalikeOld], chatRules: [], places: tokenPlaces, now: now, calendar: calendar)
+        try require(shownToken.count == 2 && shownToken[0].line.plain(name: "Ada").hasSuffix(", in a{name}")
+                        && shownToken[1].line.plain(name: "Ada").hasSuffix(", in {name}'s thread")
+                        && !shownToken.contains { (row: RuleRow) -> Bool in row.line.plain(name: "Ada").contains("Ada") },
+                    "Those rows still show their titles as written: \(shownToken.map { $0.line.plain(name: "Ada") })")
+        print("  rule rows literal OK (outside text as written, name parts, companion's conversation, order)")
     }
 
     static func runRuleRowsStore() async throws {
@@ -304,6 +544,30 @@ extension SelfTest {
         try require(row(toggled.id)?.off == false && decision("rows-a", "make pdf") == .act(.grant), "Switch on brings the rule back")
         store.revokeRuleRecord(id: toggled.id)
 
+        let braceRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rule-rows-brace-\(UUID().uuidString)", isDirectory: true)
+        let braceFolder = braceRoot.appendingPathComponent("{name}", isDirectory: true).path
+        try FileManager.default.createDirectory(atPath: braceFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: braceRoot) }
+        guard let braceTarget = NativeRuleTarget.folder(braceFolder) else { throw NativeTaskFixture.Failure.assertion("The braced folder target builds") }
+        let braced = try save(NativeRuleRecord(scope: .everywhere, action: .fileEdits, target: braceTarget, effect: .allow,
+                                               statement: "Always allow file edits in {name}", origin: .confirmCard, originConversationID: "rows-a"))
+        func others() -> [String: NativeRuleStatus] {
+            Dictionary(uniqueKeysWithValues: store.ruleRecords.filter { $0.id != braced.id }.map { ($0.id, $0.status) })
+        }
+        let before = others()
+        guard let bracedRow = row(braced.id) else { throw NativeTaskFixture.Failure.assertion("The braced folder rule is listed") }
+        try require(bracedRow.source == .saved(braced.id) && bracedRow.line.plain(name: "Ada") == "Always allow file edits in {name}, everywhere"
+                    && bracedRow.line.plain(name: nil) == "Always allow file edits in {name}, everywhere",
+                    "A folder named with the token is listed as written: \(bracedRow.line.plain(name: "Ada"))")
+        store.toggleRule(bracedRow)
+        guard let bracedOff = row(braced.id) else { throw NativeTaskFixture.Failure.assertion("The braced folder rule stays listed when off") }
+        try require(bracedOff.off && stored(braced.id)?.status == .disabled && others() == before, "Switching off the braced row switches off only its rule")
+        store.toggleRule(bracedOff)
+        try require(row(braced.id)?.off == false && stored(braced.id)?.status == .active && others() == before, "Switching on the braced row brings back only its rule")
+        guard let bracedOn = row(braced.id) else { throw NativeTaskFixture.Failure.assertion("The braced folder rule is listed again") }
+        store.removeRule(bracedOn)
+        try require(row(braced.id) == nil && stored(braced.id)?.status == .revoked && others() == before, "Removing the braced row removes only its rule")
+
         let never = try save(NativeRuleRecord(scope: .conversation("rows-a"), action: nil, toolID: command, effect: .forbid,
                                               statement: "Never run commands in this chat", origin: .confirmCard, originConversationID: "rows-a"))
         try require(decision("rows-a", "ls") == .handOff && decision("rows-b", "ls") == .ask, "A chat's never stays in its chat")
@@ -330,7 +594,7 @@ extension SelfTest {
         store.tightenConversationRule(.ask, for: .fileEdits, conversationID: "rows-c")
         let editRowID = "chat|rows-c|\(NativeActionClass.fileEdits.rawValue)"
         guard let editRow = row(editRowID) else { throw NativeTaskFixture.Failure.assertion("A chat that asks more is listed") }
-        try require(editRow.sentence == "Always ask before file edits" && editRow.place == "in Plant list", "The stricter chat row reads plainly")
+        try require(editRow.sentence == "Always ask before file edits" && editRow.place == .literal("in Plant list"), "The stricter chat row reads plainly")
         var leftToMe = NativeRules.defaults
         leftToMe.set(.handOff, for: .fileEdits)
         let chatRules = store.conversations.filter { !$0.rules.isEmpty }.map { (id: $0.id, rules: $0.rules) }
@@ -338,8 +602,8 @@ extension SelfTest {
         try require(!underStricterDefault.contains { $0.id == editRowID } && store.ruleRows().contains { $0.id == editRowID },
                     "A chat row is hidden while the default is already as strict, and shown when it is stricter than the default")
         let unloaded = RuleRows.place(.conversation("rows-unloaded"), places: RulePlaces(chats: ["rows-unloaded": ""]))
-        try require(unloaded == RuleRows.lostChat && RuleRows.place(.project("p"), places: RulePlaces(projects: ["p": ""])) == RuleRows.lostProject
-                    && RuleRows.place(.schedule("s"), places: RulePlaces(schedules: ["s": ""])) == RuleRows.lostSchedule,
+        try require(unloaded == .literal(RuleRows.lostChat) && RuleRows.place(.project("p"), places: RulePlaces(projects: ["p": ""])) == .literal(RuleRows.lostProject)
+                    && RuleRows.place(.schedule("s"), places: RulePlaces(schedules: ["s": ""])) == .literal(RuleRows.lostSchedule),
                     "A place that exists but could not be read still gets a row that can be removed")
         store.removeRule(editRow)
         try require(store.conversations.first { $0.id == "rows-c" }?.rules.isEmpty == true && row(editRowID) == nil,
@@ -415,7 +679,7 @@ extension SelfTest {
 
         guard let project = store.createProject(name: "Garden") else { throw NativeTaskFixture.Failure.assertion("The project fixture saves") }
         let projectBound = try save(allow(.project(project.id)))
-        try require(row(projectBound.id)?.place == "in the Garden project", "A project rule names its project")
+        try require(row(projectBound.id)?.place == .literal("in the Garden project"), "A project rule names its project")
         store.deleteProject(project.id)
         try require(stored(projectBound.id)?.status == .revoked, "Deleting a project removes its rules")
 
@@ -426,7 +690,7 @@ extension SelfTest {
         draft.instruction = "Check the forecast for frost"
         guard let schedule = store.createSchedule(draft) else { throw NativeTaskFixture.Failure.assertion("The schedule fixture saves") }
         let scheduleBound = try save(allow(.schedule(schedule.id)))
-        try require(row(scheduleBound.id)?.place == "for the schedule Frost check", "A schedule rule names its schedule")
+        try require(row(scheduleBound.id)?.place == .literal("for the schedule Frost check"), "A schedule rule names its schedule")
         store.deleteSchedule(schedule.id)
         try require(stored(scheduleBound.id)?.status == .revoked, "Deleting a schedule removes its rules")
 
@@ -445,11 +709,11 @@ extension SelfTest {
         let doneWork = try save(allow(.task(finished.id)))
         store.reloadRuleRecords()
         try require(ancient.createdAt < Date().addingTimeInterval(-2 * 365 * 86_400), "The old rule really is old")
-        try require(row(liveWork.id)?.place == "for Book the workshop inspection", "Running work is named by its title")
+        try require(row(liveWork.id)?.place == .literal("for Book the workshop inspection"), "Running work is named by its title")
         store.sweepRuleRecords()
         try require(stored(ancient.id)?.status == .active, "The launch pass keeps a very old rule whose chat still exists")
         try require(stored(storedOnly.id)?.status == .active, "The launch pass keeps a rule whose chat is only on disk")
-        try require(row(storedOnly.id)?.place == "in Stored only", "A rule whose chat is only on disk is still listed, named from the saved chat")
+        try require(row(storedOnly.id)?.place == .literal("in Stored only"), "A rule whose chat is only on disk is still listed, named from the saved chat")
         try require(stored(orphan.id)?.status == .revoked, "The launch pass removes a rule whose chat is gone")
         try require(stored(taskBound.id)?.status == .revoked, "The launch pass removes a rule for work that does not exist")
         try require(stored(liveWork.id)?.status == .active && stored(doneWork.id)?.status == .revoked,
@@ -462,6 +726,6 @@ extension SelfTest {
                     && blind.ruleScopeExists(.schedule("rows-x")) == nil && blind.ruleScopeExists(.task("rows-x")) == nil
                     && blind.ruleScopeExists(.everywhere) == true, "A store that cannot check keeps every rule")
         try require(blind.sweepRuleRecords() == 0, "The launch pass with no database removes nothing")
-        print("  rule rows store OK (remove, switch off and on, apply everywhere, stricter chat, change notices, card save, delete chat project schedule, launch pass)")
+        print("  rule rows store OK (remove, switch off and on, a folder named with the token, apply everywhere, stricter chat, change notices, card save, delete chat project schedule, launch pass)")
     }
 }

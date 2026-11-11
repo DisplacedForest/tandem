@@ -6,7 +6,8 @@ enum RulesShot {
     static func render(view: String, to path: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" && view != "rules-dark" ? .light : .dark
         let showsHelp = view == "rules-info" || view == "rules-unnamed"
-        let companion: String? = view.hasSuffix("-unnamed") ? nil : "Ada"
+        let companion: String? = view == "rules-saved-literal" ? CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)
+            : view.hasSuffix("-unnamed") ? nil : "Ada"
         let variant = view.hasSuffix("-ada") ? String(view.dropLast("-ada".count))
             : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
         let showsMenu = variant == "rules-menu"
@@ -20,6 +21,7 @@ enum RulesShot {
         store.ensureVeraThread()
         store.prepareRuleRecords()
         if variant == "rules-saved" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
+        if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         var advanced = RulesAdvancedState()
@@ -65,7 +67,7 @@ enum RulesShot {
             if let opened {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Opens from the menu on this row").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    CompanionNamedText(template: opened.line).font(.system(size: 12, weight: .semibold))
+                    CompanionLineText(line: opened.line).font(.system(size: 12, weight: .semibold))
                     ForEach(opened.menuTitles, id: \.self) { Text($0).font(.system(size: 13)) }
                     Divider()
                     Text("Apply everywhere asks first").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -147,5 +149,29 @@ enum RulesShot {
         }
         if let off { store.disableRuleRecord(id: off) }
         store.tightenConversationRule(.ask, for: .fileEdits, conversationID: orders.id)
+    }
+
+    static func seedLiteral(_ store: ChatStore, root: String) {
+        let folder = (root as NSString).appendingPathComponent("{name}")
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let notes = Conversation(id: "rules-literal-notes", title: "Notes about {name}", messages: [], updatedAt: Date())
+        store.conversations.insert(notes, at: 0)
+        let command = NativeCommandTools.toolID
+        var records: [NativeRuleRecord] = []
+        if let named = NativeRuleTarget.folder(folder) {
+            records.append(NativeRuleRecord(scope: .everywhere, action: .fileEdits, target: named, effect: .allow,
+                                            statement: "Always allow file edits in {name}", origin: .settings))
+        }
+        if let echo = NativeRuleTarget.make(.commandPrefix, "echo {name}") {
+            records.append(NativeRuleRecord(scope: .everywhere, action: .commands, toolID: command, target: echo, effect: .allow,
+                                            statement: "Always allow commands that start with echo {name}", origin: .settings))
+        }
+        if let thread = store.veraThreadID {
+            records.append(NativeRuleRecord(scope: .conversation(thread), action: .networkSends, toolID: "garden-log", effect: .allow,
+                                            statement: "In this chat, allow: Post to the garden log", origin: .confirmCard, originConversationID: thread))
+        }
+        records.append(NativeRuleRecord(scope: .conversation(notes.id), action: nil, toolID: command, effect: .forbid,
+                                        statement: "Never run commands in this chat", origin: .confirmCard, originConversationID: notes.id))
+        for record in records { store.addRuleRecord(record) }
     }
 }

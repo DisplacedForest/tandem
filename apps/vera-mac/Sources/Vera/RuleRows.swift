@@ -28,13 +28,13 @@ struct RuleRow: Identifiable, Equatable, Sendable {
     let id: String
     let source: Source
     let sentence: String
-    let place: String
-    let note: String?
+    let place: CompanionLine
+    let note: CompanionLine?
     let off: Bool
     let widens: Bool
     let widenQuestion: String?
 
-    var line: String { sentence + ", " + place }
+    var line: CompanionLine { .parts([.text(sentence + ", ")] + place.parts) }
     var toggleTitle: String? {
         guard case .saved = source else { return nil }
         return off ? RuleRows.switchOn : RuleRows.switchOff
@@ -59,8 +59,7 @@ enum RuleRows {
     static let fallbackTool = "this action"
 
     static func plain(_ text: String) -> String {
-        text.replacingOccurrences(of: CompanionSentence.placeholder, with: "name")
-            .split(whereSeparator: \.isNewline).joined(separator: " ")
+        text.split(whereSeparator: \.isNewline).joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
     }
 
@@ -151,23 +150,29 @@ enum RuleRows {
 
     static func lowered(_ text: String) -> String { text.prefix(1).lowercased() + text.dropFirst() }
 
-    static func place(_ scope: NativeRuleScope, places: RulePlaces) -> String {
+    static func place(_ scope: NativeRuleScope, places: RulePlaces) -> CompanionLine {
         switch scope {
-        case .everywhere: return everywhere
+        case .everywhere: return .literal(everywhere)
         case .conversation(let id):
-            if id == places.companionThreadID { return "in \(CompanionSentence.placeholder)'s thread" }
+            if id == places.companionThreadID { return .parts([.text("in "), .name, .text("'s thread")]) }
             let title = plain(places.chats[id] ?? "")
-            return title.isEmpty ? lostChat : "in \(title)"
+            return .literal(title.isEmpty ? lostChat : "in \(title)")
         case .project(let id):
             let name = plain(places.projects[id] ?? "")
-            return name.isEmpty ? lostProject : "in the \(name) project"
+            return .literal(name.isEmpty ? lostProject : "in the \(name) project")
         case .schedule(let id):
             let title = plain(places.schedules[id] ?? "")
-            return title.isEmpty ? lostSchedule : "for the schedule \(title)"
+            return .literal(title.isEmpty ? lostSchedule : "for the schedule \(title)")
         case .task(let id):
             let title = plain(places.work[id] ?? "")
-            return title.isEmpty ? unnamedWork : "for \(title)"
+            return .literal(title.isEmpty ? unnamedWork : "for \(title)")
         }
+    }
+
+    static func sortKey(_ scope: NativeRuleScope, places: RulePlaces) -> String {
+        let line = place(scope, places: places)
+        if case .conversation(let id) = scope, id == places.companionThreadID { return line.plain(name: CompanionSentence.placeholder) }
+        return line.plain(name: nil).replacingOccurrences(of: CompanionSentence.placeholder, with: "name")
     }
 
     static func day(_ date: Date, now: Date, calendar: Calendar) -> String {
@@ -196,15 +201,15 @@ enum RuleRows {
         return "until " + formatter.string(from: date)
     }
 
-    static func source(_ record: NativeRuleRecord, places: RulePlaces, now: Date, calendar: Calendar) -> String? {
+    static func source(_ record: NativeRuleRecord, places: RulePlaces, now: Date, calendar: Calendar) -> CompanionLine? {
         switch record.origin {
-        case .migration: return carriedOver
+        case .migration: return .literal(carriedOver)
         case .confirmCard:
             let when = day(record.createdAt, now: now, calendar: calendar)
-            guard let id = record.originConversationID else { return "From a card, \(when)" }
-            if id == places.companionThreadID { return "From a card in \(CompanionSentence.placeholder)'s thread, \(when)" }
-            guard let title = places.chats[id], !plain(title).isEmpty else { return "From a card, \(when)" }
-            return "From a card in \(plain(title)), \(when)"
+            guard let id = record.originConversationID else { return .literal("From a card, \(when)") }
+            if id == places.companionThreadID { return .parts([.text("From a card in "), .name, .text("'s thread, \(when)")]) }
+            guard let title = places.chats[id], !plain(title).isEmpty else { return .literal("From a card, \(when)") }
+            return .literal("From a card in \(plain(title)), \(when)")
         case .settings, .chat, .modelCard: return nil
         }
     }
@@ -230,13 +235,17 @@ enum RuleRows {
     }
 
     static func row(_ record: NativeRuleRecord, places: RulePlaces, now: Date, calendar: Calendar) -> RuleRow {
-        var notes: [String] = []
-        if record.status == .disabled { notes.append(offMark) }
-        if let limit = limit(record, now: now, calendar: calendar) { notes.append(limit) }
-        if let source = source(record, places: places, now: now, calendar: calendar) { notes.append(source) }
+        var notes: [CompanionLinePart] = []
+        func add(_ parts: [CompanionLinePart]) {
+            if !notes.isEmpty { notes.append(.text(". ")) }
+            notes += parts
+        }
+        if record.status == .disabled { add([.text(offMark)]) }
+        if let limit = limit(record, now: now, calendar: calendar) { add([.text(limit)]) }
+        if let source = source(record, places: places, now: now, calendar: calendar) { add(source.parts) }
         return RuleRow(id: record.id, source: .saved(record.id), sentence: sentence(record, tools: places.tools),
                        place: place(record.scope, places: places),
-                       note: notes.isEmpty ? nil : notes.joined(separator: ". "), off: record.status == .disabled,
+                       note: notes.isEmpty ? nil : .parts(notes), off: record.status == .disabled,
                        widens: widens(record), widenQuestion: widenQuestion(record, tools: places.tools))
     }
 
@@ -297,8 +306,8 @@ enum RuleRows {
                      defaults: NativeRules = .defaults, now: Date = Date(), calendar: Calendar = .current) -> [RuleRow] {
         let shown = records.filter { $0.status != .revoked && places.contains($0.scope) }
         let ordered = shown.sorted { first, second in
-            let left = (rank(first.scope), place(first.scope, places: places))
-            let right = (rank(second.scope), place(second.scope, places: places))
+            let left = (rank(first.scope), sortKey(first.scope, places: places))
+            let right = (rank(second.scope), sortKey(second.scope, places: places))
             if left != right { return left < right }
             if first.createdAt != second.createdAt { return first.createdAt > second.createdAt }
             return first.id < second.id
@@ -326,8 +335,8 @@ enum RuleRows {
         var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, goneTool,
                        lostChat, lostProject, lostSchedule]
         for row in rows {
-            strings.append(CompanionSentence.plain(row.line, name: name))
-            if let note = row.note { strings.append(CompanionSentence.plain(note, name: name)) }
+            strings.append(row.line.plain(name: name))
+            if let note = row.note { strings.append(note.plain(name: name)) }
             if let question = row.widenQuestion { strings.append(question) }
         }
         return strings
