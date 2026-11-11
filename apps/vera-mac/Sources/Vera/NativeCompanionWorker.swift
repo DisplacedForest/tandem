@@ -304,9 +304,9 @@ enum NativeCompanionWorker {
         return (action, resolved.decision, resolved.authorizedBy, footprint)
     }
 
-    static func handOffText(name: String, title: String, action: NativeActionClass?) -> String {
-        guard let item = action?.floorItem else { return "\(name) stopped before this step because your rules hand it to you: \(title)." }
-        return "\(name) stopped before this step and handed it to you: \(title). It counts as \"\(item.title)\". \(item.reason)"
+    static func handOffText(title: String, action: NativeActionClass?) -> String {
+        guard let item = action?.floorItem else { return "Stopped before this step because your rules hand it to you: \(title)." }
+        return "Stopped before this step and handed it to you: \(title). It counts as \"\(item.title)\". \(item.reason)"
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
@@ -497,9 +497,9 @@ private struct NativeCompanionRun {
     }
 
     func approvalPrompt(_ subject: NativeCardSubject?, definition: NativeToolDefinition?, title: String) -> String {
-        guard var subject, let definition else { return "\(CompanionSentence.placeholder) wants to do this: \(title)." }
+        guard var subject, let definition else { return CompanionSavedText.marker + " wants to do this: \(CompanionSavedText.sanitized(title))." }
         subject.phrase = definition.wantsPhrase
-        return NativeCardChoices.sentence(actor: CompanionSentence.placeholder, subject: subject, title: definition.title)
+        return CompanionSavedText.marker + CompanionSavedText.sanitized(NativeCardChoices.sentence(actor: "", subject: subject, title: definition.title))
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
@@ -581,7 +581,7 @@ private struct NativeCompanionRun {
         if checkpoint.segmentRounds >= budget.rounds {
             if origin.unattended { return try await finish(&checkpoint) }
             checkpoint.pending = NativeCompanionPending(kind: "cap")
-            return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
+            return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
                                               ["continue", "finish"])
         }
         let schemas = advertised.map(\.schema)
@@ -659,7 +659,7 @@ private struct NativeCompanionRun {
     }
 
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
-        var text = "\(context.companion.leading) reached the limit for this assignment before writing a full report."
+        var text = "Reached the limit for this assignment before writing a full report."
         if !checkpoint.effects.isEmpty {
             text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" }.joined(separator: "\n")
         }
@@ -668,7 +668,7 @@ private struct NativeCompanionRun {
 
     func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String, action: NativeActionClass?) throws -> NativeTaskStepResult {
         checkpoint.note(title, "handed to you")
-        let text = NativeCompanionWorker.handOffText(name: context.companion.leading, title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint)
+        let text = NativeCompanionWorker.handOffText(title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
     }
 
@@ -683,7 +683,7 @@ private struct NativeCompanionRun {
                     return try await finish(&checkpoint)
                 }
                 checkpoint.pending = NativeCompanionPending(kind: "cap")
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) has used this run's actions and saved its progress. Keep going, or finish with what it has?",
+                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) has used this run's actions and saved its progress. Keep going, or finish with what it has?",
                                                   ["continue", "finish"])
             }
             if let paused = try await execute(call, &checkpoint) { return paused }
@@ -908,7 +908,7 @@ private struct NativeCompanionRun {
             }
         }
         checkpoint.pending = NativeCompanionPending(kind: "reconcile", callID: call.id, digest: record.digest, title: title)
-        return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) can't tell whether this happened: \(title). Please check, then say what you found.",
+        return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) can't tell whether this happened: \(CompanionSavedText.sanitized(title)). Please check, then say what you found.",
                                           ["it_happened", "it_did_not", "stop"])
     }
 
@@ -1011,7 +1011,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
-                let text = "\(context.companion.leading) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
+                let text = "Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
                 return try await conclude(&checkpoint, text: text)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
@@ -1069,7 +1069,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
-                let text = "\(context.companion.leading) stopped at your request. It could not confirm whether this happened: \(title)."
+                let text = "Stopped at your request. It could not be confirmed whether this happened: \(title)."
                 return try await conclude(&checkpoint, text: text)
             default:
                 if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
@@ -1078,7 +1078,7 @@ private struct NativeCompanionRun {
                     return nil
                 }
                 checkpoint.pending = pending
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) can't tell whether this happened: \(title). Please check, then say what you found.",
+                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) can't tell whether this happened: \(CompanionSavedText.sanitized(title)). Please check, then say what you found.",
                                                   ["it_happened", "it_did_not", "stop"])
             }
         default:

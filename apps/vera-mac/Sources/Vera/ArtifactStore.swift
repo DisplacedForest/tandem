@@ -323,8 +323,8 @@ extension LocalChatRepository: ArtifactRepository {
     func updateArtifactOrigin(conversationID: String, title: String) throws {
         try database.write { db in
             try db.execute(
-                sql: "UPDATE artifacts SET origin_title = ? WHERE conversation_id = ?",
-                arguments: [title, conversationID])
+                sql: "UPDATE artifacts SET origin_title = ? WHERE conversation_id = ? AND (origin_title IS NULL OR origin_title <> ?)",
+                arguments: [title, conversationID, CompanionSavedText.marker])
         }
     }
 

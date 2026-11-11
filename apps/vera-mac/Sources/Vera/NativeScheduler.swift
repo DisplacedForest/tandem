@@ -159,7 +159,7 @@ actor NativeScheduler {
             saved.taskReferenceID = taskReferenceID
         case .failed(let reason):
             saved.outcome = .couldNotStart
-            saved.detail = reason
+            saved.detail = CompanionSavedText.sanitized(reason)
             saved.finishedAt = now()
         case .skipped(let reason):
             saved.outcome = .skipped

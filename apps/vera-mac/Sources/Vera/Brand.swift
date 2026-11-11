@@ -184,11 +184,33 @@ enum CompanionLine: Equatable, Sendable {
 }
 
 enum CompanionSavedText {
+    static let marker = "\u{E000}companion\u{E001}"
     static let questionLead = CompanionSentence.placeholder + " wants to "
+    private static let markerScalars: Set<Unicode.Scalar> = ["\u{E000}", "\u{E001}"]
 
-    static func question(_ saved: String, companionWork: Bool) -> CompanionLine {
-        guard companionWork, saved.hasPrefix(questionLead) else { return .literal(saved) }
-        return .parts([.name, .text(String(saved.dropFirst(CompanionSentence.placeholder.count)))])
+    static func sanitized(_ outside: String) -> String {
+        var kept = String.UnicodeScalarView()
+        kept.append(contentsOf: outside.unicodeScalars.filter { (scalar: Unicode.Scalar) -> Bool in !markerScalars.contains(scalar) })
+        return String(kept)
+    }
+
+    static func line(_ saved: String, appWritten: Bool) -> CompanionLine {
+        guard appWritten else { return .literal(saved) }
+        if saved.hasPrefix(questionLead) {
+            return .parts([.name, .text(String(saved.dropFirst(CompanionSentence.placeholder.count)))])
+        }
+        let pieces = saved.components(separatedBy: marker)
+        guard pieces.count > 1 else { return .literal(saved) }
+        var parts: [CompanionLinePart] = []
+        for (index, piece) in pieces.enumerated() {
+            if index > 0 { parts.append(.name) }
+            if !piece.isEmpty { parts.append(.text(piece)) }
+        }
+        return .parts(parts)
+    }
+
+    static func plain(_ saved: String, name: String?, appWritten: Bool) -> String {
+        line(saved, appWritten: appWritten).plain(name: name)
     }
 }
 

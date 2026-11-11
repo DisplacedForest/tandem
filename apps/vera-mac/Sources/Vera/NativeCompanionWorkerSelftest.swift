@@ -872,7 +872,7 @@ extension SelfTest {
         let shown = try await moving.runUntilSettled()
         try require(shown.state == .needsDecision && (try moving.decision(shown)["covers"] as? String) == "Edits in b"
                     && (try moving.decision(shown)["never"] as? String) == "Never edit in b"
-                    && (try moving.decision(shown)["prompt"] as? String) == "{name} wants to create a folder in b."
+                    && (try moving.decision(shown)["prompt"] as? String) == CompanionSavedText.marker + " wants to create a folder in b."
                     && !((try moving.decision(shown)["details"] as? String) ?? "").contains("Edits in"),
                     "The card says the saved choice covers the one folder")
         try FileManager.default.removeItem(at: folder.appendingPathComponent("a/b"))

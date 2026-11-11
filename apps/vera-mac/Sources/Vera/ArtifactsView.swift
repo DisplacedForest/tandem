@@ -59,7 +59,10 @@ enum ArtifactDateLabel {
         return sameYear ? date.formatted(style) : date.formatted(style.year())
     }
 
-    static func origin(_ record: ArtifactRecord) -> String {
+    static func origin(_ record: ArtifactRecord, companionName: String?) -> String {
+        if record.originTitle == CompanionSavedText.marker {
+            return ArtifactLibrarySelection.companionOriginLabel(name: CompanionSentence.savedName(companionName))
+        }
         let title = record.originTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return title.isEmpty ? "No conversation" : title
     }
@@ -71,37 +74,42 @@ struct ArtifactLibrarySelection: Equatable {
     var filter: ArtifactKindFilter = .all
     var conversationFilter: String?
 
-    func visible(_ records: [ArtifactRecord]) -> [ArtifactRecord] {
+    func visible(_ records: [ArtifactRecord], companionName: String? = nil) -> [ArtifactRecord] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return records.filter { record in
             guard filter.matches(record.kind) else { return false }
             if let conversationFilter, record.conversationID != conversationFilter { return false }
             guard !query.isEmpty else { return true }
             return record.title.localizedCaseInsensitiveContains(query)
-                || (record.originTitle?.localizedCaseInsensitiveContains(query) ?? false)
+                || (Self.searchableOrigin(record, companionName: companionName)?.localizedCaseInsensitiveContains(query) ?? false)
         }
     }
 
-    func selected(in records: [ArtifactRecord]) -> ArtifactRecord? {
+    static func searchableOrigin(_ record: ArtifactRecord, companionName: String?) -> String? {
+        guard record.originTitle == CompanionSavedText.marker else { return record.originTitle }
+        return companionOriginLabel(name: CompanionSentence.savedName(companionName))
+    }
+
+    func selected(in records: [ArtifactRecord], companionName: String? = nil) -> ArtifactRecord? {
         guard let selectedID else { return nil }
-        return visible(records).first { $0.id == selectedID }
+        return visible(records, companionName: companionName).first { $0.id == selectedID }
     }
 
-    func resolved(in records: [ArtifactRecord]) -> ArtifactRecord? {
+    func resolved(in records: [ArtifactRecord], companionName: String? = nil) -> ArtifactRecord? {
         var settled = self
-        settled.reconcile(records)
-        return settled.selected(in: records)
+        settled.reconcile(records, companionName: companionName)
+        return settled.selected(in: records, companionName: companionName)
     }
 
-    mutating func reconcile(_ records: [ArtifactRecord]) {
-        let shown = visible(records)
+    mutating func reconcile(_ records: [ArtifactRecord], companionName: String? = nil) {
+        let shown = visible(records, companionName: companionName)
         if let selectedID, shown.contains(where: { $0.id == selectedID }) { return }
         selectedID = shown.first?.id
     }
 
-    mutating func open(_ id: String, in records: [ArtifactRecord]) -> Bool {
+    mutating func open(_ id: String, in records: [ArtifactRecord], companionName: String? = nil) -> Bool {
         guard let record = records.first(where: { $0.id == id }) else {
-            reconcile(records)
+            reconcile(records, companionName: companionName)
             return false
         }
         search = ""
@@ -111,16 +119,16 @@ struct ArtifactLibrarySelection: Equatable {
         return true
     }
 
-    mutating func adoptConversation(_ id: String, in records: [ArtifactRecord]) {
+    mutating func adoptConversation(_ id: String, in records: [ArtifactRecord], companionName: String? = nil) {
         conversationFilter = id
         search = ""
         filter = .all
-        reconcile(records)
+        reconcile(records, companionName: companionName)
     }
 
-    mutating func apply(conversation: String?, open id: String?, in records: [ArtifactRecord]) {
-        if let conversation { adoptConversation(conversation, in: records) }
-        if let id { _ = open(id, in: records) }
+    mutating func apply(conversation: String?, open id: String?, in records: [ArtifactRecord], companionName: String? = nil) {
+        if let conversation { adoptConversation(conversation, in: records, companionName: companionName) }
+        if let id { _ = open(id, in: records, companionName: companionName) }
     }
 
     static let companionFilterTitle = "From {name}"
@@ -146,7 +154,7 @@ extension ChatStore {
         if let id = record.conversationID, isVeraThread(id) {
             return ArtifactLibrarySelection.companionOriginLabel(name: companionName)
         }
-        return ArtifactDateLabel.origin(record)
+        return ArtifactDateLabel.origin(record, companionName: companionName)
     }
 }
 
@@ -175,11 +183,11 @@ struct ArtifactsView: View {
     }
 
     private var filtered: [ArtifactRecord] {
-        state.visible(store.artifactRecords)
+        state.visible(store.artifactRecords, companionName: store.companionName)
     }
 
     private var selected: ArtifactRecord? {
-        state.resolved(in: store.artifactRecords)
+        state.resolved(in: store.artifactRecords, companionName: store.companionName)
     }
 
     var body: some View {
@@ -199,14 +207,15 @@ struct ArtifactsView: View {
         .onAppear {
             if !renderSafe { store.reloadArtifacts() }
             consumeRequests()
-            state.reconcile(store.artifactRecords)
+            state.reconcile(store.artifactRecords, companionName: store.companionName)
         }
         .onChange(of: store.requestedArtifactID) { _, _ in consumeRequests() }
         .onChange(of: store.pendingLibraryConversationID) { _, _ in consumeRequests() }
-        .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords) }
-        .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords) }
-        .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords) }
-        .onChange(of: store.artifactRecords) { _, records in state.reconcile(records) }
+        .onChange(of: state.search) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
+        .onChange(of: state.filter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
+        .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName) }
+        .onChange(of: store.artifactRecords) { _, records in state.reconcile(records, companionName: store.companionName) }
+        .onChange(of: store.companionName) { _, name in state.reconcile(store.artifactRecords, companionName: name) }
     }
 
     private func consumeRequests() {
@@ -215,7 +224,7 @@ struct ArtifactsView: View {
         guard conversation != nil || id != nil else { return }
         store.pendingLibraryConversationID = nil
         store.requestedArtifactID = nil
-        state.apply(conversation: conversation, open: id, in: store.artifactRecords)
+        state.apply(conversation: conversation, open: id, in: store.artifactRecords, companionName: store.companionName)
     }
 
     private var listColumn: some View {
