@@ -10,7 +10,8 @@ enum RulesShot {
         let variant = view.hasSuffix("-ada") ? String(view.dropLast("-ada".count))
             : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
         let showsMenu = variant == "rules-menu"
-        let size = NSSize(width: showsHelp || showsMenu ? 1240 : 860, height: 980)
+        let advancedVariant = variant.hasPrefix("rules-advanced")
+        let size = NSSize(width: showsHelp || showsMenu || advancedVariant ? 1240 : 860, height: advancedVariant ? 1100 : 980)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rules-shot-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory.appendingPathComponent("Seedlings"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -21,9 +22,35 @@ enum RulesShot {
         if variant == "rules-saved" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+        var advanced = RulesAdvancedState()
+        var asked: RulesAdvancedState.Question?
+        if variant == "rules-advanced-closed" { asked = .open }
+        if variant == "rules-advanced-open" || variant == "rules-advanced-mixed" {
+            advanced.askToOpen()
+            _ = advanced.confirm()
+        }
+        if variant == "rules-advanced-open" { asked = .allow(.payments) }
+        if variant == "rules-advanced-on" || variant == "rules-advanced-mixed" { config.letThrough(.payments, store: store) }
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let root = HStack(alignment: .top, spacing: 16) {
-            RulesSettingsTab().frame(width: 860, height: 980)
+            RulesSettingsTab(showing: advanced).frame(width: 860, height: size.height)
+            if let asked {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(RulesAdvancedCopy.question(asked, name: companion)).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                    Text(RulesAdvancedCopy.detail(asked, name: companion)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button(RulesAdvancedCopy.cancel) {}
+                        Button(RulesAdvancedCopy.confirm(asked, name: companion)) {}.buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(14)
+                .frame(width: 340, alignment: .leading)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+                .padding(.top, 20)
+            }
             if showsHelp {
                 RulesChoiceHelp()
                     .background(Theme.surface)
