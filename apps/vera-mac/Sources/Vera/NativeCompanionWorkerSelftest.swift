@@ -256,6 +256,7 @@ extension SelfTest {
         try await companionSavedAllows()
         try await companionActWrite()
         try await companionTypedRecipients()
+        try await companionInstructedSends()
         try await companionOneUseGrant()
         try await companionToolOwnChecks()
         try await companionAdmittedFolderWrites()
@@ -733,6 +734,69 @@ extension SelfTest {
         let proactive = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "proactive")
         try require(manual.typedRequest == "Email orders@workshop.example" && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
                     "Only work the person started by hand counts its assignment as their own words")
+    }
+
+    private static func companionInstructedSends() async throws {
+        let require = NativeTaskFixture.require
+        let sent = NativeChatRulesCounter()
+        var mail = NativeToolDefinition(id: "fixture-notes", name: "send_notes", title: "Send the notes", description: "Fixture",
+                                        parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write,
+                                        action: .networkSends, isAvailable: { true },
+                                        execute: { _ in sent.hit(); return .object(["sent": .bool(true)]) })
+        mail.ruleSubjects = { arguments in
+            guard case .string(let to)? = arguments["to"], let made = NativeRuleTarget.make(.recipient, to) else { return [] }
+            return [[made]]
+        }
+        mail.verbs = ["send"]
+        let tools = [mail]
+        let call = "{\"to\":\"ana@greenhouse.test\"}"
+        func harness(repeats: Bool) throws -> NativeCompanionHarness {
+            var made = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+                let results = NativeCompanionScriptedModel.toolResults(messages)
+                if results.isEmpty { return NativeCompanionScriptedModel.call("send_notes", call) }
+                if repeats && results.count == 1 { return NativeCompanionScriptedModel.call("send_notes", call, id: "call-2") }
+                return NativeCompanionScriptedModel.text("Sent the notes.")
+            }
+            let thread = made.thread
+            let rules = made.rules
+            let grants = made.grants
+            made.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            made.environment.authority = { conversation, request in
+                NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
+                                                                        typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
+                                               grantsRevision: grants.revision)
+            }
+            return made
+        }
+        let once = try harness(repeats: false)
+        let onceID = try once.create("Send the notes to ana@greenhouse.test")
+        let onceDone = try await once.runUntilSettled()
+        try require(onceDone.state == .completed && sent.count == 1 && (try once.effects(onceID)).filter { $0.state == .completed }.count == 1,
+                    "Work started by hand with the send typed in its assignment sends once with no question")
+
+        sent.reset()
+        let twice = try harness(repeats: true)
+        let twiceID = try twice.create("Send the notes to ana@greenhouse.test")
+        let twiceDone = try await twice.runUntilSettled()
+        try require(twiceDone.state == .needsDecision && sent.count == 1 && (try twice.effects(twiceID)).filter { $0.state == .completed }.count == 1,
+                    "A second identical send in the same work asks: \(twiceDone.state)")
+
+        sent.reset()
+        let scheduled = try harness(repeats: false)
+        let scheduledID = try scheduled.create("Send the notes to ana@greenhouse.test", mode: "scheduled", scheduleID: "schedule-1")
+        let scheduledDone = try await scheduled.runUntilSettled()
+        try require(sent.count == 0 && (try scheduled.effects(scheduledID)).allSatisfy { $0.state != .completed },
+                    "Scheduled work never sends on the words of its assignment: \(scheduledDone.state)")
+
+        let authority = NativeCompanionWorkerAuthority(resolver: {
+            var resolver = NativeRuleResolver(global: { var made = NativeRules.defaults; made.set(.ask, for: .networkSends); return made }(),
+                                              conversation: NativeConversationRules(), requestText: "")
+            resolver.typed = NativeTypedWords(typed: nil)
+            return resolver
+        }(), grantsRevision: 0)
+        try require(NativeCompanionWorker.ruleDecision(mail, ["to": .string("ana@greenhouse.test")], resolver: authority.resolver, honoringLimitedUse: true,
+                                                       uses: NativeInstructionUses()).decision == .ask,
+                    "With nothing typed, as for scheduled or self-started work, nothing is instructed")
     }
 
     private static func companionAdmittedFolderWrites() async throws {

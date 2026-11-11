@@ -46,7 +46,7 @@ enum RefusalShot {
         store.ensureVeraThread()
         store.conversations.insert(Conversation(id: chatID, title: "Greenhouse notes", messages: [], updatedAt: Date()), at: 0)
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
-        let size = CGSize(width: 760, height: variant == "refusal-command" ? 300 : 620)
+        let size = CGSize(width: 760, height: ["refusal-command", "refusal-instructed-command", "refusal-instructed-step"].contains(variant) ? 300 : 620)
         let content: AnyView
         switch variant {
         case "refusal-command":
@@ -64,6 +64,16 @@ enum RefusalShot {
                     }
                 }
             })
+        case "refusal-instructed-command":
+            content = AnyView(NativeCommandRunCard(run: NativeCommandRun(id: "c2", command: "make pdf", directory: "/Volumes/Notes/Greenhouse",
+                                                                         outcome: .ran, reason: .instruction, exitCode: 0,
+                                                                         stdout: "Wrote notes.pdf\n", durationMilliseconds: 840)))
+        case "refusal-instructed-step":
+            content = AnyView(NativeToolActivityChip(activity: NativeToolActivity(id: "s1", toolID: "garden-mail", name: "send_notes", title: "Send the notes",
+                                                                                   round: 0, request: "{\"to\":\"ana@greenhouse.test\"}",
+                                                                                   result: "{\"sent\":true}", state: .succeeded, confirmationRequired: false,
+                                                                                   ranBecause: .instruction),
+                                                     startsExpanded: true))
         default:
             content = AnyView(VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(samples().enumerated()), id: \.offset) { index, sample in

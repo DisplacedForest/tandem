@@ -286,17 +286,43 @@ enum NativeCompanionWorker {
 
     typealias RuleDecision = (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String], why: NativeRuleWhy?)
 
-    static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver: NativeRuleResolver,
-                             honoringLimitedUse: Bool) -> RuleDecision {
+    static func instructionClaim(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue],
+                                 action: NativeActionClass) -> NativeInstructionClaim? {
+        guard !definition.demandsConfirmation else { return nil }
+        if definition.id == NativeCommandTools.toolID {
+            guard action == .commands, case .string(let command)? = arguments["command"], NativeCommandPrefix.isSimple(command),
+                  NativeCommandClassifier.unplain(command, directory: arguments.folderString("directory")) == nil else { return nil }
+            return NativeInstructionClaim(verbs: NativeCommandTools.verbs)
+        }
+        if definition.id == NativeFolderTools.toolID { return NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) } }
+        guard !definition.verbs.isEmpty else { return nil }
+        return NativeInstructionClaim(verbs: definition.verbs, names: definition.instructionNames?(arguments) ?? [], nothing: definition.namesNothing)
+    }
+
+    static func instructionSignature(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass) -> String? {
+        guard let claim = instructionClaim(definition, arguments, action: action) else { return nil }
+        return NativeInstruction.signature(action: action, toolID: definition.id, targets: ruleQuery(definition, arguments, action: action).targets,
+                                           names: claim.names)
+    }
+
+    static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver base: NativeRuleResolver,
+                             honoringLimitedUse: Bool, uses: NativeInstructionUses? = nil) -> RuleDecision {
         let action = definition.actionClass(for: arguments) ?? .otherChanges
         let query = ruleQuery(definition, arguments, action: action)
         let footprint = query.targets.filter { $0.kind == .folder }.map(\.value)
+        var resolver = base
+        if let uses {
+            resolver.uses = uses
+            resolver.asked = instructionClaim(definition, arguments, action: action)
+        }
         let scoped = resolver.tool(definition.id, subjects: query.subjects)
         if let decide = definition.ruleDecision {
-            let decision = decide(arguments, scoped)
+            var decision = decide(arguments, scoped)
+            if decision == .ask, scoped.instructed(query, honoringLimitedUse: honoringLimitedUse) != nil { decision = .act(.instruction) }
             guard case .act = decision else {
                 return (action, decision, [], footprint, definition.ruleWhy?(arguments, scoped) ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: decision == .handOff))
             }
+            if decision == .act(.instruction) { return (action, decision, [], footprint, nil) }
             return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint, nil)
         }
         let resolved = resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
@@ -548,8 +574,22 @@ private struct NativeCompanionRun {
     }
 
     func recordDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority,
-                        honoringLimitedUse: Bool) -> NativeCompanionWorker.RuleDecision {
-        NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse)
+                        honoringLimitedUse: Bool, uses: NativeInstructionUses? = nil) -> NativeCompanionWorker.RuleDecision {
+        NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse, uses: uses)
+    }
+
+    func instructionUses(excluding key: String) throws -> NativeInstructionUses {
+        let uses = NativeInstructionUses()
+        let spent: Set<NativeEffectState> = [.admitted, .completed, .uncertain]
+        for record in try environment.ledger.records(taskID: task.id)
+        where spent.contains(record.state) && record.proposal.idempotencyKey != key {
+            guard let definition = context.tools.first(where: { $0.id == record.proposal.toolID && $0.name == record.proposal.function }),
+                  let raw = try? JSONSerialization.jsonObject(with: Data(record.proposal.argumentsJSON.utf8)),
+                  case .object(let arguments)? = try? NativeJSONValue(any: raw),
+                  let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: record.proposal.action) else { continue }
+            uses.take(signature)
+        }
+        return uses
     }
 
     var places: RulePlaces {
@@ -830,7 +870,8 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
+        let (action, decision, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
+                                                                              uses: try instructionUses(excluding: key))
         if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,

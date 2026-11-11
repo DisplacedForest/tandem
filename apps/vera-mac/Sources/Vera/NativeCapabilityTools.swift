@@ -66,6 +66,7 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
     let jsonFields: [String: String]
     let source: String
     var sendsTo: [String]? = nil
+    var verbs: [String] = []
 
     var id: String { NativeCapabilityTools.identifier(name: name) }
 
@@ -181,6 +182,8 @@ enum NativeCapabilityTools {
         var definition = plainDefinition(declaration, base: base, client: client)
         if let fields = declaration.sendsTo, !declaration.reads, declaration.method == .post {
             definition.fixedDestination = fields.isEmpty
+            definition.verbs = declaration.verbs
+            definition.namesNothing = fields.isEmpty
             if !fields.isEmpty {
                 definition.ruleSubjects = { arguments in
                     let targets = declaration.recipients(arguments)
@@ -568,10 +571,33 @@ enum NativeCapabilityTools {
             }
             sendsTo = fields
         }
-        return NativeToolDeclaration(
+        var verbs: [String] = []
+        if let raw = object["verbs"] {
+            guard let words = raw as? [String], !words.isEmpty, words.count <= 8 else {
+                throw NativeToolDeclarationError(reason: "'verbs' must be a list of one to eight action words, such as [\"send\", \"post\"]")
+            }
+            guard !(method == .get && confirmation != .required) else {
+                throw NativeToolDeclarationError(reason: "'verbs' only applies to a tool that changes something, not one that only reads")
+            }
+            for word in words {
+                guard (1...24).contains(word.count),
+                      word.allSatisfy({ ("a"..."z").contains($0) || $0 == " " }),
+                      word.first != " ", word.last != " ", !word.contains("  ") else {
+                    throw NativeToolDeclarationError(
+                        reason: "'verbs' lists '\(word)', but each must be 1 to 24 lowercase letters, with single spaces between words")
+                }
+            }
+            guard Set(words).count == words.count else {
+                throw NativeToolDeclarationError(reason: "'verbs' lists the same word twice")
+            }
+            verbs = words
+        }
+        var declaration = NativeToolDeclaration(
             name: name, title: title, description: description, properties: properties,
             required: required, endpoint: endpoint, method: method, confirmation: confirmation,
             timeoutSeconds: timeout, enabled: enabled, jsonFields: jsonFields, source: source, sendsTo: sendsTo)
+        declaration.verbs = verbs
+        return declaration
     }
 
     private static func text(_ value: Any?) -> String {

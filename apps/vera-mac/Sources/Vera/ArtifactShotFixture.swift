@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 @MainActor
 enum ArtifactShotFixture {
@@ -106,6 +107,26 @@ enum ArtifactShotFixture {
             return Seeded(store: store, selection: selection, notice: .failed(attempt, problem))
         default: return Seeded(store: store, selection: selection)
         }
+    }
+
+    static func chatImage(variant: String) -> AnyView {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tandem-chat-image-shot", isDirectory: true)
+        try? FileManager.default.removeItem(at: directory)
+        let attachments = NativeAttachmentStore(directory: directory)
+        guard let attachment = try? attachments.save(data: gradientPNG(), preferredName: "a-small-glass-greenhouse-at-dusk-1024x640.png"),
+              let source = attachment.fileName.flatMap(attachments.url(for:)) else { return AnyView(EmptyView()) }
+        let notice: ArtifactExportNotice
+        if variant == "chats-image-save-failed" {
+            let attempt = ArtifactExportAttempt(
+                id: UUID(), title: attachment.name, source: .image(source),
+                destination: directory.appendingPathComponent(attachment.name))
+            notice = .failed(attempt, .notAllowed)
+        } else {
+            notice = .savedImage(id: UUID(), fileName: attachment.name)
+        }
+        return AnyView(GeneratedImageView(attachment: attachment, store: attachments, initialNotice: notice)
+            .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
     }
 
     private static func gradientPNG() -> Data {

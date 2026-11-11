@@ -11,20 +11,39 @@ enum ArtifactExportProblem: Error, Equatable, Sendable, CaseIterable {
 }
 
 struct ArtifactExportAttempt: Equatable, Identifiable, Sendable {
+    enum Source: Equatable, Sendable {
+        case version(artifactID: String, ArtifactVersion)
+        case image(URL)
+    }
+
     let id: UUID
-    let artifactID: String
     let title: String
-    let version: ArtifactVersion
+    let source: Source
     var destination: URL
+
+    init(id: UUID, title: String, source: Source, destination: URL) {
+        self.id = id
+        self.title = title
+        self.source = source
+        self.destination = destination
+    }
+
+    init(id: UUID, artifactID: String, title: String, version: ArtifactVersion, destination: URL) {
+        self.init(id: id, title: title, source: .version(artifactID: artifactID, version), destination: destination)
+    }
 }
 
 enum ArtifactExportNotice: Equatable, Identifiable {
     case saved(id: UUID, title: String, fileName: String)
+    case savedImage(id: UUID, fileName: String)
     case failed(ArtifactExportAttempt, ArtifactExportProblem)
+
+    static let imageNameLimit = 45
 
     var id: UUID {
         switch self {
         case .saved(let id, _, _): return id
+        case .savedImage(let id, _): return id
         case .failed(let attempt, _): return attempt.id
         }
     }
@@ -35,8 +54,11 @@ enum ArtifactExportNotice: Equatable, Identifiable {
             let stem = (fileName as NSString).deletingPathExtension
             if stem == title || fileName == title { return "Saved \"\(fileName)\"." }
             return "Saved \"\(title)\" as \"\(fileName)\"."
+        case .savedImage(_, let fileName):
+            return fileName.count <= Self.imageNameLimit ? "Saved \"\(fileName)\"." : "Saved this image."
         case .failed(let attempt, let problem):
-            let lead = "Couldn't save \"\(attempt.title)\"."
+            var lead = "Couldn't save \"\(attempt.title)\"."
+            if case .image = attempt.source { lead = "Couldn't save this image." }
             switch problem {
             case .sourceMissing: return "\(lead) The original is no longer on this Mac."
             case .sourceUnreadable: return "\(lead) The original couldn't be read."
@@ -63,22 +85,30 @@ enum ArtifactExportNotice: Equatable, Identifiable {
     }
 
     var isSaved: Bool {
-        if case .saved = self { return true }
-        return false
+        switch self {
+        case .saved, .savedImage: return true
+        case .failed: return false
+        }
     }
 }
 
 struct ArtifactExporter {
-    var read: (ArtifactVersion) -> Result<Data, ArtifactExportProblem>
+    var read: (ArtifactVersion) -> Result<Data, ArtifactExportProblem> = { _ in .failure(.sourceMissing) }
     var write: (Data, URL) throws -> Void = ArtifactExporter.atomicWrite
+    var stage: (URL, URL) throws -> Void = { try FileManager.default.copyItem(at: $0, to: $1) }
 
     static func atomicWrite(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
     }
 
     func run(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice {
+        let version: ArtifactVersion
+        switch attempt.source {
+        case .version(_, let value): version = value
+        case .image(let source): return copy(attempt, from: source)
+        }
         let data: Data
-        switch read(attempt.version) {
+        switch read(version) {
         case .success(let value): data = value
         case .failure(let problem): return .failed(attempt, problem)
         }
@@ -88,6 +118,40 @@ struct ArtifactExporter {
             return .failed(attempt, Self.problem(for: error))
         }
         return .saved(id: attempt.id, title: attempt.title, fileName: attempt.destination.lastPathComponent)
+    }
+
+    private func copy(_ attempt: ArtifactExportAttempt, from source: URL) -> ArtifactExportNotice {
+        func unreadable() -> ArtifactExportProblem? {
+            do {
+                try FileHandle(forReadingFrom: source).close()
+                return nil
+            } catch {
+                return Self.sourceProblem(for: error)
+            }
+        }
+        if let problem = unreadable() { return .failed(attempt, problem) }
+        let manager = FileManager.default
+        let destination = attempt.destination
+        do {
+            let staging = try manager.url(
+                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
+            defer { try? manager.removeItem(at: staging) }
+            let staged = staging.appendingPathComponent(source.lastPathComponent)
+            do {
+                try stage(source, staged)
+            } catch {
+                if let problem = unreadable() { return .failed(attempt, problem) }
+                throw error
+            }
+            if manager.fileExists(atPath: destination.path) {
+                _ = try manager.replaceItemAt(destination, withItemAt: staged)
+            } else {
+                try manager.moveItem(at: staged, to: destination)
+            }
+        } catch {
+            return .failed(attempt, Self.problem(for: error))
+        }
+        return .savedImage(id: attempt.id, fileName: destination.lastPathComponent)
     }
 
     static func problem(for error: Error) -> ArtifactExportProblem {
@@ -139,12 +203,26 @@ struct ArtifactExportFlow {
         return exporter.run(attempt)
     }
 
+    func begin(file source: URL, title: String, fileName: String) -> ArtifactExportNotice? {
+        guard let destination = choose(fileName, nil) else { return nil }
+        return run(ArtifactExportAttempt(id: UUID(), title: title, source: .image(source), destination: destination))
+    }
+
     func chooseAnother(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
         let folder = attempt.destination.deletingLastPathComponent()
         let directory = folderExists(folder) ? folder : nil
         guard let destination = choose(attempt.destination.lastPathComponent, directory) else { return nil }
         var moved = attempt
         moved.destination = destination
-        return exporter.run(moved)
+        return run(moved)
+    }
+
+    private func run(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
+        if case .image(let source) = attempt.source, Self.sameFile(source, attempt.destination) { return nil }
+        return exporter.run(attempt)
+    }
+
+    static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL.resolvingSymlinksInPath().path == b.standardizedFileURL.resolvingSymlinksInPath().path
     }
 }

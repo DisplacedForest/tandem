@@ -122,6 +122,7 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     var confirmationRequired: Bool
     var progress: NativeToolProgress? = nil
     var why: NativeRuleWhy? = nil
+    var ranBecause: NativeRuleReason? = nil
 
     var isCancelableRun: Bool {
         state == .pending && (progress != nil || name == NativeImageTools.toolName)
@@ -225,6 +226,9 @@ struct NativeToolDefinition: Sendable {
     var proposes = false
     var alwaysAsks = false
     var fixedDestination = false
+    var verbs: [String] = []
+    var namesNothing = false
+    var instructionNames: (@Sendable ([String: NativeJSONValue]) -> [String])? = nil
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
 
@@ -745,6 +749,7 @@ struct NativeToolLoop: Sendable {
                             let result: String
                             let state: NativeToolActivityState
                             var why: NativeRuleWhy?
+                            let reasonSink = NativeToolReasonSink()
                             do {
                                 guard callCount < Self.maximumCalls else {
                                     stopped = true
@@ -805,9 +810,11 @@ struct NativeToolLoop: Sendable {
                                     defer { gate.close() }
                                     value = try await NativeToolProgressReporter.$report.withValue(report) {
                                         try await NativeToolCallContext.$confirmed.withValue(needsConfirmation) {
-                                            try await Self.execute(
-                                                definition, arguments: arguments, activity: activity,
-                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                            try await NativeToolCallContext.$reason.withValue(reasonSink) {
+                                                try await Self.execute(
+                                                    definition, arguments: arguments, activity: activity,
+                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                            }
                                         }
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
@@ -837,6 +844,7 @@ struct NativeToolLoop: Sendable {
                                 activities[index].state = state
                                 activities[index].progress = nil
                                 activities[index].why = why
+                                activities[index].ranBecause = state == .succeeded && reasonSink.value == .instruction ? .instruction : nil
                             }
                             try Task.checkCancellation()
                             history.append(NativeChatMessage(role: "tool", content: result, toolCallID: call.id))

@@ -351,17 +351,22 @@ enum NativeRequestPreapproval {
         }
     }
 
+    static func settled(_ remainder: String, original: String) -> Bool {
+        if negated(remainder) { return false }
+        if original.contains("?") { return false }
+        let wordList = " " + words(remainder).joined(separator: " ") + " "
+        if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        return true
+    }
+
     static func grants(_ text: String) -> Bool {
         let lowered = normalized(text)
         guard phrases.contains(where: { lowered.contains($0) }) else { return false }
         var remainder = lowered
         for phrase in phrases { remainder = remainder.replacingOccurrences(of: phrase, with: " ") }
         if quoted(remainder) { return false }
-        if negated(remainder) { return false }
-        if lowered.contains("?") { return false }
-        let wordList = " " + words(remainder).joined(separator: " ") + " "
-        if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
-        if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
+        guard settled(remainder, original: lowered) else { return false }
         let sentences = lowered.components(separatedBy: CharacterSet(charactersIn: ".!;\n")).map { $0.trimmingCharacters(in: .whitespaces) }
         return sentences.contains { sentenceGrants($0) }
     }
@@ -790,6 +795,7 @@ enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
     case userApproved = "user_approved"
     case conversationPrefix = "conversation_prefix"
     case grant
+    case instruction
 
     var title: String {
         switch self {
@@ -798,6 +804,7 @@ enum NativeRuleReason: String, Codable, Equatable, Hashable, Sendable {
         case .userApproved: return "Ran after you approved it"
         case .conversationPrefix: return "Ran under an approval you gave earlier in this chat"
         case .grant: return "Ran under a permission you saved"
+        case .instruction: return "Ran because you asked for this"
         }
     }
 }
@@ -984,6 +991,8 @@ struct NativeRuleResolver: Sendable {
     var failed = false
     var subjects: [[NativeRuleTarget]] = []
     var typed: NativeTypedWords = .none
+    var asked: NativeInstructionClaim?
+    var uses: NativeInstructionUses?
 
     init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0,
          records: [NativeRuleRecord] = [], context: NativeRuleContext? = nil, now: Date = Date()) {
@@ -1070,8 +1079,10 @@ struct NativeRuleResolver: Sendable {
     func resolve(_ query: NativeRuleQuery, honoringLimitedUse: Bool)
         -> (decision: NativeRuleDecision, resolution: NativeRuleResolution?, authorizedBy: [String]) {
         let settled = settle(query, honoringLimitedUse: honoringLimitedUse)
-        guard case .act = settled.decision, unnamed(in: query, honoringLimitedUse: honoringLimitedUse) != nil else { return settled }
-        return (.ask, settled.resolution, [])
+        var decided = settled
+        if case .act = settled.decision, unnamed(in: query, honoringLimitedUse: honoringLimitedUse) != nil { decided = (.ask, settled.resolution, []) }
+        guard decided.decision == .ask, instructed(query, honoringLimitedUse: honoringLimitedUse) != nil else { return decided }
+        return (.act(.instruction), decided.resolution, [])
     }
 
     func settle(_ query: NativeRuleQuery, honoringLimitedUse: Bool)
@@ -1145,11 +1156,14 @@ struct NativeRuleResolver: Sendable {
         let live = verdict?.decision ?? fallback ?? planned
         try gate(live: live, planned: planned, action: action, approved: approved, why: verdict?.why ?? why)
         guard case .act = live, let confirm = verdict?.confirm else { return {} }
-        return { if !confirm() { throw NativeToolError.failed(changedMessage) } }
+        return {
+            if !confirm() { throw NativeToolError.failed(changedMessage) }
+            if live == .act(.instruction) { NativeToolCallContext.reason?.note(.instruction) }
+        }
     }
 
     static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool, why: NativeRuleWhy? = nil) throws {
         if live == .handOff { throw NativeRuleRefusal(why: why ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: true)) }
-        if live == .ask, !planned.requiresConfirmation, !approved { throw NativeToolError.failed(changedMessage) }
+        if live == .ask, !approved { throw NativeToolError.failed(changedMessage) }
     }
 }
