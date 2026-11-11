@@ -211,6 +211,36 @@ class NameRatchetTests(unittest.TestCase):
         self.assertEqual(self.run_script("--update").returncode, 0)
         self.assertEqual(self.baseline_text(), "")
 
+    def test_escaped_newline_does_not_shift_later_lines(self):
+        self.write("A.swift", ['let a = "one\\ntwo"', "let b = 1", 'let c = "Vera"'])
+        result = self.run_script()
+        self.assertIn("A.swift:3:", result.stdout)
+
+    def test_several_escaped_newlines_do_not_shift_later_lines(self):
+        self.write("A.swift", ['let a = "a\\nb\\nc\\r\\n"', 'let b = "\\u{0A}\\u{000A}"', 'let c = "Vera"'])
+        result = self.run_script()
+        self.assertIn("A.swift:3:", result.stdout)
+        self.assertNotIn("A.swift:4:", result.stdout)
+
+    def test_raw_string_escaped_newline_does_not_shift_later_lines(self):
+        self.write("A.swift", ['let a = #"x\\#ny"#', 'let b = "Vera"'])
+        result = self.run_script()
+        self.assertIn("A.swift:2:", result.stdout)
+
+    def test_multiline_literal_reports_start_and_later_lines(self):
+        self.write(
+            "A.swift",
+            ['let a = """', "first\\nsecond", "Vera", '"""', "let b = 1", 'let c = "Vera"'],
+        )
+        result = self.run_script()
+        self.assertIn("A.swift:1:", result.stdout)
+        self.assertIn("A.swift:6:", result.stdout)
+
+    def test_line_continuation_inside_literal_counts_source_newline(self):
+        self.write("A.swift", ['let a = "one \\', 'two"', 'let b = "Vera"'])
+        result = self.run_script()
+        self.assertIn("A.swift:3:", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

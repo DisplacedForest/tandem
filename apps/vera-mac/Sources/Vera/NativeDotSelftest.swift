@@ -332,18 +332,18 @@ extension SelfTest {
                                      cadence: .daily(minuteOfDay: 420), timeZone: zone)
         var stopped = dot
         stopped.enabled = false
-        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: true, assistantName: "Ada") == "Paused with Ada",
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: true).map { CompanionSentence.plain($0, name: "Ada") } == "Paused with Ada",
                     "A schedule for a paused assistant says it is paused with them")
         try require(NativeScheduleControls.controls(for: dot, assistantPaused: true) == [.resumeAssistant, .edit],
                     "A paused assistant's schedule offers only resuming them and editing")
-        try require(NativeScheduleControls.title(.resumeAssistant, assistantName: "Ada") == "Resume Ada", "The resume control names the assistant")
-        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: false, assistantName: "Ada") == nil
+        try require(CompanionSentence.plain(NativeScheduleControls.title(.resumeAssistant), name: "Ada") == "Resume Ada", "The resume control names the assistant")
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: false) == nil
                     && NativeScheduleControls.controls(for: dot, assistantPaused: false) == [.runNow, .pause, .edit],
                     "An active assistant's schedule keeps its normal controls")
-        try require(NativeScheduleControls.pausedNote(own, assistantPaused: true, assistantName: "Ada") == nil
+        try require(NativeScheduleControls.pausedNote(own, assistantPaused: true) == nil
                     && NativeScheduleControls.controls(for: own, assistantPaused: true) == [.runNow, .pause, .edit],
                     "A chat's own schedule ignores the assistant's pause")
-        try require(NativeScheduleControls.pausedNote(stopped, assistantPaused: true, assistantName: "Ada") == nil
+        try require(NativeScheduleControls.pausedNote(stopped, assistantPaused: true) == nil
                     && NativeScheduleControls.controls(for: stopped, assistantPaused: true) == [.runNow, .resume, .edit],
                     "A schedule paused on its own keeps its own resume")
     }

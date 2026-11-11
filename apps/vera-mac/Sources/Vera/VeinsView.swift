@@ -631,7 +631,7 @@ struct VeinBrowseSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     startRow(icon: "wand.and.stars", title: "Build a new vein",
-                             note: "Describe a watch in your own words and Vera drafts it.",
+                             note: "Describe a watch in your own words and Tandem drafts it.",
                              enabled: builderConfigured) { builder = BuilderModel(base: base) }
                     startRow(icon: "square.and.arrow.down", title: "Import from file",
                              note: "Add a vein someone shared with you. It lands disabled for review.",
@@ -645,7 +645,7 @@ struct VeinBrowseSheet: View {
                     if loading {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Checking what else this Vera can run…")
+                            Text("Checking what else the vera-api service can run…")
                                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.top, 6)
@@ -867,7 +867,7 @@ struct VeinImportReviewSheet: View {
                         .foregroundStyle(Theme.accent)
                 }
             } else {
-                Text("Unknown block \(w.label). It stays inert until this Vera has it.")
+                Text("Unknown block \(w.label). It stays inert until the vera-api service has it.")
                     .font(.system(size: 12))
             }
             Spacer(minLength: 0)

@@ -299,7 +299,7 @@ struct CustomModelParameter: Codable, Equatable, Hashable, Identifiable, Sendabl
         guard !name.isEmpty else { return "Enter a key." }
         guard !name.contains(where: \.isWhitespace) else { return "Keys cannot contain spaces." }
         guard !ModelParameterCatalog.reservedWireKeys.contains(name) else {
-            return "\(name) is managed by Vera and cannot be set here."
+            return "\(name) is managed by Tandem and cannot be set here."
         }
         guard !ModelParameterCatalog.declaredWireKeys.contains(name) else {
             return "\(name) has a dedicated control above."

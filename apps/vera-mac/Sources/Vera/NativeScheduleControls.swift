@@ -9,8 +9,12 @@ enum NativeScheduleControls {
         assistantPaused && schedule.owner == .dot && schedule.enabled
     }
 
-    static func pausedNote(_ schedule: NativeSchedule, assistantPaused: Bool, assistantName: String) -> String? {
-        waitsOnPausedAssistant(schedule, assistantPaused: assistantPaused) ? "Paused with \(assistantName)" : nil
+    static func pausedNote(_ schedule: NativeSchedule, assistantPaused: Bool) -> String? {
+        waitsOnPausedAssistant(schedule, assistantPaused: assistantPaused) ? "Paused with {name}" : nil
+    }
+
+    static func resultsLine(_ lead: String, toCompanion: Bool, end: String = "") -> CompanionLine {
+        toCompanion ? .named("\(lead)Results go to {name}\(end)") : .literal("\(lead)Results go to its own chat\(end)")
     }
 
     static func controls(for schedule: NativeSchedule, assistantPaused: Bool) -> [NativeScheduleControl] {
@@ -18,12 +22,12 @@ enum NativeScheduleControls {
         return [.runNow, schedule.enabled ? .pause : .resume, .edit]
     }
 
-    static func title(_ control: NativeScheduleControl, assistantName: String) -> String {
+    static func title(_ control: NativeScheduleControl) -> String {
         switch control {
         case .runNow: return "Run now"
         case .pause: return "Pause"
         case .resume: return "Resume"
-        case .resumeAssistant: return "Resume \(assistantName)"
+        case .resumeAssistant: return "Resume {name}"
         case .edit: return "Edit"
         }
     }

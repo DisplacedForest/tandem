@@ -10,7 +10,7 @@ enum ModelSelectionBasis: String, Codable, Equatable, Sendable {
     var explanation: String {
         switch self {
         case .user: return "You chose this model."
-        case .recommended: return "Vera selected the first model returned alphabetically."
+        case .recommended: return "Tandem selected the first model returned alphabetically."
         case .restored: return "This model was restored from your saved configuration."
         }
     }

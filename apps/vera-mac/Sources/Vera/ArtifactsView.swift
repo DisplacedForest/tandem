@@ -123,9 +123,7 @@ struct ArtifactLibrarySelection: Equatable {
         if let id { _ = open(id, in: records) }
     }
 
-    static func companionFilterTitle(name: String?) -> String {
-        "From \(name ?? "your companion")"
-    }
+    static let companionFilterTitle = "From {name}"
 
     static func companionOriginLabel(name: String?) -> String {
         name ?? "Your companion"
@@ -167,12 +165,12 @@ struct ArtifactsView: View {
         _exportNotice = State(initialValue: initialExportNotice)
     }
 
-    private var conversationFilterTitle: String? {
+    private var conversationFilterTitle: CompanionLine? {
         guard let conversationFilter = state.conversationFilter else { return nil }
         if store.isVeraThread(conversationFilter) {
-            return ArtifactLibrarySelection.companionFilterTitle(name: store.companionName)
+            return .named(ArtifactLibrarySelection.companionFilterTitle)
         }
-        return store.conversations.first { $0.id == conversationFilter }.map { "From \($0.title)" }
+        return store.conversations.first { $0.id == conversationFilter }.map { (conversation: Conversation) -> CompanionLine in .literal("From \(conversation.title)") }
     }
 
     private var filtered: [ArtifactRecord] {
@@ -232,7 +230,7 @@ struct ArtifactsView: View {
                     state.conversationFilter = nil
                 } label: {
                     HStack(spacing: 6) {
-                        Text(title).font(.system(size: 12, weight: .medium))
+                        CompanionLineText(line: title).font(.system(size: 12, weight: .medium))
                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -240,7 +238,7 @@ struct ArtifactsView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Showing only results from this conversation")
-                .accessibilityLabel("\(title). Clear filter")
+                .accessibilityLabel("\(title.plain(name: store.companionName)). Clear filter")
             }
             if filtered.isEmpty {
                 Spacer(minLength: 0)

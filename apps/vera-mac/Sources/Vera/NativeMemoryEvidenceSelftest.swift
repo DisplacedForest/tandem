@@ -687,7 +687,7 @@ enum NativeMemoryEvidenceSelftest {
             store.openMemorySource(record)
             try require(store.selectedID == conversationID && store.pendingHighlightMessageID?.uuidString == sourceID
                         && store.pendingSourceNotice?.state == .edited
-                        && store.pendingSourceNotice?.message == "This message changed after Vera remembered it.",
+                        && store.pendingSourceNotice?.message == "This message changed after Tandem remembered it.",
                         "missing source snapshot was treated as valid")
             store.openMemorySource(conversationID: conversationID, messageID: sourceID, expectedText: original)
             try require(store.pendingSourceNotice?.state == .edited && store.pendingHighlightMessageID?.uuidString == sourceID,

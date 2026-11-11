@@ -389,6 +389,7 @@ enum SelfTest {
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
+        do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
@@ -3698,7 +3699,7 @@ enum SelfTest {
             }
 
             let failures: [(PulseFeedResult, String)] = [
-                (.unconfigured, "Pulse isn't connected. Set up Vera API to continue this card."),
+                (.unconfigured, "Pulse isn't connected. Set up the vera-api service to continue this card."),
                 (.transport, "Pulse couldn't be reached. Try again."),
                 (.malformed, "This Pulse card couldn't be opened."),
                 (.success(cards: [], rawIDs: []), "This Pulse card is no longer available."),
@@ -3857,7 +3858,7 @@ enum SelfTest {
                   storedMessages[1].toolActivities.first?.result == "{\"reminders\":[]}",
                   storedMessages[1].toolActivities.last?.state == .failed,
                   storedMessages[1].toolActivities.last?.result?.contains("interrupted") == true,
-                  storedMessages[1].failure == "The response was interrupted when Vera closed" else {
+                  storedMessages[1].failure == "The response was interrupted when Tandem closed" else {
                 print("SELFTEST ERROR: native local history round-trip"); exit(1)
             }
             try reopened.deleteConversation(conversationID)

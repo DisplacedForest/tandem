@@ -72,7 +72,7 @@ final class CompanionTranscriptContinuity: ObservableObject {
 }
 
 struct CompanionOpeningView: View {
-    let error: String?
+    let error: CompanionLine?
     var needsConnection = false
     var canRetry = true
     let retry: () -> Void
@@ -81,7 +81,7 @@ struct CompanionOpeningView: View {
         VStack(spacing: 12) {
             Spacer()
             if let error {
-                Text(error).foregroundStyle(Theme.textSecondary)
+                CompanionLineText(line: error).foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                 if needsConnection {
                     SettingsSectionLink("Open Settings", tab: .connection).buttonStyle(.bordered)
@@ -106,5 +106,10 @@ extension ChatStore {
         if repository == nil { return "Local history couldn't open. Reopen Tandem to try again." }
         if !pendingProfileAvailable { return Self.companionNeedsConnection }
         return nil
+    }
+
+    var companionOpeningErrorLine: CompanionLine? {
+        if chatConfigurationError != nil { return chatConfigurationErrorLine }
+        return companionOpeningError.map(CompanionLine.literal)
     }
 }

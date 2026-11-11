@@ -93,7 +93,7 @@ struct NativeMCPOAuthReviewEditor: View {
                     }
                 }
             }
-            Text("A private browser session is requested. Vera keeps authorization only in memory, for up to one hour. Disconnect ends this connection's access.")
+            Text("A private browser session is requested. Tandem keeps authorization only in memory, for up to one hour. Disconnect ends this connection's access.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
             if let progress = manager.oauthProgress[review.configuration.id] { Text(progress).font(.callout) }
             if let browser = manager.oauthFlows[review.configuration.id]?.browser as? NativeMCPOAuthFixtureBrowser {

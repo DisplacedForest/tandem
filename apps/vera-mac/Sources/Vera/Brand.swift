@@ -142,6 +142,29 @@ enum CompanionSentence {
     }
 }
 
+enum CompanionLine: Equatable, Sendable {
+    case named(String)
+    case literal(String)
+
+    func plain(name: String?) -> String {
+        switch self {
+        case .named(let template): CompanionSentence.plain(template, name: name)
+        case .literal(let text): text
+        }
+    }
+}
+
+struct CompanionLineText: View {
+    var line: CompanionLine
+
+    var body: some View {
+        switch line {
+        case .named(let template): CompanionNamedText(template: template)
+        case .literal(let text): Text(verbatim: text)
+        }
+    }
+}
+
 struct CompanionNamedText: View {
     var template: String
     @Environment(\.companionName) private var name

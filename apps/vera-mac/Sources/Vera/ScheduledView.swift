@@ -66,7 +66,7 @@ struct ScheduledView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Scheduled").font(.system(size: 22, weight: .semibold))
-                Text("Work \(store.companion.inline) runs on a schedule while Tandem is open or in the menu bar.")
+                CompanionNamedText(template: "Work {name} runs on a schedule while Tandem is open or in the menu bar.")
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -104,8 +104,7 @@ struct ScheduledView: View {
             VStack(spacing: 8) {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
-                                ownerLabel: schedule.owner == .dot ? store.companion.inline : "its own chat",
-                                pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused, assistantName: store.companion.inline),
+                                pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused),
                                 openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome)
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
@@ -137,7 +136,6 @@ struct ScheduledView: View {
 private struct ScheduleRow: View {
     let schedule: NativeSchedule
     let selected: Bool
-    let ownerLabel: String
     var pausedNote: String? = nil
     let openOutcome: NativeScheduleOutcome?
 
@@ -147,8 +145,9 @@ private struct ScheduleRow: View {
                 .font(.system(size: 15)).foregroundStyle(Theme.accent).frame(width: 22).padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(schedule.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
-                Text("\(schedule.cadenceSummary). Results go to \(ownerLabel)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Text(statusLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                CompanionLineText(line: NativeScheduleControls.resultsLine("\(schedule.cadenceSummary). ", toCompanion: schedule.owner == .dot))
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                CompanionLineText(line: statusLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 36)
         }
@@ -160,15 +159,15 @@ private struct ScheduleRow: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    private var statusLine: String {
+    private var statusLine: CompanionLine {
         switch openOutcome {
-        case .running: return "Running now"
-        case .waiting: return "Waiting for you"
-        case .blocked: return "Blocked"
+        case .running: return .literal("Running now")
+        case .waiting: return .literal("Waiting for you")
+        case .blocked: return .literal("Blocked")
         default: break
         }
-        guard schedule.enabled else { return "Paused" }
-        if let pausedNote { return pausedNote }
+        guard schedule.enabled else { return .literal("Paused") }
+        if let pausedNote { return .named(pausedNote) }
         var parts: [String] = []
         if let next = schedule.nextRunAt {
             parts.append("Next \(NativeScheduleClock.relative(next, now: Date(), timeZone: schedule.timeZone))")
@@ -176,7 +175,7 @@ private struct ScheduleRow: View {
         if let outcome = schedule.lastOutcome, let at = schedule.lastRunAt {
             parts.append("\(outcome.title) \(NativeScheduleClock.relative(at, now: Date(), timeZone: schedule.timeZone))")
         }
-        return parts.isEmpty ? "Waiting for its first run" : parts.joined(separator: ". ")
+        return .literal(parts.isEmpty ? "Waiting for its first run" : parts.joined(separator: ". "))
     }
 }
 
@@ -192,7 +191,7 @@ private struct ScheduleDetail: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(schedule.title).font(.system(size: 17, weight: .semibold))
-                    Text("\(schedule.workTitle). \(schedule.cadenceSummary). Results go to \(schedule.owner == .dot ? store.companion.inline : "its own chat").")
+                    CompanionLineText(line: NativeScheduleControls.resultsLine("\(schedule.workTitle). \(schedule.cadenceSummary). ", toCompanion: schedule.owner == .dot, end: "."))
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Text(schedule.instruction).font(.system(size: 13)).textSelection(.enabled).padding(.top, 4)
                 }
@@ -228,7 +227,7 @@ private struct ScheduleControlButtons: View {
 
     var body: some View {
         ForEach(NativeScheduleControls.controls(for: schedule, assistantPaused: store.isDotPaused), id: \.self) { control in
-            Button(NativeScheduleControls.title(control, assistantName: store.companion.inline)) {
+            Button {
                 switch control {
                 case .runNow: store.runScheduleNow(schedule.id)
                 case .pause: store.setSchedule(schedule.id, enabled: false)
@@ -236,6 +235,8 @@ private struct ScheduleControlButtons: View {
                 case .resumeAssistant: store.setDotState(.active)
                 case .edit: onEdit()
                 }
+            } label: {
+                CompanionNamedText(template: NativeScheduleControls.title(control))
             }
         }
     }

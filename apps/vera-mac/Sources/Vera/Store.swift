@@ -72,7 +72,33 @@ final class ChatStore: ObservableObject {
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
-    @Published var chatConfigurationError: String?
+    @Published var chatConfigurationError: String? {
+        didSet {
+            if let template = chatConfigurationErrorTemplate, CompanionSentence.plain(template, name: companionName) != chatConfigurationError {
+                chatConfigurationErrorTemplate = nil
+            }
+        }
+    }
+    @Published private(set) var chatConfigurationErrorTemplate: String?
+
+    var chatConfigurationErrorLine: CompanionLine? {
+        guard let chatConfigurationError else { return nil }
+        if let template = chatConfigurationErrorTemplate, CompanionSentence.plain(template, name: companionName) == chatConfigurationError {
+            return .named(template)
+        }
+        return .literal(chatConfigurationError)
+    }
+
+    func reportCompanionConfigurationError(_ lead: String, description: String, tail: String = "") {
+        guard !description.contains(CompanionSentence.placeholder) else {
+            chatConfigurationErrorTemplate = nil
+            chatConfigurationError = CompanionSentence.plain(lead, name: companionName) + description + tail
+            return
+        }
+        let template = lead + description + tail
+        chatConfigurationErrorTemplate = template
+        chatConfigurationError = CompanionSentence.plain(template, name: companionName)
+    }
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
     @Published var pendingToolConfirmation: NativeToolConfirmationRequest?
@@ -729,7 +755,7 @@ final class ChatStore: ObservableObject {
             veraThreadID = thread.id
         } catch {
             veraThreadID = nil
-            chatConfigurationError = "The Vera thread couldn't be created: \(error.localizedDescription)"
+            reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: error.localizedDescription)
         }
     }
 
@@ -1752,7 +1778,7 @@ final class ChatStore: ObservableObject {
         case failed(String)
     }
 
-    static let pulseContinuationDatabaseFailure = "Vera couldn't create the local conversation. Try again."
+    static let pulseContinuationDatabaseFailure = "Tandem couldn't create the local conversation. Try again."
 
     func openPulseInChat(_ card: PulseCard, onOpened: (() -> Void)? = nil) {
         if pulseContinuation[card.id] == .opening { return }
@@ -1771,7 +1797,7 @@ final class ChatStore: ObservableObject {
             return
         }
         guard let provider = pulseFeedProvider ?? (client as (any PulseFeedProviding)?) else {
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
             return
         }
         pulseContinuation[card.id] = .opening
@@ -1787,7 +1813,7 @@ final class ChatStore: ObservableObject {
     ) {
         switch result {
         case .unconfigured:
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
         case .transport:
             pulseContinuation[card.id] = .failed("Pulse couldn't be reached. Try again.")
         case .malformed:
@@ -2733,8 +2759,8 @@ enum NativeMemorySourceState: Equatable, Sendable {
     var message: String {
         switch self {
         case .ok: ""
-        case .edited: "This message changed after Vera remembered it."
-        case .deleted: "The source message was deleted, so Vera opened the conversation instead."
+        case .edited: "This message changed after Tandem remembered it."
+        case .deleted: "The source message was deleted, so Tandem opened the conversation instead."
         case .excluded: "This conversation is excluded from memory suggestions."
         }
     }

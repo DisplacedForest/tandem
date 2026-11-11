@@ -73,8 +73,8 @@ enum NativeMemorySensitiveHandling: String, Codable, CaseIterable, Sendable {
 
     var caption: String {
         switch self {
-        case .neverStore: "Vera skips any turn that looks like it holds a password, key, code, or other sensitive text."
-        case .reviewOnly: "Vera may suggest memory from turns with sensitive text, marked so you can check it. Nothing is saved unless you accept it, and passwords or keys are always skipped."
+        case .neverStore: "Tandem skips any turn that looks like it holds a password, key, code, or other sensitive text."
+        case .reviewOnly: "Tandem may suggest memory from turns with sensitive text, marked so you can check it. Nothing is saved unless you accept it, and passwords or keys are always skipped."
         }
     }
 
@@ -395,7 +395,7 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
         switch self {
         case .notConfigured: "The optional memory model is not configured"
         case .authentication: "The memory model rejected its saved credentials"
-        case .malformed: "The memory model returned a response Vera could not review"
+        case .malformed: "The memory model returned a response Tandem could not review"
         case .timeout: "The memory model timed out"
         case .unavailable(let detail): detail
         case .sensitiveData: "Memory skipped text that looks like a credential or secret"

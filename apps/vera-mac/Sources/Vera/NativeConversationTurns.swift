@@ -180,8 +180,8 @@ extension LocalChatRepository: NativeConversationTurnRepository {
             }
             turn.state = .interrupted
             let failure = turn.mayHaveEffect
-                ? "Vera closed before this answer finished. An action already sent may have completed; check it before trying again."
-                : "Vera closed before this answer finished. You can retry it."
+                ? "Tandem closed before this answer finished. An action already sent may have completed; check it before trying again."
+                : "Tandem closed before this answer finished. You can retry it."
             try db.execute(sql: "UPDATE messages SET state='interrupted', failure=? WHERE id=?",
                 arguments: [failure, turn.assistantMessageID.uuidString])
             try writeTurn(turn, db: db)
