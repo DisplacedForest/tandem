@@ -19,7 +19,7 @@ struct PrototypeView: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut("n", modifiers: .command)
                 .accessibilityIdentifier("new-chat")
-                Label("Vera", systemImage: "sparkle").foregroundStyle(.primary)
+                Label("Assistant", systemImage: "sparkle").foregroundStyle(.primary)
                     .tag(Destination.assistant)
                     .accessibilityIdentifier("vera-destination")
                 if !store.saved.conversations.isEmpty {
@@ -64,7 +64,7 @@ struct PrototypeView: View {
                     LazyVStack(alignment: .leading, spacing: 24) {
                         ForEach(store.messages) { message in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(message.role == "user" ? "You" : "Vera")
+                                Text(message.role == "user" ? "You" : "Assistant")
                                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 Text(message.text).textSelection(.enabled)
                                     .font(.system(size: 15)).lineSpacing(5)
@@ -74,7 +74,7 @@ struct PrototypeView: View {
                             .accessibilityElement(children: .combine)
                         }
                         if store.busyConversations.contains(store.conversation.id) {
-                            ProgressView().controlSize(.small).accessibilityLabel("Waiting for Vera")
+                            ProgressView().controlSize(.small).accessibilityLabel("Waiting for the assistant")
                         }
                         Color.clear.frame(height: 1).id("transcript-end")
                     }
@@ -94,9 +94,9 @@ struct PrototypeView: View {
                     Text("This message is too long to send. Shorten it and try again.").font(.caption).foregroundStyle(.red)
                 }
                 HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Message Vera", text: Binding(get: { store.conversation.draft }, set: { store.setDraft($0) }), axis: .vertical)
+                    TextField("Message the assistant", text: Binding(get: { store.conversation.draft }, set: { store.setDraft($0) }), axis: .vertical)
                         .textFieldStyle(.plain).lineLimit(2...7)
-                        .focused($composerFocused).accessibilityLabel("Message Vera")
+                        .focused($composerFocused).accessibilityLabel("Message the assistant")
                         .accessibilityIdentifier("message-composer")
                     Button { Task { await store.send() } } label: {
                         Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold))
@@ -272,7 +272,7 @@ struct PrototypeApplication: App {
         store = prepared
     }
     var body: some Scene {
-        WindowGroup("Vera Prototype") { PrototypeView(store: store) }
+        WindowGroup("Assistant Prototype") { PrototypeView(store: store) }
             .defaultSize(width: 1140, height: 760)
     }
 }

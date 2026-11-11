@@ -52,7 +52,7 @@ final class NativePiPresentation: ObservableObject {
     }
     var conversation: Conversation? {
         guard let session else { return nil }
-        return Conversation(id: session.id.uuidString, title: "Vera", messages: session.messages.map {
+        return Conversation(id: session.id.uuidString, title: "Assistant", messages: session.messages.map {
             var message = Message(id: Self.messageID(conversation: session.id, source: $0.id), role: $0.isUser ? .user : .assistant,
                     text: $0.text, createdAt: Date(timeIntervalSince1970: 0), sources: connection?.memoryBridge?.sources(conversation: session.id.uuidString.lowercased(), message: $0.id) ?? [])
             message.spokenText = $0.text
@@ -117,7 +117,7 @@ final class NativePiPresentation: ObservableObject {
             guard generation == revision, !stopped else { return }
             result.workspace.session.startEventTracking()
         } catch {
-            if generation == revision { failure = (error as? NativePiProduction.Failure)?.message ?? "Vera couldn't connect. Your saved work is preserved." }
+            if generation == revision { failure = (error as? NativePiProduction.Failure)?.message ?? "The assistant couldn't connect. Your saved work is preserved." }
         }
         if generation == revision { starting = false; startup = nil }
     }
