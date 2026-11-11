@@ -24,8 +24,10 @@ extension ChatStore {
               let action = definition.actionClass(for: arguments) else { return nil }
         if definition.id == NativeCommandTools.toolID {
             guard case .string(let command)? = arguments["command"] else { return nil }
+            let directory = arguments.folderString("directory")
+            if action == .commands, NativeCommandClassifier.unplain(command, grants: grants, directory: directory) != nil { return nil }
             let closures = commandLive(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed)
-            return NativeCommandTools.assess(command: command, directory: arguments.folderString("directory"), grants: grants, fallback: .handOff,
+            return NativeCommandTools.assess(command: command, directory: directory, grants: grants, fallback: .handOff,
                                              live: closures.live, liveTargets: closures.liveTargets).why
         }
         return toolDecision(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed, toolID: definition.id,
@@ -42,7 +44,7 @@ extension ChatStore {
         guard let subject, subject.governed, !subject.alwaysAsks else { return false }
         switch NativeCardChoices.coverage(subject) {
         case .none: return false
-        case .commandsOnly: return subject.action != .commands
+        case .commandsOnly: return subject.action == .riskyCommands
         case .wholeTool: return NativeCardChoices.remembers(subject)
         case .commandPrefix, .folders, .sendTargets: return true
         }
@@ -105,8 +107,7 @@ extension ChatStore {
         }
         func settle(_ state: NativeRuleOffer.State) {
             do {
-                try store.record(.answered, conversationID: conversationID, action: action)
-                if answer == .neverOffer { try store.turnOff(action) }
+                try store.settle(conversationID: conversationID, action: action, everyChat: answer == .neverOffer)
                 show(state)
             } catch {
                 show(.waiting, failed: true)

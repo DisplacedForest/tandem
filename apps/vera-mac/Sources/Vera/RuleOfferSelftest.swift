@@ -20,7 +20,8 @@ final class RuleOfferTransport: NativeChatTransport, @unchecked Sendable {
             return NativeChatStreamSnapshot(content: "", toolCalls: [
                 NativeChatToolCall(id: "offer-call-\(calls)", name: NativeCommandTools.runName,
                                    arguments: messages.last?.content.contains("twice") == true
-                                       ? "{\"command\":\"printf hello && printf again\"}" : "{\"command\":\"printf hello\"}"),
+                                       ? "{\"command\":\"printf hello && printf again\"}"
+                                       : messages.last?.content.contains("timed") == true ? "{\"command\":\"echo hello time\"}" : "{\"command\":\"printf hello\"}"),
             ], finishReason: "tool_calls")
         }
         return AsyncThrowingStream { continuation in
@@ -188,8 +189,10 @@ extension SelfTest {
                     "A send with no declared recipient never counts")
         try require(card(.commands, tool: NativeCommandTools.toolID, command: "printf hello")
                     && !card(.commands, tool: NativeCommandTools.toolID, command: "printf hello && printf again")
-                    && card(.riskyCommands, tool: NativeCommandTools.toolID, command: "rm -rf build"),
-                    "A command that isn't plain never counts, and a risky one does")
+                    && card(.riskyCommands, tool: NativeCommandTools.toolID, command: "rm -rf build")
+                    && !card(.networkSends, tool: NativeCommandTools.toolID, command: "git push origin main")
+                    && !card(.trash, tool: NativeCommandTools.toolID, command: "trash notes.md"),
+                    "A command that isn't plain never counts, a risky one does, and a send or Trash move through a command doesn't")
         try require(card(.fileEdits, tool: NativeFolderTools.toolID, targets: [folderTarget]) && !card(.fileEdits, tool: NativeFolderTools.toolID),
                     "A file edit counts when its folder is known")
         print("  rule offer copy OK (words, banned words, rule rows, answers, blocks)")
@@ -364,6 +367,22 @@ extension SelfTest {
         let compound = try chat(store)
         for _ in 0..<3 { try require(try await turn(store, "Run printf twice in the folder"), "A command that isn't plain shows a card") }
         try require(offers(store, compound).isEmpty, "Approving commands that aren't plain never leads to an offer")
+
+        let timed = try chat(store)
+        for _ in 0..<3 { try require(try await turn(store, "Run printf timed in the folder"), "A command with a part that can't be read plainly shows a card") }
+        try require(offers(store, timed).isEmpty, "A command the app can't read as plain never leads to an offer, even with a simple start")
+
+        let partial = try chat(store)
+        let (partialMessage, partialOffer) = try await reachOffer(store, partial)
+        try exec("CREATE TRIGGER offer_block BEFORE INSERT ON native_rule_offers WHEN NEW.conversation_id = '' BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
+        store.answerRuleOffer(.neverOffer, messageID: partialMessage, blockID: partialOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, partial).first?.1.state == .waiting && offers(store, partial).first?.1.failed == true
+                    && !(try offerStore.state(conversationID: partial, action: .commands)).answered && !(try offerStore.turnedOff(.commands)),
+                    "A failed don't offer again saves nothing and keeps the card")
+        try exec("DROP TRIGGER offer_block")
+        store.answerRuleOffer(.neverOffer, messageID: partialMessage, blockID: partialOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, partial).first?.1.state == .closed && (try offerStore.turnedOff(.commands)), "Trying don't offer again a second time finishes it")
+        try exec("DELETE FROM native_rule_offers WHERE conversation_id = ''")
 
         let torn = try chat(store)
         let (tornMessage, tornOffer) = try await reachOffer(store, torn)

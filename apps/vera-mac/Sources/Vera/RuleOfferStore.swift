@@ -36,6 +36,15 @@ struct RuleOfferStore: Sendable {
         }
     }
 
+    func settle(conversationID: String, action: NativeActionClass, everyChat: Bool) throws {
+        guard !conversationID.isEmpty else { return }
+        try database.write { db in
+            let current = try Self.state(db, conversationID: conversationID, action: action)
+            try Self.write(db, RuleOffer.apply(.answered, to: current, turnedOff: false).state, conversationID: conversationID, action: action)
+            if everyChat { try Self.write(db, RuleOfferState(approvals: 0, answered: true), conversationID: RuleOffer.everyChat, action: action) }
+        }
+    }
+
     func turnOff(_ action: NativeActionClass) throws {
         try database.write { db in
             try Self.write(db, RuleOfferState(approvals: 0, answered: true), conversationID: RuleOffer.everyChat, action: action)
