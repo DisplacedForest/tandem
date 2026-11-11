@@ -33,21 +33,26 @@ enum RulesShot {
         }
         if variant == "rules-advanced-open" { asked = .allow(.payments) }
         if variant == "rules-advanced-on" || variant == "rules-advanced-mixed" { config.letThrough(.payments, store: store) }
+        if variant.hasPrefix("rules-advanced-each") {
+            let settings: [(NativeFloorItem, NativeRuleChoice)] = [(.credentialEntry, .ask), (.payments, .act), (.permanentDeletion, .actIfPreapproved)]
+            for (item, choice) in settings {
+                config.letThrough(item, store: store)
+                config.setChoice(choice, for: item, store: store)
+            }
+        }
+        if variant == "rules-advanced-each-open" || variant == "rules-advanced-asking" {
+            advanced.askToOpen()
+            _ = advanced.confirm()
+        }
+        if variant == "rules-advanced-asking" {
+            config.letThrough(.payments, store: store)
+            asked = .withoutAsking(.payments)
+        }
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let root = HStack(alignment: .top, spacing: 16) {
             RulesSettingsTab(showing: advanced).frame(width: 860, height: size.height)
             if let asked {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(RulesAdvancedCopy.question(asked, name: companion)).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                    Text(RulesAdvancedCopy.detail(asked, name: companion)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Spacer()
-                        Button(RulesAdvancedCopy.cancel) {}
-                        Button(RulesAdvancedCopy.confirm(asked, name: companion)) {}.buttonStyle(.borderedProminent)
-                    }
-                }
-                .padding(14)
-                .frame(width: 340, alignment: .leading)
+                RulesAdvancedQuestionView(question: asked, onCancel: {}, onConfirm: {})
                 .background(Theme.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))

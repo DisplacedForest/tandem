@@ -4,6 +4,12 @@ struct RulesAdvancedState: Equatable {
     enum Question: Equatable {
         case open
         case allow(NativeFloorItem)
+        case withoutAsking(NativeFloorItem)
+    }
+
+    enum Answer: Equatable {
+        case allow(NativeFloorItem)
+        case withoutAsking(NativeFloorItem)
     }
 
     private(set) var isOpen = false
@@ -21,14 +27,23 @@ struct RulesAdvancedState: Equatable {
 
     mutating func cancel() { question = nil }
 
-    mutating func confirm() -> NativeFloorItem? {
+    mutating func choose(_ choice: NativeRuleChoice, for item: NativeFloorItem) -> Bool {
+        guard isOpen, item.isLiftable else { return false }
+        guard choice == .act else { return true }
+        question = .withoutAsking(item)
+        return false
+    }
+
+    mutating func confirm() -> Answer? {
         defer { question = nil }
         switch question {
         case .open:
             isOpen = true
             return nil
         case .allow(let item):
-            return isOpen ? item : nil
+            return isOpen ? .allow(item) : nil
+        case .withoutAsking(let item):
+            return isOpen ? .withoutAsking(item) : nil
         case nil:
             return nil
         }
@@ -57,10 +72,36 @@ enum RulesAdvancedCopy {
         "Let \(CompanionSentence.placeholder) \(lowered(item.title))?"
     }
 
-    static func question(_ question: RulesAdvancedState.Question?, name: String?) -> String {
+    static func withoutAskingQuestionTemplate(_ item: NativeFloorItem) -> String {
+        "Let \(CompanionSentence.placeholder) \(lowered(item.title)) without asking?"
+    }
+
+    static func questionTemplate(_ question: RulesAdvancedState.Question?) -> String {
         switch question {
         case .open: return openQuestion
-        case .allow(let item): return CompanionSentence.plain(allowQuestionTemplate(item), name: name)
+        case .allow(let item): return allowQuestionTemplate(item)
+        case .withoutAsking(let item): return withoutAskingQuestionTemplate(item)
+        case nil: return ""
+        }
+    }
+
+    static func question(_ question: RulesAdvancedState.Question?, name: String?) -> String {
+        CompanionSentence.plain(questionTemplate(question), name: name)
+    }
+
+    static func detailTemplate(_ question: RulesAdvancedState.Question?) -> String {
+        switch question {
+        case .open: return openDetailTemplate
+        case .allow(let item), .withoutAsking(let item): return item.reason
+        case nil: return ""
+        }
+    }
+
+    static func confirmTemplate(_ question: RulesAdvancedState.Question?) -> String {
+        switch question {
+        case .open: return openConfirm
+        case .allow: return allowTemplate
+        case .withoutAsking: return NativeRuleChoice.act.title
         case nil: return ""
         }
     }
@@ -68,7 +109,7 @@ enum RulesAdvancedCopy {
     static func detail(_ question: RulesAdvancedState.Question?, name: String?) -> String {
         switch question {
         case .open: return CompanionSentence.plain(openDetailTemplate, name: name)
-        case .allow(let item): return item.reason
+        case .allow(let item), .withoutAsking(let item): return item.reason
         case nil: return ""
         }
     }
@@ -77,6 +118,7 @@ enum RulesAdvancedCopy {
         switch question {
         case .open: return openConfirm
         case .allow: return CompanionSentence.plain(allowTemplate, name: name)
+        case .withoutAsking: return NativeRuleChoice.act.title
         case nil: return ""
         }
     }
@@ -100,7 +142,8 @@ enum RulesAdvancedCopy {
 
     static func screenStrings(name: String?) -> [String] {
         var strings = [title, open, close, openConfirm, cancel, takeBack, CompanionSentence.plain(allowTemplate, name: name)]
-        let questions: [RulesAdvancedState.Question] = [.open] + NativeFloorItem.allCases.filter(\.isLiftable).map { .allow($0) }
+        let liftable = NativeFloorItem.allCases.filter(\.isLiftable)
+        let questions: [RulesAdvancedState.Question] = [.open] + liftable.map { .allow($0) } + liftable.map { .withoutAsking($0) }
         for question in questions {
             strings.append(self.question(question, name: name))
             strings.append(detail(question, name: name))
@@ -143,6 +186,14 @@ struct RulesAdvancedSection: View {
 
     private var rules: NativeRules { config.nativeSettings.rules }
 
+    private func choice(for item: NativeFloorItem) -> Binding<NativeRuleChoice> {
+        Binding(
+            get: { item.actionClass.map { rules.choice(for: $0) } ?? .handOff },
+            set: { picked in
+                if state.choose(picked, for: item) { config.setChoice(picked, for: item, store: store) }
+            })
+    }
+
     private var asking: Binding<Bool> {
         Binding(get: { state.question != nil }, set: { if !$0 { state.cancel() } })
     }
@@ -156,25 +207,64 @@ struct RulesAdvancedSection: View {
             }
             ForEach(RulesAdvancedCopy.allowed(rules), id: \.self) { item in
                 HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                        Text(RulesAdvancedCopy.follows(item, rules: rules))
-                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    if state.isOpen {
+                        Picker(item.title, selection: choice(for: item)) {
+                            ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
+                                Text(choice.title).tag(choice)
+                            }
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title)
+                            Text(RulesAdvancedCopy.follows(item, rules: rules))
+                                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button(RulesAdvancedCopy.takeBack) { config.leaveToMe(item, store: store) }
+                            .accessibilityLabel("\(RulesAdvancedCopy.takeBack): \(item.title)")
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(RulesAdvancedCopy.takeBack) { config.leaveToMe(item, store: store) }
-                        .accessibilityLabel("\(RulesAdvancedCopy.takeBack): \(item.title)")
                 }
                 .padding(.vertical, 2)
             }
         }
-        .confirmationDialog(RulesAdvancedCopy.question(state.question, name: name), isPresented: asking, titleVisibility: .visible) {
-            Button(RulesAdvancedCopy.confirm(state.question, name: name)) {
-                if let item = state.confirm() { config.letThrough(item, store: store) }
+        .sheet(isPresented: asking) {
+            RulesAdvancedQuestionView(question: state.question, onCancel: { state.cancel() }) {
+                switch state.confirm() {
+                case .allow(let item): config.letThrough(item, store: store)
+                case .withoutAsking(let item): config.setChoice(.act, for: item, store: store)
+                case nil: break
+                }
             }
-            Button(RulesAdvancedCopy.cancel, role: .cancel) { state.cancel() }
-        } message: {
-            Text(RulesAdvancedCopy.detail(state.question, name: name))
         }
+    }
+}
+
+struct RulesAdvancedQuestionView: View {
+    let question: RulesAdvancedState.Question?
+    var onCancel: () -> Void
+    var onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CompanionNamedText(template: RulesAdvancedCopy.questionTemplate(question))
+                .font(.system(size: 13, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            CompanionNamedText(template: RulesAdvancedCopy.detailTemplate(question))
+                .font(.system(size: 12))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button(RulesAdvancedCopy.cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(action: onConfirm) {
+                    CompanionNamedText(template: RulesAdvancedCopy.confirmTemplate(question))
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 360, alignment: .leading)
     }
 }
