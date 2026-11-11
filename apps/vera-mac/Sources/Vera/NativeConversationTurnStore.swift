@@ -358,6 +358,7 @@ extension ChatStore {
     func clearTurnDecisions(_ turn: NativeConversationTurn) {
         turnDeclineSource.clear(turn: turn.id)
         turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+        forgetRuleOfferCandidates(turn)
     }
 
     private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {
@@ -420,6 +421,7 @@ extension ChatStore {
         guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { return }
         execution.deadline?.cancel()
         execution.task = nil
+        offerToStopAsking(after: turn)
         resolveTurnConfirmation(turn.assistantMessageID, approved: false)
         clearTurnDecisions(turn)
         if let location = turnLocation(turn) {
@@ -627,6 +629,7 @@ extension ChatStore {
                 attachDisplayBlock(.commandRun(NativeCommandRun(id: Self.scopedBlockID(request.id, turn: execution.record), command: command, directory: directory, outcome: .declined)), turn: execution.record)
             }
         }
+        recordRuleOfferDecision(decision, request: request, turn: turn, chosen: owned && requestID != nil)
         if let request, !decision.approves {
             turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
         }

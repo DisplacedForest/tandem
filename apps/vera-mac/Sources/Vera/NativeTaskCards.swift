@@ -130,6 +130,7 @@ struct NativeDisplayBlocksView: View {
     var onDecide: ((String, String) -> Void)? = nil
     var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
     @State private var openReport: NativeResearchArtifact?
 
     var body: some View {
@@ -159,6 +160,8 @@ struct NativeDisplayBlocksView: View {
                     NativeFileChangeCard(change: change)
                 case .commandRun(let run):
                     NativeCommandRunCard(run: run)
+                case .ruleOffer(let offer):
+                    RuleOfferCard(offer: offer, onAnswer: onRuleOffer.map { action in { action(block.id, $0) } })
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
                         ConversationResultRow(title: artifact.title, action: artifact.openTitle)

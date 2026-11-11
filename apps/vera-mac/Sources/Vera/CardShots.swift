@@ -55,6 +55,19 @@ enum CardShot {
             let id = seedRules(store)
             content = AnyView(ConversationRulesEditor(conversationID: id).background(Theme.bg)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 20))
+        case "card-offer-edits", "card-offer-sends", "card-offer-risky", "card-offer-allowed", "card-offer-everywhere", "card-offer-failed":
+            size = CGSize(width: 760, height: 380)
+            content = AnyView(offer(variant))
+        case "card-offer-menus":
+            size = CGSize(width: 640, height: 300)
+            let answers = CardAnswers.offer()
+            content = AnyView(VStack(alignment: .trailing, spacing: 14) {
+                RuleOfferCard(offer: NativeRuleOffer(id: "shot", action: .fileEdits), onAnswer: { _ in })
+                HStack(alignment: .top, spacing: 12) {
+                    CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
+                    CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
+                }
+            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
         case "card-scheduled-answer":
             store.section = .scheduled
             seedSchedule(store)
@@ -97,6 +110,31 @@ enum CardShot {
             FileHandle.standardError.write(Data("Card image couldn't be saved\n".utf8))
             exit(1)
         }
+    }
+
+    static func offer(_ variant: String) -> some View {
+        let action: NativeActionClass = variant == "card-offer-sends" ? .networkSends : variant == "card-offer-risky" ? .riskyCommands : .fileEdits
+        let state: NativeRuleOffer.State = variant == "card-offer-allowed" ? .allowedHere : variant == "card-offer-everywhere" ? .allowedEverywhere : .waiting
+        let ask: String
+        let reply: String
+        switch action {
+        case .networkSends:
+            ask = "Note that I watered the tomato bed twice today."
+            reply = "Posted to the garden log."
+        case .riskyCommands:
+            ask = "Clear the old build cache."
+            reply = "The old build cache is cleared."
+        default:
+            ask = "Add the afternoon vent check to the plan."
+            reply = "The plan now has the afternoon vent check."
+        }
+        var message = Message(role: .assistant, text: reply)
+        message.displayBlocks = [.ruleOffer(NativeRuleOffer(id: "shot", action: action, state: state, failed: variant == "card-offer-failed"))]
+        return VStack(alignment: .leading, spacing: 22) {
+            MessageRow(message: Message(role: .user, text: ask))
+            MessageRow(message: message, onRuleOffer: { _, _ in })
+        }
+        .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     static func ruledActivity(_ definition: NativeToolDefinition, rules: NativeRules, id: String, request: String, ask: String,

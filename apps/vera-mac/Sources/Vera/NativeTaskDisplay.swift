@@ -51,6 +51,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
     case artifact(NativeResearchArtifact)
     case fileChange(NativeFileChange)
     case commandRun(NativeCommandRun)
+    case ruleOffer(NativeRuleOffer)
 
     var id: String {
         switch self {
@@ -59,6 +60,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .artifact(let artifact): return "artifact:" + artifact.id
         case .fileChange(let change): return "file:" + change.id
         case .commandRun(let run): return "command:" + run.id
+        case .ruleOffer(let offer): return offer.blockID
         }
     }
 
@@ -67,8 +69,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case taskCard = "task_card"
         case fileChange = "file_change"
         case commandRun = "command_run"
+        case ruleOffer = "rule_offer"
     }
-    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change", commandRun = "command_run" }
+    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change", commandRun = "command_run", ruleOffer = "rule_offer" }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -78,6 +81,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .artifact: self = .artifact(try container.decode(NativeResearchArtifact.self, forKey: .artifact))
         case .fileChange: self = .fileChange(try container.decode(NativeFileChange.self, forKey: .fileChange))
         case .commandRun: self = .commandRun(try container.decode(NativeCommandRun.self, forKey: .commandRun))
+        case .ruleOffer: self = .ruleOffer(try container.decode(NativeRuleOffer.self, forKey: .ruleOffer))
         }
     }
 
@@ -99,6 +103,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .commandRun(let run):
             try container.encode(Kind.commandRun, forKey: .type)
             try container.encode(run, forKey: .commandRun)
+        case .ruleOffer(let offer):
+            try container.encode(Kind.ruleOffer, forKey: .type)
+            try container.encode(offer, forKey: .ruleOffer)
         }
     }
 }

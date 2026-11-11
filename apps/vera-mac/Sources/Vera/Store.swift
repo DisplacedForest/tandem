@@ -238,6 +238,7 @@ final class ChatStore: ObservableObject {
     @Published var turnConfirmations: [UUID: NativeToolConfirmationRequest] = [:]
     var turnConfirmationTokens: [UUID: UUID] = [:]
     var turnExecutions: [UUID: NativeTurnExecution] = [:]
+    let ruleOfferSession = RuleOfferSession()
     static let turnProcessIdentity = UUID().uuidString
     var suspendsTurnScheduling = false
     var isSchedulingTurns = false
@@ -1787,6 +1788,7 @@ final class ChatStore: ObservableObject {
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         try repository?.deleteConversation(id)
         removeRules(for: .conversation(id))
+        removeRuleOffers(conversationID: id)
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }
         }
@@ -2469,6 +2471,7 @@ final class ChatStore: ObservableObject {
             confirm: { [weak self, turnRegistry] activity in
                 guard let self else { return false }
                 let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions, typedText: text)
+                await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typedText: text)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(

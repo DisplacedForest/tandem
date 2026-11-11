@@ -425,6 +425,12 @@ When the commands rule asks, the card shows the exact command and the folder. **
 
 Not included: sandboxes or containers, network isolation, a terminal view, and commands that keep running after the answer finishes.
 
+#### Stop asking in this chat
+
+When a kind of action is set to Ask first (or Do it when I say go ahead) and you click Allow on its card three times in a row in the same chat, the next reply ends with one more card, for example "Stop asking before file edits in this chat?". A Decline or a Never on that kind's card in between starts the count over, and the choices under the arrow beside Allow don't count. Cards that asked for another reason, like a rule you saved or a tool that always asks, don't count either. Entering a credential, paying and deleting permanently are never offered, even when turned on under Advanced.
+
+**Allow** saves a rule for that kind in this chat, so it runs there without asking. Other chats still ask, and a tool that always asks for confirmation still does. **Allow everywhere**, under the arrow beside Allow, changes the setting in Settings, Rules to Do it without asking. **Decline** closes the card and that chat won't offer it again. **Don't offer this again**, under the arrow beside Decline, stops the offer for that kind in every chat. If the setting changed since the card appeared, Allow closes it and saves nothing. Only a click on the card does anything: typing "allow" or "stop asking" in the chat changes nothing, and the model never sees the card.
+
 #### Rules you saved
 
 Settings, Rules lists every rule you saved from a card under **Rules you saved**. Each one reads as a single sentence with where it applies, like "Always allow commands that start with make pdf, in Greenhouse notes", plus a short note when it helps: where you saved it, how many uses are left, or how long it lasts.
