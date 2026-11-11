@@ -68,6 +68,11 @@ enum RuleOffer {
         return true
     }
 
+    static func same(_ a: NativeRuleRecord, _ b: NativeRuleRecord) -> Bool {
+        a.scope == b.scope && a.action == b.action && a.toolID == b.toolID && a.target == b.target && a.effect == b.effect
+            && a.origin == b.origin && a.status == .active && a.remainingUses == nil && a.expiresAt == nil
+    }
+
     static func record(_ action: NativeActionClass, conversationID: String, now: Date = Date()) -> NativeRuleRecord {
         NativeRuleRecord(scope: .conversation(conversationID), action: action, toolID: nil, target: nil, effect: .allow,
                          statement: RuleOfferCopy.statement(action), origin: .confirmCard, originConversationID: conversationID,

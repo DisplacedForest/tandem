@@ -15,29 +15,43 @@ extension ChatStore {
     }
 
     nonisolated static func offerWhy(for activity: NativeToolActivity, definitions: [NativeToolDefinition], rules: NativeRuleSource,
-                                     conversationID: String, typed: NativeTypedWords) -> NativeRuleWhy? {
-        guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }), definition.governed,
+                                     records: NativeRuleRecordStore?, grants: [FolderGrant], conversationID: String,
+                                     typed: NativeTypedWords) -> NativeRuleWhy? {
+        guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }),
+              definition.governed, !definition.alwaysAsks,
               let data = activity.request.data(using: .utf8), let arguments = try? NativeJSONValue.piRead(data).piObject,
               definition.proposesFor?(arguments) != true,
               let action = definition.actionClass(for: arguments) else { return nil }
-        let resolver = rules.resolver(for: conversationID, requestText: typed.said, typed: typed)
-        if let ruleWhy = definition.ruleWhy { return ruleWhy(arguments, resolver) }
-        var command: String?
-        if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
-        let scoped = resolver.tool(definition.id, subjects: definition.ruleSubjects?(arguments) ?? [])
-        return scoped.judge(action, command: action == .commands ? command : nil, honoringLimitedUse: scoped.durable).why
+        if definition.id == NativeCommandTools.toolID {
+            guard case .string(let command)? = arguments["command"] else { return nil }
+            let closures = commandLive(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed)
+            return NativeCommandTools.assess(command: command, directory: arguments.folderString("directory"), grants: grants, fallback: .handOff,
+                                             live: closures.live, liveTargets: closures.liveTargets).why
+        }
+        return toolDecision(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed, toolID: definition.id,
+                            action: action, subjects: definition.ruleSubjects?(arguments) ?? []).why
     }
 
     func noteRuleOfferWhy(_ activity: NativeToolActivity, turn: NativeConversationTurn, definitions: [NativeToolDefinition], typed: NativeTypedWords) {
         let key = Self.ruleOfferKey(turn: turn, request: activity.id)
-        ruleOfferSession.whys[key] = Self.offerWhy(for: activity, definitions: definitions, rules: nativeRuleSource,
-                                                    conversationID: turn.conversationID, typed: typed)
+        ruleOfferSession.whys[key] = Self.offerWhy(for: activity, definitions: definitions, rules: nativeRuleSource, records: nativeRuleRecordStore,
+                                                    grants: grants(for: turn.conversationID), conversationID: turn.conversationID, typed: typed)
+    }
+
+    nonisolated static func ruleOfferCard(_ subject: NativeCardSubject?) -> Bool {
+        guard let subject, subject.governed, !subject.alwaysAsks else { return false }
+        switch NativeCardChoices.coverage(subject) {
+        case .none: return false
+        case .commandsOnly: return subject.action != .commands
+        case .wholeTool: return NativeCardChoices.remembers(subject)
+        case .commandPrefix, .folders, .sendTargets: return true
+        }
     }
 
     func recordRuleOfferDecision(_ decision: NativeCardChoiceKind, request: NativeToolConfirmationRequest?, turn: NativeConversationTurn, chosen: Bool) {
         guard let request else { return }
         let why = ruleOfferSession.whys.removeValue(forKey: Self.ruleOfferKey(turn: turn, request: request.id))
-        guard chosen, let why, let store = ruleOfferStore,
+        guard chosen, Self.ruleOfferCard(request.subject), let why, let store = ruleOfferStore,
               (try? store.record(RuleOffer.event(decision, why: why), conversationID: turn.conversationID, action: why.action)) == true else { return }
         var candidates = ruleOfferSession.candidates[turn.id] ?? []
         if !candidates.contains(why.action) { candidates.append(why.action) }
@@ -83,29 +97,36 @@ extension ChatStore {
               case .ruleOffer(var offer)? = message.displayBlocks.first(where: { $0.id == blockID }),
               offer.state == .waiting, let action = offer.action else { return }
         let conversationID = conversation.id
-        let store = ruleOfferStore
-        func close(_ state: NativeRuleOffer.State) {
+        guard let store = ruleOfferStore else { return }
+        func show(_ state: NativeRuleOffer.State, failed: Bool = false) {
             offer.state = state
-            offer.failed = false
-            try? store?.record(.answered, conversationID: conversationID, action: action)
-            if answer == .neverOffer { try? store?.turnOff(action) }
+            offer.failed = failed
             updateRuleOffer(offer, messageID: messageID)
         }
+        func settle(_ state: NativeRuleOffer.State) {
+            do {
+                try store.record(.answered, conversationID: conversationID, action: action)
+                if answer == .neverOffer { try store.turnOff(action) }
+                show(state)
+            } catch {
+                show(.waiting, failed: true)
+            }
+        }
+        guard (try? store.state(conversationID: conversationID, action: action).answered) == false else { show(.closed); return }
         switch answer {
         case .decline, .neverOffer:
-            close(.closed)
-        case .allow, .allowEverywhere:
-            let retrying = offer.failed && answer == .allowEverywhere && nativeRules.choice(for: action) == .act
-            guard retrying || ruleOfferStillAsks(action, conversationID: conversationID) else { close(.closed); return }
-            let saved = answer == .allow
-                ? addRuleRecord(RuleOffer.record(action, conversationID: conversationID)) != nil
-                : everywhere(action)
-            guard saved else {
-                offer.failed = true
-                updateRuleOffer(offer, messageID: messageID)
-                return
-            }
-            close(answer == .allow ? .allowedHere : .allowedEverywhere)
+            settle(.closed)
+        case .allow:
+            let wanted = RuleOffer.record(action, conversationID: conversationID)
+            let held = ruleRecords.contains { RuleOffer.same($0, wanted) }
+            guard held || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
+            guard held || addRuleRecord(wanted) != nil else { show(.waiting, failed: true); return }
+            settle(.allowedHere)
+        case .allowEverywhere:
+            let applied = nativeRules.choice(for: action) == .act
+            guard offer.failed && applied || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
+            guard everywhere(action) else { show(.waiting, failed: true); return }
+            settle(.allowedEverywhere)
         }
     }
 
@@ -119,9 +140,5 @@ extension ChatStore {
         } else if let index = conversations[ci].messages[mi].displayBlocks.firstIndex(where: { $0.id == block.id }) {
             conversations[ci].messages[mi].displayBlocks[index] = block
         }
-    }
-
-    func removeRuleOffers(conversationID: String) {
-        try? ruleOfferStore?.remove(conversationID: conversationID)
     }
 }

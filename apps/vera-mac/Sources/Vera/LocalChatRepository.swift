@@ -554,6 +554,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try database.write { db in
             try Self.detachTasks(db, conversationID: id)
             try db.execute(sql: "DELETE FROM conversations WHERE id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM native_rule_offers WHERE conversation_id = ? AND conversation_id != ''", arguments: [id])
         }
     }
 

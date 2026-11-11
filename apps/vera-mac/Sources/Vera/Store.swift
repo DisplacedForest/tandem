@@ -1788,7 +1788,6 @@ final class ChatStore: ObservableObject {
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         try repository?.deleteConversation(id)
         removeRules(for: .conversation(id))
-        removeRuleOffers(conversationID: id)
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }
         }

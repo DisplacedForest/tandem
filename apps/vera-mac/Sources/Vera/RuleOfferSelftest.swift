@@ -18,7 +18,9 @@ final class RuleOfferTransport: NativeChatTransport, @unchecked Sendable {
                 return NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")
             }
             return NativeChatStreamSnapshot(content: "", toolCalls: [
-                NativeChatToolCall(id: "offer-call-\(calls)", name: NativeCommandTools.runName, arguments: "{\"command\":\"printf hello\"}"),
+                NativeChatToolCall(id: "offer-call-\(calls)", name: NativeCommandTools.runName,
+                                   arguments: messages.last?.content.contains("twice") == true
+                                       ? "{\"command\":\"printf hello && printf again\"}" : "{\"command\":\"printf hello\"}"),
             ], finishReason: "tool_calls")
         }
         return AsyncThrowingStream { continuation in
@@ -173,6 +175,23 @@ extension SelfTest {
         }
         try require(tolerant.action == nil && tolerant.state == .closed && RuleOfferCard.line(tolerant) == nil,
                     "An offer block with unknown values decodes closed and shows nothing")
+        let folderTarget = NativeRuleTarget.make(.folder, "/tmp/offer/notes.md")
+        let recipient = NativeRuleTarget.make(.recipient, "workshop@example.com")
+        func card(_ action: NativeActionClass, tool: String = "offer-tool", targets: [NativeRuleTarget?] = [], command: String? = nil,
+                  governed: Bool = true, fixed: Bool = false, alwaysAsks: Bool = false) -> Bool {
+            ChatStore.ruleOfferCard(NativeCardSubject(action: action, toolID: tool, toolTitle: "Tool", targets: targets.compactMap { $0 }, command: command,
+                                                      governed: governed, fixed: fixed, alwaysAsks: alwaysAsks))
+        }
+        try require(!ChatStore.ruleOfferCard(nil) && !card(.otherChanges, alwaysAsks: true) && !card(.otherChanges, governed: false)
+                    && card(.otherChanges), "A card from a tool that always asks never counts")
+        try require(!card(.networkSends) && card(.networkSends, fixed: true) && card(.networkSends, targets: [recipient]),
+                    "A send with no declared recipient never counts")
+        try require(card(.commands, tool: NativeCommandTools.toolID, command: "printf hello")
+                    && !card(.commands, tool: NativeCommandTools.toolID, command: "printf hello && printf again")
+                    && card(.riskyCommands, tool: NativeCommandTools.toolID, command: "rm -rf build"),
+                    "A command that isn't plain never counts, and a risky one does")
+        try require(card(.fileEdits, tool: NativeFolderTools.toolID, targets: [folderTarget]) && !card(.fileEdits, tool: NativeFolderTools.toolID),
+                    "A file edit counts when its folder is known")
         print("  rule offer copy OK (words, banned words, rule rows, answers, blocks)")
     }
 
@@ -336,6 +355,47 @@ extension SelfTest {
         for _ in 0..<3 { try require(!(try await turn(store)), "Commands run without asking once allowed everywhere") }
         try require(offers(store, staleNext).isEmpty, "Nothing is offered once the setting no longer asks")
         store.updateNativeRules(.defaults)
+
+        let compound = try chat(store)
+        for _ in 0..<3 { try require(try await turn(store, "Run printf twice in the folder"), "A command that isn't plain shows a card") }
+        try require(offers(store, compound).isEmpty, "Approving commands that aren't plain never leads to an offer")
+
+        let torn = try chat(store)
+        let (tornMessage, tornOffer) = try await reachOffer(store, torn)
+        let tornCount = store.ruleRecords.count
+        try exec("CREATE TRIGGER offer_block BEFORE UPDATE OF display_blocks_json ON messages BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
+        store.answerRuleOffer(.allow, messageID: tornMessage, blockID: tornOffer.blockID, everywhere: { _ in false })
+        try exec("DROP TRIGGER offer_block")
+        try require(store.ruleRecords.count == tornCount + 1 && (try offerStore.state(conversationID: torn, action: .commands)).answered,
+                    "Allow saves the rule and the answer even when the card can't be rewritten")
+        store.updateRuleOffer(tornOffer, messageID: tornMessage)
+        try require(offers(store, torn).first?.1.state == .waiting, "The fixture puts the card back to waiting as a relaunch would")
+        store.answerRuleOffer(.allow, messageID: tornMessage, blockID: tornOffer.blockID, everywhere: { _ in false })
+        try require(store.ruleRecords.count == tornCount + 1 && offers(store, torn).first?.1.state == .closed,
+                    "A card left waiting after it was answered closes and saves nothing more")
+
+        let half = try chat(store)
+        let (halfMessage, halfOffer) = try await reachOffer(store, half)
+        let halfCount = store.ruleRecords.count
+        try exec("CREATE TRIGGER offer_block BEFORE UPDATE ON native_rule_offers BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
+        store.answerRuleOffer(.allow, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, half).first?.1.state == .waiting && offers(store, half).first?.1.failed == true
+                    && store.ruleRecords.count == halfCount + 1, "A failed answer write keeps the card and says so")
+        store.answerRuleOffer(.decline, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, half).first?.1.state == .waiting, "A failed decline write keeps the card")
+        try exec("DROP TRIGGER offer_block")
+        store.answerRuleOffer(.allow, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, half).first?.1.state == .allowedHere && store.ruleRecords.count == halfCount + 1,
+                    "Trying again after a failed answer write doesn't save the rule twice")
+
+        try exec("CREATE TRIGGER offer_block BEFORE DELETE ON native_rule_offers BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
+        store.deleteConversation(half, confirmed: true)
+        try exec("DROP TRIGGER offer_block")
+        func chats(_ id: String) throws -> Int {
+            try offerStore.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations WHERE id = ?", arguments: [id]) ?? 0 }
+        }
+        let kept = try chats(half)
+        try require((kept == 0) == (try offerStore.rows(conversationID: half) == 0), "A chat is never deleted while its offer rows stay behind")
 
         store.deleteConversation(here, confirmed: true)
         try require(try offerStore.rows(conversationID: here) == 0 && offerStore.rows(conversationID: elsewhere) == 1,
