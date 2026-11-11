@@ -82,7 +82,7 @@ struct NativeTaskCardView: View {
                               onItem: { answer($0) })
             } else if let question = CardQuestion.make(choices: card.offeredChoices, stop: card.canCancel ? (stopTitle ?? card.stopTitle) : nil) {
                 if let decline = question.decline {
-                    CardAnswerRow(answers: question.answers, defaultApproval: false, allowApprove: canAnswer(question.allow), allowDecline: canAnswer(decline),
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even, allowApprove: canAnswer(question.allow), allowDecline: canAnswer(decline),
                                   onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                 } else {
                     Button(question.answers.allowTitle) { answer(question.allow) }

@@ -296,7 +296,7 @@ private struct ScheduleRunRow: View {
                                   onItem: { onChoose?($0) })
                 } else if let question {
                     if let decline = question.decline {
-                        CardAnswerRow(answers: question.answers, defaultApproval: false, allowApprove: onChoose != nil,
+                        CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even, allowApprove: onChoose != nil,
                                       allowDecline: decline == CardQuestion.stopID ? onStop != nil : onChoose != nil,
                                       onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                     } else {

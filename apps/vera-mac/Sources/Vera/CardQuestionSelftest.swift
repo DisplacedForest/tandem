@@ -14,11 +14,12 @@ extension SelfTest {
         try require(keepOnly?.answers.declineMenu.isEmpty == true && keepOnly?.controls == 2, "With nothing to stop the two answers have no menu")
         let check = CardQuestion.make(choices: ["it_happened", "it_did_not", "stop"], stop: stop)
         try require(check?.allow == "it_happened" && check?.decline == "it_did_not"
-                        && check?.answers.declineMenu == [CardMenuItem(id: "stop", title: "Stop here")] && check?.controls == 2,
+                        && check?.answers.declineMenu == [CardMenuItem(id: "stop", title: "Stop here")] && check?.controls == 2
+                        && check?.even == true && keep?.even == false,
                     "A check shows two answers and keeps its own way to stop in the menu, without a second one")
         let retry = CardQuestion.make(choices: ["retry"], stop: stop)
         try require(retry?.allow == "retry" && retry?.decline == CardQuestion.stopID && retry?.answers.allowTitle == "Retry"
-                        && retry?.answers.declineTitle == stop && retry?.answers.declineMenu.isEmpty == true && retry?.controls == 2,
+                        && retry?.answers.declineTitle == stop && retry?.answers.declineMenu.isEmpty == true && retry?.controls == 2 && retry?.even == false,
                     "Retry shows Retry and the stop answer, and nothing else")
         let retryOnly = CardQuestion.make(choices: ["retry"], stop: nil)
         try require(retryOnly?.decline == nil && retryOnly?.controls == 1, "Retry with nothing to stop is one answer")
