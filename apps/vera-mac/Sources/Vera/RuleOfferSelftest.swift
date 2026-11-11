@@ -293,6 +293,11 @@ extension SelfTest {
         store.answerRuleOffer(.allow, messageID: hereMessage, blockID: hereOffer.blockID, everywhere: { _ in false })
         try require(store.ruleRecords.count == records + 1, "An answered offer can't be answered twice")
 
+        store.tightenConversationRule(.handOff, for: .commands, conversationID: here)
+        try require(commands(store, here) == .handOff, "After Allow, leaving commands to you in this chat hands them back")
+        store.clearConversationRule(for: .commands, conversationID: here)
+        try require(commands(store, here) == .act(.grant), "Back on the default, the saved rule decides again")
+
         let elsewhere = try chat(store)
         try require(commands(store, elsewhere) == .ask, "Allow in one chat leaves other chats asking")
         let (declineMessage, declineOffer) = try await reachOffer(store, elsewhere)
