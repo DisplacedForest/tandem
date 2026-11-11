@@ -95,6 +95,13 @@ enum NativeInstruction {
         return String(characters[..<open]) + String(characters[(open + 1)..<close]) + after
     }
 
+    static func marked(_ text: String) -> String? {
+        let characters = Array(text)
+        let marks = characters.indices.filter { characters[$0] == "`" }
+        guard marks.count == 2, marks[1] - marks[0] > 1 else { return nil }
+        return String(characters[(marks[0] + 1)..<marks[1]])
+    }
+
     static func command(_ tail: String) -> String? {
         let characters = Array(tail)
         let marks = characters.indices.filter { characters[$0] == "`" }
@@ -124,6 +131,16 @@ enum NativeInstruction {
             return typed == canonical(commands[0].value) && NativeRequestPreapproval.settled("", original: NativeRequestPreapproval.normalized(folded))
         }
         guard let plain = unmarked(folded) else { return false }
+        if let inner = marked(folded) {
+            let whole = targets.contains { target in
+                switch target.kind {
+                case .folder: return inner == target.value || inner == URL(fileURLWithPath: target.value).lastPathComponent
+                case .recipient, .service: return inner.lowercased() == target.value
+                case .commandPrefix: return false
+                }
+            } || names.contains { inner.lowercased() == $0.lowercased() }
+            guard whole else { return false }
+        }
         let lowered = NativeRequestPreapproval.normalized(plain)
         let all = sentences(plain)
         for (position, sentence) in all.enumerated() {
