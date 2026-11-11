@@ -57,6 +57,44 @@ struct CardAnswers: Equatable {
     }
 }
 
+struct CardQuestion: Equatable {
+    static let stopID = "card.stop_work"
+
+    var answers: CardAnswers
+    var allow: String
+    var decline: String?
+    var even = false
+
+    static let evenAnswers: Set<String> = ["it_happened", "it_did_not"]
+
+    enum Route: Equatable {
+        case stop
+        case answer(String)
+    }
+
+    static func route(_ id: String) -> Route { id == stopID ? .stop : .answer(id) }
+
+    static func make(choices: [String], stop: String?, answerable: (String) -> Bool = { _ in true }) -> CardQuestion? {
+        let offered = choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil && answerable($0) }
+        guard let first = offered.first, let title = NativeTaskCardPresentation.choiceTitle(first) else { return nil }
+        var answers = CardAnswers(allowTitle: title, declineTitle: "")
+        let rest = Array(offered.dropFirst())
+        guard let second = rest.first, let secondTitle = NativeTaskCardPresentation.choiceTitle(second) else {
+            guard let stop else { return CardQuestion(answers: answers, allow: first, decline: nil) }
+            answers.declineTitle = stop
+            return CardQuestion(answers: answers, allow: first, decline: stopID)
+        }
+        answers.declineTitle = secondTitle
+        answers.declineMenu = rest.dropFirst().compactMap { choice in
+            NativeTaskCardPresentation.choiceTitle(choice).map { CardMenuItem(id: choice, title: $0) }
+        }
+        if let stop, !rest.contains("stop") { answers.declineMenu.append(CardMenuItem(id: stopID, title: stop)) }
+        return CardQuestion(answers: answers, allow: first, decline: second, even: evenAnswers.isSuperset(of: [first, second]))
+    }
+
+    var controls: Int { decline == nil ? 1 : 2 }
+}
+
 struct CardSegmentStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.contentShape(Rectangle()).opacity(configuration.isPressed ? 0.7 : 1)
@@ -125,6 +163,7 @@ struct CardSplitButton: View {
 struct CardAnswerRow: View {
     let answers: CardAnswers
     var defaultApproval = true
+    var even = false
     var allowApprove = true
     var allowDecline = true
     let onAllow: () -> Void
@@ -136,7 +175,7 @@ struct CardAnswerRow: View {
             Spacer(minLength: 0)
             CardSplitButton(title: answers.declineTitle, kind: .secondary, enabled: allowDecline, items: answers.declineMenu,
                             onPrimary: onDecline, onItem: onItem)
-            CardSplitButton(title: answers.allowTitle, kind: .primary, isDefault: defaultApproval, enabled: allowApprove,
+            CardSplitButton(title: answers.allowTitle, kind: even ? .secondary : .primary, isDefault: defaultApproval, enabled: allowApprove,
                             items: answers.allowMenu, onPrimary: onAllow, onItem: onItem)
         }
     }

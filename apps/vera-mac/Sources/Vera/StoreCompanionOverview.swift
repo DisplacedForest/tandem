@@ -22,7 +22,7 @@ extension ChatStore {
         }
         let runs = scheduleRuns.values.flatMap { $0 }
         let activity = CompanionOverviewModel.activity(tasks: tasks, runs: runs, schedules: schedules)
-        let results = artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
+        let results = threadID == nil ? [] : artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
         let options = dotServiceOptions()
         return CompanionOverviewModel.build(
             name: companion.leading, profile: dotProfile,

@@ -147,7 +147,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
             case .stopping: return document ? "Stopping writing" : "Stopping research"
             case .stopped: return document ? "Writing stopped" : "Research stopped"
             case .completed: return document ? "Document ready" : "Research complete"
-            case .needsInput: return "Needs your input"
+            case .needsInput: return "Needs your answer"
             case .failed: return "Couldn't finish"
             }
         }
