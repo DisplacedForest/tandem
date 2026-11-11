@@ -90,7 +90,12 @@ struct NativeTypedWords: Hashable, Sendable {
             if !leading && !trailing { found.append(range) }
             start = haystack.index(after: range.lowerBound)
         }
-        return found
+        guard !exact else { return found }
+        return found.map { range in
+            let lower = text.index(text.startIndex, offsetBy: haystack.distance(from: haystack.startIndex, to: range.lowerBound))
+            let upper = text.index(lower, offsetBy: haystack.distance(from: range.lowerBound, to: range.upperBound))
+            return lower..<upper
+        }
     }
 
     static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {

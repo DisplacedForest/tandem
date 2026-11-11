@@ -143,7 +143,7 @@ enum NativeInstruction {
             guard whole else { return false }
         }
         let message = plain.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.contains(where: \.isNewline), sentences(message).count == 1, rest(message, after: wanted) != nil else { return false }
+        guard !message.contains(where: \.isNewline), sentences(message).count == 1, let tail = rest(message, after: wanted) else { return false }
         var cuts: [Range<String.Index>] = []
         for target in targets {
             let found = spans(target, in: message).filter { span in !cuts.contains { $0.overlaps(span) } }
@@ -161,7 +161,22 @@ enum NativeInstruction {
             let upper = message.distance(from: message.startIndex, to: cut.upperBound)
             for index in lower..<upper { remainder[index] = " " }
         }
+        guard alone(Array(remainder.suffix(tail.count))) else { return false }
         return NativeRequestPreapproval.settled(String(remainder).lowercased(), original: NativeRequestPreapproval.normalized(message))
+    }
+
+    static func alone(_ remainder: [Character]) -> Bool {
+        var body = remainder
+        while let last = body.last, last.isWhitespace || ".!".contains(last) { body.removeLast() }
+        if body.contains(where: { ",:;@/\\~".contains($0) }) { return false }
+        let text = String(body)
+        if text.contains("--") || text.contains(" - ") || text.contains("\u{2013}") || text.contains("\u{2014}") { return false }
+        for index in body.indices where body[index] == "." {
+            let before = index > 0 && (body[index - 1].isLetter || body[index - 1].isNumber)
+            let after = index + 1 < body.count && (body[index + 1].isLetter || body[index + 1].isNumber)
+            if before && after { return false }
+        }
+        return true
     }
 
     static func signature(action: NativeActionClass, toolID: String?, targets: [NativeRuleTarget], names: [String]) -> String {

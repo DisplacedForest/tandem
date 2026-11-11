@@ -167,8 +167,10 @@ extension SelfTest {
             try require(resolver(typed: NativeTypedWords(typed: typed), targets: [service]).decision(for: .networkSends) == .ask,
                         "A longer address is not the shorter one it contains: \(typed)")
         }
-        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test, thanks."), targets: [service])
+        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test."), targets: [service])
                         .decision(for: .networkSends) == .act(.instruction)
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test, thanks."), targets: [service])
+                            .decision(for: .networkSends) == .ask
                         && resolver(typed: NativeTypedWords(typed: "Send the notes to \(address)!"), targets: [ana]).decision(for: .networkSends) == .act(.instruction),
                     "An address followed by one closing punctuation mark is that address")
         let reports = try target(.service, "https://api.greenhouse.test/reports/")
@@ -182,6 +184,20 @@ extension SelfTest {
             try require(resolver(typed: NativeTypedWords(typed: typed), targets: [reports]).decision(for: .networkSends) == .ask,
                         "An instruction is one sentence and the whole message: \(typed)")
         }
+        for typed in ["Send the notes to \(address), the backup contact is bo@greenhouse.test.", "Send the notes to \(address): the backup contact is bo@greenhouse.test",
+                      "Send the notes to \(address) -- the backup contact is bo@greenhouse.test", "Send the notes to \(address) and bo@greenhouse.test",
+                      "Send the notes to \(address) not bo@greenhouse.test"] {
+            try require(resolver(typed: NativeTypedWords(typed: typed), targets: [bo]).decision(for: .networkSends) == .ask,
+                        "A message that names anything besides what the call is aimed at asks: \(typed)")
+        }
+        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to \(address) and bo@greenhouse.test"), targets: [])
+                        .tool("fixture-notes", subjects: [[ana], [bo]]).decision(for: .networkSends) == .act(.instruction)
+                        && resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save notes.md like draft.md"), claim: saveClaim,
+                                    targets: [try target(.folder, "/shared/draft.md")]).decision(for: .fileEdits) == .ask
+                        && resolver(typed: NativeTypedWords(typed: "Please, send the notes to \(address)."), targets: [ana]).decision(for: .networkSends) == .act(.instruction),
+                    "Everything named is aimed at, and a polite opening still counts")
+        _ = resolver(typed: NativeTypedWords(typed: "Send \u{0130} to \(address)"), targets: [ana]).decision(for: .networkSends)
+        _ = NativeTypedWords(typed: "Mail \u{0130}\u{212A} \(address)").names(ana)
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
@@ -241,14 +257,16 @@ extension SelfTest {
 
         let both = NativeTypedWords(typed: "Send the notes to \(address) and bo@greenhouse.test")
         let shared = NativeInstructionUses()
-        let first = resolver(typed: both, targets: [ana], uses: shared)
+        let first = resolver(typed: typedTold, targets: [ana], uses: shared)
         guard let signature = first.instructed(first.query(for: .networkSends), honoringLimitedUse: false) else {
             throw NativeTaskFixture.Failure.assertion("The instruction gives a signature")
         }
         try require(shared.take(signature) && !shared.take(signature), "A signature is spent once")
         try require(first.decision(for: .networkSends) == .ask, "The same send asks after it ran once")
-        try require(resolver(typed: both, targets: [bo], uses: shared).decision(for: .networkSends) == .act(.instruction),
-                    "Another address typed in the same message still runs once")
+        try require(resolver(typed: both, targets: [bo], uses: shared).decision(for: .networkSends) == .ask
+                        && resolver(typed: both, targets: [], uses: shared).tool("fixture-notes", subjects: [[ana], [bo]])
+                            .decision(for: .networkSends) == .act(.instruction),
+                    "A message naming two addresses covers one send to both, not a send to one of them")
         try require(resolver(typed: NativeTypedWords(typed: "Thanks, that's all."), targets: [ana]).decision(for: .networkSends) == .ask,
                     "The next message without the instruction asks")
 
