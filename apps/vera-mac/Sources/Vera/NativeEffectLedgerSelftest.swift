@@ -337,7 +337,7 @@ extension SelfTest {
             + NativeFolderTools.definitions(grants: { sample }, ledger: NativeFileChangeLedger())
             + commands
             + [NativeTaskTools.definition(service: service, origin: origin, profile: nil, didSave: { _ in })]
-            + [NativeScheduleTools.definition(companionThread: { CompanionSubject("Ada").thread }, save: { _ in throw NativeToolError.unavailable })]
+            + [NativeScheduleTools.definition(save: { _ in throw NativeToolError.unavailable })]
             + NativeCapabilityTools.definitions(NativeCapabilityTools.bundled, base: { nil })
         for definition in definitions {
             try require(definition.isDeclared, "\(definition.name) is either a read or a write with an action")
@@ -421,13 +421,13 @@ extension SelfTest {
         try require(!governedTool.demandsConfirmation && !undeclared.demandsConfirmation, "Only an ungoverned tool with a fixed required flag demands confirmation")
         try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID) && effects["apple_reminders_create"] != nil, "Background work is never offered the reminder tools")
         let heldWhy = NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments)
-        let heldText = NativeCompanionWorker.handOffText(name: "Ada", title: "Pay the invoice", why: heldWhy)
+        let heldText = NativeCompanionWorker.handOffText(title: "Pay the invoice", why: heldWhy)
         try require(heldText.contains(NativeFloorItem.payments.title) && heldText.contains("Advanced") && heldText.hasSuffix(RefusalCopy.plain(heldWhy)),
                     "A held stop names its item and says where to turn it on: \(heldText)")
         let sendWhy = NativeRuleWhy(kind: .unsaved, action: .networkSends, handsOff: true, choice: .handOff, source: .settings)
-        try require(NativeCompanionWorker.handOffText(name: "Ada", title: "Send a note", why: sendWhy)
-                        == "Ada stopped before this step and handed it to you: Send a note. " + RefusalCopy.plain(sendWhy)
-                    && !NativeCompanionWorker.handOffText(name: "Ada", title: "Send a note", why: sendWhy).contains("your rules hand it to you"),
+        try require(NativeCompanionWorker.handOffText(title: "Send a note", why: sendWhy)
+                        == "Stopped before this step: Send a note. " + RefusalCopy.plain(sendWhy)
+                    && !NativeCompanionWorker.handOffText(title: "Send a note", why: sendWhy).contains("your rules hand it to you"),
                     "An ordinary hand off names the step and then gives the same reason chat gives")
     }
 

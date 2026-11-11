@@ -17,7 +17,7 @@ enum RefusalCopy {
         }
     }
 
-    static func quoted(_ text: String) -> String { "\u{201C}" + text + "\u{201D}" }
+    static func quoted(_ text: String) -> String { "\"" + text + "\"" }
 
     static func clean(_ text: String) -> String {
         text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)

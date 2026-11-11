@@ -314,4 +314,8 @@ extension NativeScheduleRun {
     var noteIsSavedQuestion: Bool {
         outcome == .waiting || (checkInKey != nil && [.completed, .stopped, .failed].contains(outcome))
     }
+
+    func noteIsAppWritten(companionWork: Bool) -> Bool {
+        outcome == .skipped || outcome == .missed || (companionWork && noteIsSavedQuestion)
+    }
 }

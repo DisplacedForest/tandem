@@ -391,6 +391,7 @@ enum SelfTest {
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
         do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
         do { try await runCardSentenceLiteral() } catch { print("SELFTEST ERROR: card sentence literal \(error)"); exit(1) }
+        do { try await runCompanionSavedText() } catch { print("SELFTEST ERROR: companion saved text \(error)"); exit(1) }
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }

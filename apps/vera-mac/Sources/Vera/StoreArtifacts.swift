@@ -59,9 +59,16 @@ extension ChatStore {
         return version
     }
 
+    func artifactOriginTitle(conversationID: String?) -> String? {
+        if isVeraThread(conversationID) { return CompanionSavedText.marker }
+        return conversations.first(where: { $0.id == conversationID }).map { (conversation: Conversation) -> String in
+            CompanionSavedText.sanitized(conversation.title)
+        }
+    }
+
     func syncArtifactOrigin(conversationID: String, title: String) {
-        guard let artifactRepository else { return }
-        try? artifactRepository.updateArtifactOrigin(conversationID: conversationID, title: title)
+        guard let artifactRepository, !isVeraThread(conversationID) else { return }
+        try? artifactRepository.updateArtifactOrigin(conversationID: conversationID, title: CompanionSavedText.sanitized(title))
         reloadArtifacts()
     }
 
@@ -101,7 +108,7 @@ extension ChatStore {
     func recordCanvasArtifacts(_ artifacts: [Artifact], conversationID: String, messageID: String, sources: [PulseSource],
                                revising target: String? = nil) {
         guard let artifactRepository, !artifacts.isEmpty else { return }
-        let origin = conversations.first(where: { $0.id == conversationID })?.title
+        let origin = artifactOriginTitle(conversationID: conversationID)
         let revisingDocument = target.flatMap { try? artifactRepository.artifact($0) }?.kind == .document
         for (index, artifact) in artifacts.enumerated() {
             recordArtifact(Self.canvasArtifactDraft(
@@ -128,7 +135,7 @@ extension ChatStore {
         let stem = (image.name as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         recordArtifact(ArtifactDraft(
             kind: .image, title: stem.isEmpty ? "Image" : stem, conversationID: conversationID,
-            originTitle: conversations.first(where: { $0.id == conversationID })?.title, messageID: messageID,
+            originTitle: artifactOriginTitle(conversationID: conversationID), messageID: messageID,
             sourceKey: "image:\(fileName)", data: data, mime: image.mime ?? "image/png", fileExtension: ext,
             details: ArtifactDetails(prompt: text("prompt"), imageSize: text("size"))), revising: target)
     }
@@ -141,7 +148,7 @@ extension ChatStore {
         let ext = (change.path as NSString).pathExtension.lowercased()
         recordArtifact(ArtifactDraft(
             kind: .fileChange, title: change.title, conversationID: conversationID,
-            originTitle: conversations.first(where: { $0.id == conversationID })?.title, messageID: messageID,
+            originTitle: artifactOriginTitle(conversationID: conversationID), messageID: messageID,
             sourceKey: "file:\(change.id)", data: Data((content ?? "").utf8), mime: "text/plain",
             fileExtension: ext.isEmpty ? "txt" : ext,
             details: ArtifactDetails(
@@ -151,7 +158,7 @@ extension ChatStore {
 
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
         guard artifactRepository != nil else { return }
-        let origin = conversations.first(where: { $0.id == conversationID })?.title
+        let origin = artifactOriginTitle(conversationID: conversationID)
         let target = artifactRevisionTarget(messageID: messageID)
         for block in blocks {
             guard case .artifact(let artifact) = block,

@@ -191,7 +191,7 @@ extension ChatStore {
             deleteSchedule(schedule.id)
         }
         if let threadID, let memoryRepository = repository as? any NativeMemoryRepository {
-            let note = "Removed when \(companion.inline) started over"
+            let note = "Removed when the companion started over"
             for memory in (try? memoryRepository.allMemories()) ?? []
             where memory.status != .deleted && memory.sourceConversationID == threadID {
                 do { try memoryRepository.deleteMemory(memory.id, note: note) } catch {

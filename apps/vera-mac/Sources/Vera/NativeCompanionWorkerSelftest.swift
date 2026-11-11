@@ -872,7 +872,7 @@ extension SelfTest {
         let shown = try await moving.runUntilSettled()
         try require(shown.state == .needsDecision && (try moving.decision(shown)["covers"] as? String) == "Edits in b"
                     && (try moving.decision(shown)["never"] as? String) == "Never edit in b"
-                    && (try moving.decision(shown)["prompt"] as? String) == "{name} wants to create a folder in b."
+                    && (try moving.decision(shown)["prompt"] as? String) == CompanionSavedText.marker + " wants to create a folder in b."
                     && !((try moving.decision(shown)["details"] as? String) ?? "").contains("Edits in"),
                     "The card says the saved choice covers the one folder")
         try FileManager.default.removeItem(at: folder.appendingPathComponent("a/b"))
@@ -965,7 +965,7 @@ extension SelfTest {
         try require(handed.shape == nil && harness.model.classifierCalls.isEmpty && (try harness.result(done))["shape"] == nil,
                     "A hand-off result carries no shape and asks no classification")
         try require(handed.why?.kind == .unsaved && handed.why?.action == .networkSends
-                        && handed.why.map { handed.report.contains(RefusalCopy.plain($0)) && handed.report.hasPrefix("Ada stopped before this step") } == true,
+                        && handed.why.map { handed.report.contains(RefusalCopy.plain($0)) && handed.report.hasPrefix("Stopped before this step") } == true,
                     "A hand-off result keeps its reason and its report gives the same sentence: \(handed.report)")
     }
 

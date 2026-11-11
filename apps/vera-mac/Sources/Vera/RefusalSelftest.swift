@@ -131,7 +131,7 @@ extension SelfTest {
                     "Every reason has exactly one sample")
         for sample in samples {
             let sentence = RefusalCopy.plain(sample)
-            let unquoted = sentence.replacingOccurrences(of: "\u{201C}[^\u{201D}]*\u{201D}", with: "", options: .regularExpression)
+            let unquoted = sentence.replacingOccurrences(of: "\"[^\"]*\"", with: "", options: .regularExpression)
                 .replacingOccurrences(of: sample.subject ?? "\u{0}", with: "")
             try require(!sentence.isEmpty && sentence.hasSuffix(".") && !unquoted.dropLast().contains(". "),
                         "\(sample.kind.rawValue) reads as one sentence: \(sentence)")
@@ -228,7 +228,7 @@ extension SelfTest {
         func stored(_ record: NativeTaskRecord) throws -> NativeResearchTaskResult {
             try JSONDecoder().decode(NativeResearchTaskResult.self, from: record.result ?? Data())
         }
-        let lead = NativeCompanionWorker.handOffLead(name: "Ada", title: "Water a bed")
+        let lead = NativeCompanionWorker.handOffLead(title: "Water a bed")
 
         let settings = try NativeCompanionHarness(rules: [.networkSends: .handOff], script: water)
         let settingsID = try settings.create()

@@ -150,7 +150,7 @@ extension SelfTest {
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,
                                instruction: draft.instruction, cadence: draft.cadence, timeZone: zone)
         }
-        let definition = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { true },
+        let definition = NativeScheduleTools.definition(searchAvailable: { true },
                                                         now: { now }, timeZone: { zone }, save: save)
         try require(definition.confirmation == .required, "Scheduling always asks first")
         try require(definition.name == "schedule_task", "The tool is named schedule_task")
@@ -166,9 +166,9 @@ extension SelfTest {
         guard case .object(let threadResult) = toThread, case .string(let threadMessage)? = threadResult["message"] else {
             throw NativeTaskFixture.Failure.assertion("The tool returns a message for the assistant thread")
         }
-        try require(threadMessage.contains("Sol's thread"), "The result names the assistant thread")
+        try require(threadMessage.hasSuffix("results go to the companion's conversation.") && !threadMessage.contains("Sol") && !threadMessage.contains(CompanionSentence.placeholder) && !threadMessage.contains(CompanionSavedText.marker), "The result names the companion's conversation without a name")
 
-        let offline = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { false },
+        let offline = NativeScheduleTools.definition(searchAvailable: { false },
                                                      now: { now }, timeZone: { zone }, save: save)
         do {
             _ = try await offline.execute(weekdaysArguments)
@@ -180,7 +180,7 @@ extension SelfTest {
         guard case .object(let documentResult) = document else { throw NativeTaskFixture.Failure.assertion("A document schedule returns an object") }
         try require(documentResult["saved"] == .bool(true), "A document schedule saves without search")
 
-        let refusing = NativeScheduleTools.definition(companionThread: { CompanionSubject("Sol").thread }, searchAvailable: { true }, now: { now }, timeZone: { zone },
+        let refusing = NativeScheduleTools.definition(searchAvailable: { true }, now: { now }, timeZone: { zone },
                                                       save: { _ in throw NativeScheduleError.invalid("Pick a time that is still ahead.") })
         do {
             _ = try await refusing.execute(weekdaysArguments)

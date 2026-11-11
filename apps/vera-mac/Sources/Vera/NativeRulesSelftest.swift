@@ -281,12 +281,12 @@ extension SelfTest {
         let (deletionRun, deletionTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
         let deletionWhy = NativeRuleWhy(kind: .held, action: .permanentDeletion, handsOff: true, item: .permanentDeletion, trigger: NativeRuleWhy.Trigger(.program, "sudo"))
         try require(deletionRun?.activities.first?.state == .failed && deletionRun?.activities.first?.why == deletionWhy
-                    && deletionTransport.histories[1].last?.content.contains(RefusalCopy.forModel(deletionWhy)) == true
+                    && deletionTransport.histories[1].last?.content.replacingOccurrences(of: "\\\"", with: "\"").contains(RefusalCopy.forModel(deletionWhy)) == true
                     && refusedCard("c10")?.why == deletionWhy && ran() == 2,
                     "A permanent deletion is handed off with its reason even when commands act")
         let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in false })
         try require(sendRun?.activities.first?.state == .failed && sendRun?.activities.first?.confirmationRequired == true
-                    && sendTransport.histories[1].last?.content.contains("did not approve") == true && ran() == 2,
+                    && sendTransport.histories[1].last?.content.replacingOccurrences(of: "\\\"", with: "\"").contains("did not approve") == true && ran() == 2,
                     "A sending command follows the sending rule and asks first by default")
         let backgroundStart = Date()
         let lingering = try await NativeCommandRunner.run(command: "sleep 30 & echo $!; exit 0", directory: directory, timeout: .seconds(20))
@@ -303,11 +303,11 @@ extension SelfTest {
         let (handedOff, handOffTransport) = try await loop(decision: .handOff, rounds: [call("c4", "{\"command\":\"printf never\"}"), done], confirm: { _ in true })
         let handedWhy = handedOff?.activities.first?.why
         try require(handedOff?.activities.first?.state == .failed && handedWhy?.kind == .unsaved && handedWhy?.action == .commands && handedWhy?.handsOff == true
-                    && handOffTransport.histories[1].last?.content.contains(NativeActionClass.commands.title) == true
+                    && handOffTransport.histories[1].last?.content.replacingOccurrences(of: "\\\"", with: "\"").contains(NativeActionClass.commands.title) == true
                     && refusedCard("c4")?.why == handedWhy && ran() == 2, "Hand off refuses with the rule named")
 
         let (outsideRun, outsideTransport) = try await loop(decision: .act(.rule), rounds: [call("c5", "{\"command\":\"printf x\",\"directory\":\"\(outside.path)\"}"), done], confirm: { _ in true })
-        try require(outsideRun?.activities.first?.state == .failed && outsideTransport.histories[1].last?.content.replacingOccurrences(of: "\\/", with: "/").contains(outside.path) == true
+        try require(outsideRun?.activities.first?.state == .failed && outsideTransport.histories[1].last?.content.replacingOccurrences(of: "\\/", with: "/").replacingOccurrences(of: "\\\"", with: "\"").contains(outside.path) == true
                     && outsideRun?.activities.first?.why?.kind == .folder && refusedCard("c5")?.why?.kind == .folder && ran() == 2, "A directory outside every grant is refused with the path named")
         let (linkRun, _) = try await loop(decision: .act(.rule), rounds: [call("c6", "{\"command\":\"printf x\",\"directory\":\"\(root)/escape\"}"), done], confirm: { _ in true })
         try require(linkRun?.activities.first?.state == .failed && ran() == 2, "A symlinked directory is refused")

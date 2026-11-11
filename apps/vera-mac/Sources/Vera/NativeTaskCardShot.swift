@@ -134,7 +134,7 @@ struct NativeTaskCardShotSurface: View {
             result.title = "Renew the seed catalogue subscription"
             result.workerType = "companion"
             result.status = .completed
-            result.milestone = "Ada stopped before this step and handed it to you: Pay the renewal invoice."
+            result.milestone = "Stopped before this step: Pay the renewal invoice."
             result.canCancel = false
             result.why = NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments)
         case "task-card-offline":

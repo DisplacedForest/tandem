@@ -5,13 +5,14 @@ import SwiftUI
 enum NameStylingShot {
     static let views: Set<String> = ["name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
                                      "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused",
-                                     "name-thread-error"]
+                                     "name-thread-error", "name-saved-report", "name-saved-approval", "name-saved-scheduled",
+                                     "name-saved-library"]
 
     static func render(to path: String, view: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let name = CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)
-        let store = view == "name-artifacts-filter" ? ArtifactShotFixture.store(variant: "artifacts").store
+        let store = view == "name-artifacts-filter" || view == "name-saved-library" ? ArtifactShotFixture.store(variant: "artifacts").store
             : ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try? LocalChatRepository(inMemory: true))
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
                                  readConfiguration: { name.map { ["assistant_name": $0] } ?? [:] },
@@ -39,6 +40,31 @@ enum NameStylingShot {
             CompanionNameShot.apply(to: store)
             store.schedules = store.schedules.filter { $0.owner == .dot } + store.schedules.filter { $0.owner != .dot }
             root = AnyView(ScheduledView(renderSafe: true))
+        case "name-saved-report", "name-saved-approval":
+            size = NSSize(width: 560, height: view == "name-saved-report" ? 420 : 300)
+            CompanionNameShot.apply(to: store)
+            let cards = CompanionSavedTextFixture.cards().filter { (card: NativeTaskCardPresentation) -> Bool in
+                (card.status == .needsInput) == (view == "name-saved-approval")
+            }
+            root = AnyView(
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(cards, id: \.id) { (card: NativeTaskCardPresentation) in NativeTaskCardView(card: card, onDecide: { _ in }) }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            )
+        case "name-saved-scheduled":
+            size = NSSize(width: 1000, height: 560)
+            NativeScheduleShotFixture.populate(store)
+            CompanionNameShot.apply(to: store)
+            CompanionSavedTextFixture.scheduleRuns(store)
+            store.schedules = store.schedules.filter { $0.owner == .dot } + store.schedules.filter { $0.owner != .dot }
+            root = AnyView(ScheduledView(renderSafe: true))
+        case "name-saved-library":
+            size = NSSize(width: 1000, height: 600)
+            CompanionNameShot.apply(to: store)
+            let selection = CompanionSavedTextFixture.libraryItems(store)
+            root = AnyView(ArtifactsView(initialSelection: selection))
         case "name-artifacts-filter":
             size = NSSize(width: 1000, height: 600)
             root = AnyView(ArtifactsView(conversationFilter: store.veraThreadID))

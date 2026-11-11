@@ -173,7 +173,7 @@ extension SelfTest {
         try require(twoLines == .literal("First \(placeholder)") && nameParts(twoLines) == 0, "Only the first prompt line shows, verbatim")
 
         let savedCommand = "\(placeholder) wants to do this: Run a command: echo \(placeholder) {Name}."
-        let savedLine = CompanionSavedText.question(savedCommand, companionWork: true)
+        let savedLine = CompanionSavedText.line(savedCommand, appWritten: true)
         try require(savedLine.parts == [.name, .text(" wants to do this: Run a command: echo \(placeholder) {Name}.")],
                     "A saved question has one leading name part and a verbatim tail")
         try require(savedLine.plain(name: "Ada") == "Ada wants to do this: Run a command: echo \(placeholder) {Name}."
@@ -181,7 +181,7 @@ extension SelfTest {
                     "The second token in a saved question survives")
         for text in hostile {
             let tail = " wants to open \(text)."
-            let line = CompanionSavedText.question(placeholder + tail, companionWork: true)
+            let line = CompanionSavedText.line(placeholder + tail, appWritten: true)
             try require(line.parts == [.name, .text(tail)] && insideText(line, text), "A saved question keeps \(text) in its tail")
             for name in names {
                 try require(line.plain(name: name) == subject(name) + tail, "A saved question reads \(text) unchanged for \(name ?? "no name")")
@@ -191,17 +191,16 @@ extension SelfTest {
         let literalSaved = [
             finished,
             "The model said \(placeholder) could not find the file.",
-            "Error: \(joined) is not a folder.",
+            "Error: \(hostile.filter { (text: String) -> Bool in text != CompanionSavedText.marker }.joined(separator: " ")) is not a folder.",
             "\(placeholder) is paused.",
             "\(placeholder)wants to run this.",
             "\(placeholder) wants  to run this.",
             " \(placeholder) wants to run this.",
             "{Name} wants to run this.",
             "{ name } wants to run this.",
-            "\u{E000}companion\u{E001} wants to run this.",
         ]
         for text in literalSaved {
-            let line = CompanionSavedText.question(text, companionWork: true)
+            let line = CompanionSavedText.line(text, appWritten: true)
             try require(line == .literal(text) && nameParts(line) == 0 && line.parts == [.text(text)],
                         "Saved text that is not a question stays literal: \(text)")
             for name in names {
@@ -209,7 +208,7 @@ extension SelfTest {
             }
         }
         let oldRow = "\(placeholder) wants to create a folder in b."
-        let oldLine = CompanionSavedText.question(oldRow, companionWork: true)
+        let oldLine = CompanionSavedText.line(oldRow, appWritten: true)
         try require(oldLine.plain(name: "Ada") == "Ada wants to create a folder in b."
                     && oldLine.plain(name: nil) == "Your companion wants to create a folder in b."
                     && oldLine.plain(name: "Ada") == CompanionSentence.plain(oldRow, name: "Ada")
@@ -219,7 +218,7 @@ extension SelfTest {
         let hostileQuestion = "\(placeholder) wants to send a message to \(joined)."
         let hostileTail = " wants to send a message to \(joined)."
         for text in [hostileQuestion, "\(placeholder) wants to remain literal.", oldRow, savedCommand] {
-            let line = CompanionSavedText.question(text, companionWork: false)
+            let line = CompanionSavedText.line(text, appWritten: false)
             try require(line == .literal(text) && nameParts(line) == 0 && line.parts == [.text(text)],
                         "Saved text outside companion work stays literal: \(text)")
             for name in names {
@@ -227,7 +226,7 @@ extension SelfTest {
             }
         }
         for name in names {
-            let read = CompanionSavedText.question(hostileQuestion, companionWork: true).plain(name: name)
+            let read = CompanionSavedText.line(hostileQuestion, appWritten: true).plain(name: name)
             try require(read == subject(name) + hostileTail, "The saved-question reader keeps the hostile tail for \(name ?? "no name")")
         }
 
@@ -291,7 +290,7 @@ extension SelfTest {
                                            outcome: .failed, detail: "The model said \(joined) failed.")
         let leadError = placeholder + " wants to reconnect: permission denied."
         var errorRuns: [NativeScheduleRun] = []
-        for outcome in [NativeScheduleOutcome.couldNotStart, .failed, .skipped, .missed, .blocked, .running] {
+        for outcome in [NativeScheduleOutcome.couldNotStart, .failed, .blocked, .running] {
             errorRuns.append(NativeScheduleRun(id: "card-literal-lead-\(outcome.rawValue)", scheduleID: companionSchedule.id, scheduledFor: Date(),
                                                outcome: outcome, detail: leadError))
         }
@@ -330,7 +329,7 @@ extension SelfTest {
                 let item = CompanionOverviewModel.runItem(run, schedule: companionSchedule)
                 try require(overview.companionActivityDetail(item).outcome == leadError,
                             "An error note that begins like a question is unchanged on the companion's own schedule for \(label): \(run.outcome.rawValue)")
-                try require(CompanionSavedText.question(run.detail, companionWork: companionSchedule.isCompanionWork && run.noteIsSavedQuestion) == .literal(leadError),
+                try require(overview.scheduleRunNote(run) == .literal(leadError),
                             "The Scheduled row shows that error note unchanged for \(label): \(run.outcome.rawValue)")
             }
             for run in askedRuns {
