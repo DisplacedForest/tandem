@@ -117,7 +117,7 @@ enum NativeCardChoices {
             let names = list(folders.map { name($0.value) })
             return subject.action == .trash ? "Moving things in \(names) to the Trash" : "Edits in \(names)"
         case .sendTargets(let targets): return "Messages to " + list(targets.map(\.value))
-        case .wholeTool: return "This action every time"
+        case .wholeTool: return "\(subject.toolTitle), every time"
         }
     }
 
@@ -215,7 +215,7 @@ enum NativeCardChoices {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
-        case .sendTargets(let targets): return "Never send to " + list(targets.map(\.value))
+        case .sendTargets(let targets): return "Never send to " + list(targets.map(\.value)) + " " + place.neverWords
         case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this \(place.neverWords)"
         }
     }
