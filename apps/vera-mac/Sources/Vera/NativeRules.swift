@@ -484,41 +484,103 @@ enum NativeCommandClassifier {
         !token.isEmpty && token.allSatisfy { $0.isLetter || $0.isNumber || "._+-/~".contains($0) }
     }
 
+    struct Classified: Equatable, Sendable {
+        var action: NativeActionClass
+        var trigger: NativeRuleWhy.Trigger? = nil
+        var outside: String? = nil
+
+        static func risky(_ trigger: NativeRuleWhy.Trigger, outside: String? = nil) -> Classified {
+            Classified(action: .riskyCommands, trigger: trigger, outside: outside)
+        }
+    }
+
+    enum Feature {
+        static let backticks = "a command inside backticks"
+        static let substitution = "a command inside another command"
+        static let inline = "inline code"
+        static let wildcard = "a wildcard"
+        static let variable = "a variable"
+        static let home = "a home folder shortcut"
+        static let up = "a path that goes up with .."
+        static let unreadable = "something that could not be read"
+        static let several = "more than one command"
+        static let redirect = "a redirect"
+        static let group = "a group of commands"
+        static let all = [backticks, substitution, inline, wildcard, variable, home, up, unreadable, several, redirect, group]
+    }
+
+    static func feature(_ text: String) -> NativeRuleWhy.Trigger { NativeRuleWhy.Trigger(.feature, text) }
+
+    static func feature(of text: String) -> NativeRuleWhy.Trigger {
+        if text.contains("`") { return feature(Feature.backticks) }
+        if text.contains("$(") { return feature(Feature.substitution) }
+        if text.contains("$") { return feature(Feature.variable) }
+        return feature(Feature.unreadable)
+    }
+
+    static func feature(mark: Character, in command: String) -> NativeRuleWhy.Trigger {
+        switch mark {
+        case "`", "$": return feature(of: command)
+        case ";", "&", "|", "\n", "\r": return feature(Feature.several)
+        case "<", ">": return feature(Feature.redirect)
+        case "(", ")", "{", "}": return feature(Feature.group)
+        default: return feature(Feature.unreadable)
+        }
+    }
+
     static func isPlain(_ command: String, grants: [FolderGrant] = [], directory: String? = nil) -> Bool {
-        if command.contains(where: { metacharacters.contains($0) }) { return false }
+        unplain(command, grants: grants, directory: directory) == nil
+    }
+
+    static func unplain(_ command: String, grants: [FolderGrant] = [], directory: String? = nil) -> NativeRuleWhy.Trigger? {
+        if let mark = command.first(where: { metacharacters.contains($0) }) { return feature(mark: mark, in: command) }
         let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         var tokens = shellTokens(command)[...]
-        guard !tokens.isEmpty else { return false }
+        guard !tokens.isEmpty else { return feature(Feature.unreadable) }
         for token in tokens {
             let inner = stripOuterQuotes(assignmentValue(token))
-            if inner.contains(where: { $0 == "\"" || $0 == "'" }) { return false }
+            if inner.contains(where: { $0 == "\"" || $0 == "'" }) { return feature(Feature.unreadable) }
         }
         while let first = tokens.first, first.contains("="), !first.hasPrefix("-") {
-            guard isPlainAssignment(first, grants: grants, working: working) else { return false }
+            guard isPlainAssignment(first, grants: grants, working: working) else { return feature(Feature.variable) }
             tokens = tokens.dropFirst()
         }
         let launchers: Set<String> = ["env", "nohup", "time", "nice", "command", "exec", "builtin", "caffeinate", "arch", "xcrun"]
         while true {
-            guard let executable = tokens.first, isPlainWord(executable), !executable.hasPrefix("-") else { return false }
+            guard let executable = tokens.first, isPlainWord(executable), !executable.hasPrefix("-") else { return feature(Feature.unreadable) }
             let name = executable.split(separator: "/").last.map(String.init) ?? executable
-            if keywords.contains(name) || wrappers.contains(name) { return false }
-            if launchers.contains(name) && name != executable { return false }
-            if name == "git" && tokens.dropFirst().contains(where: { let token = stripOuterQuotes($0); return token == "-c" || token.hasPrefix("--config") }) { return false }
-            if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return false }
+            if keywords.contains(name) || wrappers.contains(name) { return NativeRuleWhy.Trigger(.program, name) }
+            if launchers.contains(name) && name != executable { return NativeRuleWhy.Trigger(.program, executable) }
+            if name == "git" && tokens.dropFirst().contains(where: { let token = stripOuterQuotes($0); return token == "-c" || token.hasPrefix("--config") }) {
+                return NativeRuleWhy.Trigger(.program, "git -c")
+            }
+            if hasInlineCode(name, tokens.dropFirst().map(stripOuterQuotes)) { return feature(Feature.inline) }
             guard launchers.contains(name) else { break }
             tokens = tokens.dropFirst()
             while let next = tokens.first, next.contains("="), !next.hasPrefix("-") {
-                guard isPlainAssignment(next, grants: grants, working: working) else { return false }
+                guard isPlainAssignment(next, grants: grants, working: working) else { return feature(Feature.variable) }
                 tokens = tokens.dropFirst()
             }
         }
-        return !tokens.dropFirst().contains { keywords.contains(stripOuterQuotes($0)) }
+        if let keyword = tokens.dropFirst().first(where: { keywords.contains(stripOuterQuotes($0)) }) {
+            return NativeRuleWhy.Trigger(.program, stripOuterQuotes(keyword))
+        }
+        return nil
     }
 
     static func classify(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
-        let action = classifyUnfloored(command, grants: grants, directory: directory)
-        guard action == .riskyCommands, namesDestructiveProgram(command) else { return action }
-        return .permanentDeletion
+        classified(command, grants: grants, directory: directory).action
+    }
+
+    static func trigger(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeRuleWhy.Trigger? {
+        classified(command, grants: grants, directory: directory).trigger
+    }
+
+    static func classified(_ command: String, grants: [FolderGrant], directory: String? = nil) -> Classified {
+        var result = classifiedUnfloored(command, grants: grants, directory: directory)
+        guard result.action == .riskyCommands, namesDestructiveProgram(command) else { return result }
+        result.action = .permanentDeletion
+        return result
     }
 
     static func namesDestructiveProgram(_ command: String) -> Bool {
@@ -536,68 +598,100 @@ enum NativeCommandClassifier {
     }
 
     static func classifyUnfloored(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        classifiedUnfloored(command, grants: grants, directory: directory).action
+    }
+
+    static func classifiedUnfloored(_ command: String, grants: [FolderGrant], directory: String? = nil) -> Classified {
         let plain = isPlain(command, grants: grants, directory: directory)
-        let segmented = classifySegments(command, grants: grants, directory: directory)
-        if plain || segmented == .riskyCommands { return segmented }
+        let segmented = classifiedSegments(command, grants: grants, directory: directory)
+        if plain || segmented.action == .riskyCommands { return segmented }
         let working = directory ?? (grants.count == 1 ? grants[0].path : nil)
-        var sends = segmented == .networkSends
+        var sends = segmented.action == .networkSends
+        var sending = segmented.trigger
         for token in shellTokens(command.replacingOccurrences(of: ";", with: " ").replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "&", with: " ")) {
             let inner = stripOuterQuotes(assignmentValue(token))
             let name = inner.split(separator: "/").last.map(String.init) ?? inner
-            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) { return .riskyCommands }
-            if inner.contains(where: { unsafeCharacters.contains($0) }) || inner.hasPrefix("~") || inner.hasPrefix("$") { return .riskyCommands }
-            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-") && pathLeavesGrants(inner, grants: grants, working: working) { return .riskyCommands }
-            if senders.contains(name) || publishing.contains(name) { sends = true }
+            if privileged.contains(name) || destructive.contains(name) || wrappers.contains(name) || destructiveGit.contains(name) {
+                return .risky(NativeRuleWhy.Trigger(.program, name))
+            }
+            if inner.contains(where: { unsafeCharacters.contains($0) }) { return .risky(feature(of: inner)) }
+            if inner.hasPrefix("~") { return .risky(feature(Feature.home)) }
+            if inner.hasPrefix("$") { return .risky(feature(Feature.variable)) }
+            if (inner.contains("/") || inner.hasPrefix("..")) && !inner.hasPrefix("-"), let left = leaving(inner, grants: grants, working: working) { return left }
+            if senders.contains(name) || publishing.contains(name) {
+                sends = true
+                sending = sending ?? NativeRuleWhy.Trigger(.program, name)
+            }
         }
-        return sends ? .networkSends : .commands
+        return sends ? Classified(action: .networkSends, trigger: sending) : Classified(action: .commands)
+    }
+
+    static func sensitiveToken(_ command: String, fragment: String) -> String {
+        shellTokens(command).map(stripOuterQuotes).first { $0.lowercased().contains(fragment) } ?? fragment
     }
 
     static func classifySegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
+        classifiedSegments(command, grants: grants, directory: directory).action
+    }
+
+    static func classifiedSegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> Classified {
         var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
-        if sensitiveFragments.contains(where: { lowered.contains($0) }) { return .riskyCommands }
-        if command.contains("`") || command.contains("$(") { return .riskyCommands }
+        if let fragment = sensitiveFragments.first(where: { lowered.contains($0) }) {
+            return .risky(NativeRuleWhy.Trigger(.path, sensitiveToken(command, fragment: fragment)))
+        }
+        if command.contains("`") { return .risky(feature(Feature.backticks)) }
+        if command.contains("$(") { return .risky(feature(Feature.substitution)) }
         let subshells = command.contains { "(){}".contains($0) }
-        var network = false
+        var network: NativeRuleWhy.Trigger?
+        var sending = false
+        func send(_ program: String) {
+            sending = true
+            network = network ?? NativeRuleWhy.Trigger(.program, program)
+        }
         for segment in segments(of: command) {
             var (name, arguments) = executable(segment, grants: grants, working: working)
-            if name == "?" { return .riskyCommands }
-            if privileged.contains(name) { return .riskyCommands }
-            if hasInlineCode(name, arguments) { return .riskyCommands }
+            if name == "?" { return .risky(feature(Feature.unreadable)) }
+            if privileged.contains(name) { return .risky(NativeRuleWhy.Trigger(.program, name)) }
+            if hasInlineCode(name, arguments) { return .risky(wrappers.contains(name) ? NativeRuleWhy.Trigger(.program, name) : feature(Feature.inline)) }
             var segmentWorking = working
+            var program = name
             if name == "git" {
                 var index = 0
                 while index < arguments.count {
                     let token = arguments[index]
                     if token == "-C", index + 1 < arguments.count {
                         let target = arguments[index + 1]
-                        if pathLeavesGrants(target, grants: grants, working: segmentWorking) { return .riskyCommands }
+                        if let left = leaving(target, grants: grants, working: segmentWorking) { return left }
                         segmentWorking = resolved(target, working: segmentWorking)
                         index += 2
                         continue
                     }
-                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .riskyCommands }
+                    if token.hasPrefix("--git-dir") || token.hasPrefix("--work-tree") || token == "-C" { return .risky(NativeRuleWhy.Trigger(.program, "git " + token)) }
                     if token == "-c" || token == "--config-env" || token == "--namespace" || token == "--exec-path" || token == "--super-prefix" {
-                        guard index + 1 < arguments.count else { return .riskyCommands }
+                        guard index + 1 < arguments.count else { return .risky(NativeRuleWhy.Trigger(.program, "git " + token)) }
                         let operand = arguments[index + 1].lowercased()
                         if token == "-c" || token == "--config-env" {
-                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) { return .riskyCommands }
+                            if ["alias.", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "credential.", "http.", "url.", "remote.", "include.", "includeif.", "filter.", "diff.external", "merge.tool", "mergetool.", "difftool.", "sequence.editor", "core.fsmonitor", "core.gitproxy", "uploadpack.", "receive."].contains(where: { operand.hasPrefix($0) }) {
+                                return .risky(NativeRuleWhy.Trigger(.program, "git " + token + " " + arguments[index + 1]))
+                            }
                             if let equals = operand.firstIndex(of: "=") {
                                 let value = String(operand[operand.index(after: equals)...])
-                                if (value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..")) && pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .riskyCommands }
+                                if value.contains("/") || value.hasPrefix("~") || value.hasPrefix(".."), let left = leaving(value, grants: grants, working: segmentWorking) { return left }
                             }
                         }
                         index += 2
                         continue
                     }
                     if !token.hasPrefix("-") {
-                        if destructiveGit.contains(token) { name = "rm"; arguments = Array(arguments[(index + 1)...]) }
+                        if destructiveGit.contains(token) { program = "git " + token; name = "rm"; arguments = Array(arguments[(index + 1)...]) }
                         break
                     }
                     index += 1
                 }
             }
-            if name == "find" && arguments.contains(where: { findEffects.contains($0) }) {
+            if name == "find", let effect = arguments.first(where: { findEffects.contains($0) }) {
+                program = "find " + effect
                 name = "rm"
                 arguments = Array(arguments.prefix(while: { !$0.hasPrefix("-") && !$0.hasPrefix("(") && $0 != "!" }))
             }
@@ -608,44 +702,51 @@ enum NativeCommandClassifier {
                 continue
             }
             if destructive.contains(name) {
-                guard let segmentWorking, !subshells else { return .riskyCommands }
-                if arguments.contains(where: { pathLeavesGrants($0, grants: grants, working: segmentWorking) }) { return .riskyCommands }
-                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .riskyCommands }
+                guard let segmentWorking, !subshells else { return .risky(NativeRuleWhy.Trigger(.program, program)) }
+                if let left = arguments.lazy.compactMap({ leaving($0, grants: grants, working: segmentWorking) }).first { return left }
+                if arguments.contains(where: { !$0.hasPrefix("-") && $0.contains(where: { globCharacters.contains($0) }) }) { return .risky(feature(Feature.wildcard)) }
             }
             if writers.contains(name) {
                 for argument in arguments where !argument.contains("://") {
                     let value = argument.hasPrefix("--") && argument.contains("=") ? String(argument[argument.index(after: argument.firstIndex(of: "=")!)...]) : argument
                     if value.hasPrefix("-") { continue }
                     if value.contains("/") || value.hasPrefix("~") || value.hasPrefix("..") {
-                        if pathLeavesGrants(value, grants: grants, working: segmentWorking) { return .riskyCommands }
+                        if let left = leaving(value, grants: grants, working: segmentWorking) { return left }
                     }
                 }
             }
-            if name == "git" && arguments.contains(where: { ["push", "send-email"].contains($0) }) { network = true }
+            if name == "git", let verb = arguments.first(where: { ["push", "send-email"].contains($0) }) { send("git " + verb) }
             if name == "curl" && arguments.contains(where: { argument in
                 if argument.hasPrefix("@") { return true }
                 if argument.hasPrefix("--") { return argument.hasPrefix("--data") || ["--form", "--form-string", "--upload-file", "--request", "--json", "--url-query", "--config", "--variable"].contains(argument) }
                 return argument.hasPrefix("-") && argument.dropFirst().contains(where: { "dFTXK".contains($0) })
-            }) { network = true }
-            if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { network = true }
-            if senders.contains(name) { network = true }
-            if packageManagers.contains(name) && arguments.contains(where: { publishing.contains($0) }) { network = true }
+            }) { send(name) }
+            if name == "wget" && arguments.contains(where: { $0.hasPrefix("--post") || $0.hasPrefix("--method") || $0.hasPrefix("--body") }) { send(name) }
+            if senders.contains(name) { send(name) }
+            if packageManagers.contains(name), let verb = arguments.first(where: { publishing.contains($0) }) { send(name + " " + verb) }
         }
-        return network ? .networkSends : .commands
+        return sending ? Classified(action: .networkSends, trigger: network) : Classified(action: .commands)
     }
 
     static func pathLeavesGrants(_ token: String, grants: [FolderGrant], working: String?) -> Bool {
+        leaving(token, grants: grants, working: working) != nil
+    }
+
+    static func leaving(_ token: String, grants: [FolderGrant], working: String?) -> Classified? {
         var path = stripOuterQuotes(assignmentValue(token))
-        if path.hasPrefix("-") { return false }
-        if path.contains(where: { unsafeCharacters.contains($0) }) { return true }
-        if path.hasPrefix("~") || path.hasPrefix("$") { return true }
-        if path.split(separator: "/").contains("..") { return true }
+        if path.hasPrefix("-") { return nil }
+        if path.contains(where: { unsafeCharacters.contains($0) }) { return .risky(feature(of: path)) }
+        if path.hasPrefix("~") { return .risky(feature(Feature.home)) }
+        if path.hasPrefix("$") { return .risky(feature(Feature.variable)) }
+        if path.split(separator: "/").contains("..") { return .risky(feature(Feature.up)) }
+        let written = path
         if !path.hasPrefix("/") {
-            guard let working else { return true }
+            guard let working else { return .risky(NativeRuleWhy.Trigger(.path, written)) }
             path = working + "/" + path
         }
-        guard let real = resolved(path, working: nil) else { return true }
-        return !grants.contains { NativeFolderAccess.contains(root: resolved($0.path, working: nil) ?? $0.path, path: real) }
+        guard let real = resolved(path, working: nil) else { return .risky(NativeRuleWhy.Trigger(.path, written)) }
+        if grants.contains(where: { NativeFolderAccess.contains(root: resolved($0.path, working: nil) ?? $0.path, path: real) }) { return nil }
+        return .risky(NativeRuleWhy.Trigger(.path, written), outside: real)
     }
 
     static func resolved(_ token: String, working: String?) -> String? {
@@ -855,11 +956,18 @@ enum NativeRuleAdmission {
 struct NativeRuleVerdict: Sendable {
     var decision: NativeRuleDecision
     var confirm: (@Sendable () -> Bool)?
+    var why: NativeRuleWhy?
 
-    init(_ decision: NativeRuleDecision, confirm: (@Sendable () -> Bool)? = nil) {
+    init(_ decision: NativeRuleDecision, why: NativeRuleWhy? = nil, confirm: (@Sendable () -> Bool)? = nil) {
         self.decision = decision
         self.confirm = confirm
+        self.why = why
     }
+}
+
+struct NativeRuleRefusal: Error, LocalizedError, Equatable, Sendable {
+    let why: NativeRuleWhy
+    var errorDescription: String? { RefusalCopy.forModel(why) }
 }
 
 struct NativeRuleResolver: Sendable {
@@ -995,22 +1103,15 @@ struct NativeRuleResolver: Sendable {
     static let changedMessage = "The user's rules changed while this answer was running, so this action now needs their approval. It was not run. Tell the user and let them send the request again."
 
     static func gate(_ verdict: NativeRuleVerdict?, fallback: NativeRuleDecision?, planned: NativeRuleDecision, action: NativeActionClass,
-                     approved: Bool) throws -> () throws -> Void {
+                     approved: Bool, why: NativeRuleWhy? = nil) throws -> () throws -> Void {
         let live = verdict?.decision ?? fallback ?? planned
-        try gate(live: live, planned: planned, action: action, approved: approved)
+        try gate(live: live, planned: planned, action: action, approved: approved, why: verdict?.why ?? why)
         guard case .act = live, let confirm = verdict?.confirm else { return {} }
         return { if !confirm() { throw NativeToolError.failed(changedMessage) } }
     }
 
-    static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool) throws {
-        if live == .handOff { throw NativeToolError.failed(handOffMessage(action)) }
+    static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool, why: NativeRuleWhy? = nil) throws {
+        if live == .handOff { throw NativeRuleRefusal(why: why ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: true)) }
         if live == .ask, !planned.requiresConfirmation, !approved { throw NativeToolError.failed(changedMessage) }
-    }
-
-    static func handOffMessage(_ action: NativeActionClass) -> String {
-        if let item = action.floorItem {
-            return "This action is handed to the user: \(item.title.lowercased()). \(item.reason) Do not attempt it and do not look for another way to do it; tell the user exactly what you would do so they can do it themselves."
-        }
-        return "This action is set to hand off to the user in their rules (\(action.title.lowercased())). Do not attempt it; tell the user exactly what you would do so they can do it themselves or change the rule."
     }
 }

@@ -69,7 +69,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static func taskItem(card: NativeTaskCardPresentation, reference: NativeTaskReference, decision: NativeTaskDecision?,
                          hasArtifact: Bool, date: Date) -> CompanionActivityItem {
         let document = card.workerType == "document"
-        let state = card.status == .completed ? (hasArtifact ? "Ready to open" : card.statusTitle) : card.status.title(document: document)
+        let state = card.listState(card.status == .completed ? (hasArtifact ? "Ready to open" : card.statusTitle) : card.status.title(document: document))
         return CompanionActivityItem(id: reference.id.uuidString, title: card.title, state: state, status: card.status,
                                      isDocument: document, hasArtifact: hasArtifact, decision: decision, date: date, source: .task(reference.id),
                                      canOpen: true, canStop: card.canCancel)

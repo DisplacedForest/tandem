@@ -121,6 +121,7 @@ enum NativeTaskProjection {
             let companionSources = try displaySources(result.sources)
             card.status = .completed
             card.sources = companionSources
+            card.why = result.why
             if result.shape == NativeCompanionShape.answer {
                 let answer = result.report.trimmingCharacters(in: .whitespacesAndNewlines)
                 card.milestone = answer.isEmpty ? "Finished." : ""

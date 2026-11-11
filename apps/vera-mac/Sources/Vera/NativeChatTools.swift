@@ -121,6 +121,7 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     var state: NativeToolActivityState
     var confirmationRequired: Bool
     var progress: NativeToolProgress? = nil
+    var why: NativeRuleWhy? = nil
 
     var isCancelableRun: Bool {
         state == .pending && (progress != nil || name == NativeImageTools.toolName)
@@ -216,6 +217,7 @@ struct NativeToolDefinition: Sendable {
     var executeWithKey: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeJSONValue)? = nil
     var reconcile: (@Sendable ([String: NativeJSONValue], String) async throws -> NativeEffectObservation)? = nil
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
+    var ruleWhy: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleWhy?)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
     var access: NativeToolAccess? = nil
     var wants: String? = nil
@@ -741,6 +743,7 @@ struct NativeToolLoop: Sendable {
                             let resultBudget = definitions[call.name]?.resultByteBudget ?? NativeToolResultBudget.defaultBytes
                             let result: String
                             let state: NativeToolActivityState
+                            var why: NativeRuleWhy?
                             do {
                                 guard callCount < Self.maximumCalls else {
                                     stopped = true
@@ -820,6 +823,10 @@ struct NativeToolLoop: Sendable {
                                 if isSearch && webSearchCount >= maximumWebSearchCalls { stopped = true }
                             } catch is CancellationError {
                                 throw CancellationError()
+                            } catch let refusal as NativeRuleRefusal {
+                                why = refusal.why
+                                result = try NativeToolResultBudget.serializedError(RefusalCopy.forModel(refusal.why), maximumBytes: resultBudget)
+                                state = .failed
                             } catch {
                                 result = try NativeToolResultBudget.serializedError(error.localizedDescription, maximumBytes: resultBudget)
                                 state = .failed
@@ -828,6 +835,7 @@ struct NativeToolLoop: Sendable {
                                 activities[index].result = result
                                 activities[index].state = state
                                 activities[index].progress = nil
+                                activities[index].why = why
                             }
                             try Task.checkCancellation()
                             history.append(NativeChatMessage(role: "tool", content: result, toolCallID: call.id))

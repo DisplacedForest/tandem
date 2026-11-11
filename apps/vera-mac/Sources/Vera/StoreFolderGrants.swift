@@ -125,9 +125,8 @@ extension ChatStore {
                                             subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeCommandTools.toolID, subjects: subjects)
         let honoring = store != nil && resolver.durable
-        let decided = action == .commands ? resolver.decide(forCommand: command, honoringLimitedUse: honoring)
-            : resolver.decide(for: action, honoringLimitedUse: honoring)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+        let decided = resolver.judge(action, command: action == .commands ? command : nil, honoringLimitedUse: honoring)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
     nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String)
@@ -148,8 +147,8 @@ extension ChatStore {
                                          requestText: String, toolID: String, action: NativeActionClass,
                                          subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(toolID, subjects: subjects)
-        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+        let decided = resolver.judge(action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
     nonisolated static func followsRules(_ definition: NativeToolDefinition) -> Bool {
@@ -162,8 +161,10 @@ extension ChatStore {
         let original = definition
         let decide: @Sendable ([String: NativeJSONValue]) -> (NativeActionClass, NativeRuleVerdict) = { arguments in
             let action = original.actionClass(for: arguments) ?? .otherChanges
-            return (action, toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, toolID: original.id,
-                                         action: action, subjects: original.ruleSubjects?(arguments) ?? []))
+            var verdict = toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, toolID: original.id,
+                                       action: action, subjects: original.ruleSubjects?(arguments) ?? [])
+            if case .act = verdict.decision, original.demandsConfirmation { verdict.why = NativeRuleWhy.tool(action) }
+            return (action, verdict)
         }
         var wrapped = definition
         wrapped.governed = true
@@ -190,15 +191,15 @@ extension ChatStore {
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         let resolver = rules.resolver(for: conversationID, requestText: requestText).tool(NativeFolderTools.toolID, subjects: subjects)
-        let decided = resolver.decide(for: action, honoringLimitedUse: store != nil && resolver.durable)
-        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store)
+        let decided = resolver.judge(action, honoringLimitedUse: store != nil && resolver.durable)
+        return verdict(decided.decision, authorizing: decided.authorizedBy, resolver: resolver, rules: rules, store: store, why: decided.why)
     }
 
     nonisolated static func verdict(_ decision: NativeRuleDecision, authorizing: [String], resolver: NativeRuleResolver,
-                                    rules: NativeRuleSource, store: NativeRuleRecordStore?) -> NativeRuleVerdict {
-        guard case .act = decision, resolver.durable, let store else { return NativeRuleVerdict(decision) }
+                                    rules: NativeRuleSource, store: NativeRuleRecordStore?, why: NativeRuleWhy? = nil) -> NativeRuleVerdict {
+        guard case .act = decision, resolver.durable, let store else { return NativeRuleVerdict(decision, why: why) }
         let revision = resolver.revision
-        return NativeRuleVerdict(decision, confirm: {
+        return NativeRuleVerdict(decision, why: why, confirm: {
             let confirmed = (try? store.confirm(revision: revision, authorizing: authorizing)) == .authorized
             if confirmed, !authorizing.isEmpty { reloadRules(rules, from: store) }
             return confirmed

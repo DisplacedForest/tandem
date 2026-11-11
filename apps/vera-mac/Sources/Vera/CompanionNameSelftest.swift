@@ -58,7 +58,9 @@ extension SelfTest {
         let unnamed = CompanionSubject(nil), named = CompanionSubject(" Ada ")
         try require(unnamed.thread == "your companion's thread" && named.thread == "Ada's thread",
                     "The thread is Ada's thread, or your companion's thread when there is no name")
-        try require(NativeCompanionWorker.handOffText(name: unnamed.leading, title: "Send it", action: nil).hasPrefix("Your companion stopped before this step"),
-                    "The hand off line starts with Your companion when there is no name")
+        let sendWhy = NativeRuleWhy(kind: .unsaved, action: .networkSends, handsOff: true, choice: .handOff, source: .settings)
+        try require(NativeCompanionWorker.handOffText(name: unnamed.leading, title: "Send it", why: sendWhy).hasPrefix("Your companion stopped before this step")
+                    && NativeCompanionWorker.handOffText(name: named.leading, title: "Send it", why: sendWhy).hasPrefix("Ada stopped before this step"),
+                    "The hand off line starts with Your companion when there is no name, and with the name when there is one")
     }
 }

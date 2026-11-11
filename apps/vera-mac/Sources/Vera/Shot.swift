@@ -30,6 +30,10 @@ enum Shot {
             NativeSessionShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view.hasPrefix("refusal-") {
+            RefusalShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("card-") {
             CardShot.render(view: view, to: path, appearance: appearance)
             return

@@ -276,13 +276,17 @@ extension SelfTest {
         }
         try require(declinedAgain?.activities.first?.state == .failed && repeatTransport.histories[1].last?.content.contains("already declined") == true && recorder.recorded.count == 2, "A declined request is refused on every execution path, even when no card would show")
         try require(NativeToolRequestKey.canonical(name: "run_command", request: "{\"directory\":\"/a\",\"command\":\"ls\"}") == NativeToolRequestKey.canonical(name: "run_command", request: "{ \"command\": \"ls\", \"directory\": \"/a\" }"), "Decline keys ignore argument order and spacing")
+        func ran() -> Int { recorder.recorded.filter { $0.outcome != .refused }.count }
+        func refusedCard(_ id: String) -> NativeCommandRun? { recorder.recorded.last { $0.outcome == .refused && $0.id == id } }
         let (deletionRun, deletionTransport) = try await loop(decision: .act(.rule), rounds: [call("c10", "{\"command\":\"sudo rm -rf /tmp/x\"}"), done], confirm: { _ in true })
-        try require(deletionRun?.activities.first?.state == .failed && deletionTransport.histories[1].last?.content.contains("handed to the user") == true
-                    && deletionTransport.histories[1].last?.content.contains(NativeFloorItem.permanentDeletion.reason) == true && recorder.recorded.count == 2,
+        let deletionWhy = NativeRuleWhy(kind: .held, action: .permanentDeletion, handsOff: true, item: .permanentDeletion, trigger: NativeRuleWhy.Trigger(.program, "sudo"))
+        try require(deletionRun?.activities.first?.state == .failed && deletionRun?.activities.first?.why == deletionWhy
+                    && deletionTransport.histories[1].last?.content.contains(RefusalCopy.forModel(deletionWhy)) == true
+                    && refusedCard("c10")?.why == deletionWhy && ran() == 2,
                     "A permanent deletion is handed off with its reason even when commands act")
         let (sendRun, sendTransport) = try await loop(decision: .act(.rule), rounds: [call("c11", "{\"command\":\"git push\"}"), done], confirm: { _ in false })
         try require(sendRun?.activities.first?.state == .failed && sendRun?.activities.first?.confirmationRequired == true
-                    && sendTransport.histories[1].last?.content.contains("did not approve") == true && recorder.recorded.count == 2,
+                    && sendTransport.histories[1].last?.content.contains("did not approve") == true && ran() == 2,
                     "A sending command follows the sending rule and asks first by default")
         let backgroundStart = Date()
         let lingering = try await NativeCommandRunner.run(command: "sleep 30 & echo $!; exit 0", directory: directory, timeout: .seconds(20))
@@ -297,15 +301,19 @@ extension SelfTest {
         try require(source.resolver(for: "chat", requestText: "").decision(for: .fileEdits) == .handOff && source.resolver(for: "other", requestText: "").decision(for: .fileEdits) == .act(.rule), "The live rule source scopes chat rules to their chat")
 
         let (handedOff, handOffTransport) = try await loop(decision: .handOff, rounds: [call("c4", "{\"command\":\"printf never\"}"), done], confirm: { _ in true })
-        try require(handedOff?.activities.first?.state == .failed && handOffTransport.histories[1].last?.content.contains("hand off") == true && recorder.recorded.count == 2, "Hand off refuses with the rule named")
+        let handedWhy = handedOff?.activities.first?.why
+        try require(handedOff?.activities.first?.state == .failed && handedWhy?.kind == .unsaved && handedWhy?.action == .commands && handedWhy?.handsOff == true
+                    && handOffTransport.histories[1].last?.content.contains(NativeActionClass.commands.title) == true
+                    && refusedCard("c4")?.why == handedWhy && ran() == 2, "Hand off refuses with the rule named")
 
         let (outsideRun, outsideTransport) = try await loop(decision: .act(.rule), rounds: [call("c5", "{\"command\":\"printf x\",\"directory\":\"\(outside.path)\"}"), done], confirm: { _ in true })
-        try require(outsideRun?.activities.first?.state == .failed && outsideTransport.histories[1].last?.content.replacingOccurrences(of: "\\/", with: "/").contains(outside.path) == true && recorder.recorded.count == 2, "A directory outside every grant is refused with the path named")
+        try require(outsideRun?.activities.first?.state == .failed && outsideTransport.histories[1].last?.content.replacingOccurrences(of: "\\/", with: "/").contains(outside.path) == true
+                    && outsideRun?.activities.first?.why?.kind == .folder && refusedCard("c5")?.why?.kind == .folder && ran() == 2, "A directory outside every grant is refused with the path named")
         let (linkRun, _) = try await loop(decision: .act(.rule), rounds: [call("c6", "{\"command\":\"printf x\",\"directory\":\"\(root)/escape\"}"), done], confirm: { _ in true })
-        try require(linkRun?.activities.first?.state == .failed && recorder.recorded.count == 2, "A symlinked directory is refused")
+        try require(linkRun?.activities.first?.state == .failed && ran() == 2, "A symlinked directory is refused")
 
         let (prose, proseTransport) = try await loop(decision: .act(.rule), rounds: [[NativeChatStreamSnapshot(content: "run_command {\"command\":\"touch prose.txt\"}", toolCalls: [], finishReason: "stop")]], confirm: { _ in true })
-        try require(prose?.activities.isEmpty == true && proseTransport.histories.count == 1 && !manager.fileExists(atPath: root + "/prose.txt") && recorder.recorded.count == 2, "Prose that looks like a command never runs")
+        try require(prose?.activities.isEmpty == true && proseTransport.histories.count == 1 && !manager.fileExists(atPath: root + "/prose.txt") && ran() == 2, "Prose that looks like a command never runs")
 
         let revocable = NativeFolderGrantSource()
         revocable.set([grant], for: "chat")
@@ -320,7 +328,7 @@ extension SelfTest {
         for try await snapshot in revokedLoop.stream(messages: [NativeChatMessage(role: "user", content: "run")], model: "local-model", enabledToolIDs: [NativeCommandTools.toolID]) {
             revokedFinal = snapshot
         }
-        try require(revokedFinal?.activities.first?.state == .failed && recorder.recorded.count == 2, "A grant revoked before the command runs refuses it")
+        try require(revokedFinal?.activities.first?.state == .failed && ran() == 2, "A grant revoked before the command runs refuses it")
 
         let ledger = NativeFileChangeLedger()
         let access = NativeFolderAccess(grants: [grant])
@@ -356,8 +364,10 @@ extension SelfTest {
         do {
             _ = try await writeDefinition.execute(["path": .string(root + "/sub/new.txt"), "content": .string("x")])
             throw NativeTaskFixture.Failure.assertion("A hand-off edit never writes")
-        } catch NativeToolError.failed(let message) {
-            try require(message.contains("hand off") && !manager.fileExists(atPath: root + "/sub/new.txt"), "The hand-off refusal names the rule and writes nothing")
+        } catch let refusal as NativeRuleRefusal {
+            try require(refusal.why.kind == .unsaved && refusal.why.action == .fileEdits && refusal.why.handsOff
+                        && refusal.localizedDescription.contains(NativeActionClass.fileEdits.title) && !manager.fileExists(atPath: root + "/sub/new.txt"),
+                        "The hand-off refusal names the rule and writes nothing")
         }
         let asking = NativeFolderTools.definitions(grants: grants, ledger: ledger, edits: .ask, trash: .handOff)
         try require(asking.first { $0.name == NativeFolderTools.editName }!.confirmation == .required && asking.first { $0.name == NativeFolderTools.moveName }!.confirmation == .required, "Ask applies to every writing tool")

@@ -209,7 +209,8 @@ extension SelfTest {
             let offBefore = chatStore.nativeRuleSource.resolver(for: chat, requestText: "")
             try require(admission() == .handOff && live.confirmationFor?([:]) == false, "\(item.rawValue) hands off when it is not on")
             let before = calls.count
-            try require(await run(live, confirmed: true) == NativeRuleResolver.handOffMessage(action) && calls.count == before, "\(item.rawValue) does not run when it is not on")
+            let held = RefusalCopy.forModel(NativeRuleWhy(kind: .held, action: action, handsOff: true, item: item))
+            try require(await run(live, confirmed: true) == held && calls.count == before, "\(item.rawValue) does not run when it is not on")
 
             cfg.letThrough(item, store: chatStore)
             try require(admission() == .ask && live.confirmationFor?([:]) == true, "\(item.rawValue) asks when on with ask first")
@@ -228,7 +229,7 @@ extension SelfTest {
             try require(admission() == .handOff && chatStore.nativeRuleSource.resolver(for: chat, requestText: "").revision != onAct.revision,
                         "\(item.rawValue) hands off again after it is put back")
             try require(onAct.decision(for: action) == .act(.rule), "A resolver taken while it acted still says act, so work admitted then is stale by revision")
-            try require(await run(live, confirmed: true) == NativeRuleResolver.handOffMessage(action) && calls.count == before + 1,
+            try require(await run(live, confirmed: true) == held && calls.count == before + 1,
                         "A tool set up while \(item.rawValue) acted refuses at execution after it is put back")
 
             cfg.letThrough(item, store: chatStore)
