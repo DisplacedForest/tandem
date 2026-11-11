@@ -73,9 +73,9 @@ enum NativeDocumentWorker {
     static let reportCharacters = 40000
 
     static func make(exchange: NativeTaskGenerationExchange,
-                     identity: @escaping @Sendable () -> NativeWorkerIdentity) -> NativeTaskWorker {
+                     identity: @escaping @Sendable (NativeTaskRecord) -> NativeWorkerIdentity) -> NativeTaskWorker {
         NativeTaskWorker(timeoutSeconds: stepTimeoutSeconds) { task in
-            try await step(task, exchange: exchange, identity: identity())
+            try await step(task, exchange: exchange, identity: identity(task))
         }
     }
 
