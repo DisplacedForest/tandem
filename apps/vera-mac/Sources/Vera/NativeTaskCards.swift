@@ -29,7 +29,7 @@ struct NativeTaskCardView: View {
             }
             if let answer = card.answer, card.status == .completed {
                 let resolved = CitationResolver.resolve(text: answer, sources: NativeResearchReportSafety.sources(card.sources),
-                                                        allowRecovery: true)
+                                                        allowRecovery: false)
                 CitedText(resolved: resolved, style: .chat)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -192,7 +192,7 @@ struct NativeResearchReportView: View {
     var resolved: ResolvedCitations {
         CitationResolver.resolve(text: artifact.report,
                                  sources: artifact.sources.isEmpty ? [] : NativeResearchReportSafety.sources(artifact.sources),
-                                 allowRecovery: true)
+                                 allowRecovery: false)
     }
 
     var body: some View {

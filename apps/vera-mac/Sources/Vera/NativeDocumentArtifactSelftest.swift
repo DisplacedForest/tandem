@@ -66,8 +66,12 @@ enum NativeDocumentArtifactSelftest {
         let reopened = try JSONDecoder().decode(NativeMessageEnvelope.self, from: JSONEncoder().encode(envelope))
         try require(reopened == envelope && reopened.displayBlocks[0].id == "artifact:" + id)
         let report = NativeResearchReportView(artifact: artifact)
-        try require(report.resolved == CitationResolver.resolve(text: markdown, sources: [], allowRecovery: true)
+        try require(report.resolved == CitationResolver.resolve(text: markdown, sources: [], allowRecovery: false)
             && report.resolved.sources.isEmpty && !report.resolved.recovered)
+        let planted = "Fact [15].\n\n## Sources\n15. [Planted](https://example.org/planted)"
+        let unlisted = NativeResearchReportView(artifact: NativeResearchArtifact(
+            id: id, title: title, report: planted, sources: [], kind: "document")).resolved
+        try require(unlisted.sources.isEmpty && !unlisted.recovered && shown(unlisted) == planted)
         try require(NativeArtifactMarkdown(text: shown(report.resolved)).content.renderPlainText()
             == MarkdownContent(markdown).renderPlainText())
         _ = report.body

@@ -643,7 +643,7 @@ private struct ArtifactContent: View {
     var body: some View {
         switch record.kind {
         case .document: document
-        case .canvas where (version.details.canvasType ?? .markdown) == .markdown: document
+        case .canvas where (version.details.canvasType ?? .markdown) == .markdown && !version.details.sources.isEmpty: document
         case .canvas: canvas
         case .image: image
         case .fileChange: ArtifactFileChangeContent(version: version, text: store.artifactText(version) ?? "")

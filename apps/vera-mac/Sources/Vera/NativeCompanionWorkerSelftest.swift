@@ -1454,6 +1454,23 @@ extension SelfTest {
                     "The report carries exactly the cited sources with their numbers, titles and addresses: \(sources)")
         let checkpoint = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: cited.record.checkpoint)
         try require(checkpoint.sources?.map(\.n) == [1, 2, 3], "The checkpoint keeps every numbered result")
+        var moved = checkpoint
+        let fetcher = companionWebTools().1.first { $0.id == NativeWebTools.fetchToolID }
+        let landed: NativeJSONValue = .object(["url": .string("https://weather.example/rain/"), "title": .string("Rain totals"), "text": .string("Two inches.")])
+        if let fetcher {
+            let first = moved.numbered(landed, definition: fetcher, requested: "https://weather.example/rain")
+            guard case .object(let page) = first else { throw NativeTaskFixture.Failure.assertion("A fetched page stays an object") }
+            try require(page["n"] == .number(1) && moved.sources?.map(\.n) == [1, 2, 3],
+                        "A page that redirects keeps the number of the address that was asked for")
+            let reloaded = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try moved.encoded())
+            var again = reloaded
+            guard case .object(let repeated) = again.numbered(landed, definition: fetcher, requested: "https://weather.example/rain/") else {
+                throw NativeTaskFixture.Failure.assertion("A fetched page stays an object")
+            }
+            try require(repeated["n"] == .number(1) && again.sources?.map(\.n) == [1, 2, 3], "The redirect's number survives a reload")
+        } else {
+            throw NativeTaskFixture.Failure.assertion("The fake web tools include a page reader")
+        }
         let prompt = cited.harness.model.allRequests.first?.first?.content ?? ""
         try require(prompt.contains("cite them with the bracket numbers shown on the results, like [1]")
                     && prompt.contains("the app adds the list of sources."), "The worker is told how to cite web results")

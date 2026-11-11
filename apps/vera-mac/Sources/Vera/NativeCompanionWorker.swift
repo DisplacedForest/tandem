@@ -63,9 +63,10 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var nativeUnavailable: String?
     var keep: Bool?
     var sources: [NativeTaskSource]?
+    var aliases: [String: Int]?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep, sources
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
@@ -126,12 +127,18 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         return bytes.isEmpty ? none : cut + marker
     }
 
-    mutating func numbered(_ value: NativeJSONValue, definition: NativeToolDefinition) -> NativeJSONValue {
+    mutating func numbered(_ value: NativeJSONValue, definition: NativeToolDefinition, requested: String? = nil) -> NativeJSONValue {
         let web = (definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName)
             || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName)
         guard web, !NativeToolLoop.resultFailed(value, toolName: definition.name) else { return value }
         var known = sources ?? []
         var numbers = Dictionary(known.map { ($0.url, $0.n) }, uniquingKeysWith: { first, _ in first })
+            .merging(aliases ?? [:]) { first, _ in first }
+        if let requested, let number = numbers[requested], case .object(let page) = value, case .string(let landed)? = page["url"],
+           numbers[landed] == nil {
+            numbers[landed] = number
+            aliases = (aliases ?? [:]).merging([landed: number]) { first, _ in first }
+        }
         let result = NativeWebTools.numbered(value, sources: &numbers)
         guard case .object(let fields) = result else { return result }
         var entries = [fields]
@@ -143,7 +150,7 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         }
         for entry in entries {
             guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"],
-                  !known.contains(where: { $0.url == url }) else { continue }
+                  !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
             var title = ""
             if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
             known.append(NativeTaskSource(n: Int(n), title: title, url: url))
@@ -715,7 +722,9 @@ private struct NativeCompanionRun {
             checkpoint.calls += 1
             do {
                 let raw = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
-                let value = checkpoint.numbered(raw, definition: definition)
+                var requested: String?
+                if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
+                let value = checkpoint.numbered(raw, definition: definition, requested: requested)
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
