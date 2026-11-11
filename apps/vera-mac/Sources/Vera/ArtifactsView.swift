@@ -349,7 +349,7 @@ struct ArtifactsView: View {
     }
 }
 
-private struct ArtifactExportStrip: View {
+struct ArtifactExportStrip: View {
     let notice: ArtifactExportNotice
     let renderSafe: Bool
     let chooseAnother: () -> Void

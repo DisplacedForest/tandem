@@ -11,11 +11,26 @@ enum ArtifactExportProblem: Error, Equatable, Sendable, CaseIterable {
 }
 
 struct ArtifactExportAttempt: Equatable, Identifiable, Sendable {
+    enum Source: Equatable, Sendable {
+        case version(artifactID: String, ArtifactVersion)
+        case file(URL)
+    }
+
     let id: UUID
-    let artifactID: String
     let title: String
-    let version: ArtifactVersion
+    let source: Source
     var destination: URL
+
+    init(id: UUID, title: String, source: Source, destination: URL) {
+        self.id = id
+        self.title = title
+        self.source = source
+        self.destination = destination
+    }
+
+    init(id: UUID, artifactID: String, title: String, version: ArtifactVersion, destination: URL) {
+        self.init(id: id, title: title, source: .version(artifactID: artifactID, version), destination: destination)
+    }
 }
 
 enum ArtifactExportNotice: Equatable, Identifiable {
@@ -69,7 +84,7 @@ enum ArtifactExportNotice: Equatable, Identifiable {
 }
 
 struct ArtifactExporter {
-    var read: (ArtifactVersion) -> Result<Data, ArtifactExportProblem>
+    var read: (ArtifactVersion) -> Result<Data, ArtifactExportProblem> = { _ in .failure(.sourceMissing) }
     var write: (Data, URL) throws -> Void = ArtifactExporter.atomicWrite
 
     static func atomicWrite(_ data: Data, to url: URL) throws {
@@ -77,8 +92,13 @@ struct ArtifactExporter {
     }
 
     func run(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice {
+        let version: ArtifactVersion
+        switch attempt.source {
+        case .version(_, let value): version = value
+        case .file(let source): return copy(attempt, from: source)
+        }
         let data: Data
-        switch read(attempt.version) {
+        switch read(version) {
         case .success(let value): data = value
         case .failure(let problem): return .failed(attempt, problem)
         }
@@ -88,6 +108,31 @@ struct ArtifactExporter {
             return .failed(attempt, Self.problem(for: error))
         }
         return .saved(id: attempt.id, title: attempt.title, fileName: attempt.destination.lastPathComponent)
+    }
+
+    private func copy(_ attempt: ArtifactExportAttempt, from source: URL) -> ArtifactExportNotice {
+        do {
+            try FileHandle(forReadingFrom: source).close()
+        } catch {
+            return .failed(attempt, Self.sourceProblem(for: error))
+        }
+        let manager = FileManager.default
+        let destination = attempt.destination
+        do {
+            let staging = try manager.url(
+                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
+            defer { try? manager.removeItem(at: staging) }
+            let staged = staging.appendingPathComponent(source.lastPathComponent)
+            try manager.copyItem(at: source, to: staged)
+            if manager.fileExists(atPath: destination.path) {
+                _ = try manager.replaceItemAt(destination, withItemAt: staged)
+            } else {
+                try manager.moveItem(at: staged, to: destination)
+            }
+        } catch {
+            return .failed(attempt, Self.problem(for: error))
+        }
+        return .saved(id: attempt.id, title: attempt.title, fileName: destination.lastPathComponent)
     }
 
     static func problem(for error: Error) -> ArtifactExportProblem {
@@ -139,12 +184,26 @@ struct ArtifactExportFlow {
         return exporter.run(attempt)
     }
 
+    func begin(file source: URL, title: String, fileName: String) -> ArtifactExportNotice? {
+        guard let destination = choose(fileName, nil) else { return nil }
+        return run(ArtifactExportAttempt(id: UUID(), title: title, source: .file(source), destination: destination))
+    }
+
     func chooseAnother(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
         let folder = attempt.destination.deletingLastPathComponent()
         let directory = folderExists(folder) ? folder : nil
         guard let destination = choose(attempt.destination.lastPathComponent, directory) else { return nil }
         var moved = attempt
         moved.destination = destination
-        return exporter.run(moved)
+        return run(moved)
+    }
+
+    private func run(_ attempt: ArtifactExportAttempt) -> ArtifactExportNotice? {
+        if case .file(let source) = attempt.source, Self.sameFile(source, attempt.destination) { return nil }
+        return exporter.run(attempt)
+    }
+
+    static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL.resolvingSymlinksInPath().path == b.standardizedFileURL.resolvingSymlinksInPath().path
     }
 }

@@ -34,6 +34,122 @@ enum ArtifactExportSelftest {
         a?.standardizedFileURL.resolvingSymlinksInPath().path == b?.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
+    static func copiesPlainFiles(in root: URL) throws {
+        let manager = FileManager.default
+        let originals = root.appendingPathComponent("originals", isDirectory: true)
+        let saved = root.appendingPathComponent("saved", isDirectory: true)
+        let sealedFolder = root.appendingPathComponent("sealed", isDirectory: true)
+        for folder in [originals, saved, sealedFolder] {
+            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        let unreadable = originals.appendingPathComponent("unreadable.png")
+        defer {
+            try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sealedFolder.path)
+            try? manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path)
+        }
+        let title = "greenhouse-at-dusk-1024x640.png"
+        var bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        bytes.append(contentsOf: (0..<4096).map { UInt8(truncatingIfNeeded: $0 &* 53) })
+        let source = originals.appendingPathComponent("9d1c.png")
+        try bytes.write(to: source)
+        let exporter = ArtifactExporter()
+        func fileAttempt(_ source: URL, to destination: URL) -> ArtifactExportAttempt {
+            ArtifactExportAttempt(id: UUID(), title: title, source: .file(source), destination: destination)
+        }
+        func expectFailure(_ notice: ArtifactExportNotice, _ problem: ArtifactExportProblem, _ what: String) throws {
+            guard case .failed(let attempt, let found) = notice, found == problem else {
+                throw Failure(description: "\(what), got \(notice)")
+            }
+            try check(notice.message == ArtifactExportNotice.failed(attempt, problem).message
+                      && notice.message.hasPrefix("Couldn't save \"\(title)\". ")
+                      && !notice.message.contains("/"), "\(what) reads only the plain message: \(notice.message)")
+        }
+
+        let fresh = saved.appendingPathComponent("Dusk.png")
+        let freshAttempt = fileAttempt(source, to: fresh)
+        let freshNotice = exporter.run(freshAttempt)
+        try check(freshNotice == .saved(id: freshAttempt.id, title: title, fileName: "Dusk.png"), "A copied image is saved, got \(freshNotice)")
+        try check(freshNotice.message == "Saved \"\(title)\" as \"Dusk.png\".", "A copy under another name names the image")
+        try check((try? Data(contentsOf: fresh)) == bytes, "The copy has the original bytes")
+        try check((try? Data(contentsOf: source)) == bytes, "Copying leaves the original alone")
+
+        let existing = saved.appendingPathComponent(title)
+        try Data("older picture".utf8).write(to: existing)
+        let replaceAttempt = fileAttempt(source, to: existing)
+        let replaced = exporter.run(replaceAttempt)
+        try check(replaced == .saved(id: replaceAttempt.id, title: title, fileName: title), "Saving over a file is saved, got \(replaced)")
+        try check(replaced.message == "Saved \"\(title)\".", "A copy under its own name says it once")
+        try check((try? Data(contentsOf: existing)) == bytes, "Saving over a file replaces it with the original bytes")
+        try check(try manager.contentsOfDirectory(atPath: saved.path).sorted() == ["Dusk.png", title].sorted(),
+                  "Saving leaves nothing else in the folder")
+
+        let vanished = originals.appendingPathComponent("vanished.png")
+        try bytes.write(to: vanished)
+        try manager.removeItem(at: vanished)
+        let vanishedDestination = saved.appendingPathComponent("Vanished.png")
+        let vanishedNotice = exporter.run(fileAttempt(vanished, to: vanishedDestination))
+        try expectFailure(vanishedNotice, .sourceMissing, "A deleted original reads as missing")
+        try check(!vanishedNotice.canChooseLocation, "A deleted original offers only dismissal")
+        try check(!exists(vanishedDestination), "A deleted original creates no file")
+
+        try bytes.write(to: unreadable)
+        try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        let unreadableDestination = saved.appendingPathComponent("Unreadable.png")
+        let unreadableNotice = exporter.run(fileAttempt(unreadable, to: unreadableDestination))
+        try expectFailure(unreadableNotice, .sourceUnreadable, "An original that can't be opened reads as unreadable, not missing")
+        try check(!unreadableNotice.canChooseLocation, "An unreadable original offers only dismissal")
+        try check(!exists(unreadableDestination), "An unreadable original creates no file")
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path)
+
+        let kept = Data("kept picture".utf8)
+        try kept.write(to: sealedFolder.appendingPathComponent(title))
+        try manager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: sealedFolder.path)
+        let sealedBefore = try manager.contentsOfDirectory(atPath: sealedFolder.path).sorted()
+        let sealedNotice = exporter.run(fileAttempt(source, to: sealedFolder.appendingPathComponent("New.png")))
+        try expectFailure(sealedNotice, .notAllowed, "Saving into a read-only folder is not allowed")
+        try check(sealedNotice.canChooseLocation, "A read-only folder offers another location")
+        try check(try manager.contentsOfDirectory(atPath: sealedFolder.path).sorted() == sealedBefore,
+                  "A refused save leaves no staging folder or partial file behind")
+        let sealedReplace = exporter.run(fileAttempt(source, to: sealedFolder.appendingPathComponent(title)))
+        try expectFailure(sealedReplace, .notAllowed, "Replacing a file in a read-only folder is not allowed")
+        try check((try? Data(contentsOf: sealedFolder.appendingPathComponent(title))) == kept, "A refused replace keeps the old file")
+        try check(try manager.contentsOfDirectory(atPath: sealedFolder.path).sorted() == sealedBefore,
+                  "A refused replace leaves nothing behind")
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sealedFolder.path)
+
+        let removedFolder = root.appendingPathComponent("removed", isDirectory: true)
+        try manager.createDirectory(at: removedFolder, withIntermediateDirectories: true)
+        try manager.removeItem(at: removedFolder)
+        let strandedNotice = exporter.run(fileAttempt(source, to: removedFolder.appendingPathComponent(title)))
+        try expectFailure(strandedNotice, .folderUnavailable, "A removed folder is unavailable")
+        try check(strandedNotice.canChooseLocation, "A removed folder offers another location")
+        try check(!exists(removedFolder), "A removed folder is not created")
+
+        var offered: [(String, URL?)] = []
+        var chosen: URL?
+        let flow = ArtifactExportFlow(exporter: exporter, choose: { name, directory in
+            offered.append((name, directory))
+            return chosen
+        })
+        chosen = source
+        try check(flow.begin(file: source, title: title, fileName: title) == nil, "Saving onto the original itself does nothing")
+        try check(offered.last?.0 == title && offered.last?.1 == nil, "The first panel suggests the image's name")
+        try check((try? Data(contentsOf: source)) == bytes, "Saving onto the original leaves its bytes untouched")
+        chosen = nil
+        try check(flow.begin(file: source, title: title, fileName: title) == nil, "Canceling the panel does nothing")
+
+        guard let lockedAttempt = sealedNotice.attempt else { throw Failure(description: "A refused save keeps its attempt") }
+        chosen = saved.appendingPathComponent("Elsewhere.png")
+        let elsewhere = flow.chooseAnother(lockedAttempt)
+        try check(elsewhere == .saved(id: lockedAttempt.id, title: title, fileName: "Elsewhere.png"), "Saving elsewhere copies the same image, got \(String(describing: elsewhere))")
+        try check(offered.last?.0 == "New.png" && samePath(offered.last?.1, sealedFolder), "Saving elsewhere opens at the refused folder with the same name")
+        try check((try? Data(contentsOf: saved.appendingPathComponent("Elsewhere.png"))) == bytes, "The copy saved elsewhere has the original bytes")
+        guard let strandedAttempt = strandedNotice.attempt else { throw Failure(description: "A stranded save keeps its attempt") }
+        chosen = nil
+        _ = flow.chooseAnother(strandedAttempt)
+        try check(offered.last?.1 == nil, "A removed folder is not offered again")
+    }
+
     @MainActor
     static func run() throws {
         let manager = FileManager.default
@@ -277,6 +393,8 @@ enum ArtifactExportSelftest {
             sourceKey: "selftest:canvas", data: citedBytes, mime: "text/markdown", fileExtension: "md",
             details: ArtifactDetails(sources: citedSources, canvasType: .markdown))) else { throw Failure(description: "The store records a canvas") }
         try check(store.librarySaveData(canvas) == .success(citedBytes), "A canvas saves its original bytes")
+
+        try copiesPlainFiles(in: root.appendingPathComponent("files", isDirectory: true))
 
         print("  artifact export OK")
     }
