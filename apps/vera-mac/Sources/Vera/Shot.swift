@@ -68,7 +68,7 @@ enum Shot {
             size = CGSize(width: 1180, height: 1500)
         } else if view == "image-placeholder" {
             size = CGSize(width: 1800, height: 640)
-        } else if view == "brand-gallery" {
+        } else if view == "brand-gallery" || view.hasPrefix("chats-image-save") {
             size = CGSize(width: 900, height: 640)
         } else if view == "brand-marks" {
             size = CGSize(width: 900, height: 320)
@@ -169,6 +169,10 @@ enum Shot {
                 .padding(24).frame(width: size.width, height: size.height, alignment: .top)
                 .background(Theme.bg).environmentObject(store)
             )
+        } else if view.hasPrefix("chats-image-save") {
+            content = AnyView(ArtifactShotFixture.chatImage(variant: view)
+                .frame(width: size.width, height: size.height).background(Theme.conversationBackground)
+                .environment(\.renderSafe, true).environmentObject(store))
         } else if view == "image-placeholder" {
             func activity(_ id: String, _ step: Int, size: String = "1024x1024") -> NativeToolActivity {
                 NativeToolActivity(
