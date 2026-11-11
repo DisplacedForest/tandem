@@ -239,7 +239,8 @@ extension ChatStore {
 
     func deleteSchedule(_ id: String) {
         guard let store = nativeScheduleStore else { return }
-        try? store.delete(id)
+        guard (try? store.delete(id)) != nil else { reloadSchedules(); return }
+        removeRules(for: .schedule(id))
         reloadSchedules()
     }
 

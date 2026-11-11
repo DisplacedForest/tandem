@@ -404,6 +404,8 @@ enum SelfTest {
         do { try await runNativeCardChoiceStore() } catch { print("SELFTEST ERROR: native card choice store \(error)"); exit(1) }
         do { try await runNativeChatRules() } catch { print("SELFTEST ERROR: native chat rules \(error)"); exit(1) }
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
+        do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
+        do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }
