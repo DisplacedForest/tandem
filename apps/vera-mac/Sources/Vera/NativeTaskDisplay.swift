@@ -188,6 +188,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var neverTitle: String? = nil
     var answer: String? = nil
     var why: NativeRuleWhy? = nil
+    var offer: NativeLeftToYouOffer? = nil
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }

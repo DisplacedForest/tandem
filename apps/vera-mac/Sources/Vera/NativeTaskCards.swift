@@ -10,6 +10,8 @@ struct NativeTaskCardView: View {
     var onDecide: ((String) -> Void)? = nil
     var onSaveAnswer: (() -> Void)? = nil
     var highlighted = false
+    var leftToYou: LeftToYouOfferState? = nil
+    var onLeftToYou: ((LeftToYouAnswer) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -27,7 +29,9 @@ struct NativeTaskCardView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if card.needsYou, let why = card.why {
+            if card.needsYou, let offer = card.offer, let leftToYou, leftToYou.shown {
+                LeftToYouOfferCard(offer: offer, state: leftToYou, onAnswer: onLeftToYou)
+            } else if card.needsYou, let why = card.why {
                 RefusalReasonLine(why: why)
             }
             if let answer = card.answer, card.status == .completed {
@@ -131,6 +135,8 @@ struct NativeDisplayBlocksView: View {
     var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
+    var leftToYou: ((NativeTaskCardPresentation) -> LeftToYouOfferState?)? = nil
+    var onLeftToYou: ((String, LeftToYouAnswer) -> Void)? = nil
     @State private var openReport: NativeResearchArtifact?
 
     var body: some View {
@@ -144,7 +150,9 @@ struct NativeDisplayBlocksView: View {
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
                         onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
                         onSaveAnswer: saved(card) ? nil : onSaveAnswer.map { action in { action(card.id) } },
-                        highlighted: highlightedTaskID == card.id)
+                        highlighted: highlightedTaskID == card.id,
+                        leftToYou: leftToYou?(card),
+                        onLeftToYou: onLeftToYou.map { action in { action(card.id, $0) } })
                 case .link(let link):
                     if let destination = link.destination {
                         Link(destination: destination) {

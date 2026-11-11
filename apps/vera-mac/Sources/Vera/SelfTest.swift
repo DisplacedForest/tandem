@@ -429,6 +429,7 @@ enum SelfTest {
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }
         do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeCompanionWorker() } catch { print("SELFTEST ERROR: companion worker \(error)"); exit(1) }
+        do { try await runLeftToYouOffer() } catch { print("SELFTEST ERROR: left to you \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }

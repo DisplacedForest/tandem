@@ -52,6 +52,13 @@ enum CardShot {
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
+        case "card-left", "card-left-kept", "card-left-asked", "card-left-chat":
+            size = CGSize(width: 1180, height: 1040)
+            seedLeft(variant, store: store)
+            let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
+                                                     services: "Can reach every service that is turned on.",
+                                                     rules: store.companionRulesSummary, activity: [], results: [])
+            content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
         case "card-rules-popover":
             size = CGSize(width: 420, height: 760)
             let id = seedRules(store)
@@ -271,6 +278,47 @@ enum CardShot {
         message.displayBlocks = [.taskCard(display.card)]
         store.conversations[index].messages = [
             Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
+            message,
+        ]
+    }
+
+    static func seedLeft(_ variant: String, store: ChatStore) {
+        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+        store.openVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
+        let chat = variant == "card-left-chat"
+        var rules = store.nativeRules
+        rules.set(chat ? .ask : .handOff, for: .riskyCommands)
+        store.updateNativeRules(rules)
+        if chat { store.tightenConversationRule(.handOff, for: .riskyCommands, conversationID: threadID) }
+        let command = "sudo systemsetup -setremotelogin on"
+        let title = "Turn on remote login for the garden Mac"
+        let why = NativeRuleWhy(kind: .unsaved, action: .riskyCommands, handsOff: true, choice: .handOff, source: chat ? .chat : .settings)
+        let reason = (try? JSONEncoder().encode(why)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [:]
+        let lead = NativeCompanionWorker.handOffLead(title: "Run a command: \(command)")
+        let result: [String: Any] = [
+            "kind": "companion_report", "query": title, "title": title, "sources": [],
+            "report": NativeCompanionWorker.handOffText(title: "Run a command: \(command)", why: why) + " Nothing was changed.",
+            "summary": lead + " Nothing was changed.", "why": reason,
+            "offer": ["action": NativeActionClass.riskyCommands.rawValue, "source": chat ? "chat" : "settings",
+                      "step": command + "\nin /Volumes/Garden/notes"],
+        ]
+        guard let reference = try? OngoingWorkFixture.reference(conversationID: threadID, title: title, workerType: "companion",
+                                                                state: "completed", result: result),
+              let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
+        store.nativeTaskEngine.set(engineURL)
+        store.nativeTaskReferences = [reference]
+        let cardID = display.card.id
+        if variant == "card-left-kept" { store.leftToYouAnswers[cardID] = .kept }
+        if variant == "card-left-asked" {
+            store.leftToYouAnswers[cardID] = .askFirst
+            rules.set(.ask, for: .riskyCommands)
+            store.updateNativeRules(rules)
+        }
+        var message = Message(role: .assistant, text: "I'll turn on remote login in the background.")
+        message.displayBlocks = [.taskCard(display.card)]
+        store.conversations[index].messages = [
+            Message(role: .user, text: "Turn on remote login for the garden Mac."),
             message,
         ]
     }

@@ -502,6 +502,13 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var summary: String? = nil
     var shape: String? = nil
     var why: NativeRuleWhy? = nil
+    var offer: NativeLeftToYouOffer? = nil
+}
+
+struct NativeLeftToYouOffer: Codable, Equatable, Hashable, Sendable {
+    let action: String
+    let source: String
+    let step: String
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

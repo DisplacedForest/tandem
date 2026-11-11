@@ -64,6 +64,35 @@ struct RuleOfferStore: Sendable {
         }
     }
 
+    static let leftPrefix = "left:"
+
+    func leftAnswer(reportID: String, action: NativeActionClass) throws -> Int {
+        guard !reportID.isEmpty else { return 0 }
+        let state = try state(conversationID: Self.leftPrefix + reportID, action: action)
+        return state.answered ? state.approvals : 0
+    }
+
+    func setLeftAnswer(_ code: Int, reportID: String, action: NativeActionClass) throws {
+        guard !reportID.isEmpty else { return }
+        try database.write { db in
+            try Self.write(db, RuleOfferState(approvals: code, answered: true), conversationID: Self.leftPrefix + reportID, action: action)
+        }
+    }
+
+    func leftAnswers() throws -> [String: Int] {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT conversation_id, approvals FROM native_rule_offers WHERE conversation_id LIKE ? AND answered = 1",
+                                        arguments: [Self.leftPrefix + "%"])
+            var answers: [String: Int] = [:]
+            for row in rows {
+                let key: String = row["conversation_id"]
+                let code: Int = row["approvals"]
+                answers[String(key.dropFirst(Self.leftPrefix.count))] = code
+            }
+            return answers
+        }
+    }
+
     private static func state(_ db: Database, conversationID: String, action: NativeActionClass) throws -> RuleOfferState {
         guard let row = try Row.fetchOne(db, sql: "SELECT approvals, answered FROM native_rule_offers WHERE conversation_id = ? AND action = ?",
                                          arguments: [conversationID, action.rawValue]) else { return RuleOfferState() }

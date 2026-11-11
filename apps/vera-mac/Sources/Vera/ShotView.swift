@@ -560,7 +560,7 @@ struct ShotView: View {
                     MessageRow(message: message, pendingConfirmation: cardChat.flatMap { card in message.toolActivities.contains { $0.id == card.confirmation.id } ? card.confirmation : nil }
                         ?? (schedule && message.toolActivities.contains { $0.id == "s1" } ? scheduleConfirmation
                         : command && message.toolActivities.contains { $0.id == "c2" } ? shotConfirmation : nil),
-                        onToolDecision: command || cardChat != nil ? { _ in } : nil, companionThread: store.isVeraThread(store.selectedID))
+                        onToolDecision: command || cardChat != nil ? { _ in } : nil, onLeftToYou: { _, _ in }, companionThread: store.isVeraThread(store.selectedID))
                     if let marker = shotMarker(for: message) {
                         TranscriptMarkerRow(marker: marker)
                     }

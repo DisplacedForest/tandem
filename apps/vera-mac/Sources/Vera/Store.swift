@@ -240,6 +240,8 @@ final class ChatStore: ObservableObject {
     var turnConfirmationTokens: [UUID: UUID] = [:]
     var turnExecutions: [UUID: NativeTurnExecution] = [:]
     let ruleOfferSession = RuleOfferSession()
+    @Published var leftToYouAnswers: [String: LeftToYouAnswer] = [:]
+    @Published var leftToYouFailed: Set<String> = []
     static let turnProcessIdentity = UUID().uuidString
     var suspendsTurnScheduling = false
     var isSchedulingTurns = false
@@ -359,6 +361,7 @@ final class ChatStore: ObservableObject {
         reloadArtifacts()
         reloadProjects()
         sweepRuleRecords()
+        loadLeftToYouAnswers()
         for conversation in conversations where !conversation.messages.isEmpty {
             reconcileTaskArtifacts(conversationID: conversation.id)
         }
