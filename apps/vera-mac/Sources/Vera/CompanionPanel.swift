@@ -220,13 +220,15 @@ struct CompanionPanelView: View {
                     .background(Capsule().fill(Theme.accent))
             }
             Spacer()
-            Button(action: openInMain) {
-                Text("Open in Tandem")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+            if !store.companionApprovalWaiting {
+                Button(action: openInMain) {
+                    Text("Open in Tandem")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open in Tandem")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open in Tandem")
             Button { controller.hide() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
@@ -294,7 +296,7 @@ struct CompanionPanelView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 0)
-            Button(action: openInMain) {
+            Button(action: openApproval) {
                 Text("Open in Tandem")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.accent)
@@ -309,7 +311,7 @@ struct CompanionPanelView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if store.companionAwaitingApproval {
+            if store.companionApprovalWaiting {
                 approvalBanner
             }
             if !store.companionAttachments.isEmpty {
@@ -400,6 +402,11 @@ struct CompanionPanelView: View {
         }
         store.openVeraThread()
         controller.hide()
+    }
+
+    private func openApproval() {
+        openInMain()
+        store.revealCompanionApproval()
     }
 
     private func loadDroppedFiles(_ providers: [NSItemProvider]) {

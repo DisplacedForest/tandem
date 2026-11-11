@@ -363,3 +363,18 @@ enum CardShot {
         NativeScheduleShotFixture.populate(store, waiting: (reference.id.uuidString, prompt))
     }
 }
+
+extension CompanionShotFixture {
+    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed"]
+
+    static func seedWaiting(_ store: ChatStore, outer: ChatStore, view: String) {
+        guard waitingViews.contains(view), let threadID = store.veraThreadID else { return }
+        if view.hasSuffix("-unnamed") {
+            store.adoptAssistantName(nil)
+            outer.adoptAssistantName(nil)
+        }
+        let reference = try? CompanionSavedTextFixture.reference(state: "needs_decision", conversationID: threadID,
+                                                                 decision: CompanionSavedTextFixture.approvalDecision())
+        store.nativeTaskReferences = reference.map { [$0] } ?? []
+    }
+}

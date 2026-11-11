@@ -387,6 +387,7 @@ enum SelfTest {
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
         do { try runCompanionAttention() } catch { print("SELFTEST ERROR: companion attention \(error)"); exit(1) }
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
+        do { try runCompanionWorkWaiting() } catch { print("SELFTEST ERROR: companion work waiting \(error)"); exit(1) }
         do { try runEndpointEditor() } catch { print("SELFTEST ERROR: endpoint editor \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }

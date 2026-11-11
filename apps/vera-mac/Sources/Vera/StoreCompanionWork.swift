@@ -14,6 +14,51 @@ extension ChatStore {
         nativeTaskReferences.filter { $0.createRequest.workerType == "companion" }
     }
 
+    var companionWorkReferencesAwaitingApproval: [NativeTaskReference] {
+        guard let veraThreadID else { return [] }
+        return companionWorkReferences().filter { reference in
+            guard reference.origin.conversationID == veraThreadID, let snapshot = reference.snapshot,
+                  snapshot.state == .needsDecision, let decision = snapshot.decision else { return false }
+            return decision.choices.contains(NativeCardChoiceKind.allowOnce.rawValue)
+                && decision.choices.contains(NativeCardChoiceKind.decline.rawValue)
+        }
+    }
+
+    var companionWorkAwaitingApproval: NativeTaskReference? { companionWorkReferencesAwaitingApproval.first }
+
+    var companionApprovalWaiting: Bool { companionAwaitingApproval || companionWorkAwaitingApproval != nil }
+
+    var companionChatApprovalMessageID: UUID? {
+        guard let veraThreadID else { return nil }
+        return conversationTurns.first { $0.conversationID == veraThreadID && turnConfirmations[$0.assistantMessageID] != nil }?
+            .assistantMessageID
+    }
+
+    func revealCompanionApproval() {
+        if let messageID = companionChatApprovalMessageID {
+            pendingSourceNotice = nil
+            pendingHighlightMessageID = messageID
+            return
+        }
+        let waiting = companionWorkReferencesAwaitingApproval
+        guard let reference = waiting.first(where: { $0.id.uuidString == pendingTaskReveal }) ?? waiting.first else { return }
+        if let decisionID = reference.snapshot?.decision?.id { revealedCompanionWorkDecisionIDs.insert(decisionID) }
+        revealOngoingWork(reference)
+    }
+
+    func revealWaitingCompanionWorkOnce() {
+        guard !companionAwaitingApproval else { return }
+        let waiting = companionWorkReferencesAwaitingApproval
+        revealedCompanionWorkDecisionIDs.formIntersection(waiting.compactMap { $0.snapshot?.decision?.id })
+        guard let reference = waiting.first(where: { reference in
+            guard let decisionID = reference.snapshot?.decision?.id else { return false }
+            return !revealedCompanionWorkDecisionIDs.contains(decisionID)
+        }), let decisionID = reference.snapshot?.decision?.id else { return }
+        revealedCompanionWorkDecisionIDs.insert(decisionID)
+        taskRevealGeneration &+= 1
+        pendingTaskReveal = reference.id.uuidString
+    }
+
     func companionWorkInProgress() -> Bool {
         companionWorkReferences().contains { reference in
             guard !reference.cancelRequested else { return false }
