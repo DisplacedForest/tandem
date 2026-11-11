@@ -89,7 +89,7 @@ enum NativeCompanionLive {
                 else if decision.choices.contains("continue") { pick = answered.count <= 1 ? "continue" : "finish" }
                 else if decision.choices.contains("stop") { pick = "stop" }
                 else { pick = decision.choices.first ?? "retry" }
-                print("companion-live: decision \"\(CompanionSentence.plain(decision.prompt, name: nil))\" choices \(decision.choices) answering \(pick)")
+                print("companion-live: decision \"\(CompanionSavedText.question(decision.prompt, companionWork: true).plain(name: nil))\" choices \(decision.choices) answering \(pick)")
                 store.answerNativeTask(reference.id.uuidString, choice: pick)
             }
             if snapshot.state.isTerminal {

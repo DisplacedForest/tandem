@@ -259,6 +259,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
     var cadenceSummary: String { cadence.summary(timeZone: timeZone) }
     var isDocument: Bool { workerType == "document" }
+    var isCompanionWork: Bool { workerType == "companion" }
     var workTitle: String { isDocument ? "Document" : "Research" }
 
     func deliverables() -> [String] {
@@ -306,5 +307,11 @@ struct NativeScheduleRun: Identifiable, Equatable, Hashable, Sendable {
         self.messageID = messageID
         self.taskReferenceID = taskReferenceID
         self.checkInKey = checkInKey
+    }
+}
+
+extension NativeScheduleRun {
+    var noteIsSavedQuestion: Bool {
+        outcome == .waiting || (checkInKey != nil && [.completed, .stopped, .failed].contains(outcome))
     }
 }
