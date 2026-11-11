@@ -50,11 +50,219 @@ enum CompanionLibraryKeepFixture {
 
 @MainActor
 extension SelfTest {
-    static func runCompanionLibraryKeep() throws {
+    static func runCompanionLibraryKeep() async throws {
         try libraryKeepFilterTable()
         try libraryKeepSelection()
-        for name in ["Ada", nil] as [String?] { try libraryKeepReset(name: name) }
-        print("  companion library keep OK (filter table, selection with a kept item, start over marks kept items, old copies, new thread, panel outputs, ordinary chats, second start over)")
+        try libraryKeepThreadChange()
+        for name in ["Ada", nil] as [String?] {
+            try libraryKeepReset(name: name)
+            try await libraryKeepFailedReset(name: name)
+            try await libraryKeepOrder(name: name)
+            try await libraryKeepNoCompanion(name: name)
+        }
+        print("  companion library keep OK (filter table, selection with a kept item, companion conversation gone and back, start over marks kept items, old copies, new thread, panel outputs, ordinary chats, second start over, a failed keep removes nothing, keeping runs before removal, no companion conversation)")
+    }
+
+    private struct KeepFailure: LocalizedError {
+        var errorDescription: String? { "The disk is full." }
+    }
+
+    private final class KeepSighting {
+        var conversation = false
+        var schedule = false
+        var memory = false
+        var called = false
+    }
+
+    private static func connectedStore(name: String?) async throws -> (ChatStore, LocalChatRepository, URL) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("library-keep-live-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let repository = try LocalChatRepository(url: folder.appendingPathComponent("vera.sqlite"), artifactDirectory: folder)
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: name,
+                              attachmentStore: NativeAttachmentStore(directory: folder), artifactPersistenceEnabled: false)
+        await store.connect()
+        store.nativeSchedulerLoop?.cancel()
+        await store.nativeSchedulerLoop?.value
+        store.nativeSchedulerLoop = nil
+        store.ensureVeraThread()
+        return (store, repository, folder)
+    }
+
+    private static let keepGoal = "Keep the greenhouse on track this season."
+
+    private static func seedCompanionWork(_ store: ChatStore, _ repository: LocalChatRepository, thread: String, label: String) throws -> String {
+        CompanionLibraryKeepFixture.save(store, title: "Frost checklist", conversationID: thread)
+        try CompanionLibraryKeepFixture.saveOldWay(repository, title: "Old note", conversationID: thread, copiedName: label)
+        let now = Date()
+        try repository.saveMemory(NativeMemoryRecord(id: "keep-memory", title: "Vents", summary: "Vents stick", details: ["Vents stick"],
+                                                     group: .areas, category: .goal, bank: "home", durability: .durable, expiry: nil,
+                                                     status: .approved, embedding: nil, sourceConversationID: thread, sourceMessageID: nil,
+                                                     createdAt: now, updatedAt: now),
+                                  decision: .accepted, note: "Fixture")
+        var draft = NativeScheduleDraft()
+        draft.title = "Weekly greenhouse note"
+        draft.instruction = "Write the weekly greenhouse note"
+        draft.owner = .dot
+        guard let schedule = store.createSchedule(draft) else { throw NativeTaskFixture.Failure.assertion("The companion schedule saves") }
+        store.saveDotProfile { $0.goal = keepGoal }
+        store.reloadArtifacts()
+        return schedule.id
+    }
+
+    private static func memoryAlive(_ repository: LocalChatRepository) -> Bool {
+        ((try? repository.allMemories()) ?? []).contains { (memory: NativeMemoryRecord) -> Bool in memory.id == "keep-memory" && memory.status != .deleted }
+    }
+
+    private static func stored(_ store: ChatStore, _ repository: LocalChatRepository, _ title: String) throws -> ArtifactRecord {
+        guard let found = store.artifactRecords.first(where: { $0.title == title }), let record = try repository.artifact(found.id) else {
+            throw NativeTaskFixture.Failure.assertion("The \(title) item exists")
+        }
+        return record
+    }
+
+    private static func libraryKeepFailedReset(name: String?) async throws {
+        let require = NativeTaskFixture.require
+        let label = name ?? "Your companion"
+        let (store, repository, folder) = try await connectedStore(name: name)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
+        let scheduleID = try seedCompanionWork(store, repository, thread: thread, label: label)
+        let frostBefore = try stored(store, repository, "Frost checklist")
+        let oldBefore = try stored(store, repository, "Old note")
+        store.companionArtifactKeeper = { (_: String) throws -> Void in throw KeepFailure() }
+        store.resetDot()
+        try require(store.veraThreadID == thread && store.conversations.contains { $0.id == thread },
+                    "A failed keep leaves the companion's conversation in place for \(label)")
+        let frost = try stored(store, repository, "Frost checklist")
+        let old = try stored(store, repository, "Old note")
+        try require(frost.conversationID == thread && frost.originTitle == frostBefore.originTitle
+                    && old.conversationID == thread && old.originTitle == oldBefore.originTitle && old.originTitle == label,
+                    "A failed keep leaves both items' link and stored origin exactly as they were")
+        try require(store.schedules.contains { $0.id == scheduleID } && memoryAlive(repository) && store.dotProfile.goal == keepGoal,
+                    "A failed keep removes no schedule, memory or goal")
+        try require(store.chatConfigurationError == "\(label) couldn't start over: The disk is full. Nothing was removed.",
+                    "The failure reads plainly: \(store.chatConfigurationError ?? "nil")")
+        try require(store.companionConfigurationError?.lead == CompanionErrorCopy.resetLead, "The failure is kept as the reset error")
+        store.companionArtifactKeeper = nil
+        store.resetDot()
+        guard let fresh = store.veraThreadID, fresh != thread else { throw NativeTaskFixture.Failure.assertion("The retry starts over") }
+        for title in ["Frost checklist", "Old note"] {
+            let kept = try stored(store, repository, title)
+            try require(kept.conversationID == nil && kept.originTitle == CompanionSavedText.marker, "The retry keeps \(title) as the companion's")
+        }
+        try require(Set(CompanionLibraryKeepFixture.shown(store, filter: fresh)) == ["Frost checklist", "Old note"],
+                    "After the retry both items match the companion filter for the new conversation")
+        try require(store.companionConfigurationError?.lead != CompanionErrorCopy.resetLead
+                    && !(store.chatConfigurationError ?? "").contains("couldn't start over"),
+                    "The retry clears the reset error: \(store.chatConfigurationError ?? "nil")")
+        try require(!store.schedules.contains { $0.id == scheduleID } && !memoryAlive(repository) && store.dotProfile.goal.isEmpty,
+                    "The retry removes what start over removes")
+    }
+
+    private static func libraryKeepOrder(name: String?) async throws {
+        let require = NativeTaskFixture.require
+        let label = name ?? "Your companion"
+        let (store, repository, folder) = try await connectedStore(name: name)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
+        let scheduleID = try seedCompanionWork(store, repository, thread: thread, label: label)
+        let sighting = KeepSighting()
+        store.companionArtifactKeeper = { [weak store] (id: String) throws -> Void in
+            guard let store else { return }
+            sighting.called = true
+            sighting.conversation = store.conversations.contains { $0.id == id } && ((try? repository.messages(conversationID: id)) != nil)
+                && store.veraThreadID == id
+            sighting.schedule = ((try? store.nativeScheduleStore?.all()) ?? []).contains { $0.id == scheduleID }
+            sighting.memory = memoryAlive(repository)
+            _ = try repository.resolveArtifacts(conversationID: id, choice: .keepAsCompanion)
+        }
+        store.resetDot()
+        try require(sighting.called && sighting.conversation && sighting.schedule && sighting.memory,
+                    "Keeping runs while the conversation, schedule and memory still exist")
+        try require(store.veraThreadID != thread && !store.schedules.contains { $0.id == scheduleID } && !memoryAlive(repository),
+                    "Removal follows the keep")
+        try require(try stored(store, repository, "Old note").originTitle == CompanionSavedText.marker, "The keep the seam ran marked the items")
+    }
+
+    private static func libraryKeepNoCompanion(name: String?) async throws {
+        let require = NativeTaskFixture.require
+        let label = name ?? "Your companion"
+        let (store, repository, folder) = try await connectedStore(name: name)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
+        CompanionLibraryKeepFixture.save(store, title: "Frost checklist", conversationID: thread)
+        let doomed = Conversation(id: "keep-none-doomed", title: "Seed swap", messages: [], updatedAt: Date())
+        try repository.saveConversation(doomed)
+        store.conversations.append(doomed)
+        CompanionLibraryKeepFixture.save(store, title: "Swap list", conversationID: doomed.id)
+        store.requestDeleteConversation(doomed.id)
+        store.confirmDeleteConversation(.keep)
+        try await repository.database.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER keep_fail_companion BEFORE INSERT ON conversations WHEN NEW.origin_type = 'assistant'
+                BEGIN SELECT RAISE(ABORT, 'The disk is full.'); END
+                """)
+        }
+        store.resetDot()
+        try require(store.veraThreadID == nil, "The replacement conversation could not be created for \(label)")
+        let kept = try stored(store, repository, "Frost checklist")
+        let swap = try stored(store, repository, "Swap list")
+        try require(kept.conversationID == nil && kept.originTitle == CompanionSavedText.marker
+                    && swap.conversationID == nil && swap.originTitle == "Seed swap", "Both unlinked items exist with their stored origins")
+        try require(store.companionOverviewModel().outputs.isEmpty, "With no companion conversation the panel lists no outputs")
+        try await repository.database.write { db in try db.execute(sql: "DROP TRIGGER keep_fail_companion") }
+        store.ensureVeraThread()
+        guard let fresh = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion conversation comes back") }
+        CompanionLibraryKeepFixture.save(store, title: "Vent schedule", conversationID: fresh)
+        store.reloadArtifacts()
+        try require(store.companionOverviewModel().outputs.map(\.title) == ["Vent schedule"], "Once it is back the panel lists only the new item")
+        try require(Set(CompanionLibraryKeepFixture.shown(store, filter: fresh)) == ["Frost checklist", "Vent schedule"],
+                    "The companion filter shows the kept and new items but not the deleted chat's")
+    }
+
+    private static func libraryKeepThreadChange() throws {
+        let require = NativeTaskFixture.require
+        let marker = CompanionSavedText.marker
+        let old = "keep-old-companion"
+        let new = "keep-new-companion"
+        let ordinary = "keep-ordinary"
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        func item(_ id: String, link: String?, origin: String?) -> ArtifactRecord {
+            ArtifactRecord(id: id, kind: .document, title: id, conversationID: link, originTitle: origin, createdAt: date, updatedAt: date, versionCount: 1)
+        }
+        let kept = item("kept", link: nil, origin: marker)
+        let deleted = item("deleted-chat", link: nil, origin: "Seed swap")
+        let linked = item("ordinary", link: ordinary, origin: "Greenhouse plan")
+        let fresh = item("fresh", link: new, origin: marker)
+        let records = [kept, deleted, linked, fresh]
+
+        var state = ArtifactLibrarySelection(conversationFilter: old)
+        state.companionThreadChanged(from: old, to: nil)
+        try require(state.conversationFilter == old && state.holdsCompanionFilter, "Losing the companion conversation keeps the filter and remembers it")
+        try require(state.visible([kept, deleted, linked], companionThreadID: nil).map(\.id) == ["kept"],
+                    "With no companion conversation the held filter still shows the kept item and hides the others")
+        state.companionThreadChanged(from: nil, to: new)
+        try require(state.conversationFilter == new && !state.holdsCompanionFilter, "A new companion conversation takes over the held filter")
+        try require(state.visible(records, companionThreadID: new).map(\.id) == ["kept", "fresh"], "Kept and new items show together")
+
+        state = ArtifactLibrarySelection(conversationFilter: old)
+        state.companionThreadChanged(from: old, to: nil)
+        state.conversationFilter = nil
+        try require(!state.holdsCompanionFilter, "Clearing the filter clears the flag")
+        state.companionThreadChanged(from: nil, to: new)
+        try require(state.conversationFilter == nil, "A cleared filter stays cleared when the companion comes back")
+
+        state = ArtifactLibrarySelection(conversationFilter: old)
+        state.companionThreadChanged(from: old, to: new)
+        try require(state.conversationFilter == new && !state.holdsCompanionFilter, "The direct move from old to new still works")
+
+        for (from, to) in [(old, nil), (nil, new), (old, new), (nil, nil)] as [(String?, String?)] {
+            state = ArtifactLibrarySelection(conversationFilter: ordinary)
+            state.companionThreadChanged(from: from, to: to)
+            try require(state.conversationFilter == ordinary && !state.holdsCompanionFilter,
+                        "An ordinary filter is untouched by a companion change from \(from ?? "none") to \(to ?? "none")")
+            try require(state.visible(records, companionThreadID: to).map(\.id) == ["ordinary"], "An ordinary filter still shows only its own item")
+        }
     }
 
     private static func libraryKeepFilterTable() throws {

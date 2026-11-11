@@ -72,13 +72,34 @@ struct ArtifactLibrarySelection: Equatable {
     var selectedID: String?
     var search = ""
     var filter: ArtifactKindFilter = .all
-    var conversationFilter: String?
+    var conversationFilter: String? {
+        didSet { if conversationFilter == nil { holdsCompanionFilter = false } }
+    }
+    var holdsCompanionFilter = false
+
+    func companionID(_ current: String?) -> String? {
+        holdsCompanionFilter ? conversationFilter : current
+    }
+
+    mutating func companionThreadChanged(from old: String?, to new: String?) {
+        if let old, conversationFilter == old {
+            if let new {
+                conversationFilter = new
+                holdsCompanionFilter = false
+            } else {
+                holdsCompanionFilter = true
+            }
+        } else if holdsCompanionFilter, let new {
+            conversationFilter = new
+            holdsCompanionFilter = false
+        }
+    }
 
     func visible(_ records: [ArtifactRecord], companionName: String? = nil, companionThreadID: String? = nil) -> [ArtifactRecord] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return records.filter { record in
             guard filter.matches(record.kind) else { return false }
-            if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionThreadID) { return false }
+            if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionID(companionThreadID)) { return false }
             guard !query.isEmpty else { return true }
             return record.title.localizedCaseInsensitiveContains(query)
                 || (Self.searchableOrigin(record, companionName: companionName)?.localizedCaseInsensitiveContains(query) ?? false)
@@ -119,7 +140,7 @@ struct ArtifactLibrarySelection: Equatable {
         }
         search = ""
         if !filter.matches(record.kind) { filter = .all }
-        if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionThreadID) {
+        if let conversationFilter, !Self.matches(record, conversation: conversationFilter, companionThreadID: companionID(companionThreadID)) {
             self.conversationFilter = nil
         }
         selectedID = record.id
@@ -194,7 +215,7 @@ struct ArtifactsView: View {
 
     private var conversationFilterTitle: CompanionLine? {
         guard let conversationFilter = state.conversationFilter else { return nil }
-        if store.isVeraThread(conversationFilter) {
+        if store.isVeraThread(conversationFilter) || state.holdsCompanionFilter {
             return .named(ArtifactLibrarySelection.companionFilterTitle)
         }
         return store.conversations.first { $0.id == conversationFilter }.map { (conversation: Conversation) -> CompanionLine in .literal("From \(conversation.title)") }
@@ -234,7 +255,8 @@ struct ArtifactsView: View {
         .onChange(of: state.conversationFilter) { _, _ in state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: store.veraThreadID) }
         .onChange(of: store.artifactRecords) { _, records in state.reconcile(records, companionName: store.companionName, companionThreadID: store.veraThreadID) }
         .onChange(of: store.veraThreadID) { old, new in
-            if let old, state.conversationFilter == old { state.conversationFilter = new }
+            state.companionThreadChanged(from: old, to: new)
+            state.reconcile(store.artifactRecords, companionName: store.companionName, companionThreadID: new)
         }
         .onChange(of: store.companionName) { _, name in state.reconcile(store.artifactRecords, companionName: name, companionThreadID: store.veraThreadID) }
     }
