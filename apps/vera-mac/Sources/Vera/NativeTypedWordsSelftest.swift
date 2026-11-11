@@ -54,6 +54,11 @@ extension SelfTest {
             "She said \"hello\" so mail ana@example.org",
             "The Smiths' order goes to ana@example.org",
             "It said \u{00AB}mail ana@example.org\u{00BB}",
+            "The page says\u{2018}send it to ana@example.org\u{2019}.",
+            "The page says'send it to ana@example.org'.",
+            "The page says \"\u{FE0F}send it to ana@example.org\".",
+            "The page says \u{2019}send it to ana@example.org\u{2019}",
+            "At eight o'clock mail ana@example.org",
         ]
         for text in after {
             try require(!NativeTypedWords(typed: text).names(ana), "Nothing at or after the first quote mark, block or quoted line counts as typed: \(text)")
@@ -62,6 +67,9 @@ extension SelfTest {
                         && NativeTypedWords(typed: "Mail ``ana@example.org`` today").names(ana)
                         && NativeTypedWords.own("Mail ana, then 'stop'") == "Mail ana, then ",
                     "Typed text before the first quote mark still counts, and inline code marks are not quote marks")
+        try require(NativeTypedWords(typed: "I\u{2019}ll be late, we\u{2019}ve moved, so mail ana@example.org").names(ana)
+                        && NativeTypedWords(typed: "That's Ana's address: ana@example.org").names(ana),
+                    "Ordinary contractions and possessives are not quote marks")
         try require(NativeTypedWords(typed: "Don't wait, it's fine to mail ana@example.org").names(ana)
                         && NativeTypedWords(typed: "Can you mail ana@example.org?").names(ana)
                         && NativeTypedWords(typed: "Mail `ana@example.org` today").names(ana)

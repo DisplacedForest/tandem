@@ -19,34 +19,44 @@ struct NativeTypedWords: Hashable, Sendable {
         self.earlier = earlier.suffix(Self.limit).map(Self.own)
     }
 
-    static let quoteMarks: Set<Character> = ["\"", "\u{201C}", "\u{201D}", "\u{201E}", "\u{00AB}", "\u{00BB}", "\u{2039}", "\u{203A}"]
+    static let quoteMarks: Set<Unicode.Scalar> = ["\"", "\u{201C}", "\u{201D}", "\u{201E}", "\u{201F}", "\u{00AB}", "\u{00BB}", "\u{2039}", "\u{203A}",
+                                                  "\u{2018}", "\u{201A}", "\u{201B}", "\u{FF02}", "\u{FF07}"]
+    static let apostrophes: Set<Unicode.Scalar> = ["'", "\u{2019}"]
+    static let contractions: Set<String> = ["t", "s", "d", "m", "ll", "re", "ve"]
 
     static func own(_ raw: String) -> String {
-        let characters = Array(raw.replacingOccurrences(of: "\u{2019}", with: "'").replacingOccurrences(of: "\u{2018}", with: "'"))
-        let count = characters.count
+        let scalars = Array(raw.unicodeScalars)
+        let count = scalars.count
         func wordy(_ index: Int) -> Bool {
-            index >= 0 && index < count && (characters[index].isLetter || characters[index].isNumber)
+            index >= 0 && index < count && CharacterSet.alphanumerics.contains(scalars[index])
         }
         func lineStart(_ index: Int) -> Bool {
             var cursor = index - 1
-            while cursor >= 0, !characters[cursor].isNewline {
-                if !characters[cursor].isWhitespace { return false }
+            while cursor >= 0, !CharacterSet.newlines.contains(scalars[cursor]) {
+                if !CharacterSet.whitespaces.contains(scalars[cursor]) { return false }
                 cursor -= 1
             }
             return true
         }
+        func contracts(_ index: Int) -> Bool {
+            guard wordy(index - 1) else { return false }
+            var end = index + 1
+            while end < count, end - index <= 3, wordy(end) { end += 1 }
+            guard !wordy(end) else { return false }
+            return contractions.contains(String(String.UnicodeScalarView(scalars[(index + 1)..<end])).lowercased())
+        }
         func opens(_ index: Int) -> Bool {
-            let character = characters[index]
-            if quoteMarks.contains(character) { return true }
-            if character == "'" { return !(wordy(index - 1) && wordy(index + 1)) }
-            if character == ">" { return lineStart(index) }
-            if character == "`" || character == "~" {
-                return index + 2 < count && characters[index + 1] == character && characters[index + 2] == character
+            let scalar = scalars[index]
+            if quoteMarks.contains(scalar) { return true }
+            if apostrophes.contains(scalar) { return !contracts(index) }
+            if scalar == ">" { return lineStart(index) }
+            if scalar == "`" || scalar == "~" {
+                return index + 2 < count && scalars[index + 1] == scalar && scalars[index + 2] == scalar
             }
             return false
         }
-        guard let first = characters.indices.first(where: opens) else { return String(characters) }
-        return String(characters[..<first])
+        let cut = scalars.indices.first(where: opens) ?? count
+        return String(String.UnicodeScalarView(scalars[..<cut])).replacingOccurrences(of: "\u{2019}", with: "'")
     }
 
     var isEmpty: Bool { current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && earlier.isEmpty }
