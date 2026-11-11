@@ -38,7 +38,7 @@ struct OnboardingSheet: View {
                     case 0:
                         IdentityOnboardingEditor()
                         Divider().padding(.vertical, 6)
-                        NativeEndpointEditor()
+                        NativeEndpointEditor(addsOnEntry: true)
                     case 1: NativeModelEditor()
                     case 2: NativeMemoryOnboardingEditor()
                     default: PulseOnboardingEditor()
@@ -105,6 +105,7 @@ struct OnboardingSheet: View {
     }
 
     private func move(to value: Int) {
+        config.discardUntouchedEntryProfile()
         step = value
         config.updateOnboarding(step: value)
     }
