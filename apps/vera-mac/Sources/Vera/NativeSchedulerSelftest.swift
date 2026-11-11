@@ -30,6 +30,7 @@ final class NativeSchedulerFireLog: @unchecked Sendable {
     var result: NativeScheduleFireResult = .started(taskReferenceID: "reference-1")
     var status: NativeScheduleTaskStatus = .active
     var overrides: [String: NativeScheduleTaskStatus] = [:]
+    var endedAt: Date?
 
     func record(_ schedule: NativeSchedule, _ run: NativeScheduleRun) -> NativeScheduleFireResult {
         lock.lock(); defer { lock.unlock() }
@@ -48,7 +49,7 @@ final class NativeSchedulerFireLog: @unchecked Sendable {
     func link(_ run: NativeScheduleRun) -> NativeScheduleTaskLink? {
         lock.lock(); defer { lock.unlock() }
         guard let id = run.taskReferenceID ?? (run.messageID == "recovered" ? "reference-recovered" : nil) else { return nil }
-        return NativeScheduleTaskLink(referenceID: id, status: overrides[id] ?? status)
+        return NativeScheduleTaskLink(referenceID: id, status: overrides[id] ?? status, endedAt: endedAt)
     }
 
     var count: Int {

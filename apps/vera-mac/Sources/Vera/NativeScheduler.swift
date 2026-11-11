@@ -18,6 +18,7 @@ enum NativeScheduleTaskStatus: Sendable, Equatable {
 struct NativeScheduleTaskLink: Sendable, Equatable {
     let referenceID: String
     let status: NativeScheduleTaskStatus
+    var endedAt: Date? = nil
 }
 
 typealias NativeScheduleBind = @Sendable (String, String) async -> Void
@@ -241,7 +242,11 @@ actor NativeScheduler {
             case .stopped: outcome = .stopped
             }
             run.outcome = outcome
-            run.finishedAt = now()
+            let moment = now()
+            let ended = link.endedAt.flatMap { (ended: Date) -> Date? in
+                ended <= moment && ended >= (run.startedAt ?? run.scheduledFor) ? ended : nil
+            }
+            run.finishedAt = ended ?? moment
             try? store.saveRun(run)
             changed = true
         }

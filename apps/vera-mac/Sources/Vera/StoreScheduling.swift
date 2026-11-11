@@ -158,7 +158,9 @@ extension ChatStore {
             case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active
             }
-            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status)
+            let terminal = status == .completed || status == .failed || status == .stopped
+            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status,
+                                          endedAt: terminal ? snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) } : nil)
         }, fire: { [weak self] schedule, run, bind in
             guard let self else { return .failed("Tandem is closing.") }
             return await self.fireSchedule(schedule, run: run, bind: bind)

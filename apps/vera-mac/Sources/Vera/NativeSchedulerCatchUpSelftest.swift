@@ -215,6 +215,23 @@ extension SelfTest {
                         && runs[2].scheduledFor == at(19, 6) && runs[2].outcome == .running && runs[2].detail == NativeScheduler.caughtUpNote,
                     "An earlier run waiting on a question does not stop the next occurrence, on time or caught up: \(runs.map(\.detail))")
 
+        for (label, ended, expected) in [("its own end time", at(19, 9, 4), at(19, 9, 4)),
+                                         ("no end time", Date?.none, at(20, 10)),
+                                         ("an end time after now", at(21, 0), at(20, 10)),
+                                         ("an end time before it started", at(19, 8), at(20, 10))] as [(String, Date?, Date)] {
+            let ending = try CatchUpFixture(start: at(19, 9))
+            let endingDaily = try ending.schedule(.weekly(weekday: 2, minuteOfDay: 7 * 60), next: at(26, 7), zone: zone)
+            try ending.store.saveRun(NativeScheduleRun(scheduleID: endingDaily.id, scheduledFor: at(19, 7), startedAt: at(19, 9), outcome: .running,
+                                                       detail: NativeScheduler.caughtUpNote, taskReferenceID: "reference-ending"))
+            ending.log.status = .completed
+            ending.log.endedAt = ended
+            try ending.closed(from: at(19, 9, 1), until: at(20, 10))
+            _ = await ending.scheduler.tick()
+            let settled = try ending.runs(endingDaily.id).first { $0.scheduledFor == at(19, 7) }
+            try require(settled?.outcome == .completed && settled?.finishedAt == expected && settled?.happenedAt == expected,
+                        "A run noticed as finished after a relaunch is given \(label): \(String(describing: settled?.finishedAt))")
+        }
+
         let retired = NativeScheduler.missedNote + " " + oldSentence + "."
         try require(NativeScheduler.retiredMissedNote == retired && NativeScheduler.shownNote(retired) == NativeScheduler.missedNote,
                     "A missed row saved before this change shows the current missed note")
