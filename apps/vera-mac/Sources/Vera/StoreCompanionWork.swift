@@ -14,6 +14,32 @@ extension ChatStore {
         nativeTaskReferences.filter { $0.createRequest.workerType == "companion" }
     }
 
+    var companionWorkAwaitingApproval: NativeTaskReference? {
+        guard let veraThreadID else { return nil }
+        return companionWorkReferences().first { reference in
+            guard reference.origin.conversationID == veraThreadID, let snapshot = reference.snapshot,
+                  snapshot.state == .needsDecision, let decision = snapshot.decision else { return false }
+            return decision.choices.contains(NativeCardChoiceKind.allowOnce.rawValue)
+                && decision.choices.contains(NativeCardChoiceKind.decline.rawValue)
+        }
+    }
+
+    var companionApprovalWaiting: Bool { companionAwaitingApproval || companionWorkAwaitingApproval != nil }
+
+    func revealCompanionWorkApproval() {
+        guard !companionAwaitingApproval, let reference = companionWorkAwaitingApproval else { return }
+        revealedCompanionWorkDecisionID = reference.snapshot?.decision?.id
+        revealOngoingWork(reference)
+    }
+
+    func revealWaitingCompanionWorkOnce() {
+        guard !companionAwaitingApproval, let reference = companionWorkAwaitingApproval,
+              let decisionID = reference.snapshot?.decision?.id, decisionID != revealedCompanionWorkDecisionID else { return }
+        revealedCompanionWorkDecisionID = decisionID
+        taskRevealGeneration &+= 1
+        pendingTaskReveal = reference.id.uuidString
+    }
+
     func companionWorkInProgress() -> Bool {
         companionWorkReferences().contains { reference in
             guard !reference.cancelRequested else { return false }
