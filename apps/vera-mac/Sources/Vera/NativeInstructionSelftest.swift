@@ -201,6 +201,13 @@ extension SelfTest {
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Update .env to match draft.md"), claim: saveClaim,
                              targets: [try target(.folder, "/shared/draft.md")]).decision(for: .fileEdits) == .ask,
                     "A second file name asks even when it starts with a dot")
+        for typed in ["Delete notes.txt and the parent directory ..", "Delete notes.txt and .", "Delete notes.txt!!", "Delete notes.txt and more..."] {
+            try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed), claim: trashClaim, targets: [loose]).decision(for: .trash) == .ask,
+                        "More than one closing mark at the end is not sentence punctuation: \(typed)")
+        }
+        try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt now."), claim: trashClaim, targets: [loose])
+                        .decision(for: .trash) == .act(.instruction),
+                    "One closing full stop is sentence punctuation")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
