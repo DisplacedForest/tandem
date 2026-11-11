@@ -145,6 +145,7 @@ struct NativeCompanionHarness {
         })
         water.effect = .write
         water.action = .networkSends
+        water.fixedDestination = true
         water.executeWithKey = { arguments, key in
             service.bump("water_bed")
             if service.failWrites { throw NativeToolRefusal(detail: "The valve did not open") }
@@ -254,6 +255,7 @@ extension SelfTest {
         try await companionUnnamedWorker()
         try await companionSavedAllows()
         try await companionActWrite()
+        try await companionTypedRecipients()
         try await companionOneUseGrant()
         try await companionToolOwnChecks()
         try await companionAdmittedFolderWrites()
@@ -276,7 +278,7 @@ extension SelfTest {
         try companionShape()
         try await companionClassification()
         try await companionWebSources()
-        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, typed recipients, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -583,6 +585,7 @@ extension SelfTest {
                 id: "fixture-post", name: "post_line", title: "Post a line", description: "Fixture",
                 parameters: .object(["type": .string("object")]), confirmation: confirmation, effect: .write, action: .networkSends,
                 isAvailable: { true }, execute: { _ in posted.hit(); return .object(["ok": .bool(true)]) })
+            definition.fixedDestination = true
             definition.preflight = { arguments in
                 guard arguments["line"] != nil else { throw NativeToolError.invalidArguments("A line is required") }
             }
@@ -680,6 +683,56 @@ extension SelfTest {
         free.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: freeThread.current, tools: relaxed) }
         _ = try free.create("Post the line")
         try require(try await free.runUntilSettled().state == .completed && posted.count == 1, "A tool that doesn't demand confirmation still acts under an act rule with no card")
+    }
+
+    private static func companionTypedRecipients() async throws {
+        let require = NativeTaskFixture.require
+        let sent = NativeChatRulesCounter()
+        var mail = NativeToolDefinition(id: "fixture-mail", name: "send_mail", title: "Send an email", description: "Fixture",
+                                        parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write,
+                                        action: .networkSends, isAvailable: { true },
+                                        execute: { _ in sent.hit(); return .object(["sent": .bool(true)]) })
+        mail.ruleSubjects = { arguments in
+            guard case .string(let to)? = arguments["to"], let made = NativeRuleTarget.make(.recipient, to) else { return [] }
+            return [[made]]
+        }
+        let tools = [mail]
+        func harness(_ to: String) throws -> NativeCompanionHarness {
+            var made = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                    return NativeCompanionScriptedModel.call("send_mail", "{\"to\":\"\(to)\",\"body\":\"Order ready\"}")
+                }
+                return NativeCompanionScriptedModel.text("Sent the note.")
+            }
+            let thread = made.thread
+            let rules = made.rules
+            let grants = made.grants
+            made.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
+            made.environment.authority = { conversation, request in
+                NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
+                                                                        typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
+                                               grantsRevision: grants.revision)
+            }
+            return made
+        }
+        let named = try harness("orders@workshop.example")
+        _ = try named.create("Email orders@workshop.example that the order is ready")
+        let namedDone = try await named.runUntilSettled()
+        try require(namedDone.state == .completed && sent.count == 1, "Work whose assignment names the address sends with no question")
+
+        sent.reset()
+        let unnamed = try harness("ana@example.com")
+        let unnamedID = try unnamed.create("Email the supplier that the order is ready")
+        let unnamedDone = try await unnamed.runUntilSettled()
+        try require(unnamedDone.state == .needsDecision && sent.count == 0
+                        && (try unnamed.effects(unnamedID)).allSatisfy { $0.state != .completed },
+                    "Work that sends to an address the assignment never named waits for a decision and sends nothing")
+
+        let manual = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual")
+        let scheduled = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "scheduled", scheduleID: "schedule-1")
+        let proactive = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "proactive")
+        try require(manual.typedRequest == "Email orders@workshop.example" && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
+                    "Only work the person started by hand counts its assignment as their own words")
     }
 
     private static func companionAdmittedFolderWrites() async throws {

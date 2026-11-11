@@ -935,8 +935,8 @@ final class NativeRuleSource: @unchecked Sendable {
         change({ conversations != next }, { conversations = next })
     }
 
-    func resolver(for conversationID: String, requestText: String, projectID: String? = nil, taskID: String? = nil,
-                  scheduleID: String? = nil) -> NativeRuleResolver {
+    func resolver(for conversationID: String, requestText: String, typed: NativeTypedWords = .none, projectID: String? = nil,
+                  taskID: String? = nil, scheduleID: String? = nil) -> NativeRuleResolver {
         lock.lock(); defer { lock.unlock() }
         var resolver = NativeRuleResolver(global: global, conversation: conversations[conversationID] ?? NativeConversationRules(),
                                           requestText: requestText, revision: currentRevision(), records: records,
@@ -944,6 +944,7 @@ final class NativeRuleSource: @unchecked Sendable {
                                                                      taskID: taskID, scheduleID: scheduleID))
         resolver.durable = allocator != nil
         resolver.failed = failed
+        resolver.typed = typed
         return resolver
     }
 }
@@ -982,6 +983,7 @@ struct NativeRuleResolver: Sendable {
     var toolID: String?
     var failed = false
     var subjects: [[NativeRuleTarget]] = []
+    var typed: NativeTypedWords = .none
 
     init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0,
          records: [NativeRuleRecord] = [], context: NativeRuleContext? = nil, now: Date = Date()) {
@@ -1037,7 +1039,31 @@ struct NativeRuleResolver: Sendable {
         }
     }
 
+    func unnamed(_ part: NativeRuleQuery, honoringLimitedUse: Bool) -> NativeRuleTarget? {
+        guard part.action == .networkSends else { return nil }
+        return part.targets.first { target in
+            guard target.kind == .recipient || target.kind == .service, !typed.names(target) else { return false }
+            let single = NativeRuleQuery(action: part.action, toolID: part.toolID, targets: [target])
+            let winner = NativeRuleMatcher.resolve(records, query: single, context: context, at: now, honoringLimitedUse: honoringLimitedUse)?.decidedBy
+            return !(winner?.effect == .allow && winner?.target != nil)
+        }
+    }
+
+    func unnamed(in query: NativeRuleQuery, honoringLimitedUse: Bool) -> NativeRuleTarget? {
+        for part in query.parts {
+            if let target = unnamed(part, honoringLimitedUse: honoringLimitedUse) { return target }
+        }
+        return nil
+    }
+
     func resolve(_ query: NativeRuleQuery, honoringLimitedUse: Bool)
+        -> (decision: NativeRuleDecision, resolution: NativeRuleResolution?, authorizedBy: [String]) {
+        let settled = settle(query, honoringLimitedUse: honoringLimitedUse)
+        guard case .act = settled.decision, unnamed(in: query, honoringLimitedUse: honoringLimitedUse) != nil else { return settled }
+        return (.ask, settled.resolution, [])
+    }
+
+    func settle(_ query: NativeRuleQuery, honoringLimitedUse: Bool)
         -> (decision: NativeRuleDecision, resolution: NativeRuleResolution?, authorizedBy: [String]) {
         if global.holds(query.action) { return (.handOff, nil, []) }
         var worst: (decision: NativeRuleDecision, resolution: NativeRuleResolution?)?

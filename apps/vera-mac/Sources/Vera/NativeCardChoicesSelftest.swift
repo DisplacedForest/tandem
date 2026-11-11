@@ -70,17 +70,24 @@ extension SelfTest {
         try require(trashRecords.count == 1 && trashRecords[0].action == .trash && valid(trashRecords[0]), "A Trash card saves a Trash record")
 
         let ana = NativeRuleTarget.make(.recipient, "ana@example.com")!
-        let typed = NativeCardSubject(action: .networkSends, toolID: "mail", toolTitle: "Send an email", targets: [ana],
-                                      typedText: "Send the notes to Ana@example.com please")
-        try require(kinds(typed, chat) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A send to a recipient you typed offers the standing choices")
-        let sendAlways = NativeCardChoices.records(.allowAlways, subject: typed, place: chat, originMessageID: nil)
+        let send = NativeCardSubject(action: .networkSends, toolID: "mail", toolTitle: "Send an email", targets: [ana])
+        try require(kinds(send, chat) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A send to a named recipient offers the standing choices for that recipient")
+        let sendAlways = NativeCardChoices.records(.allowAlways, subject: send, place: chat, originMessageID: nil)
         try require(sendAlways.count == 1 && sendAlways[0].target == ana && sendAlways[0].effect == .allow && valid(sendAlways[0]),
-                    "Always allow on a typed recipient targets that recipient")
-        var untyped = typed
-        untyped.typedText = "Send the notes to my friend"
-        try require(kinds(untyped, chat) == [.decline, .never, .allowOnce], "A send to a recipient you never typed offers no standing allow")
-        try require(NativeCardChoices.records(.allowAlways, subject: untyped, place: chat, originMessageID: nil).isEmpty,
-                    "No allow is saved for a recipient you never typed")
+                    "Always allow on a send targets that recipient and nothing wider")
+        let unknown = NativeCardSubject(action: .networkSends, toolID: "post", toolTitle: "Post a note")
+        try require(kinds(unknown, chat) == [.decline, .never, .allowOnce], "A sending tool that never said where it sends offers no standing allow")
+        try require(NativeCardChoices.records(.allowAlways, subject: unknown, place: chat, originMessageID: nil).isEmpty
+                        && NativeCardChoices.records(.allowHere, subject: unknown, place: chat, originMessageID: nil).isEmpty,
+                    "No allow is saved for a sending tool that never said where it sends")
+        var fixed = unknown
+        fixed.fixed = true
+        try require(kinds(fixed, chat) == [.decline, .never, .allowAlways, .allowHere, .allowOnce], "A sending tool that always sends to the same place keeps the standing choices")
+        let fixedAlways = NativeCardChoices.records(.allowAlways, subject: fixed, place: chat, originMessageID: nil)
+        try require(fixedAlways.count == 1 && fixedAlways[0].target == nil && fixedAlways[0].toolID == "post" && valid(fixedAlways[0]),
+                    "Always allow on a fixed sending tool covers that tool")
+        try require(NativeCardChoices.signature(fixed) != NativeCardChoices.signature(unknown), "A fixed and an unknown sending tool are different cards")
+        let untyped = send
         let sendNever = NativeCardChoices.records(.never, subject: untyped, place: chat, originMessageID: nil)
         try require(sendNever.count == 1 && sendNever[0].target == ana && sendNever[0].effect == .forbid && valid(sendNever[0]),
                     "Never on a send forbids that recipient")

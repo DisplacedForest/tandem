@@ -68,7 +68,7 @@ struct NativeCardSubject: Equatable, Hashable, Sendable {
     var targets: [NativeRuleTarget] = []
     var command: String?
     var governed = true
-    var typedText = ""
+    var fixed = false
     var scheduleInstructed = false
     var phrase: String? = nil
     var alwaysAsks = false
@@ -78,7 +78,7 @@ enum NativeCardCoverage: Equatable, Sendable {
     case commandPrefix(NativeRuleTarget)
     case commandsOnly
     case folders([NativeRuleTarget])
-    case sendTargets([NativeRuleTarget], typed: Bool)
+    case sendTargets([NativeRuleTarget])
     case wholeTool
     case none
 }
@@ -116,7 +116,7 @@ enum NativeCardChoices {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return subject.action == .trash ? "Moving things in \(names) to the Trash" : "Edits in \(names)"
-        case .sendTargets(let targets, _): return "Messages to " + list(targets.map(\.value))
+        case .sendTargets(let targets): return "Messages to " + list(targets.map(\.value))
         case .wholeTool: return "This action every time"
         }
     }
@@ -129,7 +129,7 @@ enum NativeCardChoices {
     static func wants(_ subject: NativeCardSubject, phrase: String) -> String {
         switch coverage(subject) {
         case .folders(let folders): return phrase + " in " + list(folders.map { name($0.value) })
-        case .sendTargets(let targets, _): return phrase + " to " + list(targets.map(\.value))
+        case .sendTargets(let targets): return phrase + " to " + list(targets.map(\.value))
         case .commandPrefix, .commandsOnly, .wholeTool, .none: return phrase
         }
     }
@@ -155,9 +155,7 @@ enum NativeCardChoices {
             return .folders(folders)
         case .networkSends:
             let named = subject.targets.filter { $0.kind == .recipient || $0.kind == .service }
-            guard !named.isEmpty else { return .wholeTool }
-            let typed = NativeRequestPreapproval.normalized(subject.typedText)
-            return .sendTargets(named, typed: named.allSatisfy { typed.contains(NativeRequestPreapproval.normalized($0.value)) })
+            return named.isEmpty ? .wholeTool : .sendTargets(named)
         default:
             return .wholeTool
         }
@@ -168,13 +166,17 @@ enum NativeCardChoices {
         switch coverage(subject) {
         case .none: parts.append("none")
         case .commandsOnly: parts.append("commands")
-        case .wholeTool: parts.append(subject.alwaysAsks ? "tool-asks" : "tool")
+        case .wholeTool: parts.append(subject.alwaysAsks ? "tool-asks" : remembers(subject) ? "tool" : "tool-once")
         case .commandPrefix(let prefix): parts += ["prefix", prefix.kind.rawValue, prefix.value]
         case .folders(let folders): parts += ["folders"] + folders.flatMap { [$0.kind.rawValue, $0.value] }
-        case .sendTargets(let targets, let typed): parts += [typed ? "typed" : "untyped"] + targets.flatMap { [$0.kind.rawValue, $0.value] }
+        case .sendTargets(let targets): parts += ["recipients"] + targets.flatMap { [$0.kind.rawValue, $0.value] }
         }
         guard let data = try? JSONEncoder().encode(parts), let text = String(data: data, encoding: .utf8) else { return UUID().uuidString }
         return text
+    }
+
+    static func remembers(_ subject: NativeCardSubject) -> Bool {
+        subject.action != .networkSends || subject.fixed
     }
 
     static func offered(_ subject: NativeCardSubject, place: NativeCardPlace) -> [NativeCardChoice] {
@@ -190,9 +192,9 @@ enum NativeCardChoices {
         case .commandsOnly:
             standing = false
             never = NativeCardChoice(kind: .never, title: "Never run commands \(place.neverWords)")
-        case .sendTargets(_, let typed):
-            standing = standing && typed
-        case .folders, .wholeTool:
+        case .wholeTool:
+            standing = standing && remembers(subject)
+        case .folders, .sendTargets:
             break
         }
         var choices = [decline]
@@ -213,7 +215,7 @@ enum NativeCardChoices {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
-        case .sendTargets(let targets, _): return "Never send to " + list(targets.map(\.value))
+        case .sendTargets(let targets): return "Never send to " + list(targets.map(\.value))
         case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this \(place.neverWords)"
         }
     }
@@ -235,7 +237,7 @@ enum NativeCardChoices {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
             return subject.action == .trash ? "moving things in \(names) to the Trash" : "file edits in \(names)"
-        case .sendTargets(let targets, _):
+        case .sendTargets(let targets):
             return "sending to " + list(targets.map(\.value))
         case .wholeTool:
             return "this action every time"
@@ -282,7 +284,7 @@ enum NativeCardChoices {
                 return [record(nil, tool: subject.toolID, target: nil, statement: "Never run commands \(place.neverWords)")]
             case .folders(let folders):
                 return folders.map { record(subject.action, tool: nil, target: $0, statement: "Never allow \(covers(subject) ?? "this")") }
-            case .sendTargets(let targets, _):
+            case .sendTargets(let targets):
                 return targets.map { record(subject.action, tool: nil, target: $0, statement: "Never allow sending to \($0.value)") }
             case .wholeTool:
                 return [record(subject.action, tool: subject.toolID, target: nil, statement: "Never allow: \(subject.toolTitle)")]
@@ -296,8 +298,7 @@ enum NativeCardChoices {
             return [record(.commands, tool: subject.toolID, target: prefix, statement: statement)]
         case .folders(let folders):
             return folders.map { record(subject.action, tool: nil, target: $0, statement: statement) }
-        case .sendTargets(let targets, let typed):
-            guard typed else { return [] }
+        case .sendTargets(let targets):
             return targets.map { record(subject.action, tool: subject.toolID, target: $0, statement: statement) }
         case .wholeTool:
             return [record(subject.action, tool: subject.toolID, target: nil, statement: statement)]

@@ -13,7 +13,7 @@ enum RefusalCopy {
     static func offersRules(_ why: NativeRuleWhy) -> Bool {
         switch why.kind {
         case .unsaved, .outside, .rule, .held: return true
-        case .tool, .folder: return false
+        case .tool, .folder, .unnamed: return false
         }
     }
 
@@ -90,6 +90,9 @@ enum RefusalCopy {
         case .folder:
             let path = why.subject.map { full ? clean($0) : shortened($0) }.flatMap { $0.isEmpty ? nil : $0 } ?? "This"
             return .literal("\(path) is outside the folders shared with this chat, so share its folder to allow this.")
+        case .unnamed:
+            let address = why.subject.map(clean).flatMap { $0.isEmpty ? nil : $0 } ?? "where this is going"
+            return .literal("You didn't type \(address) yourself, so this asks you first.")
         }
     }
 
@@ -104,6 +107,9 @@ enum RefusalCopy {
         }
         if why.kind == .folder {
             return "This action was not run. The user sees: \(shown) Do not attempt it; tell the user which folder they would need to share."
+        }
+        if why.kind == .unnamed {
+            return "This action was not run. The user sees: \(shown) Do not attempt it; tell the user where you would send it so they can confirm it in their own words."
         }
         return "This action was not run. The user sees: \(shown) Do not attempt it; tell the user exactly what you would do so they can do it themselves or change the rule."
     }
@@ -131,6 +137,8 @@ enum RefusalCopy {
                 return NativeRuleWhy.tool(.networkSends)
             case .folder:
                 return NativeRuleWhy.folder(.fileEdits, path: "/Volumes/Other/notes.txt")
+            case .unnamed:
+                return NativeRuleWhy(kind: .unnamed, action: .networkSends, handsOff: false, subject: "orders@workshop.example")
             }
         }
     }

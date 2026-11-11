@@ -114,8 +114,7 @@ extension ChatStore {
     func turnDotContext(_ turn: NativeConversationTurn) -> String? {
         if let stored = turn.dotContext { return stored }
         guard isVeraThread(turn.conversationID) else { return nil }
-        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
-        return dotContext(for: turn.conversationID, requestText: text)
+        return dotContext(for: turn.conversationID, requestText: typedWords(for: turn).said)
     }
 
     func memorySourceIsLive(_ source: NativeMemoryTurnSource?, generation: Int, wasVeraThread: Bool) -> Bool {

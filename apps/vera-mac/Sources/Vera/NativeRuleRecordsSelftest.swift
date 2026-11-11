@@ -227,9 +227,13 @@ enum NativeRuleRecordsSelftest {
                     "On a full tie the most recently updated record decides")
 
         let carveOut = resolver([record(.allow), record(.forbid, target: alice)])
+        var carveOutNamed = carveOut
+        carveOutNamed.typed = NativeTypedWords(typed: "Send the notes to bob@example.com")
         try require(carveOut.resolve(toAlice, honoringLimitedUse: false).resolution?.decidedBy.effect == .forbid
-                    && carveOut.resolve(toBob, honoringLimitedUse: false).decision == .act(.grant),
+                    && carveOutNamed.resolve(toBob, honoringLimitedUse: false).decision == .act(.grant),
                     "A narrower forbid blocks its target while a broader allow covers the rest")
+        try require(carveOut.resolve(toBob, honoringLimitedUse: false).decision == .ask,
+                    "A broader allow never covers a recipient that was not typed")
 
         let tooled = resolver([record(.forbid), record(.allow, tool: "mail")])
         try require(tooled.resolve(NativeRuleQuery(action: .networkSends, toolID: "mail"), honoringLimitedUse: false).decision == .act(.grant)

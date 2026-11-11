@@ -65,8 +65,21 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
     let enabled: Bool
     let jsonFields: [String: String]
     let source: String
+    var sendsTo: [String]? = nil
 
     var id: String { NativeCapabilityTools.identifier(name: name) }
+
+    func recipients(_ arguments: [String: NativeJSONValue]) -> [NativeRuleTarget] {
+        var found: [NativeRuleTarget] = []
+        for field in sendsTo ?? [] {
+            guard case .string(let value)? = arguments[field] else { continue }
+            for piece in value.split(whereSeparator: { $0 == "," || $0 == ";" || $0.isNewline }) {
+                guard let target = NativeRuleTarget.make(.recipient, String(piece)), !found.contains(target) else { continue }
+                found.append(target)
+            }
+        }
+        return found
+    }
 
     var needsAPIBase: Bool { URL(string: endpoint)?.scheme == nil }
 
@@ -166,6 +179,15 @@ enum NativeCapabilityTools {
         client: NativeHTTPToolClient = .live
     ) -> NativeToolDefinition {
         var definition = plainDefinition(declaration, base: base, client: client)
+        if let fields = declaration.sendsTo, !declaration.reads, declaration.method == .post {
+            definition.fixedDestination = fields.isEmpty
+            if !fields.isEmpty {
+                definition.ruleSubjects = { arguments in
+                    let targets = declaration.recipients(arguments)
+                    return targets.isEmpty ? [] : [targets]
+                }
+            }
+        }
         guard declaration.source == bundledSource else { return definition }
         definition.proposes = proposing.contains(declaration.name)
         if let mode = drafting[declaration.name] {
@@ -527,10 +549,29 @@ enum NativeCapabilityTools {
             }
             jsonFields = mapping
         }
+        var sendsTo: [String]?
+        if let raw = object["sends_to"] {
+            guard let fields = raw as? [String] else {
+                throw NativeToolDeclarationError(reason: "'sends_to' must be a list of declared string fields, or an empty list for a tool that always sends to the same place")
+            }
+            guard method == .post else {
+                throw NativeToolDeclarationError(reason: "'sends_to' requires the POST method")
+            }
+            for field in fields {
+                guard properties.contains(where: { $0.name == field && $0.type == .string }) else {
+                    throw NativeToolDeclarationError(
+                        reason: "'sends_to' names '\(field)', which is not a declared string property")
+                }
+            }
+            guard Set(fields).count == fields.count else {
+                throw NativeToolDeclarationError(reason: "'sends_to' lists the same field twice")
+            }
+            sendsTo = fields
+        }
         return NativeToolDeclaration(
             name: name, title: title, description: description, properties: properties,
             required: required, endpoint: endpoint, method: method, confirmation: confirmation,
-            timeoutSeconds: timeout, enabled: enabled, jsonFields: jsonFields, source: source)
+            timeoutSeconds: timeout, enabled: enabled, jsonFields: jsonFields, source: source, sendsTo: sendsTo)
     }
 
     private static func text(_ value: Any?) -> String {
