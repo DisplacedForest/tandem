@@ -400,7 +400,7 @@ enum NativeCompanionWorker {
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil) throws -> NativeTaskStepResult {
-        let body = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters))
+        let body = CompanionSavedText.sanitized(String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters)))
         let firstParagraph = body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
         let summary = String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters))
         let title = assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""

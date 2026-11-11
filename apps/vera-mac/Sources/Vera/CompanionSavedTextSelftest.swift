@@ -613,6 +613,26 @@ extension SelfTest {
 
     private static func savedTextModelInput(_ reports: [String: [String: Any]]) async throws {
         let require = NativeTaskFixture.require
+        var refused = NativeCompanionCheckpoint()
+        let hostileTitle = "Water a bed: " + CompanionSavedText.marker
+        refused.note(hostileTitle, NativeReadOnlyRun.outcome)
+        guard let appendix = NativeReadOnlyRun.undone(refused.effects.filter { $0.outcome == NativeReadOnlyRun.outcome }.map(\.title)) else {
+            throw NativeTaskFixture.Failure.assertion("A refused write is listed as left undone")
+        }
+        try require(hasMarkerScalar(appendix), "The fixture's left undone line carries the hostile title as written")
+        for text in ["Nothing changed.\n\n" + appendix, "The model wrote " + CompanionSavedText.marker + " itself.\n\n" + appendix] {
+            let step = try NativeCompanionWorker.report(refused, assignment: CompanionSavedTextFixture.assignment, text: text, keep: true)
+            guard let data = step.result, let saved = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw NativeTaskFixture.Failure.assertion("The report is saved")
+            }
+            let report = saved["report"] as? String ?? "\u{E000}"
+            let summary = saved["summary"] as? String ?? "\u{E000}"
+            try require(!hasMarkerScalar(report) && !hasMarkerScalar(summary) && report.contains("Left undone") && report.contains("Water a bed: companion"),
+                        "Every saved companion report loses the marker characters, including the left undone line the app appends: \(report)")
+            let reference = try CompanionSavedTextFixture.reference(state: "completed", result: saved)
+            try require(!hasMarkerScalar(ChatStore.refinementObservation(reference.snapshot) ?? "\u{E000}"),
+                        "The follow-up built from that report carries no marker character")
+        }
         for (label, report) in reports {
             let outside = report["outside"] as? String ?? ""
             var result = report
