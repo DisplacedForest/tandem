@@ -63,6 +63,7 @@ final class ConfigStore: ObservableObject {
     private var legacyCredentials: [String: String] = [:]
     private var blockedLegacyMigrationID: String?
     private var entryProfileID: String?
+    private var entryCredentialRemovalID: String?
 
     static let visionBridgeCredentialID = "vision-bridge"
     static let memoryCredentialID = "memory-endpoint"
@@ -266,6 +267,7 @@ final class ConfigStore: ObservableObject {
         if !unavailableCredentials.contains(id), value == (savedCredentials[id] ?? "") {
             pendingCredentials.removeValue(forKey: id)
         } else { pendingCredentials[id] = value }
+        if id == entryCredentialRemovalID { entryCredentialRemovalID = nil }
         legacyCredentials.removeValue(forKey: id)
         if id == blockedLegacyMigrationID { blockedLegacyMigrationID = nil }
     }
@@ -274,6 +276,11 @@ final class ConfigStore: ObservableObject {
 
     func save() throws {
         piCommitValid = false
+        if let id = entryCredentialRemovalID, untouchedEntryProfileID != id,
+           nativeSettings.profiles.contains(where: { $0.id == id }) {
+            if pendingCredentials[id] == "" { pendingCredentials.removeValue(forKey: id) }
+            entryCredentialRemovalID = nil
+        }
         if let id = untouchedEntryProfileID { queueEntryCredentialRemoval(id) }
         let piCredentialsChanged = Set(pendingCredentials.keys).union(legacyCredentials.keys)
         do {
@@ -285,6 +292,7 @@ final class ConfigStore: ObservableObject {
                 piCredentialIdentities[id] = value.isEmpty ? nil : piHash(Data(value.utf8))
                 unavailableCredentials.remove(id)
                 pendingCredentials.removeValue(forKey: id)
+                if id == entryCredentialRemovalID { entryCredentialRemovalID = nil }
             }
             for id in legacyCredentials.keys.sorted() {
                 guard let value = legacyCredentials[id] else { continue }
@@ -643,6 +651,7 @@ final class ConfigStore: ObservableObject {
         if (savedCredentials[id] ?? "").isEmpty, !unavailableCredentials.contains(id) {
             pendingCredentials.removeValue(forKey: id)
         } else {
+            if pendingCredentials[id] == nil { entryCredentialRemovalID = id }
             pendingCredentials[id] = ""
         }
     }

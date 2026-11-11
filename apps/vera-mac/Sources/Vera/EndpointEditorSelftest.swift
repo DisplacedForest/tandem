@@ -152,6 +152,34 @@ extension SelfTest {
         try require(!hasEndpoint(deniedDisk.contents) && deniedStore.values[deniedID] == nil,
                     "A save that leaves the blank endpoint off disk also removes a stored key it could not read")
 
+        for restoresAddress in [true, false] {
+            let retryDisk = EndpointEditorFixtureDisk()
+            let retryStore = NativeCredentialFixtureStore()
+            let retry = ConfigStore(credentialStore: retryStore, readConfiguration: { retryDisk.contents },
+                                    nativeMCP: NativeMCPManager(servers: []),
+                                    writeConfiguration: { retryDisk.contents = $0; retryDisk.writes.append($0) })
+            host(NativeEndpointEditor(addsOnEntry: true), config: retry)
+            let retryID = retry.nativeSettings.activeProfileID ?? ""
+            retry.activeProfileBinding(\.baseURL).wrappedValue = "https://openrouter.ai/api/v1"
+            retry.activeProfileBinding(\.selectedModel).wrappedValue = "qwen/qwen3.8-flash"
+            retry.apiKeyBinding().wrappedValue = "synthetic-key"
+            try retry.save()
+            retryStore.denied = [retryID]
+            _ = try? retry.piConnectSelectedProfile()
+            retryStore.denied = []
+            retry.activeProfileBinding(\.baseURL).wrappedValue = ""
+            retryStore.failWrites = true
+            let writesBefore = retryDisk.writes.count
+            try require((try? retry.save()) == nil && retryDisk.writes.count == writesBefore,
+                        "A save that cannot remove the stored key writes nothing")
+            retryStore.failWrites = false
+            if restoresAddress { retry.activeProfileBinding(\.baseURL).wrappedValue = "https://openrouter.ai/api/v1" }
+            else { retry.activeProfileBinding(\.name).wrappedValue = "Studio" }
+            try retry.save()
+            try require(retryStore.values[retryID] == "synthetic-key" && hasEndpoint(retryDisk.contents),
+                        "After a failed save, an endpoint that is filled in again keeps its stored key")
+        }
+
         let clearedDisk = EndpointEditorFixtureDisk()
         let clearedStore = NativeCredentialFixtureStore()
         let cleared = ConfigStore(credentialStore: clearedStore, readConfiguration: { clearedDisk.contents },
