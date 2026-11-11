@@ -51,6 +51,7 @@ enum RefusalCopy {
             return ", and this command reaches \(full ? text : shortened(text))"
         case .feature:
             if text == NativeCommandClassifier.Feature.unreadable { return ", and this command couldn't be read in full" }
+            if NativeCommandClassifier.Feature.places.contains(text) { return ", and this command reaches \(text)" }
             return ", and this command uses \(text)"
         }
     }

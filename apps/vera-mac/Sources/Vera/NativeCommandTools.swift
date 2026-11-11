@@ -119,9 +119,9 @@ enum NativeCommandTools {
             why = (outcome.why ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: final == .handOff))
                 .with(action == .commands ? nil : classified.trigger).with(unplain)
         }
-        if final == .handOff, let path = classified.trigger?.text, classified.outside != nil, why.kind == .unsaved || why.kind == .held,
+        if final == .handOff, let reached = classified.trigger, classified.outside != nil, why.kind == .unsaved || why.kind == .held,
            !stopsWithoutOutside(command, directory: directory, grants: grants, classified: classified, fallback: fallback, live: live, liveTargets: liveTargets) {
-            why = NativeRuleWhy.folder(action, path: path)
+            why = NativeRuleWhy.folder(action, path: reached.kind == .path ? reached.text : "")
         }
         return Assessment(action: action, decision: final, confirm: nil, why: why)
     }

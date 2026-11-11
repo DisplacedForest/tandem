@@ -506,7 +506,10 @@ enum NativeCommandClassifier {
         static let several = "more than one command"
         static let redirect = "a redirect"
         static let group = "a group of commands"
-        static let all = [backticks, substitution, inline, wildcard, variable, home, up, unreadable, several, redirect, group]
+        static let unchecked = "a place that could not be checked"
+        static let elsewhere = "a place outside the shared folders"
+        static let places = [unchecked, elsewhere]
+        static let all = [backticks, substitution, inline, wildcard, variable, home, up, unreadable, several, redirect, group, unchecked, elsewhere]
     }
 
     static func feature(_ text: String) -> NativeRuleWhy.Trigger { NativeRuleWhy.Trigger(.feature, text) }
@@ -737,12 +740,13 @@ enum NativeCommandClassifier {
         if path.split(separator: "/").contains("..") { return .risky(feature(Feature.up)) }
         let written = path
         if !path.hasPrefix("/") {
-            guard let working else { return .risky(NativeRuleWhy.Trigger(.path, written)) }
+            guard let working else { return .risky(feature(Feature.unchecked)) }
             path = working + "/" + path
         }
-        guard let real = resolved(path, working: nil) else { return .risky(NativeRuleWhy.Trigger(.path, written)) }
+        guard let real = resolved(path, working: nil) else { return .risky(feature(Feature.unchecked)) }
         if grants.contains(where: { NativeFolderAccess.contains(root: resolved($0.path, working: nil) ?? $0.path, path: real) }) { return nil }
-        return .risky(NativeRuleWhy.Trigger(.path, written), outside: real)
+        let exists = FileManager.default.fileExists(atPath: real)
+        return .risky(exists ? NativeRuleWhy.Trigger(.path, written) : feature(Feature.elsewhere), outside: real)
     }
 
     static func resolved(_ token: String, working: String?) -> String? {

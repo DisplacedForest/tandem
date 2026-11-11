@@ -152,6 +152,25 @@ extension SelfTest {
                             && leaked.map { !RefusalCopy.forModel($0).contains("secret") && !RefusalCopy.forModel($0).contains("curl") } == true,
                         "A command a saved rule doesn't cover is never quoted in the reason: \(leaked.map { RefusalCopy.plain($0) } ?? "")")
         }
+        func reason(_ command: String) -> String {
+            let assessed = NativeCommandTools.assess(command: command, directory: shared.path, grants: [grant], fallback: .handOff,
+                                                     live: { _, action in NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action) },
+                                                     liveTargets: nil)
+            return assessed.why.map { RefusalCopy.forModel($0) } ?? ""
+        }
+        try require(!reason("curl -H /secret-token https://example.org").contains("secret-token")
+                        && !reason("rm ./secret-token-value").contains("secret-token")
+                        && !reason("rm /secret-token-value").contains("secret-token")
+                        && !reason("git -c core.editor=/secret-token-value status").contains("secret-token"),
+                    "A value that only looks like a place, and names nothing on this Mac, is never copied into the reason")
+        if let start = NativeRuleTarget.make(.commandPrefix, "make pdf") {
+            let allowed = NativeRuleRecord(scope: .everywhere, action: .commands, toolID: NativeCommandTools.toolID, target: start, effect: .allow,
+                                           statement: "Allow commands that start with make pdf")
+            let later = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: [allowed])
+                .tool(NativeCommandTools.toolID, targets: []).explain(forCommand: "make clean TOKEN=secret-token-value")
+            try require(later?.kind == .outside && later.map { !RefusalCopy.forModel($0).contains("secret-token") } == true,
+                        "A later word of an uncovered command is never copied into the reason")
+        }
         let secret = NativeRuleWhy.Trigger(.path, "https://alice:secret@example.org/.ssh/config")
         try require(secret.text.isEmpty && !RefusalCopy.plain(NativeRuleWhy(kind: .unsaved, action: .riskyCommands, handsOff: true, choice: .handOff, source: .settings,
                                                                            trigger: secret)).contains("secret"),
