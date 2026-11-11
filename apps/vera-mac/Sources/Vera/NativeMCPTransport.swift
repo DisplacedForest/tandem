@@ -10,10 +10,18 @@ protocol NativeMCPConnection: Sendable {
     func disconnect() async
 }
 
+struct NativeMCPToolHints: Sendable, Equatable {
+    var readOnly: Bool?
+    var destructive: Bool?
+    var idempotent: Bool?
+    var openWorld: Bool?
+}
+
 struct NativeMCPDiscoveredTool: Sendable, Equatable {
     let name: String
     let description: String
     let inputSchema: NativeJSONValue
+    var hints = NativeMCPToolHints()
 }
 
 struct NativeMCPPage: Sendable, Equatable {
@@ -101,7 +109,9 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
         return try await perform {
             let page = try await client.listTools(cursor: cursor)
             return NativeMCPPage(tools: try page.tools.map {
-                NativeMCPDiscoveredTool(name: $0.name, description: $0.description ?? "", inputSchema: try Self.native($0.inputSchema))
+                NativeMCPDiscoveredTool(name: $0.name, description: $0.description ?? "", inputSchema: try Self.native($0.inputSchema),
+                                        hints: NativeMCPToolHints(readOnly: $0.annotations.readOnlyHint, destructive: $0.annotations.destructiveHint,
+                                                                  idempotent: $0.annotations.idempotentHint, openWorld: $0.annotations.openWorldHint))
             }, nextCursor: page.nextCursor)
         }
     }

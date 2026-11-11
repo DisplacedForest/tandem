@@ -176,7 +176,7 @@ final class ConfigStore: ObservableObject {
             throw NativeToolError.failed("That service is no longer connected.")
         }
         let before = nativeMCPToolIDs(serverID: id)
-        let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.map(server.toolID) })
+        let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.union(server.actTools).map(server.toolID) })
         rows[index] = row
         try commitNativeMCPServers(rows, pruning: before.subtracting(after))
     }
@@ -227,7 +227,7 @@ final class ConfigStore: ObservableObject {
 
     private func nativeMCPToolIDs(serverID: String) -> Set<String> {
         let configured = NativeMCPServerConfiguration.load(raw).0.filter { $0.id == serverID }
-        let declared = configured.flatMap { server in server.readTools.map(server.toolID) }
+        let declared = configured.flatMap { server in server.readTools.union(server.actTools).map(server.toolID) }
         let discovered = nativeMCP.servers.filter { $0.id == serverID }.flatMap { $0.tools.map(\.id) }
         return Set(declared + discovered)
     }

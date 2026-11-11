@@ -70,7 +70,7 @@ extension NativeMCPManager {
             oauthProgress[id] = "Completing sign-in"
             let lease = try await session.complete(callback: callback, generation: flow.owner.consent.generation)
             try requireCurrent(id, flow: flow)
-            oauthProgress[id] = "Discovering approved read tools"
+            oauthProgress[id] = "Discovering approved tools"
             await authority.connect(id, authorization: lease, oauth: flow.owner)
             try requireCurrent(id, flow: flow)
             guard authority.access.snapshot().contains(where: { $0.id == id && $0.connected }) else { throw NativeMCPOAuthError.network }

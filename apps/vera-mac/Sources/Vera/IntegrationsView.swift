@@ -276,6 +276,9 @@ private struct IntegrationsDestination: View {
         let progress = manager.oauthProgress[server.id]
         let state = IntegrationsText.state(server, signingIn: progress != nil)
         let detail = progress ?? (server.status == state || server.status.hasPrefix("Connected") ? nil : server.status)
+        let reads = server.tools.filter { $0.state == .read || $0.asksBecauseOfService }
+        let changes = server.tools.filter { $0.state == .change && !$0.asksBecauseOfService }
+        let unapproved = server.tools.filter { $0.state == .unapproved }
         return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -328,19 +331,33 @@ private struct IntegrationsDestination: View {
                 IntegrationsNotice(text: consentError)
             }
             IntegrationsSection(title: "Reads") {
-                if server.tools.isEmpty {
-                    Text(server.connected ? "This service offered no reads." : "Connect to see the reads this service offers.")
+                if reads.isEmpty {
+                    Text(server.connected ? (server.tools.isEmpty ? "This service offered no reads." : "No reads are approved.") : "Connect to see the reads this service offers.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else {
                     VStack(spacing: 6) {
-                        ForEach(server.tools) { tool in toolRow(tool) }
+                        ForEach(reads) { tool in toolRow(tool, warning: tool.asksBecauseOfService ? "\(configuration.name) says this can change things, so it asks first." : nil) }
+                    }
+                }
+            }
+            if !changes.isEmpty {
+                IntegrationsSection(title: "Changes") {
+                    VStack(spacing: 6) {
+                        ForEach(changes) { tool in toolRow(tool, warning: nil) }
+                    }
+                }
+            }
+            if !unapproved.isEmpty {
+                IntegrationsSection(title: "Not approved") {
+                    VStack(spacing: 6) {
+                        ForEach(unapproved) { tool in toolRow(tool, warning: nil, described: true) }
                     }
                 }
             }
             if let source = configuration.sourceURL {
                 IntegrationsLink(title: "Publisher's page", url: source)
             }
-            Text("Only reads you approve are available, and a service cannot give itself more. Connections end when Tandem quits.")
+            Text("Only what you approve is available, and a service cannot give itself more. Connections end when Tandem quits.")
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -367,8 +384,9 @@ private struct IntegrationsDestination: View {
         }
     }
 
-    private func toolRow(_ tool: NativeMCPToolRecord) -> some View {
+    private func toolRow(_ tool: NativeMCPToolRecord, warning: String?, described: Bool = false) -> some View {
         let enabled = config.nativeSettings.enabledToolIDs.contains(tool.id)
+        let tryable = tool.state == .read
         let canTry = !renderSafe && NativeMCPReadTestController.scope(authority: manager.authority, record: tool) != nil
         return HStack(alignment: .top, spacing: 10) {
             IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool.id, enabled: $0) }),
@@ -376,15 +394,21 @@ private struct IntegrationsDestination: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(tool.remoteName).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(tool.callable ? Theme.textPrimary : Theme.textSecondary)
-                if let reason = tool.reason {
+                if let reason = tool.reason, !described {
                     Text(reason).font(.system(size: 11)).foregroundStyle(Theme.accent)
                 } else if !tool.description.isEmpty {
                     Text(tool.description).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
+                if let warning {
+                    Text(warning).font(.system(size: 11)).foregroundStyle(Theme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
-            IntegrationsAction(title: "Try", symbol: "play", disabled: !(canTry || (renderSafe && enabled && tool.callable))) {
-                readTest = NativeMCPReadTestController(manager: manager, record: tool)
+            if tryable {
+                IntegrationsAction(title: "Try", symbol: "play", disabled: !(canTry || (renderSafe && enabled && tool.callable))) {
+                    readTest = NativeMCPReadTestController(manager: manager, record: tool)
+                }
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
@@ -513,17 +537,34 @@ struct IntegrationsInstallSheet: View {
 struct IntegrationsManageSheet: View {
     @EnvironmentObject var config: ConfigStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.renderSafe) private var renderSafe
     let target: IntegrationsManageTarget
     let onSaved: (String) -> Void
     @State private var loaded = false
     @State private var name = ""
     @State private var endpoint = ""
     @State private var reads = ""
+    @State private var acts = ""
     @State private var scopes: Set<String> = ["focused", "assistant"]
     @State private var authentication: NativeMCPServerConfiguration.Authentication = .none
     @State private var timeout = "20"
     @State private var error: String?
     @State private var confirmingRemove = false
+
+    init(target: IntegrationsManageTarget, filled row: [String: Any]? = nil, onSaved: @escaping (String) -> Void) {
+        self.target = target
+        self.onSaved = onSaved
+        guard let row else { return }
+        let fields = Self.fields(row)
+        _loaded = State(initialValue: true)
+        _name = State(initialValue: fields.name)
+        _endpoint = State(initialValue: fields.endpoint)
+        _reads = State(initialValue: fields.reads)
+        _acts = State(initialValue: fields.acts)
+        _scopes = State(initialValue: fields.scopes)
+        _authentication = State(initialValue: fields.authentication)
+        if let timeout = fields.timeout { _timeout = State(initialValue: timeout) }
+    }
 
     private var existingRow: [String: Any]? {
         config.nativeMCPServerRows.first { ($0["id"] as? String)?.lowercased() == target.id }
@@ -537,16 +578,30 @@ struct IntegrationsManageSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(target.existing ? "Manage \(name.isEmpty ? "service" : name)" : "Add a service").font(.title2)
             IntegrationsField(label: "Name") {
-                TextField("Name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Name")
+                if renderSafe { IntegrationsStaticField(text: name) } else {
+                    TextField("Name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Name")
+                }
             }
             IntegrationsField(label: "Service address") {
-                TextField("https://", text: $endpoint).textFieldStyle(.roundedBorder).accessibilityLabel("Service address")
+                if renderSafe { IntegrationsStaticField(text: endpoint) } else {
+                    TextField("https://", text: $endpoint).textFieldStyle(.roundedBorder).accessibilityLabel("Service address")
+                }
             }
             IntegrationsField(label: "Approved reads, one per line") {
-                TextEditor(text: $reads).font(.system(.body, design: .monospaced))
-                    .frame(height: 90)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
-                    .accessibilityLabel("Approved reads, one per line")
+                if renderSafe { IntegrationsStaticField(text: reads, lines: true) } else {
+                    TextEditor(text: $reads).font(.system(.body, design: .monospaced))
+                        .frame(height: 90)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
+                        .accessibilityLabel("Approved reads, one per line")
+                }
+            }
+            IntegrationsField(label: "Approved changes, one per line") {
+                if renderSafe { IntegrationsStaticField(text: acts, lines: true) } else {
+                    TextEditor(text: $acts).font(.system(.body, design: .monospaced))
+                        .frame(height: 90)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
+                        .accessibilityLabel("Approved changes, one per line")
+                }
             }
             IntegrationsField(label: "Available in") {
                 IntegrationsScopeToggles(scopes: $scopes)
@@ -569,8 +624,10 @@ struct IntegrationsManageSheet: View {
                     }
                 }
                 IntegrationsField(label: "Timeout in seconds") {
-                    TextField("20", text: $timeout).textFieldStyle(.roundedBorder).frame(width: 80)
-                        .accessibilityLabel("Timeout in seconds")
+                    if renderSafe { IntegrationsStaticField(text: timeout).frame(width: 80) } else {
+                        TextField("20", text: $timeout).textFieldStyle(.roundedBorder).frame(width: 80)
+                            .accessibilityLabel("Timeout in seconds")
+                    }
                 }
             }
             if let error { Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true) }
@@ -592,19 +649,28 @@ struct IntegrationsManageSheet: View {
         }
     }
 
+    private static func fields(_ row: [String: Any]) -> (name: String, endpoint: String, reads: String, acts: String, scopes: Set<String>,
+                                                        authentication: NativeMCPServerConfiguration.Authentication, timeout: String?) {
+        let stored = NativeMCPServerConfiguration.Authentication(rawValue: row["authentication"] as? String ?? "none") ?? .none
+        let seconds = row["timeout_seconds"] as? Double
+        return (row["name"] as? String ?? "", row["url"] as? String ?? "",
+                (row["read_tools"] as? [String] ?? []).joined(separator: "\n"), (row["act_tools"] as? [String] ?? []).joined(separator: "\n"),
+                Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), stored == .oauth && row["oauth"] == nil ? .none : stored,
+                seconds.map { $0 == $0.rounded() ? String(Int($0)) : String($0) })
+    }
+
     private func load() {
         guard !loaded else { return }
         loaded = true
         guard let row = existingRow else { return }
-        name = row["name"] as? String ?? ""
-        endpoint = row["url"] as? String ?? ""
-        reads = (row["read_tools"] as? [String] ?? []).joined(separator: "\n")
-        scopes = Set(row["scopes"] as? [String] ?? ["focused", "assistant"])
-        let stored = NativeMCPServerConfiguration.Authentication(rawValue: row["authentication"] as? String ?? "none") ?? .none
-        authentication = stored == .oauth && row["oauth"] == nil ? .none : stored
-        if let seconds = row["timeout_seconds"] as? Double {
-            timeout = seconds == seconds.rounded() ? String(Int(seconds)) : String(seconds)
-        }
+        let fields = Self.fields(row)
+        name = fields.name
+        endpoint = fields.endpoint
+        reads = fields.reads
+        acts = fields.acts
+        scopes = fields.scopes
+        authentication = fields.authentication
+        if let seconds = fields.timeout { timeout = seconds }
     }
 
     private func save() {
@@ -616,10 +682,15 @@ struct IntegrationsManageSheet: View {
         row["id"] = target.id
         row["name"] = name.trimmingCharacters(in: .whitespacesAndNewlines)
         row["url"] = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        var seen = Set<String>()
+        var changed = Set<String>()
+        let changes = acts.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && changed.insert($0).inserted }
+        var seen = changed
         row["read_tools"] = reads.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
+        if changes.isEmpty { row.removeValue(forKey: "act_tools") } else { row["act_tools"] = changes }
         row["scopes"] = IntegrationsText.scopeKeys.filter { scopes.contains($0) }
         row["timeout_seconds"] = seconds
         if authentication == .oauth && !hasSignInDetails {
@@ -671,6 +742,19 @@ private struct IntegrationsField<Content: View>: View {
             Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             content()
         }
+    }
+}
+
+private struct IntegrationsStaticField: View {
+    let text: String
+    var lines = false
+
+    var body: some View {
+        Text(text).font(lines ? .system(.body, design: .monospaced) : .system(size: 13))
+            .frame(maxWidth: .infinity, minHeight: lines ? 90 : nil, alignment: .topLeading)
+            .padding(.horizontal, lines ? 4 : 6).padding(.vertical, lines ? 2 : 3)
+            .background(Theme.surface)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
     }
 }
 
