@@ -189,8 +189,45 @@ enum RuleRows {
 
     static func chatRow(conversationID: String, action: NativeActionClass, choice: NativeRuleChoice, places: RulePlaces) -> RuleRow {
         RuleRow(id: "chat|\(conversationID)|\(action.rawValue)", source: .chat(conversationID: conversationID, action: action),
-                sentence: "\(choice.title): \(lowered(action.title))", place: place(.conversation(conversationID), places: places),
+                sentence: chatSentence(action, choice), place: place(.conversation(conversationID), places: places),
                 note: nil, off: false, widens: false, widenQuestion: nil)
+    }
+
+    static func doing(_ action: NativeActionClass) -> String {
+        switch action {
+        case .fileEdits: return "file edits"
+        case .commands: return "running commands"
+        case .trash: return "moving files to the Trash"
+        case .networkSends: return "sending on your behalf"
+        case .riskyCommands: return "running risky commands"
+        case .reminders: return "changing your reminders"
+        case .serviceChanges: return "making changes through connected services"
+        case .otherChanges: return "making other changes"
+        case .credentialEntry, .payments, .permanentDeletion: return lowered(action.title)
+        }
+    }
+
+    static func thing(_ action: NativeActionClass) -> String {
+        switch action {
+        case .fileEdits: return "file edits"
+        case .commands: return "commands"
+        case .trash: return "moving files to the Trash"
+        case .networkSends: return "sending"
+        case .riskyCommands: return "risky commands"
+        case .reminders: return "reminder changes"
+        case .serviceChanges: return "changes through connected services"
+        case .otherChanges: return "other changes"
+        case .credentialEntry, .payments, .permanentDeletion: return lowered(action.title)
+        }
+    }
+
+    static func chatSentence(_ action: NativeActionClass, _ choice: NativeRuleChoice) -> String {
+        switch choice {
+        case .act: return "Always allow \(doing(action))"
+        case .actIfPreapproved: return "Always wait for my go-ahead before \(doing(action))"
+        case .ask: return "Always ask before \(doing(action))"
+        case .handOff: return "Always leave \(thing(action)) to me"
+        }
     }
 
     static func rank(_ scope: NativeRuleScope) -> Int {

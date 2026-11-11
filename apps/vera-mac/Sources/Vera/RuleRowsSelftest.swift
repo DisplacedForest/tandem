@@ -167,7 +167,13 @@ extension SelfTest {
         try require(listed.prefix(6).map(\.id) == [newer.id, older.id, inProject.id, inChat.id, inSchedule.id, inTask.id],
                     "Rows run everywhere, project, chat, schedule, task, newest first: \(listed.map(\.sentence))")
         try require(!listed.contains { $0.id == revoked.id || $0.id == unknown.id }, "Removed rules and rules for unknown places never show")
-        try require(listed.count == 7 && listed[6].sentence == "Ask first: edit files in granted folders" && listed[6].place == "in Greenhouse notes",
+        try require(RuleRows.chatSentence(.commands, .handOff) == "Always leave commands to me"
+                    && RuleRows.chatSentence(.networkSends, .actIfPreapproved) == "Always wait for my go-ahead before sending on your behalf"
+                    && RuleRows.chatSentence(.trash, .ask) == "Always ask before moving files to the Trash"
+                    && NativeActionClass.configurable.allSatisfy { action in
+                        NativeRuleChoice.allCases.allSatisfy { !RuleRows.chatSentence(action, $0).contains(":") }
+                    }, "A stricter chat reads as a sentence like every other row")
+        try require(listed.count == 7 && listed[6].sentence == "Always ask before file edits" && listed[6].place == "in Greenhouse notes",
                     "A stricter chat adds its own row: \(listed.last?.line ?? "none")")
         let again = RuleRows.rows(records: [inChat], chatRules: chatRules, places: places, now: now, calendar: calendar)
         try require(again.last?.id == listed[6].id, "A stricter chat row keeps its id")
@@ -291,7 +297,7 @@ extension SelfTest {
         store.tightenConversationRule(.ask, for: .fileEdits, conversationID: "rows-c")
         let editRowID = "chat|rows-c|\(NativeActionClass.fileEdits.rawValue)"
         guard let editRow = row(editRowID) else { throw NativeTaskFixture.Failure.assertion("A chat that asks more is listed") }
-        try require(editRow.sentence == "Ask first: edit files in granted folders" && editRow.place == "in Plant list", "The stricter chat row reads plainly")
+        try require(editRow.sentence == "Always ask before file edits" && editRow.place == "in Plant list", "The stricter chat row reads plainly")
         store.removeRule(editRow)
         try require(store.conversations.first { $0.id == "rows-c" }?.rules.isEmpty == true && row(editRowID) == nil,
                     "Remove puts the chat back on the defaults")
