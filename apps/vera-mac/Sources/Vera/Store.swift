@@ -152,6 +152,8 @@ final class ChatStore: ObservableObject {
     @Published var preferenceMarkers: [String: [UUID: TranscriptMarker]] = [:]
     var preferenceClassifier: (@Sendable (String) async -> String?)?
     var preferenceClassifierTimeout: Duration = .seconds(30)
+    var instructionCheck: NativeInstructionAnswerer?
+    var instructionCheckTimeout: Duration = NativeInstructionCheck.timeout
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
@@ -2443,6 +2445,10 @@ final class ChatStore: ObservableObject {
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
                 live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
                 liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1) },
+                instruction: {
+                    ChatStore.folderInstruction(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses,
+                                                action: $0, subjects: $1, about: $2)
+                },
                 alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
@@ -2464,6 +2470,12 @@ final class ChatStore: ObservableObject {
         turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions.map {
             ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: said, typed: typed, uses: uses)
         })
+        let checkTimeout = instructionCheckTimeout
+        let checkModel = nativeConfig.model
+        let checkTransport = nativeTransport
+        let answerer: NativeInstructionAnswerer = instructionCheck ?? { said, about in
+            await NativeInstructionCheck.ask(transport: checkTransport, model: checkModel, said: said, about: about, timeout: checkTimeout)
+        }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2479,7 +2491,8 @@ final class ChatStore: ObservableObject {
                 let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions)
                 await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
-            })
+            },
+            instructionCheck: answerer, instructionTimeout: checkTimeout, said: said)
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let (authority, consented) = turnToolAuthority(for: turn)

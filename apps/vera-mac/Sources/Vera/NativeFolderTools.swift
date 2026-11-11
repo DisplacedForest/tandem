@@ -45,6 +45,7 @@ enum NativeFolderTools {
                             edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                             live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
                             liveTargets: (@Sendable (NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
+                            instruction: (@Sendable (NativeActionClass, [[NativeRuleTarget]], String) -> NativeInstructionPending?)? = nil,
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
@@ -217,6 +218,14 @@ enum NativeFolderTools {
                 let subjectsFor = declared(paths)
                 targeted.confirmationFor = { arguments in
                     liveTargets(action, subjectsFor(arguments))?.decision.requiresConfirmation ?? fallback
+                }
+                if let instruction {
+                    let original = definition
+                    targeted.instructionFor = { arguments in
+                        let subjects = subjectsFor(arguments)
+                        guard liveTargets(action, subjects)?.decision == .act(.instruction) else { return nil }
+                        return instruction(action, subjects, NativeInstructionCheck.about(original, arguments: arguments, targets: subjects.flatMap { $0 }))
+                    }
                 }
             }
             return targeted
