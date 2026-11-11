@@ -106,7 +106,10 @@ struct ScheduledView: View {
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
                                 pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused),
                                 openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome,
-                                lastTitle: (store.scheduleRuns[schedule.id] ?? []).first.flatMap { $0.outcome == schedule.lastOutcome ? store.scheduleRunTitle($0) : nil })
+                                lastTitle: (store.scheduleRuns[schedule.id] ?? []).first.flatMap { $0.outcome == schedule.lastOutcome ? store.scheduleRunTitle($0) : nil },
+                                lastHappenedAt: (store.scheduleRuns[schedule.id] ?? []).first.flatMap { (run: NativeScheduleRun) -> Date? in
+                                    run.outcome == schedule.lastOutcome && run.scheduledFor == schedule.lastRunAt ? run.happenedAt : nil
+                                })
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
                         .contextMenu { actions(for: schedule) }
@@ -140,6 +143,7 @@ private struct ScheduleRow: View {
     var pausedNote: String? = nil
     let openOutcome: NativeScheduleOutcome?
     var lastTitle: String? = nil
+    var lastHappenedAt: Date? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -175,7 +179,7 @@ private struct ScheduleRow: View {
             parts.append("Next \(NativeScheduleClock.relative(next, now: Date(), timeZone: schedule.timeZone))")
         }
         if let outcome = schedule.lastOutcome, let at = schedule.lastRunAt {
-            parts.append("\(lastTitle ?? outcome.title) \(NativeScheduleClock.relative(at, now: Date(), timeZone: schedule.timeZone))")
+            parts.append("\(lastTitle ?? outcome.title) \(NativeScheduleClock.relative(lastHappenedAt ?? at, now: Date(), timeZone: schedule.timeZone))")
         }
         return .literal(parts.isEmpty ? "Waiting for its first run" : parts.joined(separator: ". "))
     }
@@ -267,7 +271,7 @@ private struct ScheduleRunRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
+                        Text("\(title), \(NativeScheduleClock.relative(run.happenedAt, now: Date(), timeZone: timeZone))")
                             .font(.system(size: 13, weight: .medium))
                         if !run.detail.isEmpty {
                             CompanionLineText(line: note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)

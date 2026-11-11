@@ -220,6 +220,21 @@ extension SelfTest {
         try await catchUpManySchedules(require, zone: zone, at: at)
         try catchUpEngineClaim(require)
         try catchUpStrings(require, oldSentence: oldSentence)
+        let due = at(19, 7)
+        let ran = at(19, 9, 40)
+        let late = NativeScheduleRun(scheduleID: "happened", scheduledFor: due, startedAt: ran, finishedAt: ran.addingTimeInterval(240),
+                                     outcome: .completed, detail: NativeScheduler.caughtUpNote)
+        var going = late
+        going.outcome = .running
+        going.finishedAt = nil
+        try require(late.happenedAt == ran.addingTimeInterval(240) && going.happenedAt == ran,
+                    "A run that happened shows when it finished, or when it started while it is still going, not its scheduled time")
+        for outcome in [NativeScheduleOutcome.missed, .skipped, .couldNotStart] {
+            let never = NativeScheduleRun(scheduleID: "happened", scheduledFor: due, finishedAt: ran, outcome: outcome)
+            try require(never.happenedAt == due, "A run that never ran shows the time it was due: \(outcome.rawValue)")
+        }
+        let bare = NativeScheduleRun(scheduleID: "happened", scheduledFor: due, outcome: .completed)
+        try require(bare.happenedAt == due, "An older row with no recorded times falls back to its scheduled time")
         print("  native scheduler catch-up OK (one run per missed schedule inside a day, earlier times missed, boundary, sleep, late while running, still going, relaunch, once, paused companion, five schedules through the engine, read-only, strings)")
     }
 

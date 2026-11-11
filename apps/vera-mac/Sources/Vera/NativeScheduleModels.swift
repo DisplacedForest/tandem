@@ -319,3 +319,13 @@ extension NativeScheduleRun {
         outcome == .skipped || outcome == .missed || (companionWork && noteIsSavedQuestion)
     }
 }
+
+extension NativeScheduleRun {
+    var happenedAt: Date {
+        switch outcome {
+        case .missed, .skipped, .couldNotStart: return scheduledFor
+        case .completed, .failed, .stopped: return finishedAt ?? startedAt ?? scheduledFor
+        case .running, .waiting, .blocked: return startedAt ?? scheduledFor
+        }
+    }
+}
