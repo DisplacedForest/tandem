@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-private final class NativeSchedulerClock: @unchecked Sendable {
+final class NativeSchedulerClock: @unchecked Sendable {
     private let lock = NSLock()
     private var current: Date
 
@@ -23,7 +23,7 @@ private final class NativeSchedulerClock: @unchecked Sendable {
     }
 }
 
-private final class NativeSchedulerFireLog: @unchecked Sendable {
+final class NativeSchedulerFireLog: @unchecked Sendable {
     private let lock = NSLock()
     private(set) var fired: [(schedule: String, scheduledFor: Date)] = []
     private(set) var origins: [NativeRunOrigin?] = []
@@ -110,7 +110,7 @@ extension SelfTest {
         let store = NativeScheduleStore(database: repository.database)
         let clock = NativeSchedulerClock(monday)
         let log = NativeSchedulerFireLog()
-        let scheduler = NativeScheduler(store: store, now: { clock.now }, grace: 300, downtime: 60,
+        let scheduler = NativeScheduler(store: store, now: { clock.now }, grace: 300, downtime: 60, catchUp: 0,
                                         lookup: { run in log.link(run) },
                                         fire: { schedule, run, bind in
                                             await bind("conversation", "message")
@@ -151,7 +151,7 @@ extension SelfTest {
         _ = await scheduler.tick()
         runs = try store.runs(scheduleID: schedule.id)
         try require(log.count == 1, "A run whose time passed beyond the grace window never fires")
-        try require(runs.count == 2 && runs[0].outcome == .missed && runs[0].scheduledFor == dailyAfter && runs[0].detail.contains("wasn't running"),
+        try require(runs.count == 2 && runs[0].outcome == .missed && runs[0].scheduledFor == dailyAfter && runs[0].detail == NativeScheduler.missedNote,
                     "The missed run records the scheduled time and says why")
         saved = try store.get(schedule.id)!
         try require(saved.nextRunAt == daily.nextRun(after: clock.now, previous: nil, timeZone: zone) && saved.enabled, "The next run proceeds normally after a miss")
@@ -276,6 +276,7 @@ extension SelfTest {
         try require(gone == nil && goneRuns.isEmpty, "Deleting a schedule removes its history")
         try await runWaitingRuns(zone: zone, start: monday, cadence: daily)
         try runOpenRunWindow(zone: zone, start: monday, cadence: daily)
+        try await runNativeSchedulerCatchUp()
         print("  native scheduler OK (cadence math, time zones, plain summaries, claim, single fire, late note, settle, missed, downtime, long absence, skip, disable, run now, schedule identity on fired and run now work, refused start, once, relink, waiting, picked up again, waiting does not skip, blocked, run now while waiting, open runs outside the window, claim a check-in once)")
     }
 

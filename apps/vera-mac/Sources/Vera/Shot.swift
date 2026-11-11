@@ -519,7 +519,7 @@ enum Shot {
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
-            case "scheduled", "scheduled-paused": section = .scheduled
+            case "scheduled", "scheduled-paused", "scheduled-caught-up": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
@@ -529,7 +529,9 @@ enum Shot {
             default: section = .chat
             }
             store.section = section
-            if view == "scheduled" || view == "scheduled-paused" { NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused") }
+            if view == "scheduled" || view == "scheduled-paused" || view == "scheduled-caught-up" {
+                NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused", caughtUp: view == "scheduled-caught-up")
+            }
             content = AnyView(
                 ShotView(store: store, section: section,
                          emptyChat: view == "empty" || view == "attach" || view == "sidebar-collapsed" || view == "companion-connection",

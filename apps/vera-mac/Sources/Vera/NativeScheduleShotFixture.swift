@@ -2,7 +2,8 @@ import Foundation
 
 @MainActor
 enum NativeScheduleShotFixture {
-    static func populate(_ store: ChatStore, assistantPaused: Bool = false, waiting: (referenceID: String, prompt: String)? = nil) {
+    static func populate(_ store: ChatStore, assistantPaused: Bool = false, waiting: (referenceID: String, prompt: String)? = nil,
+                         caughtUp: Bool = false) {
         if assistantPaused {
             store.adoptAssistantName(NativeDotShotFixture.name)
             store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .paused, setupCompleted: true)
@@ -33,19 +34,27 @@ enum NativeScheduleShotFixture {
                 NativeScheduleRun(scheduleID: briefing.id, scheduledFor: today7, startedAt: today7, finishedAt: today7.addingTimeInterval(240),
                                   outcome: .completed, conversationID: "shot"),
                 NativeScheduleRun(scheduleID: briefing.id, scheduledFor: calendar.date(byAdding: .day, value: -1, to: today7)!,
-                                  finishedAt: now, outcome: .missed,
-                                  detail: "Tandem wasn't running at the scheduled time. It will run next time as planned."),
+                                  finishedAt: now, outcome: .missed, detail: NativeScheduler.missedNote),
             ],
             digest.id: [
                 NativeScheduleRun(scheduleID: digest.id, scheduledFor: calendar.date(byAdding: .day, value: -3, to: today7)!,
-                                  finishedAt: now, outcome: .missed,
-                                  detail: "Tandem wasn't running at the scheduled time. It will run next time as planned."),
+                                  finishedAt: now, outcome: .missed, detail: NativeScheduler.missedNote),
             ],
             prices.id: [
                 NativeScheduleRun(scheduleID: prices.id, scheduledFor: today6, startedAt: today6, outcome: .waiting,
                                   detail: waiting?.prompt ?? "The model request did not complete. Retry this step?",
                                   conversationID: "shot", taskReferenceID: waiting?.referenceID ?? "shot-task"),
             ],
+        ]
+        guard caughtUp else { return }
+        store.schedules = [briefing, prices, digest]
+        let caughtUpStart = today7.addingTimeInterval(2 * 3600)
+        store.scheduleRuns[briefing.id] = [
+            NativeScheduleRun(scheduleID: briefing.id, scheduledFor: today7, startedAt: caughtUpStart, finishedAt: caughtUpStart.addingTimeInterval(240),
+                              outcome: .completed, detail: NativeScheduler.caughtUpNote, conversationID: "shot"),
+            NativeScheduleRun(scheduleID: briefing.id, scheduledFor: calendar.date(byAdding: .day, value: -3, to: today7)!,
+                              finishedAt: calendar.date(byAdding: .day, value: -1, to: caughtUpStart)!, outcome: .missed,
+                              detail: NativeScheduler.missedNote),
         ]
     }
 }
