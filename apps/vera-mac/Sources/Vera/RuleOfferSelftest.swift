@@ -193,6 +193,25 @@ extension SelfTest {
                     && !card(.networkSends, tool: NativeCommandTools.toolID, command: "git push origin main")
                     && !card(.trash, tool: NativeCommandTools.toolID, command: "trash notes.md"),
                     "A command that isn't plain never counts, a risky one does, and a send or Trash move through a command doesn't")
+        func commandWhy(_ command: String) -> NativeRuleWhy? {
+            let source = NativeRuleSource()
+            var rules = NativeRules.defaults
+            rules.set(.ask, for: .riskyCommands)
+            source.setGlobal(rules)
+            let grant = FolderGrant(path: "/tmp/offer")
+            let definitions = NativeCommandTools.definitions(grants: { [grant] }, decision: .ask, reason: { _ in nil }, record: { _ in },
+                                                             live: { _, _ in nil }, liveTargets: nil, declined: { _ in false }, alwaysAvailable: true)
+            guard let definition = definitions.first(where: { $0.name == NativeCommandTools.runName }),
+                  let data = try? JSONEncoder().encode(["command": command, "directory": "/tmp/offer"]), let request = String(data: data, encoding: .utf8) else { return nil }
+            let activity = NativeToolActivity(id: "offer-command", toolID: definition.id, name: definition.name, title: definition.title, round: 1,
+                                              request: request, result: nil, state: .pending, confirmationRequired: true)
+            return ChatStore.offerWhy(for: activity, definitions: [definition], rules: source, records: nil, grants: [grant],
+                                      conversationID: "offer-command-chat", typed: .none)
+        }
+        let plainRisky = commandWhy("sudo make install"), unreadRisky = commandWhy("bash -c 'make'")
+        try require(plainRisky?.action == .riskyCommands && RuleOffer.counts(plainRisky), "A plain risky command counts: \(String(describing: plainRisky))")
+        try require(!RuleOffer.counts(unreadRisky) && !RuleOffer.counts(commandWhy("eval echo hello")) && !RuleOffer.counts(commandWhy("echo hello time")),
+                    "A command that can't be read as plain never counts, risky or not")
         try require(card(.fileEdits, tool: NativeFolderTools.toolID, targets: [folderTarget]) && !card(.fileEdits, tool: NativeFolderTools.toolID),
                     "A file edit counts when its folder is known")
         print("  rule offer copy OK (words, banned words, rule rows, answers, blocks)")

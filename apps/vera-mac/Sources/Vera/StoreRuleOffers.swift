@@ -25,7 +25,7 @@ extension ChatStore {
         if definition.id == NativeCommandTools.toolID {
             guard case .string(let command)? = arguments["command"] else { return nil }
             let directory = arguments.folderString("directory")
-            if action == .commands, NativeCommandClassifier.unplain(command, grants: grants, directory: directory) != nil { return nil }
+            if NativeCommandClassifier.unplain(command, grants: grants, directory: directory) != nil { return nil }
             let closures = commandLive(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed)
             return NativeCommandTools.assess(command: command, directory: directory, grants: grants, fallback: .handOff,
                                              live: closures.live, liveTargets: closures.liveTargets).why
