@@ -52,6 +52,19 @@ extension ChatStore {
         return (try? projectionRepository.taskProjection(id: uuid))?.snapshot?.decision
     }
 
+    func scheduleRunTitle(_ run: NativeScheduleRun) -> String {
+        guard run.outcome == .completed, let id = run.taskReferenceID, let uuid = UUID(uuidString: id),
+              let projectionRepository = repository as? any NativeTaskProjectionRepository,
+              let reference = try? projectionRepository.taskReference(id: uuid) else { return run.outcome.title }
+        let snapshot = (try? projectionRepository.taskProjection(id: uuid))?.snapshot ?? reference.snapshot
+        return Self.scheduleRunTitle(run, card: (try? NativeTaskProjection.display(reference: reference, snapshot: snapshot))?.card)
+    }
+
+    nonisolated static func scheduleRunTitle(_ run: NativeScheduleRun, card: NativeTaskCardPresentation?) -> String {
+        guard run.outcome == .completed, let card else { return run.outcome.title }
+        return card.listState(run.outcome.title)
+    }
+
     func scheduleRunIsCompanionWork(_ run: NativeScheduleRun) -> Bool {
         if let id = run.taskReferenceID, let uuid = UUID(uuidString: id) {
             let reference = nativeTaskReferences.first { $0.id == uuid }

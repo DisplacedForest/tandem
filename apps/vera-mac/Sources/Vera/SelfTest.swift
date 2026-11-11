@@ -410,6 +410,8 @@ enum SelfTest {
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
+        do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }
+        do { try await runRefusalWork() } catch { print("SELFTEST ERROR: refusal work \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }

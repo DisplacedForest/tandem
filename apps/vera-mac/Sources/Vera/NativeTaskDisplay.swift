@@ -180,9 +180,13 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var covers: String? = nil
     var neverTitle: String? = nil
     var answer: String? = nil
+    var why: NativeRuleWhy? = nil
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }
+    var needsYou: Bool { isCompanion && status == .completed && why != nil }
+
+    func listState(_ otherwise: String) -> String { needsYou ? statusTitle : otherwise }
     var statusTitle: String { isCompanion ? companionTitle : status.title(document: isDocument) }
     var offeredChoices: [String] {
         guard let choices else { return canRetry ? ["retry"] : [] }
@@ -207,11 +211,11 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .working: return "Working on it"
         case .stopping: return "Stopping the work"
         case .stopped: return "Work stopped"
-        case .completed: return "Work done"
+        case .completed: return why == nil ? "Work done" : RefusalCopy.needsYou
         case .needsInput: return "Needs your answer"
         case .queued, .failed: return status.title(document: false)
         }
     }
-    var statusSymbol: String { status.symbol(document: isDocument) }
+    var statusSymbol: String { needsYou ? "hand.raised" : status.symbol(document: isDocument) }
     var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }

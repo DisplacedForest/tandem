@@ -938,6 +938,7 @@ struct NativeToolActivityChip: View {
     private var declined: Bool { Self.isDeclined(activity) }
 
     private var icon: String {
+        if activity.why != nil { return "hand.raised" }
         if declined { return "hand.raised.slash" }
         switch activity.state {
         case .pending: return "clock"
@@ -948,6 +949,7 @@ struct NativeToolActivityChip: View {
     }
 
     private var status: String {
+        if let why = activity.why { return RefusalCopy.label(why) }
         if declined { return "Declined" }
         switch activity.state {
         case .pending: return awaitingDecision ? "Waiting for you" : (activity.progress?.label ?? "Working")
@@ -958,7 +960,7 @@ struct NativeToolActivityChip: View {
     }
 
     private var iconColor: Color {
-        if declined { return Theme.warmTextSecondary }
+        if declined || activity.why != nil { return Theme.warmTextSecondary }
         switch activity.state {
         case .failed: return Color.orange
         case .pending: return Theme.sage
@@ -974,10 +976,11 @@ struct NativeToolActivityChip: View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 8) {
                 inspected("Request", activity.request)
-                if let result = activity.result { inspected("Result", result) }
+                if activity.why == nil, let result = activity.result { inspected("Result", result) }
             }
             .padding(.top, 8)
         } label: {
+            VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 if activity.state == .pending {
                     ProgressView().controlSize(.mini)
@@ -1000,6 +1003,8 @@ struct NativeToolActivityChip: View {
                 }
             }
             .foregroundStyle(Theme.warmTextPrimary)
+            if let why = activity.why, activity.toolID != NativeCommandTools.toolID { RefusalReasonLine(why: why) }
+            }
         }
         .disclosureGroupStyle(.automatic)
         .padding(.horizontal, 11).padding(.vertical, 8)
