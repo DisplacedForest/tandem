@@ -39,6 +39,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
     var title: String
     var outcome: String
+    var reason: String? = nil
 }
 
 struct NativeCompanionPending: Codable, Equatable, Hashable, Sendable {
@@ -165,8 +166,8 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.title, "url": $0.url] }
     }
 
-    mutating func note(_ title: String, _ outcome: String) {
-        effects.append(NativeCompanionEffectNote(title: title, outcome: outcome))
+    mutating func note(_ title: String, _ outcome: String, reason: String? = nil) {
+        effects.append(NativeCompanionEffectNote(title: title, outcome: outcome, reason: reason))
         if effects.count > 64 { effects.removeFirst(effects.count - 64) }
     }
 }
@@ -283,30 +284,57 @@ enum NativeCompanionWorker {
         return NativeRuleQuery(action: action, toolID: definition.id, subjects: subjects)
     }
 
+    typealias RuleDecision = (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String], why: NativeRuleWhy?)
+
     static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver: NativeRuleResolver,
-                             honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
+                             honoringLimitedUse: Bool) -> RuleDecision {
         let action = definition.actionClass(for: arguments) ?? .otherChanges
         let query = ruleQuery(definition, arguments, action: action)
         let footprint = query.targets.filter { $0.kind == .folder }.map(\.value)
         let scoped = resolver.tool(definition.id, subjects: query.subjects)
         if let decide = definition.ruleDecision {
             let decision = decide(arguments, scoped)
-            guard case .act = decision else { return (action, decision, [], footprint) }
-            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint)
+            guard case .act = decision else {
+                return (action, decision, [], footprint, definition.ruleWhy?(arguments, scoped) ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: decision == .handOff))
+            }
+            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint, nil)
         }
         let resolved = resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
         if resolved.resolution == nil, action == .commands, case .string(let command)? = arguments["command"] {
             let fallback = scoped.decide(forCommand: command)
-            if case .act = fallback.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
-            return (action, fallback.decision, fallback.authorizedBy, footprint)
+            if case .act = fallback.decision {
+                if definition.demandsConfirmation { return (action, .ask, [], footprint, .tool(action)) }
+                return (action, fallback.decision, fallback.authorizedBy, footprint, nil)
+            }
+            return (action, fallback.decision, fallback.authorizedBy, footprint, scoped.explain(forCommand: command, honoringLimitedUse: honoringLimitedUse))
         }
-        if case .act = resolved.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
-        return (action, resolved.decision, resolved.authorizedBy, footprint)
+        if case .act = resolved.decision {
+            if definition.demandsConfirmation { return (action, .ask, [], footprint, .tool(action)) }
+            return (action, resolved.decision, resolved.authorizedBy, footprint, nil)
+        }
+        return (action, resolved.decision, resolved.authorizedBy, footprint,
+                resolver.why(query, decision: resolved.decision, resolution: resolved.resolution, honoringLimitedUse: honoringLimitedUse))
     }
 
-    static func handOffText(title: String, action: NativeActionClass?) -> String {
-        guard let item = action?.floorItem else { return "Stopped before this step because your rules hand it to you: \(title)." }
-        return "Stopped before this step and handed it to you: \(title). It counts as \"\(item.title)\". \(item.reason)"
+    static func handOffLead(title: String) -> String {
+        "Stopped before this step: \(title)."
+    }
+
+    static func handOffText(title: String, why: NativeRuleWhy, places: RulePlaces = RulePlaces(), companion: String? = nil) -> String {
+        handOffLead(title: title) + " " + RefusalCopy.plain(why, places: places, name: companion)
+    }
+
+    static func places(threadID: String, tools: [NativeToolDefinition], taskID: String? = nil, title: String? = nil) -> RulePlaces {
+        var places = RulePlaces()
+        places.companionThreadID = threadID
+        places.tools = Dictionary(tools.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        if let taskID, let title, !title.isEmpty { places.work = [taskID: title] }
+        return places
+    }
+
+    static func notRunLine(_ notes: [NativeCompanionEffectNote]) -> String? {
+        let lines = notes.compactMap { note in note.reason.map { "Not run: \(note.title). \($0)" } }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
@@ -399,9 +427,11 @@ enum NativeCompanionWorker {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
-    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil) throws -> NativeTaskStepResult {
+    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
+                       summary shown: String? = nil, why: NativeRuleWhy? = nil) throws -> NativeTaskStepResult {
         let body = CompanionSavedText.sanitized(String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters)))
-        let firstParagraph = body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
+        let firstParagraph = shown.map(CompanionSavedText.sanitized)
+            ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
         let summary = String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters))
         let title = assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""
         var done = checkpoint
@@ -410,6 +440,7 @@ enum NativeCompanionWorker {
         var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
                                      "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
         if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
+        if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
             result: try NativeTaskStore.canonical(result), event: "completed")
     }
@@ -517,8 +548,23 @@ private struct NativeCompanionRun {
     }
 
     func recordDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority,
-                        honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
+                        honoringLimitedUse: Bool) -> NativeCompanionWorker.RuleDecision {
         NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse)
+    }
+
+    var places: RulePlaces {
+        NativeCompanionWorker.places(threadID: context.threadID, tools: context.tools, taskID: task.id,
+                                     title: dot.assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) })
+    }
+
+    func sentence(_ why: NativeRuleWhy) -> String {
+        RefusalCopy.plain(why, places: places, name: nil)
+    }
+
+    func unasked(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) -> String? {
+        let decided = recordDecision(definition, arguments, authority(), honoringLimitedUse: false)
+        guard decided.decision == .ask, let why = decided.why else { return nil }
+        return sentence(why)
     }
 
     func systemPrompt(finishing: Bool) -> String {
@@ -635,6 +681,10 @@ private struct NativeCompanionRun {
             let room = max(0, NativeCompanionWorker.reportCharacters - undone.count - 2)
             body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + undone
         }
+        if let notRun = NativeCompanionWorker.notRunLine(checkpoint.effects) {
+            let room = max(0, NativeCompanionWorker.reportCharacters - notRun.count - 2)
+            body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + notRun
+        }
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep)
     }
 
@@ -661,15 +711,21 @@ private struct NativeCompanionRun {
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
         var text = "Reached the limit for this assignment before writing a full report."
         if !checkpoint.effects.isEmpty {
-            text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" }.joined(separator: "\n")
+            text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n")
         }
         return CompanionSavedText.sanitized(text)
     }
 
-    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String, action: NativeActionClass?) throws -> NativeTaskStepResult {
+    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass?,
+                 why: NativeRuleWhy?) throws -> NativeTaskStepResult {
+        let reason = why ?? NativeRuleWhy(kind: .unsaved, action: action ?? .otherChanges, handsOff: true)
         checkpoint.note(title, "handed to you")
-        let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint))
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
+        checkpoint.answer(call, NativeCompanionWorker.message(RefusalCopy.forModel(reason)))
+        let effects = NativeCompanionWorker.effectsLine(checkpoint)
+        let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
+                                                                                  companion: nil) + effects)
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
+                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason)
     }
 
     func answerOutstanding(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
@@ -698,7 +754,7 @@ private struct NativeCompanionRun {
         }
         if let refusal = readOnlyRefusal(definition) {
             let arguments = (try? definition.validatedArguments(call.arguments)) ?? [:]
-            checkpoint.note(NativeCompanionWorker.describe(definition, arguments), NativeReadOnlyRun.outcome)
+            checkpoint.note(NativeCompanionWorker.describe(definition, arguments), NativeReadOnlyRun.outcome, reason: unasked(definition, arguments))
             checkpoint.answer(call, NativeCompanionWorker.message(refusal))
             return nil
         }
@@ -774,8 +830,8 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision, authorizedBy, footprint) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
-        if decision == .handOff { return try handOff(&checkpoint, title: title, action: action) }
+        let (action, decision, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
+        if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
             argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)), target: NativeCompanionWorker.target(arguments),
@@ -797,14 +853,14 @@ private struct NativeCompanionRun {
                                                      live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy)
         if !authorizedBy.isEmpty, case .admitted = admission { environment.recordsChanged() }
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title,
-                                  footprint: footprint, action: action, &checkpoint)
+                                  footprint: footprint, action: action, why: why, &checkpoint)
     }
 
     func dispatch(_ admission: NativeEffectAdmission, call: NativeTaskGenerationToolCall, definition: NativeToolDefinition,
                   arguments: [String: NativeJSONValue], key: String, title: String, footprint: [String]? = nil, action: NativeActionClass? = nil,
-                  _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
+                  why: NativeRuleWhy? = nil, _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
         guard case .admitted(let record) = admission else {
-            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, action: action, &checkpoint) }
+            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, action: action, why: why, &checkpoint) }
             return nil
         }
         checkpoint.segmentCalls += 1
@@ -851,12 +907,16 @@ private struct NativeCompanionRun {
     }
 
     func refused(_ reason: NativeEffectRefusal, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass? = nil,
-                 _ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? {
+                 why: NativeRuleWhy? = nil, _ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? {
         switch reason {
         case .taskInactive, .staleGeneration:
             throw CancellationError()
         case .ruleHandsOff:
-            return try handOff(&checkpoint, title: title, action: action)
+            return try handOff(&checkpoint, call: call, title: title, action: action, why: why)
+        case .ruleAsks where why != nil:
+            guard let why else { return nil }
+            checkpoint.note(title, "not done", reason: sentence(why))
+            checkpoint.answer(call, NativeCompanionWorker.message(RefusalCopy.forModel(why)))
         case .declined:
             checkpoint.note(title, "declined")
             checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
@@ -1039,7 +1099,7 @@ private struct NativeCompanionRun {
             }
             let authority = self.authority()
             let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
-            if approved.decision == .handOff { return try handOff(&checkpoint, title: title, action: approved.action) }
+            if approved.decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: approved.action, why: approved.why) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
@@ -1049,7 +1109,8 @@ private struct NativeCompanionRun {
                 if !drafts.isEmpty { _ = environment.saveRules(drafts) }
             }
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
-                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action, &checkpoint)
+                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action,
+                                      why: approved.why, &checkpoint)
         case "reconcile":
             guard let digest = pending.digest, let call = call(pending.callID, checkpoint) else { return nil }
             let title = pending.title ?? "an earlier step"

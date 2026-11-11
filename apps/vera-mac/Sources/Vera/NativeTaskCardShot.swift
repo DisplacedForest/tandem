@@ -63,6 +63,8 @@ enum NativeTaskCardShot {
         let hosting = NSHostingView(rootView: content
             .frame(width: size.width, height: size.height)
             .background(Theme.bg)
+            .environmentObject(ChatStore())
+            .environment(\.renderSafe, true)
             .environment(\.colorScheme, scheme))
         hosting.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -128,6 +130,13 @@ struct NativeTaskCardShotSurface: View {
             result.answer = "Tomorrow in Chicago looks **sunny**, with a high of 61 and a low of 45. [1]\n\n- Light wind from the west\n- No rain expected"
             result.sources = [PulseSource(n: 1, title: "Chicago forecast", url: "https://example.org/chicago-forecast")]
             result.canCancel = false
+        case "task-card-needs-you":
+            result.title = "Renew the seed catalogue subscription"
+            result.workerType = "companion"
+            result.status = .completed
+            result.milestone = "Stopped before this step: Pay the renewal invoice."
+            result.canCancel = false
+            result.why = NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments)
         case "task-card-offline":
             break
         case "task-card-document":

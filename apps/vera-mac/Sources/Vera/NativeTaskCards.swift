@@ -27,6 +27,9 @@ struct NativeTaskCardView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if card.needsYou, let why = card.why {
+                RefusalReasonLine(why: why)
+            }
             if let answer = card.answer, card.status == .completed {
                 let resolved = CitationResolver.resolve(text: answer, sources: NativeResearchReportSafety.sources(card.sources),
                                                         allowRecovery: false)

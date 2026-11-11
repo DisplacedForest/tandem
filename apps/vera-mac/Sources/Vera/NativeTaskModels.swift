@@ -499,6 +499,7 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var title: String? = nil
     var summary: String? = nil
     var shape: String? = nil
+    var why: NativeRuleWhy? = nil
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

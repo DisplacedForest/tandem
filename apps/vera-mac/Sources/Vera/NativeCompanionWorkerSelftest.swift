@@ -964,6 +964,9 @@ extension SelfTest {
         let handed = try JSONDecoder().decode(NativeResearchTaskResult.self, from: done.result ?? Data())
         try require(handed.shape == nil && harness.model.classifierCalls.isEmpty && (try harness.result(done))["shape"] == nil,
                     "A hand-off result carries no shape and asks no classification")
+        try require(handed.why?.kind == .unsaved && handed.why?.action == .networkSends
+                        && handed.why.map { handed.report.contains(RefusalCopy.plain($0)) && handed.report.hasPrefix("Stopped before this step") } == true,
+                    "A hand-off result keeps its reason and its report gives the same sentence: \(handed.report)")
     }
 
     private static func companionStaleAuthority() async throws {

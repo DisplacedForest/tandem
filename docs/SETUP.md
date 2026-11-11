@@ -437,6 +437,19 @@ Deleting a chat, project or schedule removes the rules that only applied there. 
 
 Each default's explanation sits behind the info button on its row. Editing files also covers saving images Tandem generates.
 
+#### Why something wasn't done
+
+When an action is left to you or isn't run, the chat says why in one sentence. The step shows **Left to you** or **Not run** in place of a failure, and a command that wasn't run keeps its card with the same sentence. It is always one of six reasons:
+
+- The setting for that kind of action is Ask first or Leave it to me, in Settings or tightened in that chat. For a command it also says what made it risky, such as asking for administrator rights.
+- A rule you saved allows something close but not this, for example commands that start with other words.
+- A rule you saved says never, shown in the same words as under **Rules you saved**.
+- It is one of the three things always left to you, which you can turn on under Advanced.
+- The tool asks every time, whatever your rules say.
+- It reaches a path outside the folders shared with that chat. Share the folder to allow it.
+
+Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. Nothing is ever changed from inside the chat. Work your companion does in the background stops at the same point and shows **Needs you** with the step it stopped at and the reason. The model is told the same reason, so what it says matches what you see.
+
 ### Preferences
 
 Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
