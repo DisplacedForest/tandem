@@ -289,8 +289,25 @@ extension SelfTest {
                                             outcome: .waiting, detail: hostileQuestion)
         let literalRun = NativeScheduleRun(id: "card-literal-error", scheduleID: companionSchedule.id, scheduledFor: Date(),
                                            outcome: .failed, detail: "The model said \(joined) failed.")
-        overview.scheduleRuns = [companionSchedule.id: [companionRun, literalRun], fixtureSchedules[0].id: [researchRun],
-                                 fixtureSchedules[1].id: [documentRun]]
+        let leadError = placeholder + " wants to reconnect: permission denied."
+        var errorRuns: [NativeScheduleRun] = []
+        for outcome in [NativeScheduleOutcome.couldNotStart, .failed, .skipped, .missed, .blocked, .running] {
+            errorRuns.append(NativeScheduleRun(id: "card-literal-lead-\(outcome.rawValue)", scheduleID: companionSchedule.id, scheduledFor: Date(),
+                                               outcome: outcome, detail: leadError))
+        }
+        var askedRuns: [NativeScheduleRun] = []
+        for outcome in [NativeScheduleOutcome.completed, .stopped, .failed] {
+            askedRuns.append(NativeScheduleRun(id: "card-literal-asked-\(outcome.rawValue)", scheduleID: companionSchedule.id, scheduledFor: Date(),
+                                               outcome: outcome, detail: hostileQuestion, checkInKey: "asked"))
+        }
+        let finishedUnasked = NativeScheduleRun(id: "card-literal-unasked", scheduleID: companionSchedule.id, scheduledFor: Date(),
+                                                outcome: .completed, detail: leadError)
+        try require(companionRun.noteIsSavedQuestion && !finishedUnasked.noteIsSavedQuestion
+                        && errorRuns.allSatisfy { (run: NativeScheduleRun) -> Bool in !run.noteIsSavedQuestion }
+                        && askedRuns.allSatisfy { (run: NativeScheduleRun) -> Bool in run.noteIsSavedQuestion },
+                    "A run note is a saved question only while the run waits, or after a run that stopped to ask has finished")
+        overview.scheduleRuns = [companionSchedule.id: [companionRun, literalRun, finishedUnasked] + errorRuns + askedRuns,
+                                 fixtureSchedules[0].id: [researchRun], fixtureSchedules[1].id: [documentRun]]
         let companionRunItem = CompanionOverviewModel.runItem(companionRun, schedule: companionSchedule)
         let researchRunItem = CompanionOverviewModel.runItem(researchRun, schedule: fixtureSchedules[0])
         let documentRunItem = CompanionOverviewModel.runItem(documentRun, schedule: fixtureSchedules[1])
@@ -309,6 +326,18 @@ extension SelfTest {
                         "Activity detail for research and document scheduled questions is unchanged for \(label)")
             try require(overview.companionActivityDetail(literalRunItem).outcome == "The model said \(joined) failed.",
                         "Activity detail for other saved text is unchanged for \(label)")
+            for run in errorRuns + [finishedUnasked] {
+                let item = CompanionOverviewModel.runItem(run, schedule: companionSchedule)
+                try require(overview.companionActivityDetail(item).outcome == leadError,
+                            "An error note that begins like a question is unchanged on the companion's own schedule for \(label): \(run.outcome.rawValue)")
+                try require(CompanionSavedText.question(run.detail, companionWork: companionSchedule.isCompanionWork && run.noteIsSavedQuestion) == .literal(leadError),
+                            "The Scheduled row shows that error note unchanged for \(label): \(run.outcome.rawValue)")
+            }
+            for run in askedRuns {
+                let item = CompanionOverviewModel.runItem(run, schedule: companionSchedule)
+                try require(overview.companionActivityDetail(item).outcome == subject(name) + hostileTail,
+                            "A finished run that stopped to ask still reads as it did for \(label): \(run.outcome.rawValue)")
+            }
         }
 
         func checkIn(name: String?, workerType: String) throws -> String? {

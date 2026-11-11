@@ -70,7 +70,7 @@ extension ChatStore {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
             }
             let reference = nativeTaskReferences.first { $0.id.uuidString.lowercased() == run.taskReferenceID?.lowercased() }
-            return CompanionActivityDetail(request: reference?.request.objective, outcome: CompanionSavedText.question(run.detail, companionWork: schedules.first { $0.id == run.scheduleID }?.isCompanionWork == true).plain(name: companionName),
+            return CompanionActivityDetail(request: reference?.request.objective, outcome: CompanionSavedText.question(run.detail, companionWork: run.noteIsSavedQuestion && schedules.first { $0.id == run.scheduleID }?.isCompanionWork == true).plain(name: companionName),
                                            canOpen: run.conversationID.flatMap(companionActivityConversation) != nil)
         }
     }

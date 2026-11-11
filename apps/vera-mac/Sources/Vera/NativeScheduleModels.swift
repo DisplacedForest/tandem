@@ -309,3 +309,9 @@ struct NativeScheduleRun: Identifiable, Equatable, Hashable, Sendable {
         self.checkInKey = checkInKey
     }
 }
+
+extension NativeScheduleRun {
+    var noteIsSavedQuestion: Bool {
+        outcome == .waiting || (checkInKey != nil && [.completed, .stopped, .failed].contains(outcome))
+    }
+}
