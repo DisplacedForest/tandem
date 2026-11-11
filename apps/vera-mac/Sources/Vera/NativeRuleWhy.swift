@@ -141,6 +141,9 @@ extension NativeRuleResolver {
         if let winner = resolution?.decidedBy, winner.effect.restricts {
             return NativeRuleWhy(kind: .rule, action: query.action, handsOff: handsOff, rule: .init(winner))
         }
+        if overruled(resolution, for: query.action) {
+            return NativeRuleWhy(kind: .unsaved, action: query.action, handsOff: handsOff, choice: choice(for: query.action), source: .chat)
+        }
         if decision == .ask, let target = unnamed(in: query, honoringLimitedUse: honoringLimitedUse),
            case .act = settle(query, honoringLimitedUse: honoringLimitedUse).decision {
             return NativeRuleWhy(kind: .unnamed, action: query.action, handsOff: false, subject: target.value)

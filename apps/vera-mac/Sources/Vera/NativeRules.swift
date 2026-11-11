@@ -1039,6 +1039,17 @@ struct NativeRuleResolver: Sendable {
         }
     }
 
+    func tightens(_ action: NativeActionClass) -> Bool {
+        guard let own = conversation.choices[action] else { return false }
+        return own.strictness > global.choice(for: action).strictness
+    }
+
+    func overruled(_ resolution: NativeRuleResolution?, for action: NativeActionClass) -> Bool {
+        guard let winner = resolution?.decidedBy, winner.effect == .allow, winner.specificity == 0, tightens(action) else { return false }
+        if case .act = baseDecision(for: action) { return false }
+        return true
+    }
+
     func unnamed(_ part: NativeRuleQuery, honoringLimitedUse: Bool) -> NativeRuleTarget? {
         guard part.action == .networkSends else { return nil }
         return part.targets.first { target in
@@ -1072,7 +1083,8 @@ struct NativeRuleResolver: Sendable {
         var granted = false
         for part in query.parts {
             let resolution = NativeRuleMatcher.resolve(records, query: part, context: context, at: now, honoringLimitedUse: honoringLimitedUse)
-            let decision = resolution.map { Self.decision(for: $0.decidedBy.effect) } ?? baseDecision(for: query.action)
+            var decision = resolution.map { Self.decision(for: $0.decidedBy.effect) } ?? baseDecision(for: query.action)
+            if overruled(resolution, for: query.action) { decision = baseDecision(for: query.action) }
             if firstResolution == nil { firstResolution = resolution }
             if case .act = decision, let winner = resolution?.decidedBy, winner.effect == .allow {
                 granted = true

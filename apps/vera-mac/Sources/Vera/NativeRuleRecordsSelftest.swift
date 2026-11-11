@@ -226,6 +226,41 @@ enum NativeRuleRecordsSelftest {
         try require(newer.resolve(toAlice, honoringLimitedUse: false).resolution?.decidedBy.statement == "Newer",
                     "On a full tie the most recently updated record decides")
 
+        func tightened(_ own: NativeRuleChoice, over base: NativeRuleChoice, _ records: [NativeRuleRecord], request: String = "") -> NativeRuleResolver {
+            var global = NativeRules.defaults
+            global.set(base, for: .networkSends)
+            return NativeRuleResolver(global: global, conversation: NativeConversationRules(choices: [.networkSends: own]), requestText: request,
+                                      records: records, context: NativeRuleContext(conversationID: "c1"), now: start)
+        }
+        let plain = NativeRuleQuery(action: .networkSends, toolID: "mail", targets: [])
+        let hereAllow = record(.allow, scope: .conversation("c1"), statement: "Always allow sending in this chat")
+        let leftHere = tightened(.handOff, over: .ask, [hereAllow])
+        let leftWhy = leftHere.tool("mail", targets: []).explain(for: .networkSends)
+        try require(leftHere.resolve(plain, honoringLimitedUse: false).decision == .handOff
+                        && leftWhy?.kind == .unsaved && leftWhy?.source == .chat && leftWhy?.choice == .handOff && leftWhy?.handsOff == true,
+                    "A chat set to leave a kind to you is not loosened by an allow for that whole kind in the chat: \(String(describing: leftWhy))")
+        for kindWide in [hereAllow, record(.allow)] {
+            let asking = tightened(.ask, over: .act, [kindWide])
+            let askWhy = asking.tool("mail", targets: []).explain(for: .networkSends)
+            try require(asking.resolve(plain, honoringLimitedUse: false).decision == .ask && askWhy?.source == .chat && askWhy?.choice == .ask,
+                        "A chat set to ask first is not loosened by an allow for that whole kind, wherever it was saved")
+        }
+        let spare = tightened(.handOff, over: .ask, [record(.allow, scope: .conversation("c1"), uses: 1)]).resolve(plain, honoringLimitedUse: true)
+        try require(spare.decision == .handOff && spare.authorizedBy.isEmpty, "A one-use allow that did not decide is not relied on")
+        try require(tightened(.handOff, over: .ask, [record(.allow, scope: .conversation("c1"), tool: "mail")]).resolve(plain, honoringLimitedUse: false).decision == .act(.grant),
+                    "An allow for one tool is more specific than the chat's choice and still wins")
+        var namedAlice = tightened(.handOff, over: .ask, [record(.allow, scope: .conversation("c1"), target: alice)])
+        namedAlice.typed = NativeTypedWords(typed: "Send it to alice@example.com")
+        try require(namedAlice.resolve(toAlice, honoringLimitedUse: false).decision == .act(.grant)
+                        && namedAlice.resolve(toBob, honoringLimitedUse: false).decision == .handOff,
+                    "An allow for one recipient still wins for that recipient only")
+        try require(tightened(.ask, over: .ask, [hereAllow]).resolve(plain, honoringLimitedUse: false).decision == .act(.grant)
+                        && tightened(.act, over: .ask, [hereAllow]).resolve(plain, honoringLimitedUse: false).decision == .act(.grant)
+                        && resolver([hereAllow]).resolve(plain, honoringLimitedUse: false).decision == .act(.grant),
+                    "A chat that is not stricter than Settings leaves saved allows as they were")
+        try require(tightened(.handOff, over: .ask, [record(.ask), hereAllow]).resolve(plain, honoringLimitedUse: false).decision == .ask,
+                    "A saved ask for the whole kind still decides as before")
+
         let carveOut = resolver([record(.allow), record(.forbid, target: alice)])
         var carveOutNamed = carveOut
         carveOutNamed.typed = NativeTypedWords(typed: "Send the notes to bob@example.com")
