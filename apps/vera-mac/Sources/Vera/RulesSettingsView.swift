@@ -209,6 +209,7 @@ struct RulesSettingsTab: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
         .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
+        .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }
         .confirmationDialog(widening?.widenQuestion ?? "", isPresented: Binding(get: { widening != nil }, set: { if !$0 { widening = nil } }),
                             titleVisibility: .visible) {
             Button(RuleRows.widenConfirm) {

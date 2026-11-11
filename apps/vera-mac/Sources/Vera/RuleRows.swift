@@ -6,6 +6,7 @@ struct RulePlaces: Equatable, Sendable {
     var projects: [String: String] = [:]
     var schedules: [String: String] = [:]
     var work: [String: String] = [:]
+    var tools: [String: String] = [:]
 
     func contains(_ scope: NativeRuleScope) -> Bool {
         switch scope {
@@ -78,15 +79,27 @@ enum RuleRows {
         return name.isEmpty ? fallbackTool : name
     }
 
-    static func sentence(_ record: NativeRuleRecord) -> String {
+    static let oneTool = "one tool"
+    static let lostChat = "in a chat that couldn't be loaded"
+    static let lostProject = "in a project that couldn't be loaded"
+    static let lostSchedule = "for a schedule that couldn't be loaded"
+
+    static func through(_ record: NativeRuleRecord, tools: [String: String]) -> String {
+        guard let id = record.toolID, id != NativeCommandTools.toolID else { return "" }
+        let name = plain(tools[id] ?? "")
+        return " through " + (name.isEmpty ? oneTool : name)
+    }
+
+    static func sentence(_ record: NativeRuleRecord, tools: [String: String] = [:]) -> String {
         let lead = lead(record.effect)
         if let target = record.target {
             switch target.kind {
             case .commandPrefix: return "\(lead) commands that start with \(plain(target.value))"
             case .folder:
                 let name = plain(NativeCardChoices.name(target.value))
-                return record.action == .trash ? "\(lead) moving things in \(name) to the Trash" : "\(lead) file edits in \(name)"
-            case .recipient, .service: return "\(lead) sending to \(plain(target.value))"
+                let covered = record.action == .trash ? "\(lead) moving things in \(name) to the Trash" : "\(lead) file edits in \(name)"
+                return covered + through(record, tools: tools)
+            case .recipient, .service: return "\(lead) sending to \(plain(target.value))" + through(record, tools: tools)
             }
         }
         if record.toolID == NativeCommandTools.toolID, record.action == nil || record.action == .commands {
@@ -109,9 +122,14 @@ enum RuleRows {
         case .everywhere: return everywhere
         case .conversation(let id):
             if id == places.companionThreadID { return "in \(CompanionSentence.placeholder)'s thread" }
-            return "in \(plain(places.chats[id] ?? ""))"
-        case .project(let id): return "in the \(plain(places.projects[id] ?? "")) project"
-        case .schedule(let id): return "for the schedule \(plain(places.schedules[id] ?? ""))"
+            let title = plain(places.chats[id] ?? "")
+            return title.isEmpty ? lostChat : "in \(title)"
+        case .project(let id):
+            let name = plain(places.projects[id] ?? "")
+            return name.isEmpty ? lostProject : "in the \(name) project"
+        case .schedule(let id):
+            let title = plain(places.schedules[id] ?? "")
+            return title.isEmpty ? lostSchedule : "for the schedule \(title)"
         case .task(let id):
             let title = plain(places.work[id] ?? "")
             return title.isEmpty ? unnamedWork : "for \(title)"
@@ -134,7 +152,7 @@ enum RuleRows {
 
     static func until(_ date: Date, now: Date, calendar: Calendar) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
-        if days == 0 { return "until the end of today" }
+        if days <= 0 { return "expires today" }
         if days == 1 { return "until tomorrow" }
         let formatter = DateFormatter()
         formatter.calendar = calendar
@@ -172,9 +190,9 @@ enum RuleRows {
         return record.effect == .allow || record.effect == .forbid
     }
 
-    static func widenQuestion(_ record: NativeRuleRecord) -> String? {
+    static func widenQuestion(_ record: NativeRuleRecord, tools: [String: String] = [:]) -> String? {
         guard widens(record), record.effect == .forbid else { return nil }
-        return "\(sentence(record)), in every chat and in background work?"
+        return "\(sentence(record, tools: tools)), in every chat and in background work?"
     }
 
     static func row(_ record: NativeRuleRecord, places: RulePlaces, now: Date, calendar: Calendar) -> RuleRow {
@@ -182,9 +200,10 @@ enum RuleRows {
         if record.status == .disabled { notes.append(offMark) }
         if let limit = limit(record, now: now, calendar: calendar) { notes.append(limit) }
         if let source = source(record, places: places, now: now, calendar: calendar) { notes.append(source) }
-        return RuleRow(id: record.id, source: .saved(record.id), sentence: sentence(record), place: place(record.scope, places: places),
+        return RuleRow(id: record.id, source: .saved(record.id), sentence: sentence(record, tools: places.tools),
+                       place: place(record.scope, places: places),
                        note: notes.isEmpty ? nil : notes.joined(separator: ". "), off: record.status == .disabled,
-                       widens: widens(record), widenQuestion: widenQuestion(record))
+                       widens: widens(record), widenQuestion: widenQuestion(record, tools: places.tools))
     }
 
     static func chatRow(conversationID: String, action: NativeActionClass, choice: NativeRuleChoice, places: RulePlaces) -> RuleRow {
@@ -241,7 +260,7 @@ enum RuleRows {
     }
 
     static func rows(records: [NativeRuleRecord], chatRules: [(id: String, rules: NativeConversationRules)], places: RulePlaces,
-                     now: Date = Date(), calendar: Calendar = .current) -> [RuleRow] {
+                     defaults: NativeRules = .defaults, now: Date = Date(), calendar: Calendar = .current) -> [RuleRow] {
         let shown = records.filter { $0.status != .revoked && places.contains($0.scope) }
         let ordered = shown.sorted { first, second in
             let left = (rank(first.scope), place(first.scope, places: places))
@@ -254,7 +273,8 @@ enum RuleRows {
         for entry in chatRules.sorted(by: { (places.chats[$0.id] ?? "", $0.id) < (places.chats[$1.id] ?? "", $1.id) })
         where places.contains(.conversation(entry.id)) {
             for action in NativeActionClass.allCases {
-                guard let choice = entry.rules.choices[action] else { continue }
+                guard let choice = entry.rules.choices[action], !defaults.holds(action),
+                      choice.strictness > defaults.choice(for: action).strictness else { continue }
                 rows.append(chatRow(conversationID: entry.id, action: action, choice: choice, places: places))
             }
         }
@@ -269,7 +289,8 @@ enum RuleRows {
     }
 
     static func screenStrings(_ rows: [RuleRow], name: String?) -> [String] {
-        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel]
+        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, oneTool,
+                       lostChat, lostProject, lostSchedule]
         for row in rows {
             strings.append(CompanionSentence.plain(row.line, name: name))
             if let note = row.note { strings.append(CompanionSentence.plain(note, name: name)) }

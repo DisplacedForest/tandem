@@ -56,8 +56,15 @@ extension SelfTest {
         let sendNever = record(action: .networkSends, tool: "mail", target: workshop, effect: .forbid, statement: "Never send")
         let serviceAllow = record(action: .networkSends, target: garden, statement: "Allow the service")
         let serviceNever = record(action: .networkSends, target: garden, effect: .forbid, statement: "Never the service")
-        try require(RuleRows.sentence(sendAllow) == "Always allow sending to workshop@example.com"
-                    && RuleRows.sentence(sendNever) == "Never allow sending to workshop@example.com"
+        let named = ["mail": "Mail", "post": "Garden log"]
+        let otherTool = record(action: .networkSends, tool: "post", target: workshop, statement: "In this chat, allow sending")
+        try require(RuleRows.sentence(sendAllow, tools: named) != RuleRows.sentence(otherTool, tools: named)
+                    && RuleRows.sentence(otherTool, tools: named) == "Always allow sending to workshop@example.com through Garden log"
+                    && RuleRows.sentence(otherTool) == "Always allow sending to workshop@example.com through one tool"
+                    && !RuleRows.sentence(otherTool).contains("post"),
+                    "Two tools allowed to send to the same person read differently, and an unknown tool never shows its identifier")
+        try require(RuleRows.sentence(sendAllow, tools: named) == "Always allow sending to workshop@example.com through Mail"
+                    && RuleRows.sentence(sendNever, tools: named) == "Never allow sending to workshop@example.com through Mail"
                     && RuleRows.sentence(serviceAllow) == "Always allow sending to garden.example"
                     && RuleRows.sentence(serviceNever) == "Never allow sending to garden.example",
                     "Recipient and service rows name who they send to")
@@ -121,7 +128,7 @@ extension SelfTest {
         let friday = record(action: .networkSends, tool: "mail", expires: now.addingTimeInterval(3 * day))
         let later = record(action: .networkSends, tool: "mail", expires: now.addingTimeInterval(20 * day))
         try require(limit(once) == "1 use left" && limit(twice) == "2 uses left", "Use counts read plainly")
-        try require(limit(tonight) == "until the end of today", "Later today: \(limit(tonight) ?? "nil")")
+        try require(limit(tonight) == "expires today", "Later today: \(limit(tonight) ?? "nil")")
         try require(limit(tomorrow) == "until tomorrow", "Tomorrow: \(limit(tomorrow) ?? "nil")")
         try require(limit(friday) == "until Friday", "Within the week names the weekday: \(limit(friday) ?? "nil")")
         try require(limit(later) == "until November 30", "Further out names the date: \(limit(later) ?? "nil")")
@@ -298,6 +305,16 @@ extension SelfTest {
         let editRowID = "chat|rows-c|\(NativeActionClass.fileEdits.rawValue)"
         guard let editRow = row(editRowID) else { throw NativeTaskFixture.Failure.assertion("A chat that asks more is listed") }
         try require(editRow.sentence == "Always ask before file edits" && editRow.place == "in Plant list", "The stricter chat row reads plainly")
+        var leftToMe = NativeRules.defaults
+        leftToMe.set(.handOff, for: .fileEdits)
+        let chatRules = store.conversations.filter { !$0.rules.isEmpty }.map { (id: $0.id, rules: $0.rules) }
+        let underStricterDefault = RuleRows.rows(records: [], chatRules: chatRules, places: store.rulePlaces(for: []), defaults: leftToMe)
+        try require(!underStricterDefault.contains { $0.id == editRowID } && store.ruleRows().contains { $0.id == editRowID },
+                    "A chat row is hidden while the default is already as strict, and shown when it is stricter than the default")
+        let unloaded = RuleRows.place(.conversation("rows-unloaded"), places: RulePlaces(chats: ["rows-unloaded": ""]))
+        try require(unloaded == RuleRows.lostChat && RuleRows.place(.project("p"), places: RulePlaces(projects: ["p": ""])) == RuleRows.lostProject
+                    && RuleRows.place(.schedule("s"), places: RulePlaces(schedules: ["s": ""])) == RuleRows.lostSchedule,
+                    "A place that exists but could not be read still gets a row that can be removed")
         store.removeRule(editRow)
         try require(store.conversations.first { $0.id == "rows-c" }?.rules.isEmpty == true && row(editRowID) == nil,
                     "Remove puts the chat back on the defaults")
@@ -406,6 +423,7 @@ extension SelfTest {
         store.sweepRuleRecords()
         try require(stored(ancient.id)?.status == .active, "The launch pass keeps a very old rule whose chat still exists")
         try require(stored(storedOnly.id)?.status == .active, "The launch pass keeps a rule whose chat is only on disk")
+        try require(row(storedOnly.id)?.place == "in Stored only", "A rule whose chat is only on disk is still listed, named from the saved chat")
         try require(stored(orphan.id)?.status == .revoked, "The launch pass removes a rule whose chat is gone")
         try require(stored(taskBound.id)?.status == .revoked, "The launch pass removes a rule for work that does not exist")
         try require(stored(liveWork.id)?.status == .active && stored(doneWork.id)?.status == .revoked,

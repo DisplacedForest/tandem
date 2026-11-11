@@ -139,6 +139,14 @@ extension ChatStore {
         }
     }
 
+    private func storedLabel(_ table: String, _ column: String, _ id: String) -> String {
+        guard let database = ruleDatabase else { return "" }
+        let label = try? database.read { db in
+            try String.fetchOne(db, sql: "SELECT \(column) FROM \(table) WHERE id = ?", arguments: [id])
+        }
+        return label ?? ""
+    }
+
     private func stored(_ table: String, _ id: String) -> Bool? {
         guard let database = ruleDatabase else { return nil }
         return try? database.read { db in
@@ -152,6 +160,19 @@ extension ChatStore {
         for conversation in conversations where conversation.id != veraThreadID { places.chats[conversation.id] = conversation.title }
         for project in projects { places.projects[project.id] = project.name }
         for schedule in schedules { places.schedules[schedule.id] = schedule.title }
+        for descriptor in NativeChatToolCatalog.tools(veraAPIConfigured: true, imageConfigured: true, searchConfigured: true,
+                                                      declarations: capabilityDeclarations) {
+            places.tools[descriptor.id] = descriptor.name
+        }
+        for declaration in capabilityDeclarations { places.tools[declaration.id] = declaration.title }
+        for record in records where !places.contains(record.scope) && ruleScopeExists(record.scope) != false {
+            switch record.scope {
+            case .conversation(let id): places.chats[id] = storedLabel("conversations", "title", id)
+            case .project(let id): places.projects[id] = storedLabel("projects", "name", id)
+            case .schedule(let id): places.schedules[id] = storedLabel("native_schedules", "title", id)
+            case .everywhere, .task: break
+            }
+        }
         if let database = ruleDatabase {
             let tasks = NativeTaskStore(database: database)
             for record in records {
@@ -167,7 +188,8 @@ extension ChatStore {
     func ruleRows(now: Date = Date(), calendar: Calendar = .current) -> [RuleRow] {
         let records = ruleRecords
         let chatRules = conversations.filter { !$0.rules.isEmpty }.map { (id: $0.id, rules: $0.rules) }
-        return RuleRows.rows(records: records, chatRules: chatRules, places: rulePlaces(for: records), now: now, calendar: calendar)
+        return RuleRows.rows(records: records, chatRules: chatRules, places: rulePlaces(for: records), defaults: nativeRules,
+                             now: now, calendar: calendar)
     }
 
     func removeRule(_ row: RuleRow) {
