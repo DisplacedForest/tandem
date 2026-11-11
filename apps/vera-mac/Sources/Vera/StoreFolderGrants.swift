@@ -323,20 +323,59 @@ extension ChatStore {
     }
 
     func revokeGrant(_ grantID: String) {
-        guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-        conversations[index].grants.removeAll { $0.id == grantID }
-        persistGrants(index)
+        guard let id = selectedID else { return }
+        stopSharing(conversationID: id, grantID: grantID)
     }
 
-    private func persistGrants(_ index: Int) {
+    @discardableResult
+    func stopSharing(conversationID: String, grantID: String) -> Bool {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
+        let before = conversations[index]
+        conversations[index].grants.removeAll { $0.id == grantID }
+        if persistGrants(index) { return true }
+        if let current = conversations.firstIndex(where: { $0.id == conversationID }) {
+            conversations[current].grants = before.grants
+            conversations[current].isPersisted = before.isPersisted
+            refreshConversationGrants(conversationID)
+        }
+        return false
+    }
+
+    var sharedFolderRows: [SharedFolderRow] {
+        SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName)
+    }
+
+    @discardableResult
+    func stopSharing(_ row: SharedFolderRow) -> Bool {
+        let chatLine = grantError
+        let projectLine = projectError
+        let saved: Bool
+        switch row.kind {
+        case .chat(let conversationID, let grantID): saved = stopSharing(conversationID: conversationID, grantID: grantID)
+        case .project(let projectID, let grantID): saved = removeProjectFolder(projectID, grantID: grantID)
+        }
+        if saved {
+            if rulesNotice == SharedFolderRows.failed { rulesNotice = nil }
+        } else {
+            grantError = chatLine
+            projectError = projectLine
+            rulesNotice = SharedFolderRows.failed
+        }
+        return saved
+    }
+
+    @discardableResult
+    private func persistGrants(_ index: Int) -> Bool {
         let conversation = conversations[index]
         refreshConversationGrants(conversation.id)
-        guard let repository else { return }
+        guard let repository else { return true }
         do {
             conversations[index].isPersisted = true
             try repository.saveConversation(conversations[index])
+            return true
         } catch {
             grantError = "The shared folder couldn't be saved: \(error.localizedDescription)"
+            return false
         }
     }
 

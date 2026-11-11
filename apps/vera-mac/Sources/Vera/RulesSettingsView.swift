@@ -41,7 +41,38 @@ enum RulesCopy {
             strings.append(item.title)
             strings.append(item.reason)
         }
-        return strings + RulesAdvancedCopy.screenStrings(name: name)
+        return strings + SharedFolderRows.screenStrings([], name: name) + RulesAdvancedCopy.screenStrings(name: name)
+    }
+}
+
+struct SharedFolderRowView: View {
+    let row: SharedFolderRow
+    var onStop: () -> Void
+    @Environment(\.companionName) private var name
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: row.title)
+                    .help(Text(verbatim: row.path))
+                CompanionLineText(line: row.sentence)
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(SharedFolderRows.stop, action: onStop)
+                .accessibilityLabel(row.stopLabel(name: name))
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct SharedFolderInfo: View {
+    var body: some View {
+        Text(SharedFolderRows.info)
+            .font(.system(size: 12))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(14)
+            .frame(width: 300, alignment: .leading)
     }
 }
 
@@ -107,6 +138,7 @@ struct RulesSettingsTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var showsChoiceHelp = false
+    @State private var showsSharingInfo = false
     @State private var infoFor: NativeActionClass?
     @State private var rows: [RuleRow] = []
     @State private var widening: RuleRow?
@@ -197,6 +229,30 @@ struct RulesSettingsTab: View {
                     SavedRuleRow(row: row, onToggle: { store.toggleRule(row) },
                                  onWiden: { if row.widenQuestion == nil { store.widenRule(row) } else { widening = row } },
                                  onRemove: { store.removeRule(row) })
+                }
+            }
+            let shared = store.sharedFolderRows
+            if !shared.isEmpty {
+                Section {
+                    ForEach(shared) { row in
+                        SharedFolderRowView(row: row, onStop: { store.stopSharing(row) })
+                    }
+                } header: {
+                    HStack {
+                        Text(SharedFolderRows.sectionTitle)
+                        Spacer()
+                        Button {
+                            showsSharingInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(SharedFolderRows.infoLabel)
+                        .help(SharedFolderRows.infoLabel)
+                        .popover(isPresented: $showsSharingInfo, arrowEdge: .bottom) {
+                            SharedFolderInfo()
+                        }
+                    }
                 }
             }
             Section(RulesCopy.floorSectionTitle) {

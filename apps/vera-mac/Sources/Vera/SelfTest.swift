@@ -412,6 +412,8 @@ enum SelfTest {
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
         do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
+        do { try runSharedFolderRows() } catch { print("SELFTEST ERROR: shared folder rows \(error)"); exit(1) }
+        do { try runSharedFolderRowsStore() } catch { print("SELFTEST ERROR: shared folder rows store \(error)"); exit(1) }
         do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
         do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }

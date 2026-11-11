@@ -34,12 +34,15 @@ extension ChatStore {
         return project(record.id)
     }
 
-    private func updateProject(_ id: String, failure: String, _ change: (inout ProjectRecord) -> Void) {
-        guard let projectRepository, var record = project(id) else { return }
+    @discardableResult
+    private func updateProject(_ id: String, failure: String, _ change: (inout ProjectRecord) -> Void) -> Bool {
+        guard let projectRepository, var record = project(id) else { return false }
         change(&record)
+        var saved = true
         do { try projectRepository.saveProject(record) }
-        catch { projectError = "\(failure): \(error.localizedDescription)" }
+        catch { projectError = "\(failure): \(error.localizedDescription)"; saved = false }
         reloadProjects()
+        return saved
     }
 
     @discardableResult
@@ -91,9 +94,11 @@ extension ChatStore {
         refreshProjectGrants(id)
     }
 
-    func removeProjectFolder(_ id: String, grantID: String) {
-        updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }
+    @discardableResult
+    func removeProjectFolder(_ id: String, grantID: String) -> Bool {
+        let saved = updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }
         refreshProjectGrants(id)
+        return saved
     }
 
     func addProjectFile(_ id: String, url: URL) {
