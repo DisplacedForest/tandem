@@ -30,8 +30,11 @@ extension ChatStore {
             return NativeCommandTools.assess(command: command, directory: directory, grants: grants, fallback: .handOff,
                                              live: closures.live, liveTargets: closures.liveTargets).why
         }
+        let subjects = definition.ruleSubjects?(arguments) ?? []
+        if action == .networkSends,
+           subjects.flatMap({ $0 }).contains(where: { ($0.kind == .recipient || $0.kind == .service) && !typed.names($0) }) { return nil }
         return toolDecision(rules, store: records, conversationID: conversationID, requestText: typed.said, typed: typed, toolID: definition.id,
-                            action: action, subjects: definition.ruleSubjects?(arguments) ?? []).why
+                            action: action, subjects: subjects).why
     }
 
     func noteRuleOfferWhy(_ activity: NativeToolActivity, turn: NativeConversationTurn, definitions: [NativeToolDefinition], typed: NativeTypedWords) {
@@ -114,16 +117,23 @@ extension ChatStore {
             }
         }
         guard (try? store.state(conversationID: conversationID, action: action).answered) == false else { show(.closed); return }
+        let wanted = RuleOffer.record(action, conversationID: conversationID)
+        let held = ruleRecords.first { RuleOffer.same($0, wanted) }
+        func withdrawn() -> Bool {
+            guard let held, !revokeRuleRecord(id: held.id) else { return true }
+            show(.waiting, failed: true)
+            return false
+        }
         switch answer {
         case .decline, .neverOffer:
+            guard withdrawn() else { return }
             settle(.closed)
         case .allow:
-            let wanted = RuleOffer.record(action, conversationID: conversationID)
-            let held = ruleRecords.contains { RuleOffer.same($0, wanted) }
-            guard held || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
-            guard held || addRuleRecord(wanted) != nil else { show(.waiting, failed: true); return }
+            guard held != nil || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
+            guard held != nil || addRuleRecord(wanted) != nil else { show(.waiting, failed: true); return }
             settle(.allowedHere)
         case .allowEverywhere:
+            guard withdrawn() else { return }
             let applied = nativeRules.choice(for: action) == .act
             guard offer.failed && applied || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
             guard everywhere(action) else { show(.waiting, failed: true); return }

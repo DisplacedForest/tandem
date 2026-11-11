@@ -296,6 +296,26 @@ extension SelfTest {
         store.answerRuleOffer(.allow, messageID: hereMessage, blockID: hereOffer.blockID, everywhere: { _ in false })
         try require(store.ruleRecords.count == records + 1, "An answered offer can't be answered twice")
 
+        var sender = NativeToolDefinition(id: "offer-send", name: "offer_send", title: "Send", description: "Send",
+                                          parameters: .object(["type": .string("object")]), confirmation: .none, effect: .write, action: .networkSends,
+                                          isAvailable: { true }, execute: { _ in .null })
+        sender.ruleSubjects = { arguments in
+            guard case .string(let to)? = arguments["to"], let target = NativeRuleTarget.make(.recipient, to) else { return [] }
+            return [[target]]
+        }
+        func sendWhy(_ definition: NativeToolDefinition, typed: NativeTypedWords) -> NativeRuleWhy? {
+            let activity = NativeToolActivity(id: "offer-send-call", toolID: definition.id, name: definition.name, title: definition.title, round: 1,
+                                              request: "{\"to\":\"ana@example.com\"}", result: nil, state: .pending, confirmationRequired: true)
+            return ChatStore.offerWhy(for: activity, definitions: [definition], rules: store.nativeRuleSource, records: store.nativeRuleRecordStore,
+                                      grants: [], conversationID: elsewhereID, typed: typed)
+        }
+        let elsewhereID = "offer-send-chat"
+        let ruledSender = ChatStore.ruled(sender, rules: store.nativeRuleSource, store: nil, conversationID: elsewhereID, requestText: "")
+        try require(RuleOffer.counts(sendWhy(ruledSender, typed: NativeTypedWords(typed: "Send the update to ana@example.com")))
+                    && !RuleOffer.counts(sendWhy(ruledSender, typed: NativeTypedWords(typed: "Send the update")))
+                    && !RuleOffer.counts(sendWhy(ruledAlways, typed: NativeTypedWords(typed: "Send the update to ana@example.com"))),
+                    "A send counts only when you typed its recipient, and never for a tool that always asks")
+
         store.tightenConversationRule(.handOff, for: .commands, conversationID: here)
         try require(commands(store, here) == .handOff, "After Allow, leaving commands to you in this chat hands them back")
         store.clearConversationRule(for: .commands, conversationID: here)
@@ -405,12 +425,25 @@ extension SelfTest {
         store.answerRuleOffer(.allow, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
         try require(offers(store, half).first?.1.state == .waiting && offers(store, half).first?.1.failed == true
                     && store.ruleRecords.count == halfCount + 1, "A failed answer write keeps the card and says so")
-        store.answerRuleOffer(.decline, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
-        try require(offers(store, half).first?.1.state == .waiting, "A failed decline write keeps the card")
         try exec("DROP TRIGGER offer_block")
         store.answerRuleOffer(.allow, messageID: halfMessage, blockID: halfOffer.blockID, everywhere: { _ in false })
         try require(offers(store, half).first?.1.state == .allowedHere && store.ruleRecords.count == halfCount + 1,
                     "Trying again after a failed answer write doesn't save the rule twice")
+
+        let changed = try chat(store)
+        let (changedMessage, changedOffer) = try await reachOffer(store, changed)
+        try exec("CREATE TRIGGER offer_block BEFORE UPDATE ON native_rule_offers BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
+        store.answerRuleOffer(.allow, messageID: changedMessage, blockID: changedOffer.blockID, everywhere: { _ in false })
+        try require(commands(store, changed) == .act(.grant) && offers(store, changed).first?.1.state == .waiting, "The half saved answer left a rule and a waiting card")
+        store.answerRuleOffer(.decline, messageID: changedMessage, blockID: changedOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, changed).first?.1.state == .waiting && commands(store, changed) == .ask,
+                    "Declining after a half saved Allow takes the rule back, and a failed decline write keeps the card")
+        try exec("DROP TRIGGER offer_block")
+        store.answerRuleOffer(.decline, messageID: changedMessage, blockID: changedOffer.blockID, everywhere: { _ in false })
+        try require(offers(store, changed).first?.1.state == .closed && commands(store, changed) == .ask
+                    && !store.ruleRecords.contains { $0.scope == .conversation(changed) && $0.status == .active },
+                    "A different answer after a half saved Allow leaves no rule behind")
+
 
         try exec("CREATE TRIGGER offer_block BEFORE DELETE ON native_rule_offers BEGIN SELECT RAISE(ABORT, 'blocked'); END;")
         store.deleteConversation(half, confirmed: true)
