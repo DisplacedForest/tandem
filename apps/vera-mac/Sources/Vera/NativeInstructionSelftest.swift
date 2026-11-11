@@ -103,12 +103,21 @@ extension SelfTest {
         try require(command("Run make pdf", runs: "make pdf") && command("Please run `make pdf`.", runs: "make pdf"),
                     "A typed command allows exactly that command")
         for (typed, ran) in [("Run make -n", "make"), ("Run echo make", "make"), ("Run make", "make -n"), ("Run make pdf", "make PDF"),
-                             ("Run make pdf now", "make pdf"), ("Run make pdf and send it", "make pdf")] {
+                             ("Run make pdf now", "make pdf"), ("Run make pdf and send it", "make pdf"), ("Run `make clean. all`", "make clean"),
+                             ("Run make clean. Then stop", "make clean"), ("Run make clean\nall", "make clean"), ("Run make pdf.", "make pdf.x")] {
             try require(!command(typed, runs: ran), "Typing \(typed) does not allow running \(ran)")
         }
         let drafts = try target(.folder, "/shared/drafts")
         try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [drafts]).decision(for: .trash) == .ask,
                     "Naming a file does not allow moving its folder to the Trash")
+        for typed in ["Delete /shared/drafts._backup/notes.txt", "Delete /shared/drafts./notes.txt", "Delete /shared/drafts-old", "Delete /shared/drafts.bak"] {
+            try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed), claim: trashClaim, targets: [drafts]).decision(for: .trash) == .ask,
+                        "A longer typed path does not name a shorter one: \(typed)")
+        }
+        try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete /shared/drafts."), claim: trashClaim, targets: [drafts])
+                        .decision(for: .trash) == .act(.instruction)
+                        && command("Run make pdf.", runs: "make pdf") && command("Run `make pdf`.", runs: "make pdf"),
+                    "A full stop that ends the message is not part of the path or command")
         let upper = try target(.folder, "/shared/drafts/Notes.txt")
         try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [upper]).decision(for: .trash) == .ask
                         && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt"), claim: trashClaim, targets: [upper])

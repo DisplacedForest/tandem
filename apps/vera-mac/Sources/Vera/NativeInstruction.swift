@@ -93,14 +93,16 @@ enum NativeInstruction {
         let lowered = NativeRequestPreapproval.normalized(plain)
         let all = sentences(plain)
         let commands = targets.filter { $0.kind == .commandPrefix }
+        if !commands.isEmpty {
+            guard commands.count == 1, targets.count == 1, names.isEmpty, !plain.contains(where: \.isNewline),
+                  let tail = rest(plain.trimmingCharacters(in: .whitespaces), after: wanted) else { return false }
+            var typed = [spaced(tail)]
+            if tail.hasSuffix("`.") || (!tail.contains("`") && tail.hasSuffix(".")) { typed.append(spaced(String(tail.dropLast()))) }
+            return typed.contains(canonical(commands[0].value)) && NativeRequestPreapproval.settled("", original: lowered)
+        }
         for (position, sentence) in all.enumerated() {
-            guard let tail = rest(sentence, after: wanted) else { continue }
+            guard rest(sentence, after: wanted) != nil else { continue }
             let others = all.enumerated().filter { $0.offset != position }.map { $0.element.lowercased() }.joined(separator: ". ")
-            if !commands.isEmpty {
-                guard commands.count == 1, targets.count == 1, names.isEmpty, spaced(tail) == canonical(commands[0].value) else { continue }
-                if NativeRequestPreapproval.settled(others, original: lowered) { return true }
-                continue
-            }
             var cuts: [Range<String.Index>] = []
             var complete = true
             for target in targets where complete {
