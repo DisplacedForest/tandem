@@ -2633,6 +2633,7 @@ final class ChatStore: ObservableObject {
                                 scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                                 recordCanvasArtifacts(arts, conversationID: id,
                                                       messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                                      sources: conversations[i].messages[replyIndex].sources,
                                                       revising: revisionTarget)
                                 lastCheckpoint = Date()
                             }
@@ -2666,6 +2667,7 @@ final class ChatStore: ObservableObject {
                     let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          sources: conversations[i].messages[replyIndex].sources,
                                           revising: revisionTarget)
                     if !partialAnswer, revisionTarget != nil { clearArtifactRevisionTarget(messageID: revisionKey) }
                     if !partialAnswer, conversations[i].messages[replyIndex].id
@@ -2716,6 +2718,7 @@ final class ChatStore: ObservableObject {
                     try? repository.saveConversation(conversations[i])
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          sources: conversations[i].messages[replyIndex].sources,
                                           revising: revisionTarget)
                 }
             }

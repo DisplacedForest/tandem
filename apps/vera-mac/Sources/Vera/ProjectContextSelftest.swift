@@ -179,7 +179,7 @@ enum ProjectContextSelftest {
         try await checkNewChatAndReplayScope(store, service: service, projectChat: chat, projectID: project.id)
 
         store.recordCanvasArtifacts([Artifact(id: "plan", title: "Bed plan", type: .markdown, language: "", content: "Bed two")],
-                                    conversationID: chat, messageID: "plan-message")
+                                    conversationID: chat, messageID: "plan-message", sources: [])
         try check(store.projectArtifacts(project.id).count == 1, "The project lists its chat's artifact")
         store.deleteProject(project.id)
         try check(store.project(project.id) == nil, "The project is gone after delete")
