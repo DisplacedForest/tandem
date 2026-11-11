@@ -220,13 +220,15 @@ struct CompanionPanelView: View {
                     .background(Capsule().fill(Theme.accent))
             }
             Spacer()
-            Button(action: openInMain) {
-                Text("Open in Tandem")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+            if !store.companionApprovalWaiting {
+                Button(action: openInMain) {
+                    Text("Open in Tandem")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open in Tandem")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open in Tandem")
             Button { controller.hide() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
@@ -404,7 +406,7 @@ struct CompanionPanelView: View {
 
     private func openApproval() {
         openInMain()
-        store.revealCompanionWorkApproval()
+        store.revealCompanionApproval()
     }
 
     private func loadDroppedFiles(_ providers: [NSItemProvider]) {

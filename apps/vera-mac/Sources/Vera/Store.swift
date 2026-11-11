@@ -203,7 +203,7 @@ final class ChatStore: ObservableObject {
     @Published var pendingTaskReveal: String?
     @Published private(set) var composerSend = ComposerSend()
     var taskRevealGeneration = 0
-    var revealedCompanionWorkDecisionID: String?
+    var revealedCompanionWorkDecisionIDs: Set<String> = []
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()

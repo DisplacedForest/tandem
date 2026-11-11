@@ -43,7 +43,7 @@ extension SelfTest {
         try require(store.companionApprovalWaiting, "The panel shows the approval banner for waiting companion work")
         try require(messageCount() == messages, "Work moving into waiting posts no message")
 
-        store.revealCompanionWorkApproval()
+        store.revealCompanionApproval()
         try require(store.selectedID == threadID, "The approval opens the companion conversation")
         try require(store.pendingTaskReveal == waiting.id.uuidString, "The approval scrolls to the waiting task")
         let owner = Message(id: waiting.origin.assistantMessageID, role: .assistant, text: "I'll sort them in the background.")
@@ -51,11 +51,11 @@ extension SelfTest {
                                                 in: [owner]) == waiting.origin.assistantMessageID,
                     "The scroll lands on the message that started the task")
         store.pendingTaskReveal = nil
-        store.revealCompanionWorkApproval()
+        store.revealCompanionApproval()
         try require(store.pendingTaskReveal == waiting.id.uuidString, "Pressing the banner button always scrolls to the task")
 
         store.pendingTaskReveal = nil
-        store.revealedCompanionWorkDecisionID = nil
+        store.revealedCompanionWorkDecisionIDs = []
         store.select(ordinary.id)
         store.openVeraThread()
         try require(store.pendingTaskReveal == waiting.id.uuidString, "Opening the companion conversation scrolls to the waiting task")
@@ -86,14 +86,38 @@ extension SelfTest {
         store.conversationTurns = [turn]
         store.turnConfirmations[turn.assistantMessageID] = NativeToolConfirmationRequest(activity: activity)
         store.nativeTaskReferences = [waiting]
-        store.revealedCompanionWorkDecisionID = nil
+        store.revealedCompanionWorkDecisionIDs = []
         try require(store.companionAwaitingApproval && store.companionApprovalWaiting, "A waiting chat answer shows the banner")
-        store.revealCompanionWorkApproval()
-        try require(store.pendingTaskReveal == nil, "A waiting chat answer goes first, the task is not scrolled to")
+        store.revealCompanionApproval()
+        try require(store.pendingTaskReveal == nil && store.pendingHighlightMessageID == turn.assistantMessageID,
+                    "A waiting chat answer goes first: its message is scrolled to and the task is not")
+        store.pendingHighlightMessageID = nil
         store.select(ordinary.id)
         store.openVeraThread()
         try require(store.pendingTaskReveal == nil, "Opening the conversation leaves the chat answer's card in view")
         try require(messageCount() == messages, "Waiting work never adds a message")
-        print("  companion work waiting OK (approval only, companion conversation only, scrolls once, chat answer first)")
+
+        store.conversationTurns = []
+        store.turnConfirmations = [:]
+        store.revealedCompanionWorkDecisionIDs = []
+        let first = try saved.reference(state: "needs_decision", conversationID: threadID,
+                                        decision: ["id": "first-approval", "prompt": saved.approvalQuestion, "choices": ["decline", "approve"]])
+        let second = try saved.reference(state: "needs_decision", conversationID: threadID,
+                                         decision: ["id": "second-approval", "prompt": saved.approvalQuestion, "choices": ["decline", "approve"]])
+        store.nativeTaskReferences = [second]
+        store.openVeraThread()
+        try require(store.pendingTaskReveal == second.id.uuidString, "The only waiting task is scrolled to")
+        store.nativeTaskReferences = [first, second]
+        store.openVeraThread()
+        try require(store.pendingTaskReveal == first.id.uuidString, "A second task that starts waiting is scrolled to once")
+        store.pendingTaskReveal = nil
+        store.nativeTaskReferences = [second]
+        store.openVeraThread()
+        store.select(threadID)
+        try require(store.pendingTaskReveal == nil, "A task already scrolled to is not scrolled to again after another is answered")
+        store.revealCompanionApproval()
+        try require(store.pendingTaskReveal == second.id.uuidString, "The banner's button still scrolls to it")
+        store.pendingTaskReveal = nil
+        print("  companion work waiting OK (approval only, companion conversation only, scrolls once, chat answer first, several waiting)")
     }
 }
