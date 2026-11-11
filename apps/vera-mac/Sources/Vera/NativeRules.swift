@@ -626,10 +626,6 @@ enum NativeCommandClassifier {
         return sends ? Classified(action: .networkSends, trigger: sending) : Classified(action: .commands)
     }
 
-    static func sensitiveToken(_ command: String, fragment: String) -> String {
-        shellTokens(command).map(stripOuterQuotes).first { $0.lowercased().contains(fragment) } ?? fragment
-    }
-
     static func classifySegments(_ command: String, grants: [FolderGrant], directory: String? = nil) -> NativeActionClass {
         classifiedSegments(command, grants: grants, directory: directory).action
     }
@@ -638,7 +634,7 @@ enum NativeCommandClassifier {
         var working = directory ?? (grants.count == 1 ? grants[0].path : nil)
         let lowered = command.lowercased()
         if let fragment = sensitiveFragments.first(where: { lowered.contains($0) }) {
-            return .risky(NativeRuleWhy.Trigger(.path, sensitiveToken(command, fragment: fragment)))
+            return .risky(NativeRuleWhy.Trigger(.path, fragment))
         }
         if command.contains("`") { return .risky(feature(Feature.backticks)) }
         if command.contains("$(") { return .risky(feature(Feature.substitution)) }

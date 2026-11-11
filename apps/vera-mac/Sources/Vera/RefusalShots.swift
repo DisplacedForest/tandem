@@ -28,7 +28,7 @@ enum RefusalShot {
             let allow = NativeRuleRecord(scope: .conversation(chatID), action: .commands, toolID: NativeCommandTools.toolID, target: target, effect: .allow,
                                          statement: "Allow commands that start with make pdf")
             list.append(("Run a command", NativeRuleWhy(kind: .outside, action: .commands, handsOff: false, choice: .ask, source: .settings,
-                                                        rule: .init(allow), subject: "make clean")))
+                                                        rule: .init(allow))))
         }
         list.append(("Post to the garden log", NativeRuleWhy.tool(.networkSends)))
         return list

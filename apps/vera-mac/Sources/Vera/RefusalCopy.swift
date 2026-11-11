@@ -74,7 +74,8 @@ enum RefusalCopy {
             return .literal(setTo(why) + triggered(why.trigger, full: full) + ".")
         case .outside:
             let rule = why.rule.map { RuleRows.sentence($0.record, tools: places.tools) } ?? ""
-            let subject = why.subject.map(clean).flatMap { $0.isEmpty ? nil : $0 } ?? "this"
+            let fallback = why.rule?.target?.kind == .commandPrefix ? "this command" : "this"
+            let subject = why.subject.map(clean).flatMap { $0.isEmpty ? nil : $0 } ?? fallback
             return .literal("Your rule \(quoted(rule)) doesn't cover \(subject).")
         case .rule:
             guard let rule = why.rule else { return .literal(setTo(why) + ".") }
@@ -120,7 +121,7 @@ enum RefusalCopy {
                                      trigger: .init(.program, "sudo"))
             case .outside:
                 return NativeRuleWhy(kind: .outside, action: .commands, handsOff: false, choice: .ask, source: .settings,
-                                     rule: allow.map { .init($0) }, subject: "make clean")
+                                     rule: allow.map { .init($0) })
             case .rule:
                 return NativeRuleWhy(kind: .rule, action: .commands, handsOff: true, rule: .init(never))
             case .held:

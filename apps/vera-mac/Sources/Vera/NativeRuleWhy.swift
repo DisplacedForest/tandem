@@ -57,7 +57,9 @@ struct NativeRuleWhy: Codable, Hashable, Sendable {
         }
 
         static func isPlainPath(_ text: String) -> Bool {
-            !text.contains("://") && !text.contains("@") && !text.contains("=") && !text.contains("?")
+            if NativeCommandClassifier.sensitiveFragments.contains(text.lowercased()) { return true }
+            guard ["/", "~/", "./", "../"].contains(where: { text.hasPrefix($0) }), !text.hasPrefix("//") else { return false }
+            return !text.contains("://") && !text.contains("@") && !text.contains("=") && !text.contains("?")
         }
     }
 
@@ -148,8 +150,8 @@ extension NativeRuleResolver {
         if wouldAct { return NativeRuleWhy(kind: .unsaved, action: query.action, handsOff: handsOff) }
         if let allow = NativeRuleMatcher.unmatchedAllow(records, query: query, context: context, at: now, honoringLimitedUse: honoringLimitedUse),
            let target = allow.target {
-            let other = query.parts.first { !allow.matches($0, at: now) }?.targets.first { $0.kind == target.kind }?.value
-            let differed = target.kind == .commandPrefix ? other.map { $0.split(whereSeparator: \.isWhitespace).prefix(NativeCommandPrefix.words).joined(separator: " ") } : other
+            let differed = target.kind == .commandPrefix ? nil
+                : query.parts.first { !allow.matches($0, at: now) }?.targets.first { $0.kind == target.kind }?.value
             return NativeRuleWhy(kind: .outside, action: query.action, handsOff: handsOff, choice: choice(for: query.action),
                                  source: source(for: query.action), rule: .init(allow), subject: differed)
         }

@@ -31,10 +31,10 @@ extension SelfTest {
         let outside = allowing.explain(forCommand: "make clean")
         try require(allowing.decision(forCommand: "make clean") == .ask && allowing.decision(forCommand: "make pdf report") == .act(.grant),
                     "The saved start allows its own commands and the other one asks")
-        try require(outside?.kind == .outside && outside?.rule == NativeRuleWhy.Rule(allow) && outside?.subject?.contains("make clean") == true
+        try require(outside?.kind == .outside && outside?.rule == NativeRuleWhy.Rule(allow) && outside?.subject == nil
                     && outside?.handsOff == false,
                     "A command outside a saved start names that rule and the command: \(String(describing: outside))")
-        try require(outside.map { RefusalCopy.plain($0).contains("make pdf") && RefusalCopy.plain($0).contains("make clean") } == true,
+        try require(outside.map { RefusalCopy.plain($0).contains("make pdf") && RefusalCopy.plain($0).hasSuffix("doesn't cover this command.") } == true,
                     "The outside sentence names the allowed start and the command")
 
         let never = NativeRuleRecord(scope: .conversation(chat), action: nil, toolID: NativeCommandTools.toolID, effect: .forbid,
@@ -134,6 +134,24 @@ extension SelfTest {
         let relaxed = NativeRuleResolver(global: { var rules = NativeRules.defaults; rules.set(.act, for: .fileEdits); return rules }(),
                                          conversation: NativeConversationRules(), requestText: "", records: folderAsk.map { [$0] } ?? [])
         try require(relaxed.decision(for: .fileEdits) == .ask && relaxed.explain(for: .fileEdits)?.kind == .rule, "A rule that raised it to a question is the reason")
+        let header = NativeCommandTools.assess(command: "curl -H 'Authorization: Bearer abc/.ssh/secret' https://example.org", directory: shared.path, grants: [grant],
+                                               fallback: .handOff, live: { _, action in NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "").decision(for: action) },
+                                               liveTargets: nil)
+        try require(header.decision == .handOff && header.why.map { !RefusalCopy.forModel($0).contains("Bearer") && !RefusalCopy.forModel($0).contains("abc") } == true,
+                    "A header that mentions a sensitive place is never copied into the reason: \(header.why.map { RefusalCopy.plain($0) } ?? "")")
+        try require(NativeRuleWhy.Trigger(.path, "Authorization: Bearer abc/.ssh/secret").text.isEmpty && NativeRuleWhy.Trigger(.path, "notes/plan.md").text.isEmpty
+                        && NativeRuleWhy.Trigger(.path, "/.ssh").text == "/.ssh" && NativeRuleWhy.Trigger(.path, "~/Documents/a b.txt").text == "~/Documents/a b.txt",
+                    "Only a real path or a known place is kept as the place a command reaches")
+        if let start = NativeRuleTarget.make(.commandPrefix, "make pdf") {
+            let allowed = NativeRuleRecord(scope: .everywhere, action: .commands, toolID: NativeCommandTools.toolID, target: start, effect: .allow,
+                                           statement: "Allow commands that start with make pdf")
+            let covering = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "", records: [allowed])
+                .tool(NativeCommandTools.toolID, targets: [])
+            let leaked = covering.explain(forCommand: "curl https://alice:secret@example.org/report")
+            try require(leaked?.kind == .outside && leaked?.subject == nil
+                            && leaked.map { !RefusalCopy.forModel($0).contains("secret") && !RefusalCopy.forModel($0).contains("curl") } == true,
+                        "A command a saved rule doesn't cover is never quoted in the reason: \(leaked.map { RefusalCopy.plain($0) } ?? "")")
+        }
         let secret = NativeRuleWhy.Trigger(.path, "https://alice:secret@example.org/.ssh/config")
         try require(secret.text.isEmpty && !RefusalCopy.plain(NativeRuleWhy(kind: .unsaved, action: .riskyCommands, handsOff: true, choice: .handOff, source: .settings,
                                                                            trigger: secret)).contains("secret"),
@@ -151,7 +169,7 @@ extension SelfTest {
         let wildcard = NativeCommandClassifier.trigger("rm *.txt", grants: [grant], directory: shared.path)
         let backticks = NativeCommandClassifier.trigger("echo `date`", grants: [grant], directory: shared.path)
         try require(program == NativeRuleWhy.Trigger(.program, "sudo"), "A privileged program is the trigger: \(String(describing: program))")
-        try require(path == NativeRuleWhy.Trigger(.path, "~/.ssh/id_rsa"), "A sensitive location is the trigger as written: \(String(describing: path))")
+        try require(path == NativeRuleWhy.Trigger(.path, "/.ssh"), "A sensitive location is named by the known place, never by the text around it: \(String(describing: path))")
         try require(wildcard == NativeRuleWhy.Trigger(.feature, NativeCommandClassifier.Feature.wildcard)
                     && backticks == NativeRuleWhy.Trigger(.feature, NativeCommandClassifier.Feature.backticks),
                     "Shell features are the trigger: \(String(describing: wildcard)) \(String(describing: backticks))")
