@@ -169,6 +169,7 @@ final class ChatStore: ObservableObject {
     private(set) var nativeRules: NativeRules
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
+    var turnInstructionUseSources: [UUID: NativeInstructionUses] = [:]
     let nativeRuleSource = NativeRuleSource()
     let companionWorkerRelay: NativeCompanionWorkerRelay
     let turnDeclineSource = NativeDeclineSource()
@@ -2428,6 +2429,7 @@ final class ChatStore: ObservableObject {
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
         let typed = typedWords(for: turn)
         let said = typed.said
+        let uses = turnInstructionUses(for: turn)
         let resolver = ruleResolver(for: id, requestText: said, typed: typed)
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
@@ -2436,7 +2438,7 @@ final class ChatStore: ObservableObject {
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
                 live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
-                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, action: $0, subjects: $1) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1) },
                 alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
@@ -2456,7 +2458,7 @@ final class ChatStore: ObservableObject {
         let turnRules = nativeRuleSource
         let turnRecords = nativeRuleRecordStore
         turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions.map {
-            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: said, typed: typed)
+            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: said, typed: typed, uses: uses)
         })
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,

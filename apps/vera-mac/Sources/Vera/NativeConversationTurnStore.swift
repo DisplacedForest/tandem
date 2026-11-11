@@ -358,6 +358,7 @@ extension ChatStore {
     func clearTurnDecisions(_ turn: NativeConversationTurn) {
         turnDeclineSource.clear(turn: turn.id)
         turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+        turnInstructionUseSources[turn.attempt ?? turn.id] = nil
     }
 
     private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {

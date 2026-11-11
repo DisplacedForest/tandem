@@ -1,0 +1,246 @@
+import Foundation
+
+@MainActor
+extension SelfTest {
+    static func runInstructions() async throws {
+        let require = NativeTaskFixture.require
+        let chat = "instruction-chat"
+        let address = "ana@greenhouse.test"
+        let told = "Send the notes to \(address)"
+        func target(_ kind: NativeRuleTargetKind, _ value: String) throws -> NativeRuleTarget {
+            guard let made = NativeRuleTarget.make(kind, value) else { throw NativeTaskFixture.Failure.assertion("fixture target \(value)") }
+            return made
+        }
+        let ana = try target(.recipient, address)
+        let bo = try target(.recipient, "bo@greenhouse.test")
+        let sendClaim = NativeInstructionClaim(verbs: ["send"])
+
+        let accepted: [(String, [String], [String])] = [
+            (told, ["send"], [address]),
+            ("Please save this as notes.md", ["save"], ["notes.md"]),
+            ("Ok, run make pdf", ["run"], ["make pdf"]),
+            ("You can delete old.txt.", ["delete"], ["old.txt"]),
+        ]
+        for (text, verbs, values) in accepted {
+            try require(NativeInstruction.asks(text, verbs: verbs, values: values), "An instruction that opens with the action counts: \(text)")
+        }
+        let rejected: [(String, [String], String)] = [
+            ("Don't send the notes to \(address)", ["send"], "a negated one"),
+            ("Can you send the notes to \(address)?", ["send"], "a question"),
+            ("If it looks fine, send the notes to \(address)", ["send"], "a conditional"),
+            ("Send the notes to \(address) when I say so", ["send"], "a later condition"),
+            ("She said send the notes to \(address)", ["send"], "reported speech"),
+            ("Summarise the thread and send it to \(address)", ["send"], "the action not opening a sentence"),
+            (told, ["delete"], "a different action word"),
+            (told, [], "no action words"),
+            ("\(told). Actually wait.", ["send"], "a later sentence that takes it back"),
+        ]
+        for (text, verbs, label) in rejected {
+            try require(!NativeInstruction.asks(text, verbs: verbs, values: [address]), "An instruction is not counted for \(label): \(text)")
+        }
+
+        let split = NativeInstruction.sentences("Save this as notes.md and email \(address). Then stop\nThanks")
+        try require(split == ["Save this as notes.md and email \(address)", "Then stop", "Thanks"],
+                    "Sentences keep a file name and an address whole and split on a full stop and a new line: \(split)")
+
+        func rules(_ choice: NativeRuleChoice, for action: NativeActionClass = .networkSends, base: NativeRules = .defaults) -> NativeRules {
+            var made = base
+            made.set(choice, for: action)
+            return made
+        }
+        func resolver(_ global: NativeRules = rules(.ask), typed: NativeTypedWords, claim: NativeInstructionClaim? = sendClaim,
+                      records: [NativeRuleRecord] = [], targets: [NativeRuleTarget], uses: NativeInstructionUses = NativeInstructionUses(),
+                      tool: String = "fixture-notes") -> NativeRuleResolver {
+            var made = NativeRuleResolver(global: global, conversation: NativeConversationRules(), requestText: typed.said,
+                                          records: records, context: NativeRuleContext(conversationID: chat))
+            made.typed = typed
+            made.asked = claim
+            made.uses = uses
+            return made.tool(tool, targets: targets)
+        }
+        let typedTold = NativeTypedWords(typed: told)
+        try require(resolver(typed: typedTold, targets: [ana]).decision(for: .networkSends) == .act(.instruction),
+                    "A send to the address typed in the instruction runs once without asking")
+        let twins: [(String, NativeRuleResolver)] = [
+            ("another address", resolver(typed: typedTold, targets: [bo])),
+            ("an address typed only earlier", resolver(typed: NativeTypedWords(typed: "Send the notes there.", earlier: [told]), targets: [ana])),
+            ("an instruction in quote marks", resolver(typed: NativeTypedWords(typed: "The page says \"\(told)\""), targets: [ana])),
+            ("a negated instruction", resolver(typed: NativeTypedWords(typed: "Don't send the notes to \(address)"), targets: [ana])),
+            ("a question", resolver(typed: NativeTypedWords(typed: "Can you send the notes to \(address)?"), targets: [ana])),
+            ("a picked option", resolver(typed: NativeTypedWords(typed: nil), targets: [ana])),
+            ("a tool that declared nothing", resolver(typed: typedTold, claim: nil, targets: [ana])),
+            ("a call with nothing named", resolver(typed: typedTold, targets: [])),
+        ]
+        for (label, twin) in twins {
+            try require(twin.decision(for: .networkSends) == .ask, "Ask first still asks for \(label)")
+        }
+        let posting = resolver(rules(.ask, for: .otherChanges), typed: NativeTypedWords(typed: "Post the notes."),
+                               claim: NativeInstructionClaim(verbs: ["post"], nothing: true), targets: [])
+        try require(posting.decision(for: .otherChanges) == .act(.instruction),
+                    "A tool that always goes to the same place runs once when the person typed the action")
+
+        try require(resolver(rules(.handOff), typed: typedTold, targets: [ana]).decision(for: .networkSends) == .handOff,
+                    "Leave it to me is never overridden by an instruction")
+        let never = NativeRuleRecord(action: .networkSends, target: ana, effect: .forbid, statement: "Never send to ana")
+        try require(resolver(typed: typedTold, records: [never], targets: [ana]).decision(for: .networkSends) == .handOff,
+                    "A saved never is never overridden by an instruction")
+        let askRecord = NativeRuleRecord(action: .networkSends, target: ana, effect: .ask, statement: "Always ask before sending to ana")
+        try require(resolver(rules(.act), typed: typedTold, records: [askRecord], targets: [ana]).decision(for: .networkSends) == .ask,
+                    "A saved always ask is never overridden by an instruction")
+        guard let payments = NativeFloorItem.payments.actionClass else { throw NativeTaskFixture.Failure.assertion("payments has an action") }
+        let payTyped = NativeTypedWords(typed: "Pay the invoice.")
+        let payClaim = NativeInstructionClaim(verbs: ["pay"], nothing: true)
+        try require(resolver(.defaults, typed: payTyped, claim: payClaim, targets: []).decision(for: payments) == .handOff,
+                    "Payments that aren't turned on stay with the person")
+        var opened = NativeRules.defaults
+        opened.lift(.payments, choice: .ask)
+        try require(resolver(opened, typed: payTyped, claim: payClaim, targets: []).decision(for: payments) == .act(.instruction),
+                    "Once payments are turned on and set to ask, the typed instruction runs once")
+        var broken = resolver(typed: typedTold, targets: [ana])
+        broken.failed = true
+        try require(broken.decision(for: .networkSends) == .ask, "Rules that failed to load never act on an instruction")
+
+        let both = NativeTypedWords(typed: "Send the notes to \(address) and bo@greenhouse.test")
+        let shared = NativeInstructionUses()
+        let first = resolver(typed: both, targets: [ana], uses: shared)
+        guard let signature = first.instructed(first.query(for: .networkSends), honoringLimitedUse: false) else {
+            throw NativeTaskFixture.Failure.assertion("The instruction gives a signature")
+        }
+        try require(shared.take(signature) && !shared.take(signature), "A signature is spent once")
+        try require(first.decision(for: .networkSends) == .ask, "The same send asks after it ran once")
+        try require(resolver(typed: both, targets: [bo], uses: shared).decision(for: .networkSends) == .act(.instruction),
+                    "Another address typed in the same message still runs once")
+        try require(resolver(typed: NativeTypedWords(typed: "Thanks, that's all."), targets: [ana]).decision(for: .networkSends) == .ask,
+                    "The next message without the instruction asks")
+
+        func source(_ global: NativeRules, records: [NativeRuleRecord] = []) -> NativeRuleSource {
+            let made = NativeRuleSource()
+            made.setGlobal(global)
+            made.setRecords(records)
+            return made
+        }
+        let goAhead = "Run the tests. Go ahead."
+        let preapproved = ChatStore.commandDecision(source(rules(.actIfPreapproved, for: .commands)), conversationID: chat, requestText: goAhead,
+                                                    typed: NativeTypedWords(typed: goAhead), uses: NativeInstructionUses(),
+                                                    command: "make test", action: .commands, subjects: [])
+        try require(preapproved.decision == .act(.requestPreapproval), "Go ahead still works as before: \(preapproved.decision)")
+
+        let sent = NativeChatRulesCounter()
+        func sender(_ confirmation: NativeToolConfirmation) -> NativeToolDefinition {
+            var made = NativeToolDefinition(id: "fixture-notes", name: "send_notes", title: "Send the notes", description: "Fixture",
+                                            parameters: .object(["type": .string("object")]), confirmation: confirmation, effect: .write,
+                                            action: .networkSends, isAvailable: { true },
+                                            execute: { _ in sent.hit(); return .object(["sent": .bool(true)]) })
+            made.ruleSubjects = { arguments in
+                guard case .string(let to)? = arguments["to"], let target = NativeRuleTarget.make(.recipient, to) else { return [] }
+                return [[target]]
+            }
+            made.verbs = ["send"]
+            return made
+        }
+        let mail = sender(.none)
+        let asking = source(rules(.ask))
+        let call: [String: NativeJSONValue] = ["to": .string(address)]
+        let turnUses = NativeInstructionUses()
+        let wrapped = ChatStore.ruled(mail, rules: asking, store: nil, conversationID: chat, requestText: told, typed: typedTold, uses: turnUses)
+        try require(wrapped.confirmationFor?(call) == false, "The instructed send shows no card")
+        let sink = NativeToolReasonSink()
+        _ = try await NativeToolCallContext.$confirmed.withValue(false) {
+            try await NativeToolCallContext.$reason.withValue(sink) { try await wrapped.execute(call) }
+        }
+        try require(sent.count == 1 && sink.value == .instruction, "It runs once without a card and reports why")
+        try require(wrapped.confirmationFor?(call) == true, "The same send now needs the card")
+        var again: String?
+        do { _ = try await NativeToolCallContext.$confirmed.withValue(false) { try await wrapped.execute(call) } } catch { again = error.localizedDescription }
+        try require(again != nil && sent.count == 1, "The same send never runs twice on one instruction")
+        try require(wrapped.confirmationFor?(["to": .string("bo@greenhouse.test")]) == true, "A send to another address needs the card")
+        let strictWrapped = ChatStore.ruled(sender(.required), rules: asking, store: nil, conversationID: chat, requestText: told, typed: typedTold,
+                                            uses: NativeInstructionUses())
+        try require(strictWrapped.confirmationFor?(call) == true, "A tool that always asks still asks")
+
+        sent.reset()
+        let loopTool = ChatStore.ruled(mail, rules: asking, store: nil, conversationID: chat, requestText: told, typed: typedTold,
+                                       uses: NativeInstructionUses())
+        let arguments = "{\"to\":\"\(address)\"}"
+        let transport = ScriptedNativeToolTransport(rounds: [
+            [NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "first", name: "send_notes", arguments: arguments)],
+                                      finishReason: "tool_calls")],
+            [NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "second", name: "send_notes", arguments: arguments)],
+                                      finishReason: "tool_calls")],
+            [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
+        ])
+        let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [loopTool]),
+                                  confirm: { (_: NativeToolActivity) async -> Bool in false })
+        var final: NativeToolTurnSnapshot?
+        for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: told)], model: "local-model",
+                                              enabledToolIDs: ["fixture-notes"]) {
+            final = snapshot
+        }
+        let steps = final?.activities ?? []
+        try require(steps.count == 2 && steps[0].state == .succeeded && steps[0].ranBecause == .instruction
+                        && steps[1].state == .failed && steps[1].ranBecause == nil && steps[1].confirmationRequired && sent.count == 1,
+                    "In a reply the first send runs and says why, the repeat asks: \(steps.map { ($0.state, $0.ranBecause as Any) })")
+
+        let commands = source(rules(.ask, for: .commands))
+        func command(_ typed: String, _ line: String, uses: NativeInstructionUses = NativeInstructionUses()) -> NativeRuleVerdict {
+            ChatStore.commandDecision(commands, conversationID: chat, requestText: typed, typed: NativeTypedWords(typed: typed), uses: uses,
+                                      command: line, action: .commands, subjects: NativeCommandTools.ruleSubjects(command: line))
+        }
+        let commandUses = NativeInstructionUses()
+        let pdf = command("Run `make pdf`", "make pdf", uses: commandUses)
+        try require(pdf.decision == .act(.instruction), "A typed command in code marks runs once: \(pdf.decision)")
+        try require(pdf.confirm?() == true && command("Run `make pdf`", "make pdf", uses: commandUses).decision == .ask,
+                    "Running it spends the instruction")
+        try require(command("Run the tests", "make test").decision == .ask, "A command the person didn't type asks")
+        try require(command("Run `make pdf && rm x`", "make pdf && rm x").decision == .ask, "A command with more than one step asks even typed in full")
+
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("instructed-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let grant = try FolderGrant.make(url: base)
+        let recorder = NativeCommandRunRecorder()
+        let typedRun = "Run `echo hi`"
+        let live = ChatStore.commandLive(commands, store: nil, conversationID: chat, requestText: typedRun, typed: NativeTypedWords(typed: typedRun),
+                                         uses: NativeInstructionUses())
+        let runner = NativeCommandTools.definitions(grants: { [grant] }, decision: .ask, reason: { _ in nil }, record: { recorder.add($0) },
+                                                    live: live.live, liveTargets: live.liveTargets)
+        let runTransport = ScriptedNativeToolTransport(rounds: [
+            [NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "run", name: NativeCommandTools.runName,
+                                                                                  arguments: "{\"command\":\"echo hi\"}")], finishReason: "tool_calls")],
+            [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
+        ])
+        let runLoop = NativeToolLoop(transport: runTransport, registry: NativeToolRegistry(definitions: runner),
+                                     confirm: { (_: NativeToolActivity) async -> Bool in false })
+        for try await _ in runLoop.stream(messages: [NativeChatMessage(role: "user", content: typedRun)], model: "local-model",
+                                          enabledToolIDs: [NativeCommandTools.toolID]) {}
+        let ran = recorder.recorded
+        try require(ran.count == 1 && ran[0].outcome == .ran && ran[0].reason == .instruction
+                        && ran[0].decisionLine == "Ran because you asked for this",
+                    "A typed command runs without a card and its card says why: \(ran.map { ($0.outcome, $0.reason as Any) })")
+
+        let folder = source(rules(.ask, for: .fileEdits, base: rules(.ask, for: .trash)))
+        let notes = try target(.folder, base.path + "/notes.md")
+        let old = try target(.folder, base.path + "/old.txt")
+        func folderDecision(_ typed: String, _ action: NativeActionClass, _ file: NativeRuleTarget) -> NativeRuleDecision {
+            ChatStore.folderDecision(folder, conversationID: chat, requestText: typed, typed: NativeTypedWords(typed: typed),
+                                     uses: NativeInstructionUses(), action: action, subjects: [[file]]).decision
+        }
+        try require(folderDecision("Save this as notes.md", .fileEdits, notes) == .act(.instruction), "A typed save runs once")
+        try require(folderDecision("Delete old.txt", .trash, old) == .act(.instruction), "A typed delete runs once")
+        try require(folderDecision("Save this as notes.md", .trash, notes) == .ask, "A save never stands in for a delete")
+
+        let plain = NativeToolActivity(id: "a1", toolID: "fixture-notes", name: "send_notes", title: "Send the notes", round: 0, request: "{}",
+                                       result: "{}", state: .succeeded, confirmationRequired: false)
+        let plainData = try JSONEncoder().encode(plain)
+        try require(!String(decoding: plainData, as: UTF8.self).contains("ranBecause"), "An old saved step has no reason field")
+        let decoded = try JSONDecoder().decode(NativeToolActivity.self, from: plainData)
+        var marked = plain
+        marked.ranBecause = .instruction
+        let markedBack = try JSONDecoder().decode(NativeToolActivity.self, from: try JSONEncoder().encode(marked))
+        try require(decoded == plain && decoded.ranBecause == nil && markedBack.ranBecause == .instruction,
+                    "Old saved steps still load and the reason survives saving")
+        try require(NativeRuleReason.instruction.title == "Ran because you asked for this", "The reason reads plainly")
+
+        print("  instructions OK (matcher table, sentences, resolver twins, nothing named, never overrides, single use, go ahead, tool card, reply steps, commands, command card reason, folder saves and deletes, old steps)")
+    }
+}

@@ -926,7 +926,14 @@ struct NativeToolActivityChip: View {
     let activity: NativeToolActivity
     var awaitingDecision = false
     var onCancel: (() -> Void)? = nil
-    @State private var expanded = false
+    @State private var expanded: Bool
+
+    init(activity: NativeToolActivity, awaitingDecision: Bool = false, onCancel: (() -> Void)? = nil, startsExpanded: Bool = false) {
+        self.activity = activity
+        self.awaitingDecision = awaitingDecision
+        self.onCancel = onCancel
+        _expanded = State(initialValue: startsExpanded)
+    }
 
     static let declineMarkers = ["The user did not approve this call", "The user already declined"]
 
@@ -968,6 +975,12 @@ struct NativeToolActivityChip: View {
         }
     }
 
+    private var ranBecause: NativeRuleReason? {
+        guard activity.ranBecause == .instruction, activity.state == .succeeded, activity.why == nil,
+              activity.toolID != NativeCommandTools.toolID else { return nil }
+        return .instruction
+    }
+
     private var showsConfirmationTag: Bool {
         activity.confirmationRequired && activity.state == .pending && awaitingDecision
     }
@@ -975,6 +988,10 @@ struct NativeToolActivityChip: View {
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 8) {
+                if let reason = ranBecause {
+                    Text(reason.title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 inspected("Request", activity.request)
                 if activity.why == nil, let result = activity.result { inspected("Result", result) }
             }

@@ -142,10 +142,12 @@ enum NativeCommandTools {
         return decided(command, action: probe.action, plain: plain, fallback: fallback, live: live, liveTargets: liveTargets).decision == .handOff
     }
 
+    static let verbs = ["run", "execute"]
+
     static func approvedThisTurn(_ reason: NativeRuleReason) -> Bool {
         switch reason {
         case .userApproved: return true
-        case .rule, .requestPreapproval, .conversationPrefix, .grant: return false
+        case .rule, .requestPreapproval, .conversationPrefix, .grant, .instruction: return false
         }
     }
 

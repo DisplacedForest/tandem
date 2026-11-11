@@ -196,6 +196,22 @@ enum NativeToolCallContext {
     @TaskLocal static var activityID: String?
     @TaskLocal static var request: String?
     @TaskLocal static var confirmed: Bool?
+    @TaskLocal static var reason: NativeToolReasonSink?
+}
+
+final class NativeToolReasonSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: NativeRuleReason?
+
+    var value: NativeRuleReason? {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+
+    func note(_ reason: NativeRuleReason) {
+        lock.lock(); defer { lock.unlock() }
+        stored = reason
+    }
 }
 
 enum NativeToolRequestKey {
