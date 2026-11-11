@@ -61,10 +61,8 @@ struct NativeTaskCardView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             }
-            if !card.sources.isEmpty && [.stopped, .needsInput, .failed].contains(card.status) {
-                SourcesRow(sources: NativeResearchReportSafety.sources(card.sources))
-            }
-            if !card.sources.isEmpty && card.status == .completed && !card.isCompanion {
+            if !card.sources.isEmpty,
+               [.stopped, .needsInput, .failed].contains(card.status) || (card.status == .completed && !card.isCompanion) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
             if let onSaveAnswer, card.answer != nil, card.status == .completed {
