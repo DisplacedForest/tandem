@@ -144,6 +144,8 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
     private var index = 0
     private var capturedHistories: [[NativeChatMessage]] = []
     private var capturedSchemas: [[NativeToolSchema]] = []
+    private var checkAnswer = "{\"run\": false}"
+    private var checks: [String] = []
 
     init(rounds: [[NativeChatStreamSnapshot]]) {
         self.rounds = rounds
@@ -151,6 +153,8 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
 
     var histories: [[NativeChatMessage]] { locked { capturedHistories } }
     var schemas: [[NativeToolSchema]] { locked { capturedSchemas } }
+    var instructionChecks: [String] { locked { checks } }
+    func answerChecks(_ reply: String) { locked { checkAnswer = reply } }
 
     func discoverModels() async throws -> [String] { ["local-model"] }
 
@@ -158,6 +162,10 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         let snapshots: [NativeChatStreamSnapshot] = locked {
+            if messages.first?.content == NativeInstructionCheck.systemPrompt {
+                checks.append(messages.last?.content ?? "")
+                return [NativeChatStreamSnapshot(content: checkAnswer, toolCalls: [], finishReason: "stop")]
+            }
             capturedHistories.append(messages)
             capturedSchemas.append(tools)
             defer { index += 1 }
@@ -419,6 +427,7 @@ enum SelfTest {
         do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
         do { try await runInstructions() } catch { print("SELFTEST ERROR: instructions \(error)"); exit(1) }
+        do { try await runInstructionCheck() } catch { print("SELFTEST ERROR: instruction check \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
         do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }

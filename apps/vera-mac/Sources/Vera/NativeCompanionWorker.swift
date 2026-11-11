@@ -65,9 +65,11 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var keep: Bool?
     var sources: [NativeTaskSource]?
     var aliases: [String: Int]?
+    var refused: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases
+        case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
@@ -578,8 +580,9 @@ private struct NativeCompanionRun {
         NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse, uses: uses)
     }
 
-    func instructionUses(excluding key: String) throws -> NativeInstructionUses {
+    func instructionUses(excluding key: String, refused: [String] = []) throws -> NativeInstructionUses {
         let uses = NativeInstructionUses()
+        for signature in refused { uses.take(signature) }
         let spent: Set<NativeEffectState> = [.admitted, .completed, .uncertain]
         for record in try environment.ledger.records(taskID: task.id)
         where spent.contains(record.state) && record.proposal.idempotencyKey != key {
@@ -748,6 +751,30 @@ private struct NativeCompanionRun {
         }
     }
 
+    func confirmsInstruction(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass, key: String,
+                             _ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
+        let phase = "work-\(min(checkpoint.rounds, 63))"
+        let attempt = checkpoint.attempt + NativeInstructionCheck.attemptSuffix + key
+        let names = NativeCompanionWorker.instructionClaim(definition, arguments, action: action)?.names ?? []
+        let targets = NativeCompanionWorker.ruleQuery(definition, arguments, action: action).targets
+        let messages = NativeInstructionCheck.taskMessages(said: dot.typedRequest,
+                                                           about: NativeInstructionCheck.about(definition, arguments: arguments, targets: targets, names: names))
+        let model = model
+        do {
+            let completion = try await NativeCompanionWorker.withDeadline(NativeInstructionCheck.seconds, stopped: stopProbe) {
+                try await model(phase, attempt, 0, messages, nil, "none")
+            }
+            guard completion.toolCalls.isEmpty else { return false }
+            return NativeInstructionCheck.parse(completion.content)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch is NativeCompanionStopped {
+            throw CancellationError()
+        } catch {
+            return false
+        }
+    }
+
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
         var text = "Reached the limit for this assignment before writing a full report."
         if !checkpoint.effects.isEmpty {
@@ -870,8 +897,19 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
-                                                                              uses: try instructionUses(excluding: key))
+        let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
+                                                                             uses: try instructionUses(excluding: key, refused: checkpoint.refused ?? []))
+        var decision = decided
+        if decision == .act(.instruction) {
+            let confirmed = try await confirmsInstruction(definition, arguments, action: action, key: key, checkpoint)
+            if !confirmed {
+                if let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: action),
+                   !(checkpoint.refused ?? []).contains(signature) {
+                    checkpoint.refused = (checkpoint.refused ?? []) + [signature]
+                }
+                decision = .ask
+            }
+        }
         if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
