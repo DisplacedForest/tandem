@@ -4,7 +4,8 @@ import SwiftUI
 @MainActor
 enum RefusalShot {
     static let chatID = "refusal-greenhouse"
-    static let longPath = "/Volumes/Archive/Household/Paperwork/2024/Insurance/Claims/Water damage/Photos and receipts/kitchen-ceiling-estimate.pdf"
+    static let longPath = "/" + ["Volumes", "Archive", "Household", "Paperwork", "2024", "Insurance", "Claims", "Water damage", "Photos and receipts",
+                                 "kitchen-ceiling-estimate.pdf"].joined(separator: "/")
 
     static func samples() -> [(title: String, request: String, why: NativeRuleWhy)] {
         let command = NativeCommandTools.toolID
