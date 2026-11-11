@@ -118,6 +118,29 @@ extension SelfTest {
         store.revealCompanionApproval()
         try require(store.pendingTaskReveal == second.id.uuidString, "The banner's button still scrolls to it")
         store.pendingTaskReveal = nil
+
+        store.revealedCompanionWorkDecisionIDs = ["first-approval"]
+        store.nativeTaskReferences = [first, second]
+        store.select(ordinary.id)
+        store.openVeraThread()
+        store.revealCompanionApproval()
+        try require(store.pendingTaskReveal == second.id.uuidString,
+                    "The banner's button keeps the task the opening just chose, so no task is counted as shown without being shown")
+        store.pendingTaskReveal = nil
+        store.nativeTaskReferences = [second]
+        store.openVeraThread()
+        try require(store.pendingTaskReveal == nil, "That task was shown, so it is not scrolled to again")
+
+        store.nativeTaskReferences = [waiting]
+        store.conversationTurns = [turn]
+        store.turnConfirmations[turn.assistantMessageID] = NativeToolConfirmationRequest(activity: activity)
+        store.pendingSourceNotice = NativeMemorySourceNotice(conversationID: threadID, state: .edited, message: "Changed")
+        store.revealCompanionApproval()
+        try require(store.pendingSourceNotice == nil && store.pendingHighlightMessageID == turn.assistantMessageID,
+                    "Going to the chat answer's card clears a note about a different message")
+        store.pendingHighlightMessageID = nil
+        store.conversationTurns = []
+        store.turnConfirmations = [:]
         print("  companion work waiting OK (approval only, companion conversation only, scrolls once, chat answer first, several waiting)")
     }
 }

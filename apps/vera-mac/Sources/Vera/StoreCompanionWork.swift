@@ -36,10 +36,12 @@ extension ChatStore {
 
     func revealCompanionApproval() {
         if let messageID = companionChatApprovalMessageID {
+            pendingSourceNotice = nil
             pendingHighlightMessageID = messageID
             return
         }
-        guard let reference = companionWorkAwaitingApproval else { return }
+        let waiting = companionWorkReferencesAwaitingApproval
+        guard let reference = waiting.first(where: { $0.id.uuidString == pendingTaskReveal }) ?? waiting.first else { return }
         if let decisionID = reference.snapshot?.decision?.id { revealedCompanionWorkDecisionIDs.insert(decisionID) }
         revealOngoingWork(reference)
     }
