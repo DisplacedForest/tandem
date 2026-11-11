@@ -78,8 +78,9 @@ extension ChatStore {
 
     func scheduleRunNote(_ run: NativeScheduleRun) -> CompanionLine {
         let companionWork = scheduleRunIsCompanionWork(run)
-        return CompanionSavedText.line(run.detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
-                                           || run.detail.hasPrefix(CompanionSavedText.marker))
+        let detail = NativeScheduler.shownNote(run.detail)
+        return CompanionSavedText.line(detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
+                                           || detail.hasPrefix(CompanionSavedText.marker))
     }
 
     func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
@@ -157,7 +158,9 @@ extension ChatStore {
             case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active
             }
-            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status)
+            let terminal = status == .completed || status == .failed || status == .stopped
+            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status,
+                                          endedAt: terminal ? snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) } : nil)
         }, fire: { [weak self] schedule, run, bind in
             guard let self else { return .failed("Tandem is closing.") }
             return await self.fireSchedule(schedule, run: run, bind: bind)
