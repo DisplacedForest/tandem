@@ -67,8 +67,15 @@ struct CardQuestion: Equatable {
 
     static let evenAnswers: Set<String> = ["it_happened", "it_did_not"]
 
-    static func make(choices: [String], stop: String?) -> CardQuestion? {
-        let offered = choices.filter { NativeCardChoices.kind(wire: $0) == nil && NativeTaskCardPresentation.choiceTitle($0) != nil }
+    enum Route: Equatable {
+        case stop
+        case answer(String)
+    }
+
+    static func route(_ id: String) -> Route { id == stopID ? .stop : .answer(id) }
+
+    static func make(choices: [String], stop: String?, answerable: (String) -> Bool = { _ in true }) -> CardQuestion? {
+        let offered = choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil && answerable($0) }
         guard let first = offered.first, let title = NativeTaskCardPresentation.choiceTitle(first) else { return nil }
         var answers = CardAnswers(allowTitle: title, declineTitle: "")
         let rest = Array(offered.dropFirst())

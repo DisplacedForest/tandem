@@ -80,14 +80,15 @@ struct NativeTaskCardView: View {
                               onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
                               onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
                               onItem: { answer($0) })
-            } else if let question = CardQuestion.make(choices: card.offeredChoices, stop: card.canCancel ? (stopTitle ?? card.stopTitle) : nil) {
+            } else if let question = CardQuestion.make(choices: card.offeredChoices,
+                                                       stop: card.canCancel && onCancel != nil ? (stopTitle ?? card.stopTitle) : nil,
+                                                       answerable: canAnswer) {
                 if let decline = question.decline {
-                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even, allowApprove: canAnswer(question.allow), allowDecline: canAnswer(decline),
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,
                                   onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                 } else {
                     Button(question.answers.allowTitle) { answer(question.allow) }
                         .buttonStyle(.bordered).font(.system(size: 12))
-                        .disabled(!canAnswer(question.allow))
                         .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
             } else if card.canCancel {
@@ -109,13 +110,14 @@ struct NativeTaskCardView: View {
     }
 
     private func canAnswer(_ choice: String) -> Bool {
-        if choice == CardQuestion.stopID { return onCancel != nil }
-        return onDecide != nil || (choice == "retry" && onRetry != nil)
+        onDecide != nil || (choice == "retry" && onRetry != nil)
     }
 
-    private func answer(_ choice: String) {
-        if choice == CardQuestion.stopID { onCancel?(); return }
-        if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
+    private func answer(_ id: String) {
+        switch CardQuestion.route(id) {
+        case .stop: onCancel?()
+        case .answer(let choice): if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
+        }
     }
 }
 

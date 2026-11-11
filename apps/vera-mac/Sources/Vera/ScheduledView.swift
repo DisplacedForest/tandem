@@ -296,12 +296,11 @@ private struct ScheduleRunRow: View {
                                   onItem: { onChoose?($0) })
                 } else if let question {
                     if let decline = question.decline {
-                        CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even, allowApprove: onChoose != nil,
-                                      allowDecline: decline == CardQuestion.stopID ? onStop != nil : onChoose != nil,
+                        CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,
                                       onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                     } else {
                         Button(question.answers.allowTitle) { answer(question.allow) }
-                            .buttonStyle(.bordered).controlSize(.small).fixedSize().disabled(onChoose == nil)
+                            .buttonStyle(.bordered).controlSize(.small).fixedSize()
                     }
                 }
             }
@@ -315,11 +314,14 @@ private struct ScheduleRunRow: View {
     static let stopTitle = "Stop"
 
     private var question: CardQuestion? {
-        isApproval ? nil : CardQuestion.make(choices: choices, stop: onStop == nil ? nil : Self.stopTitle)
+        isApproval ? nil : CardQuestion.make(choices: choices, stop: onStop == nil ? nil : Self.stopTitle, answerable: { _ in onChoose != nil })
     }
 
-    private func answer(_ choice: String) {
-        if choice == CardQuestion.stopID { onStop?() } else { onChoose?(choice) }
+    private func answer(_ id: String) {
+        switch CardQuestion.route(id) {
+        case .stop: onStop?()
+        case .answer(let choice): onChoose?(choice)
+        }
     }
 }
 
