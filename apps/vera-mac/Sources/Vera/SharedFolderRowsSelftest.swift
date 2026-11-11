@@ -5,6 +5,7 @@ final class SharedFolderFailingRepository: ChatRepository, ProjectRepository, @u
     private let lock = NSLock()
     private var conversationsFail = false
     private var projectsFail = false
+    private var listsFail = false
 
     init(inner: LocalChatRepository) { self.inner = inner }
 
@@ -16,6 +17,11 @@ final class SharedFolderFailingRepository: ChatRepository, ProjectRepository, @u
     var failProjects: Bool {
         get { lock.lock(); defer { lock.unlock() }; return projectsFail }
         set { lock.lock(); projectsFail = newValue; lock.unlock() }
+    }
+
+    var failLists: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return listsFail }
+        set { lock.lock(); listsFail = newValue; lock.unlock() }
     }
 
     private func scripted() -> NSError {
@@ -43,7 +49,10 @@ final class SharedFolderFailingRepository: ChatRepository, ProjectRepository, @u
     }
     func referencedAttachmentFileNames() throws -> Set<String> { try inner.referencedAttachmentFileNames() }
 
-    func listProjects() throws -> [ProjectRecord] { try inner.listProjects() }
+    func listProjects() throws -> [ProjectRecord] {
+        if failLists { throw scripted() }
+        return try inner.listProjects()
+    }
     func project(_ id: String) throws -> ProjectRecord? { try inner.project(id) }
     func saveProject(_ project: ProjectRecord) throws {
         if failProjects { throw scripted() }
@@ -280,6 +289,14 @@ extension SelfTest {
         try require(store.projectFolders(project.id, edited: [sheds], opened: []).map(\.id) == ["s-sheds"]
                     && store.projectFolders(project.id, edited: [], opened: ["s-sheds"]).isEmpty,
                     "A folder added in the editor is kept and one removed in the editor stays removed")
+        guard let shedsRow = row("project|\(project.id)|s-sheds") else { throw NativeTaskFixture.Failure.assertion("The new project folder is listed") }
+        repository.failLists = true
+        try require(store.stopSharing(shedsRow), "A stop that saved counts even when the projects can't be read back")
+        try require(row(shedsRow.id) == nil && store.project(project.id)?.grants.isEmpty == true && paths("s-member-b").isEmpty && toolPaths("s-member-b").isEmpty
+                    && store.projectFolders(project.id, edited: [sheds], opened: ["s-sheds"]).isEmpty,
+                    "The saved stop shows in the list, for the chats' tools and for an open editor without a reload")
+        repository.failLists = false
+        store.clearProjectError()
 
         let packets = try folder("Packets")
         try add("s-twin-a", "Twin A", [FolderGrant(id: "s-packets-a", path: packets)])

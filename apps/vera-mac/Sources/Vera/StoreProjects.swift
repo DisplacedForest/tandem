@@ -39,8 +39,10 @@ extension ChatStore {
         guard let projectRepository, var record = project(id) else { return false }
         change(&record)
         var saved = true
-        do { try projectRepository.saveProject(record) }
-        catch { projectError = "\(failure): \(error.localizedDescription)"; saved = false }
+        do {
+            try projectRepository.saveProject(record)
+            if let index = projects.firstIndex(where: { $0.id == id }) { projects[index] = record }
+        } catch { projectError = "\(failure): \(error.localizedDescription)"; saved = false }
         reloadProjects()
         return saved
     }
