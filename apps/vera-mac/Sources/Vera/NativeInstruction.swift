@@ -171,10 +171,7 @@ enum NativeInstruction {
         var body = remainder
         while let last = body.last, last.isWhitespace { body.removeLast() }
         if let last = body.last, ".!".contains(last) { body.removeLast() }
-        if body.contains(where: { ",:;@/\\~.".contains($0) }) { return false }
-        let text = String(body)
-        if text.contains("--") || text.contains(" - ") || text.contains("\u{2013}") || text.contains("\u{2014}") { return false }
-        return true
+        return body.allSatisfy { $0.isLetter || $0 == " " || $0 == "'" }
     }
 
     static func signature(action: NativeActionClass, toolID: String?, targets: [NativeRuleTarget], names: [String]) -> String {
