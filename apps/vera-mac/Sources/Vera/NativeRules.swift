@@ -345,7 +345,7 @@ enum NativeCommandClassifier {
     static let separators = ["&&", "||", ";", "|"]
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]
     static let destructive: Set<String> = ["rm", "rmdir", "mv", "cp", "chmod", "chown", "chflags", "shred", "srm", "dd", "truncate", "tee", "ln", "mkfs", "newfs"]
-    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab"]
+    static let senders: Set<String> = ["scp", "sftp", "ssh", "rsync", "mail", "mailx", "sendmail", "msmtp", "mutt", "osascript", "twurl", "slack", "gh", "glab", "hub", "aws", "gcloud", "az", "heroku", "flyctl", "fly", "vercel", "netlify", "wrangler", "kubectl", "helm", "terraform", "pulumi", "ansible", "fab", "gsutil", "rclone", "nc"]
     static let packageManagers: Set<String> = ["npm", "pnpm", "yarn", "cargo", "pip", "pip3", "twine", "gem", "docker", "bun", "poetry", "uv"]
     static let publishing: Set<String> = ["publish", "deploy", "push", "login", "upload", "release"]
     static let executing: Set<String> = ["exec", "dlx", "x", "create", "init"]
@@ -354,7 +354,7 @@ enum NativeCommandClassifier {
     static let globCharacters: Set<Character> = ["*", "?", "["]
     static let wrappers: Set<String> = ["eval", "xargs", "source", ".", "timeout", "gtimeout", "stdbuf", "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until", "case", "esac", "select", "function", "in", "!"]
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
-    static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua"]
+    static let interpreters: Set<String> = ["python", "python3", "perl", "ruby", "node", "php", "lua", "deno"]
     static let findEffects: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]
     static let destructiveGit: Set<String> = ["clean", "reset", "rm", "restore", "checkout", "switch", "stash", "worktree", "branch", "filter-branch", "gc", "prune", "reflog"]
     static let unsafeCharacters: Set<Character> = ["\"", "'", "`", "$", "\\"]
@@ -448,6 +448,7 @@ enum NativeCommandClassifier {
             if argument.hasPrefix("--") { return argument.contains("eval") || argument.contains("exec") || argument.contains("command") }
             return argument.hasPrefix("-") && argument.dropFirst().contains(where: { $0 == "c" || $0 == "e" })
         }) { return true }
+        if name == "deno", arguments.first(where: { !$0.hasPrefix("-") }) == "eval" { return true }
         return false
     }
 
