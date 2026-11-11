@@ -72,17 +72,17 @@ struct NativeTypedWords: Hashable, Sendable {
         joins(character) || "!#$%&'*/=?^`{|}~".contains(character)
     }
 
-    static func spans(_ text: String, _ value: String, strict: Bool = false) -> [Range<String.Index>] {
-        let needle = value.lowercased()
+    static func spans(_ text: String, _ value: String, strict: Bool = false, exact: Bool = false) -> [Range<String.Index>] {
+        let needle = exact ? value : value.lowercased()
         guard !needle.isEmpty else { return [] }
-        let haystack = text.lowercased()
+        let haystack = exact ? text : text.lowercased()
         guard haystack.count == text.count else { return [] }
         var found: [Range<String.Index>] = []
         var start = haystack.startIndex
         while start < haystack.endIndex, let range = haystack.range(of: needle, range: start..<haystack.endIndex) {
             let before = range.lowerBound == haystack.startIndex ? nil : haystack[haystack.index(before: range.lowerBound)]
             let after = range.upperBound == haystack.endIndex ? nil : haystack[range.upperBound]
-            let trailing = after.map { joins($0) && !ends(haystack, at: range.upperBound) } ?? false
+            let trailing = after.map { (joins($0) && !ends(haystack, at: range.upperBound)) || (exact && $0 == "/") } ?? false
             if !(strict ? fused(haystack, before: range.lowerBound) : (before.map(joins) ?? false)) && !trailing { found.append(range) }
             start = haystack.index(after: range.lowerBound)
         }

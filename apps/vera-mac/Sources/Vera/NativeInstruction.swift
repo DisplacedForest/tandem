@@ -43,13 +43,25 @@ enum NativeInstruction {
         return found.map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ","))) }.filter { !$0.isEmpty }
     }
 
-    static func opens(_ sentence: String, with verbs: [String]) -> Bool {
-        var rest = sentence
+    static func rest(_ sentence: String, after verbs: [String]) -> String? {
+        let lowered = sentence.lowercased()
+        guard lowered.count == sentence.count else { return nil }
+        var offset = 0
         while true {
-            if verbs.contains(where: { rest == $0 || rest.hasPrefix($0 + " ") }) { return true }
-            guard let opener = NativeRequestPreapproval.openers.first(where: { rest.hasPrefix($0 + " ") || rest.hasPrefix($0 + ",") }) else { return false }
-            rest = String(rest.dropFirst(opener.count)).trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+            let current = String(lowered.dropFirst(offset))
+            if let verb = verbs.first(where: { current == $0 || current.hasPrefix($0 + " ") }) {
+                return String(sentence.dropFirst(offset + verb.count)).trimmingCharacters(in: .whitespaces)
+            }
+            guard let opener = NativeRequestPreapproval.openers.first(where: { current.hasPrefix($0 + " ") || current.hasPrefix($0 + ",") }) else { return nil }
+            var next = offset + opener.count
+            let characters = Array(lowered)
+            while next < characters.count, characters[next].isWhitespace || characters[next] == "," { next += 1 }
+            offset = next
         }
+    }
+
+    static func opens(_ sentence: String, with verbs: [String]) -> Bool {
+        rest(sentence, after: verbs) != nil
     }
 
     static func spans(_ target: NativeRuleTarget, in sentence: String) -> [Range<String.Index>] {
@@ -57,12 +69,12 @@ enum NativeInstruction {
         case .recipient, .service:
             return NativeTypedWords.spans(sentence, target.value, strict: true)
         case .folder:
-            let whole = NativeTypedWords.spans(sentence, target.value, strict: true)
+            let whole = NativeTypedWords.spans(sentence, target.value, strict: true, exact: true)
             if !whole.isEmpty { return whole }
             let name = URL(fileURLWithPath: target.value).lastPathComponent
-            return name.isEmpty || name == "/" ? [] : NativeTypedWords.spans(sentence, name, strict: true)
+            return name.isEmpty || name == "/" ? [] : NativeTypedWords.spans(sentence, name, strict: true, exact: true)
         case .commandPrefix:
-            return NativeTypedWords.spans(sentence, canonical(target.value), strict: true)
+            return []
         }
     }
 
@@ -77,10 +89,18 @@ enum NativeInstruction {
     static func asks(_ text: String, verbs: [String], targets: [NativeRuleTarget], names: [String]) -> Bool {
         let wanted = verbs.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !wanted.isEmpty else { return false }
-        let lowered = NativeRequestPreapproval.normalized(text)
-        let all = sentences(lowered)
-        for (position, raw) in all.enumerated() where opens(raw, with: wanted) {
-            let sentence = targets.contains(where: { $0.kind == .commandPrefix }) ? spaced(raw) : raw
+        let plain = text.replacingOccurrences(of: "\u{2019}", with: "'")
+        let lowered = NativeRequestPreapproval.normalized(plain)
+        let all = sentences(plain)
+        let commands = targets.filter { $0.kind == .commandPrefix }
+        for (position, sentence) in all.enumerated() {
+            guard let tail = rest(sentence, after: wanted) else { continue }
+            let others = all.enumerated().filter { $0.offset != position }.map { $0.element.lowercased() }.joined(separator: ". ")
+            if !commands.isEmpty {
+                guard commands.count == 1, targets.count == 1, names.isEmpty, spaced(tail) == canonical(commands[0].value) else { continue }
+                if NativeRequestPreapproval.settled(others, original: lowered) { return true }
+                continue
+            }
             var cuts: [Range<String.Index>] = []
             var complete = true
             for target in targets where complete {
@@ -100,8 +120,7 @@ enum NativeInstruction {
                 let upper = sentence.distance(from: sentence.startIndex, to: cut.upperBound)
                 for index in lower..<upper { remainder[index] = " " }
             }
-            let others = all.enumerated().filter { $0.offset != position }.map(\.element).joined(separator: ". ")
-            if NativeRequestPreapproval.settled(String(remainder) + ". " + others, original: lowered) { return true }
+            if NativeRequestPreapproval.settled(String(remainder).lowercased() + ". " + others, original: lowered) { return true }
         }
         return false
     }

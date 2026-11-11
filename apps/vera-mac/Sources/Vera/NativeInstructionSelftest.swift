@@ -96,6 +96,24 @@ extension SelfTest {
         try require(tight.instructed(wideQuery, honoringLimitedUse: false) == tightSignature, "Extra spaces in a command do not make it a different use")
         runUses.take(tightSignature)
         try require(tight.instructed(wideQuery, honoringLimitedUse: false) == nil, "The same command with extra spaces is spent with the first run")
+        func command(_ typed: String, runs command: String) -> Bool {
+            let made = resolver(rules(.ask, for: .commands), typed: NativeTypedWords(typed: typed), claim: runClaim, targets: [], tool: NativeCommandTools.toolID)
+            return made.instructed(made.query(for: .commands, command: command), honoringLimitedUse: false) != nil
+        }
+        try require(command("Run make pdf", runs: "make pdf") && command("Please run `make pdf`.", runs: "make pdf"),
+                    "A typed command allows exactly that command")
+        for (typed, ran) in [("Run make -n", "make"), ("Run echo make", "make"), ("Run make", "make -n"), ("Run make pdf", "make PDF"),
+                             ("Run make pdf now", "make pdf"), ("Run make pdf and send it", "make pdf")] {
+            try require(!command(typed, runs: ran), "Typing \(typed) does not allow running \(ran)")
+        }
+        let drafts = try target(.folder, "/shared/drafts")
+        try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [drafts]).decision(for: .trash) == .ask,
+                    "Naming a file does not allow moving its folder to the Trash")
+        let upper = try target(.folder, "/shared/drafts/Notes.txt")
+        try require(resolver(rules(.ask, for: .trash), typed: deleteDraft, claim: trashClaim, targets: [upper]).decision(for: .trash) == .ask
+                        && resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: "Delete notes.txt"), claim: trashClaim, targets: [upper])
+                            .decision(for: .trash) == .ask,
+                    "A file name in different letter case is a different file")
         var gateFailed = false
         do { try NativeRuleResolver.gate(live: .ask, planned: .ask, action: .fileEdits, approved: false) } catch { gateFailed = true }
         try require(gateFailed, "A live ask with no approval never runs, whatever was planned")
