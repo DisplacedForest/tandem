@@ -204,7 +204,7 @@ private struct ScheduleDetail: View {
                         Text("No runs yet.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(runs) { run in
-                        ScheduleRunRow(run: run, companionWork: schedule.isCompanionWork, timeZone: schedule.timeZone,
+                        ScheduleRunRow(run: run, note: store.scheduleRunNote(run), timeZone: schedule.timeZone,
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
@@ -244,7 +244,7 @@ private struct ScheduleControlButtons: View {
 
 private struct ScheduleRunRow: View {
     let run: NativeScheduleRun
-    let companionWork: Bool
+    let note: CompanionLine
     let timeZone: TimeZone
     let onOpen: (() -> Void)?
     let onStop: (() -> Void)?
@@ -267,7 +267,7 @@ private struct ScheduleRunRow: View {
                         Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
                             .font(.system(size: 13, weight: .medium))
                         if !run.detail.isEmpty {
-                            CompanionLineText(line: CompanionSavedText.question(run.detail, companionWork: companionWork && run.noteIsSavedQuestion)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                            CompanionLineText(line: note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

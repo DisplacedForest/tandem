@@ -250,6 +250,6 @@ struct NativeArtifactMarkdown: View, Equatable {
 
 extension NativeTaskCardPresentation {
     var milestoneLine: CompanionLine {
-        CompanionSavedText.question(milestone, companionWork: isCompanion && status == .needsInput)
+        CompanionSavedText.line(milestone, appWritten: isCompanion && status == .needsInput)
     }
 }

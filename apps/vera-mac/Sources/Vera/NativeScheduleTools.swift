@@ -21,8 +21,7 @@ enum NativeScheduleTools {
         return base.union([toolID])
     }
 
-    static func definition(companionThread: @escaping @Sendable () -> String,
-                           searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
+    static func definition(searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
                            save: @escaping @Sendable (NativeScheduleDraft) async throws -> NativeSchedule) -> NativeToolDefinition {
@@ -53,7 +52,7 @@ enum NativeScheduleTools {
                 }
                 let schedule: NativeSchedule
                 do { schedule = try await save(draft) } catch { throw NativeToolError.failed(error.localizedDescription) }
-                let destination = schedule.owner == .dot ? companionThread() : "its own chat"
+                let destination = schedule.owner == .dot ? "the companion's conversation" : "its own chat"
                 return .object([
                     "message": .string("Saved. \(schedule.cadenceSummary). It appears in Scheduled, and results go to \(destination)."),
                     "saved": .bool(true),
