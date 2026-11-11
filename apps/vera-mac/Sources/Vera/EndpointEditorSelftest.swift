@@ -102,6 +102,35 @@ extension SelfTest {
         named.skipOnboarding()
         try require(named.nativeSettings.profiles.count == 1, "An endpoint the person named is kept")
 
+        let draftDisk = EndpointEditorFixtureDisk()
+        let draft = makeConfig(draftDisk)
+        host(NativeEndpointEditor(addsOnEntry: true), config: draft)
+        try draft.save()
+        try require(draft.nativeSettings.profiles.count == 1 && draftDisk.writes.count == 1 && !hasEndpoint(draftDisk.contents),
+                    "A save from elsewhere while the guide is open keeps the untouched endpoint on screen and off disk")
+        let reopened = makeConfig(draftDisk)
+        try require(reopened.nativeSettings.profiles.isEmpty, "Reopening after that save finds no endpoint")
+        draft.activeProfileBinding(\.baseURL).wrappedValue = "https://models.example/v1"
+        try draft.save()
+        try require(draftDisk.contents["model_base"] as? String == "https://models.example/v1",
+                    "Once an address is typed the same save writes the endpoint")
+
+        let keyDisk = EndpointEditorFixtureDisk()
+        let keyStore = NativeCredentialFixtureStore()
+        let keyed = ConfigStore(credentialStore: keyStore, readConfiguration: { keyDisk.contents },
+                                nativeMCP: NativeMCPManager(servers: []),
+                                writeConfiguration: { keyDisk.contents = $0; keyDisk.writes.append($0) })
+        host(NativeEndpointEditor(addsOnEntry: true), config: keyed)
+        let keyedID = keyed.nativeSettings.activeProfileID ?? ""
+        keyed.apiKeyBinding().wrappedValue = "synthetic-key"
+        try keyed.save()
+        try require(keyStore.values[keyedID] == "synthetic-key" && hasEndpoint(keyDisk.contents),
+                    "An endpoint with only a key saves with its key")
+        keyed.apiKeyBinding().wrappedValue = ""
+        keyed.skipOnboarding()
+        try require(keyed.nativeSettings.profiles.isEmpty && !hasEndpoint(keyDisk.contents) && keyStore.values[keyedID] == nil,
+                    "Clearing the key and skipping drops the endpoint and removes its stored key")
+
         let savedDisk = EndpointEditorFixtureDisk()
         savedDisk.contents = ["native_chat": ["profiles": [["id": "saved", "name": "Home", "baseURL": "https://models.example/v1",
                                                              "discoveredModels": [String](), "selectedModel": ""]],
@@ -115,6 +144,6 @@ extension SelfTest {
         saved.skipOnboarding()
         try require(saved.nativeSettings.profiles.map(\.id) == ["saved"], "Skipping keeps a saved endpoint")
 
-        print("  endpoint editor OK (no endpoint on entry in Settings, guide entry, skip and continue, saved endpoints)")
+        print("  endpoint editor OK (no endpoint on entry in Settings, guide entry, skip and continue, saves while the guide is open, stored keys, saved endpoints)")
     }
 }

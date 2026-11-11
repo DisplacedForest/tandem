@@ -297,7 +297,8 @@ final class ConfigStore: ObservableObject {
             credentialError = (error as? NativeCredentialError)?.localizedDescription ?? NativeCredentialError.write.localizedDescription
             throw (error as? NativeCredentialError) ?? NativeCredentialError.write
         }
-        var merged = nativeSettings.merging(into: raw)
+        let persisted = settingsWithoutUntouchedEntryProfile
+        var merged = persisted.merging(into: raw)
         if memoryMigrationAwaitingCredential, savedCredentials[Self.memoryCredentialID] == nil,
            let snapshot = migratedMemoryEndpointSnapshot,
            nativeSettings.memoryEndpoint.baseURL == snapshot.baseURL,
@@ -311,7 +312,7 @@ final class ConfigStore: ObservableObject {
             migratedMemoryEndpointSnapshot = nil
         }
         var revisions = raw["pi_profile_revisions"] as? [String: String] ?? [:]
-        for profile in nativeSettings.profiles {
+        for profile in persisted.profiles {
             let previous = piCommittedSettings.profiles.first { $0.id == profile.id }
             if revisions[profile.id] == nil || previous?.baseURL != profile.baseURL || previous?.selectedModel != profile.selectedModel || piCredentialsChanged.contains(profile.id) || piCommittedCredentials[profile.id] != savedCredentials[profile.id] {
                 revisions[profile.id] = UUID().uuidString.lowercased()
@@ -319,7 +320,7 @@ final class ConfigStore: ObservableObject {
         }
         merged["pi_profile_revisions"] = revisions
         try writeConfiguration(merged)
-        piCommittedSettings = nativeSettings
+        piCommittedSettings = persisted
         piCommittedCredentials = savedCredentials
         piCommitValid = true
         raw = merged
@@ -610,18 +611,35 @@ final class ConfigStore: ObservableObject {
         entryProfileID = nativeSettings.activeProfileID
     }
 
-    func discardUntouchedEntryProfile() {
-        guard let id = entryProfileID else { return }
-        entryProfileID = nil
-        guard let profile = nativeSettings.profiles.first(where: { $0.id == id }),
+    private var untouchedEntryProfileID: String? {
+        guard let id = entryProfileID,
+              let profile = nativeSettings.profiles.first(where: { $0.id == id }),
               profile.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               profile.name == NativeEndpointProfile.empty().name,
-              (nativeAPIKeys[id] ?? "").isEmpty else { return }
+              (nativeAPIKeys[id] ?? "").isEmpty else { return nil }
+        return id
+    }
+
+    private var settingsWithoutUntouchedEntryProfile: NativeChatSettings {
+        guard let id = untouchedEntryProfileID else { return nativeSettings }
         var updated = nativeSettings
         updated.profiles.removeAll { $0.id == id }
         if updated.activeProfileID == id { updated.activeProfileID = updated.profiles.first?.id }
-        nativeSettings = updated
-        pendingCredentials.removeValue(forKey: id)
+        return updated
+    }
+
+    func discardUntouchedEntryProfile() {
+        guard let id = untouchedEntryProfileID else {
+            entryProfileID = nil
+            return
+        }
+        nativeSettings = settingsWithoutUntouchedEntryProfile
+        entryProfileID = nil
+        if (savedCredentials[id] ?? "").isEmpty, !unavailableCredentials.contains(id) {
+            pendingCredentials.removeValue(forKey: id)
+        } else {
+            pendingCredentials[id] = ""
+        }
     }
 
     func updateActiveNativeProfile(_ update: (inout NativeEndpointProfile) -> Void) {
