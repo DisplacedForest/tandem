@@ -423,6 +423,18 @@ When the commands rule asks, the card shows the exact command and the folder. **
 
 Not included: sandboxes or containers, network isolation, a terminal view, and commands that keep running after the answer finishes.
 
+#### Rules you saved
+
+Settings, Rules lists every rule you saved from a card under **Rules you saved**. Each one reads as a single sentence with where it applies, like "Always allow commands that start with make pdf, in Greenhouse notes", plus a short note when it helps: where you saved it, how many uses are left, or how long it lasts.
+
+**Remove** takes a rule back at once. The next action it would have covered asks again, and anything it already let through finishes. The menu on a row can switch a rule off without removing it, so you can switch it back on later. For a rule saved in a chat or a project, the same menu can apply it everywhere. A never asks you once before it widens, since it'll stop that action in every chat and in background work.
+
+Chats you've made stricter than your defaults show up in the same list. Removing one of those puts the chat back on the default.
+
+Deleting a chat, project or schedule removes the rules that only applied there. Rules that apply everywhere stay, even when the chat you saved them from is gone.
+
+Each default's explanation sits behind the info button on its row. Editing files also covers saving images Tandem generates.
+
 ### Preferences
 
 Settings, Persona, Preferences lists the standing preferences Vera follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.

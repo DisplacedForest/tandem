@@ -259,6 +259,14 @@ extension ChatStore {
         guard let id = conversationID ?? selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].rules.tighten(choice, for: action, global: nativeRules)
         persistRules(index)
+        announceRuleChange()
+    }
+
+    func clearConversationRule(for action: NativeActionClass, conversationID: String) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].rules.choices[action] != nil else { return }
+        conversations[index].rules.choices[action] = nil
+        persistRules(index)
+        announceRuleChange()
     }
 
     private func persistRules(_ index: Int) {

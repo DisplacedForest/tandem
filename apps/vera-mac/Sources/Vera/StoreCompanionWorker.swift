@@ -45,6 +45,7 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             var saved = true
             for record in records where (try? store.add(record)) == nil { saved = false }
             if let rules = self?.lock.withLock({ self?.rules }) { ChatStore.reloadRules(rules, from: store) }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .ruleRecordsChanged, object: nil) }
             return saved
         }
         environment.recordsChanged = { [weak self] in
