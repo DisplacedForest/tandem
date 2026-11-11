@@ -266,7 +266,7 @@ private struct ScheduleRunRow: View {
                         Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
                             .font(.system(size: 13, weight: .medium))
                         if !run.detail.isEmpty {
-                            CompanionNamedText(template: run.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                            CompanionLineText(line: CompanionSavedText.question(run.detail)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

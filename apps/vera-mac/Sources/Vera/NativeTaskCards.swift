@@ -22,7 +22,7 @@ struct NativeTaskCardView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             if !card.milestone.isEmpty {
-                CompanionNamedText(template: card.milestone)
+                CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -245,5 +245,11 @@ struct NativeArtifactMarkdown: View, Equatable {
         Markdown(content)
             .markdownTheme(Self.theme)
             .textSelection(.enabled)
+    }
+}
+
+extension NativeTaskCardPresentation {
+    var milestoneLine: CompanionLine {
+        status == .needsInput ? CompanionSavedText.question(milestone) : .literal(milestone)
     }
 }
