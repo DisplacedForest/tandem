@@ -450,30 +450,32 @@ enum NativeCompanionWorker {
     }
 
     static func earlierLine(_ checkpoint: NativeCompanionCheckpoint) -> String? {
-        let line = effectsLine(checkpoint)
-        guard line != " Nothing was changed." else { return nil }
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? nil : trimmed
+        earlierLine(done: checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title),
+                    unsure: checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title))
     }
 
-    static func stepLiteral(_ definition: NativeToolDefinition?, _ arguments: [String: NativeJSONValue]?, title: String) -> String {
+    static func earlierLine(done: [String], unsure: [String]) -> String? {
+        var parts: [String] = []
+        if !done.isEmpty { parts.append("Earlier in this work: " + done.joined(separator: "; ") + ".") }
+        if !unsure.isEmpty { parts.append("These may have changed something: " + unsure.joined(separator: "; ") + ".") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    static func stepLiteral(toolID: String?, toolTitle: String?, argumentsJSON: String?, title: String) -> String {
         var literal = ""
-        if let definition, let arguments {
-            let lines = details(definition.title, argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)))
-            literal = lines.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : definition.title + "\n" + lines
-            if definition.id == NativeCommandTools.toolID, case .string(let command)? = arguments["command"] {
-                if case .string(let directory)? = arguments["directory"] { literal = command + "\nin " + directory } else { literal = command }
+        if let argumentsJSON, let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any], !object.isEmpty {
+            if toolID == NativeCommandTools.toolID, let command = object["command"] as? String {
+                literal = (object["directory"] as? String).map { command + "\nin " + $0 } ?? command
+            } else {
+                let name = toolTitle ?? title.components(separatedBy: ": ").first ?? ""
+                let lines = details(name, argumentsJSON: argumentsJSON)
+                literal = name.isEmpty ? lines : name + "\n" + lines
             }
         }
         if literal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { literal = title }
         var kept = String.UnicodeScalarView()
         kept.append(contentsOf: CompanionSavedText.sanitized(literal).unicodeScalars.prefix(NativeTaskStop.stepScalars))
         return String(kept)
-    }
-
-    static func stop(_ reason: String, _ definition: NativeToolDefinition?, _ arguments: [String: NativeJSONValue]?, title: String,
-                     earlier: String?) -> NativeTaskStop {
-        NativeTaskStop(reason: reason, step: stepLiteral(definition, arguments, title: title), earlier: earlier)
     }
 
     static func remainingLimit(_ checkpoint: NativeCompanionCheckpoint, cap: Int, budget: NativeCompanionWorkerBudget) -> Int {
@@ -784,6 +786,28 @@ private struct NativeCompanionRun {
         return CompanionSavedText.sanitized(text)
     }
 
+    func stopped(_ reason: String, call: NativeTaskGenerationToolCall, record: NativeEffectRecord?, title: String,
+                 _ checkpoint: NativeCompanionCheckpoint) -> NativeTaskStop {
+        let tool = context.tools.first { $0.name == (record?.proposal.function ?? call.name) }
+        let validated = tool.flatMap { try? $0.validatedArguments(call.arguments) }
+            .map { NativeEffectProposal.canonicalArguments(.object($0)) }
+        let step = NativeCompanionWorker.stepLiteral(toolID: record?.proposal.toolID ?? tool?.id, toolTitle: tool?.title,
+                                                     argumentsJSON: record?.proposal.argumentsJSON ?? validated ?? call.arguments, title: title)
+        var done = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title)
+        var unsure = checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
+        var noted = Set(checkpoint.effects.map(\.title))
+        noted.insert(title)
+        for other in (try? environment.ledger.records(taskID: task.id)) ?? [] where other.digest != record?.digest {
+            guard other.state == .completed || other.state == .uncertain else { continue }
+            let known = context.tools.first { $0.name == other.proposal.function }
+            let arguments = known.flatMap { try? $0.validatedArguments(other.proposal.argumentsJSON) }
+            let name = known.map { NativeCompanionWorker.describe($0, arguments ?? [:]) } ?? other.proposal.function
+            guard noted.insert(name).inserted else { continue }
+            if other.state == .completed { done.append(name) } else { unsure.append(name) }
+        }
+        return NativeTaskStop(reason: reason, step: step, earlier: NativeCompanionWorker.earlierLine(done: done, unsure: unsure))
+    }
+
     func handOff(_ checkpoint: inout NativeCompanionCheckpoint, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass?,
                  why: NativeRuleWhy?) throws -> NativeTaskStepResult {
         let reason = why ?? NativeRuleWhy(kind: .unsaved, action: action ?? .otherChanges, handsOff: true)
@@ -792,9 +816,7 @@ private struct NativeCompanionRun {
         let effects = NativeCompanionWorker.effectsLine(checkpoint)
         let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
                                                                                   companion: nil) + effects)
-        let asked = definition(named: call.name)
-        let stop = NativeCompanionWorker.stop(NativeTaskStop.left, asked, asked.flatMap { try? $0.validatedArguments(call.arguments) },
-                                              title: title, earlier: NativeCompanionWorker.earlierLine(checkpoint))
+        let stop = stopped(NativeTaskStop.left, call: call, record: nil, title: title, checkpoint)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
                                                 summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason, stop: stop)
     }
@@ -1144,8 +1166,7 @@ private struct NativeCompanionRun {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
-                let stop = NativeCompanionWorker.stop(NativeTaskStop.declined, asked, askedArguments, title: title,
-                                                      earlier: NativeCompanionWorker.earlierLine(checkpoint))
+                let stop = stopped(NativeTaskStop.declined, call: call, record: record, title: title, checkpoint)
                 return try await conclude(&checkpoint, text: text, stop: stop)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
@@ -1200,9 +1221,8 @@ private struct NativeCompanionRun {
                 checkpoint.answer(call, NativeCompanionWorker.message("The person checked and this did not happen. Propose it again only if it is still needed; it will need the usual approval."))
                 return nil
             case "stop":
-                let asked = definition(named: call.name)
-                let stop = NativeCompanionWorker.stop(NativeTaskStop.unconfirmed, asked, asked.flatMap { try? $0.validatedArguments(call.arguments) },
-                                                      title: title, earlier: NativeCompanionWorker.earlierLine(checkpoint))
+                let stop = stopped(NativeTaskStop.unconfirmed, call: call, record: try? environment.ledger.record(digest: digest), title: title,
+                                   checkpoint)
                 checkpoint.note(title, "unconfirmed")
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))

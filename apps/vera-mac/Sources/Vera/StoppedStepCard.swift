@@ -14,6 +14,13 @@ enum StoppedStepCopy {
         }
     }
 
+    static func plain(_ stop: NativeTaskStop, why: NativeRuleWhy?, places: RulePlaces, name: String?) -> String {
+        var parts = [line(stop.reason).plain(name: name), stop.step]
+        if stop.reason == NativeTaskStop.left, let why { parts.append(RefusalCopy.plain(why, places: places, name: name)) }
+        if let earlier = stop.earlier, !earlier.isEmpty { parts.append(earlier) }
+        return parts.joined(separator: "\n\n")
+    }
+
     static func strings(name: String?) -> [String] {
         [NativeTaskStop.left, NativeTaskStop.declined, NativeTaskStop.unconfirmed].map { line($0).plain(name: name) } + [stepLabel]
     }

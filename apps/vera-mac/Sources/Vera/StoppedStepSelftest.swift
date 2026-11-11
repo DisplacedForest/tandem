@@ -52,12 +52,35 @@ extension SelfTest {
                     "The panel, the work list and the Scheduled row read Needs you too")
 
         let commandTool = NativeCommandTools.definitions(grants: { [] }, decision: .act(.rule), reason: { _ in nil }, record: { _ in })[0]
-        try require(NativeCompanionWorker.stepLiteral(commandTool, ["command": .string("make pdf"), "directory": .string("/Volumes/Notes")], title: "Run a command")
+        let commandID = commandTool.id
+        try require(NativeCompanionWorker.stepLiteral(toolID: commandID, toolTitle: commandTool.title,
+                                                      argumentsJSON: "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes\"}", title: "Run a command")
                         == "make pdf\nin /Volumes/Notes"
-                    && NativeCompanionWorker.stepLiteral(nil, nil, title: "Water a bed") == "Water a bed"
-                    && NativeCompanionWorker.stepLiteral(commandTool, ["command": .string(String(repeating: "x", count: 30000))], title: "t").unicodeScalars.count
-                        == NativeTaskStop.stepScalars,
+                    && NativeCompanionWorker.stepLiteral(toolID: nil, toolTitle: nil, argumentsJSON: nil, title: "Water a bed") == "Water a bed"
+                    && NativeCompanionWorker.stepLiteral(toolID: commandID, toolTitle: nil,
+                                                         argumentsJSON: "{\"command\":\"" + String(repeating: "x", count: 30000) + "\"}", title: "t")
+                        .unicodeScalars.count == NativeTaskStop.stepScalars,
                     "A command step shows the command and its folder, a missing step falls back to its short title, and a long step is cut to fit")
+        let longCommand = "rsync -a " + String(repeating: "notes/", count: 40) + " /Volumes/Backup"
+        try require(NativeCompanionWorker.stepLiteral(toolID: commandID, toolTitle: nil,
+                                                      argumentsJSON: NativeEffectProposal.canonicalArguments(.object(["command": .string(longCommand),
+                                                                                                                      "directory": .string("/Volumes/Notes")])),
+                                                      title: "Run a command: rsync -a notes/...") == longCommand + "\nin /Volumes/Notes",
+                    "A step whose tool is no longer offered still shows the whole saved command and its folder")
+        try require(NativeCompanionWorker.stepLiteral(toolID: "garden", toolTitle: nil, argumentsJSON: "{\"bed\":\"north\"}", title: "Water a bed")
+                        == "Water a bed\nBed: north"
+                    && NativeCompanionWorker.stepLiteral(toolID: "garden", toolTitle: nil, argumentsJSON: "{\"text\":\"hello\"}", title: "Send a note: hello")
+                        == "Send a note\nText: hello",
+                    "Without the tool, the action's name comes from the saved short title")
+        try require(NativeCompanionWorker.earlierLine(done: [], unsure: []) == nil
+                    && NativeCompanionWorker.earlierLine(done: ["Edit a file: plan.md"], unsure: []) == "Earlier in this work: Edit a file: plan.md."
+                    && NativeCompanionWorker.earlierLine(done: ["A"], unsure: ["B", "C"])
+                        == "Earlier in this work: A. These may have changed something: B; C.",
+                    "The earlier line appears only when something ran or may have changed something")
+        let shownStop = NativeTaskStop(reason: NativeTaskStop.declined, step: "Send a message\nTo: growers@example.com", earlier: "Earlier in this work: A.")
+        try require(StoppedStepCopy.plain(shownStop, why: nil, places: RulePlaces(), name: nil)
+                        == "You declined this step. It was not run.\n\nSend a message\nTo: growers@example.com\n\nEarlier in this work: A.",
+                    "The companion panel's detail says whether the step ran, shows the step and the earlier line")
 
         let mixed = try NativeCompanionHarness(rules: [.networkSends: .act, .trash: .handOff]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty
