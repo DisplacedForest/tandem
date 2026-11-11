@@ -854,8 +854,8 @@ enum NativeRuleRecordsSelftest {
                 ChatStore.commandDecision(asking, conversationID: "c1", requestText: "", command: command, action: action, subjects: subjects)
             })[0]
             var message = ""
-            do { _ = try await foreground.execute(arguments) } catch { message = error.localizedDescription }
-            try require(blocks ? message == NativeRuleResolver.handOffMessage(.commands) : message == NativeRuleResolver.changedMessage,
+            do { _ = try await foreground.execute(arguments) } catch { message = outcomeText(error) }
+            try require(blocks ? message == refusedText(.rule, .commands) : message == NativeRuleResolver.changedMessage,
                         blocks ? "The same forbid hands off swift build in foreground chat" : "A forbid for another tool leaves foreground chat on the ordinary rules")
         }
     }
@@ -874,12 +874,12 @@ enum NativeRuleRecordsSelftest {
         let write = chat.first { $0.name == NativeFolderTools.writeName }!
         let move = chat.first { $0.name == NativeFolderTools.moveName }!
         func outcome(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) async -> String {
-            do { _ = try await definition.execute(arguments); return "ran" } catch { return error.localizedDescription }
+            do { _ = try await definition.execute(arguments); return "ran" } catch { return outcomeText(error) }
         }
         let inside: [String: NativeJSONValue] = ["path": .string(locked + "/a.txt"), "content": .string("x")]
         let sibling: [String: NativeJSONValue] = ["path": .string(fixture.root + "/open/a.txt"), "content": .string("x")]
         let intoLocked: [String: NativeJSONValue] = ["from": .string(fixture.root + "/open/a.txt"), "to": .string(locked + "/b.txt")]
-        let handed = NativeRuleResolver.handOffMessage(.fileEdits)
+        let handed = refusedText(.rule, .fileEdits)
         try require(await outcome(write, inside) == handed, "A folder forbid blocks a write inside it in chat")
         try require(await outcome(write, sibling) == "ran", "A sibling path still acts in chat")
         try require(await outcome(move, intoLocked) == handed && FileManager.default.fileExists(atPath: fixture.root + "/open/a.txt"),
@@ -969,15 +969,15 @@ enum NativeRuleRecordsSelftest {
             ChatStore.folderDecision(source, conversationID: "c1", requestText: "", action: action, subjects: subjects)
         })
         let write = chat.first { $0.name == NativeFolderTools.writeName }!
-        let handed = NativeRuleResolver.handOffMessage(.fileEdits)
+        let handed = refusedText(.rule, .fileEdits)
         for path in [fixture.root + "/locked/a.txt", link.path + "/locked/b.txt"] {
             var message = ""
-            do { _ = try await write.execute(["path": .string(path), "content": .string("x")]) } catch { message = error.localizedDescription }
+            do { _ = try await write.execute(["path": .string(path), "content": .string("x")]) } catch { message = outcomeText(error) }
             try require(message == handed && !FileManager.default.fileExists(atPath: fixture.root + "/locked/" + URL(fileURLWithPath: path).lastPathComponent),
                         "The symlink-spelled forbid blocks a write addressed as \(path == fixture.root + "/locked/a.txt" ? "the real path" : "the symlink")")
         }
         var sibling = ""
-        do { _ = try await write.execute(["path": .string(fixture.root + "/open/c.txt"), "content": .string("x")]); sibling = "ran" } catch { sibling = error.localizedDescription }
+        do { _ = try await write.execute(["path": .string(fixture.root + "/open/c.txt"), "content": .string("x")]); sibling = "ran" } catch { sibling = outcomeText(error) }
         try require(sibling == "ran", "The sibling folder still acts")
     }
 
@@ -989,8 +989,17 @@ enum NativeRuleRecordsSelftest {
         return Dictionary(uniqueKeysWithValues: definitions.map { ($0.name, $0) })
     }
 
+    static func outcomeText(_ error: Error) -> String {
+        guard let refusal = error as? NativeRuleRefusal else { return error.localizedDescription }
+        return refusedText(refusal.why.kind, refusal.why.action)
+    }
+
+    static func refusedText(_ kind: NativeRuleWhy.Kind, _ action: NativeActionClass) -> String {
+        "refused \(kind.rawValue) \(action.rawValue)"
+    }
+
     static func run(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) async -> String {
-        do { _ = try await definition.execute(arguments); return "ran" } catch { return error.localizedDescription }
+        do { _ = try await definition.execute(arguments); return "ran" } catch { return outcomeText(error) }
     }
 
     private static func foregroundBoundary(_ require: (Bool, String) throws -> Void) async throws {
@@ -1063,7 +1072,7 @@ enum NativeRuleRecordsSelftest {
         let out: [String: NativeJSONValue] = ["from": .string(open + "/a.txt"), "to": .string(locked + "/a.txt")]
         let back: [String: NativeJSONValue] = ["from": .string(locked + "/z.txt"), "to": .string(open + "/z.txt")]
         let inside: [String: NativeJSONValue] = ["from": .string(open + "/a.txt"), "to": .string(open + "/b.txt")]
-        let handed = NativeRuleResolver.handOffMessage(.fileEdits)
+        let handed = refusedText(.rule, .fileEdits)
         let outRun = await run(move, out)
         try require(NativeCompanionWorker.ruleDecision(move, out, resolver: resolver, honoringLimitedUse: true).decision == .handOff
                     && outRun == handed && FileManager.default.fileExists(atPath: open + "/a.txt"),
@@ -1143,7 +1152,7 @@ enum NativeRuleRecordsSelftest {
         try require(NativeCompanionWorker.ruleDecision(tools[NativeFolderTools.trashName]!, trashParent, resolver: resolver, honoringLimitedUse: true).decision == .handOff,
                     "A forbid on a protected descendant blocks trashing its parent")
         let moveRun = await run(tools[NativeFolderTools.moveName]!, moveParent)
-        try require(moveRun == NativeRuleResolver.handOffMessage(.fileEdits) && FileManager.default.fileExists(atPath: protected + "/secret.txt"),
+        try require(moveRun == refusedText(.rule, .fileEdits) && FileManager.default.fileExists(atPath: protected + "/secret.txt"),
                     "The parent move is refused in chat and nothing moves")
         try "y".write(toFile: fixture.root + "/open/loose.txt", atomically: true, encoding: .utf8)
         let sibling: [String: NativeJSONValue] = ["from": .string(fixture.root + "/open/loose.txt"), "to": .string(fixture.root + "/open/moved.txt")]
@@ -1158,7 +1167,7 @@ enum NativeRuleRecordsSelftest {
         try require(mkdir.ruleSubjects?(make).count == 2, "Creating a folder declares every missing parent plus the leaf")
         let decided = NativeCompanionWorker.ruleDecision(mkdir, make, resolver: creating.resolver(for: "c1", requestText: ""), honoringLimitedUse: true)
         let made = await run(mkdir, make)
-        try require(decided.decision == .handOff && made == NativeRuleResolver.handOffMessage(.fileEdits)
+        try require(decided.decision == .handOff && made == refusedText(.rule, .fileEdits)
                     && !FileManager.default.fileExists(atPath: fixture.root + "/open/new"),
                     "An allow on the leaf does not authorize creating its missing parent under a class-wide forbid")
         let insideAllowed = NativeRuleSource()
@@ -1219,7 +1228,7 @@ enum NativeRuleRecordsSelftest {
             try require(NativeCompanionWorker.ruleDecision(mkdir, ["path": .string(open + "/vault")], resolver: resolver, honoringLimitedUse: true).decision == .handOff,
                         "A differently cased folder holding a forbidden descendant is blocked on a case-insensitive volume")
             let made = await run(mkdir, ["path": .string(open + "/locked")])
-            try require(made == NativeRuleResolver.handOffMessage(.fileEdits) && !FileManager.default.fileExists(atPath: open + "/locked"),
+            try require(made == refusedText(.rule, .fileEdits) && !FileManager.default.fileExists(atPath: open + "/locked"),
                         "Creating the differently cased folder in chat is refused and nothing is created")
         }
         let restrict = NativeRuleTarget.make(.folder, "/volume/Locked")!
@@ -1351,7 +1360,7 @@ enum NativeRuleRecordsSelftest {
                                                        honoringLimitedUse: true).decision == .handOff,
                     "Trashing a trailing-space parent that holds a restricted descendant is blocked")
         let moved = await run(tools[NativeFolderTools.moveName]!, move)
-        try require(moved == NativeRuleResolver.handOffMessage(.fileEdits) && FileManager.default.fileExists(atPath: protected),
+        try require(moved == refusedText(.rule, .fileEdits) && FileManager.default.fileExists(atPath: protected),
                     "The trailing-space move is refused in chat and nothing moves")
 
         let allowing = NativeRuleSource()

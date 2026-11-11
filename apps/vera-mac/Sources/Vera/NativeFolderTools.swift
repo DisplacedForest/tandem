@@ -201,7 +201,8 @@ enum NativeFolderTools {
                 }),
         ]
         let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: [creatingKey], trashName: ["path"]]
-        return definitions.map { definition in
+        return definitions.map { original in
+            let definition = refusingOutside(original, grants: grants)
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
             targeted.governed = true
@@ -215,6 +216,20 @@ enum NativeFolderTools {
             }
             return targeted
         }
+    }
+
+    static func refusingOutside(_ definition: NativeToolDefinition, grants: @escaping @Sendable () -> [FolderGrant]) -> NativeToolDefinition {
+        var wrapped = definition
+        let execute = definition.execute
+        let action = definition.action ?? .fileEdits
+        wrapped.execute = { arguments in
+            do {
+                return try await execute(arguments)
+            } catch NativeFolderAccessError.outsideGrants(let path) where !grants().contains(where: { $0.path == path }) {
+                throw NativeRuleRefusal(why: NativeRuleWhy.folder(action, path: path))
+            }
+        }
+        return wrapped
     }
 
     static let creatingKey = "path+"

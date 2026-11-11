@@ -22,7 +22,7 @@ enum CompanionSavedTextFixture {
     }
 
     static func handOffResult() -> [String: Any] {
-        result(NativeCompanionWorker.handOffText(title: "Send the seed order to Ana", action: nil), shape: nil)
+        result(NativeCompanionWorker.handOffText(title: "Send the seed order to Ana", why: NativeRuleWhy(kind: .unsaved, action: .networkSends, handsOff: true, choice: .handOff, source: .settings)), shape: nil)
     }
 
     static func declinedResult() -> [String: Any] {
@@ -362,10 +362,11 @@ extension SelfTest {
         _ = try handing.create()
         let handed = try await handing.runUntilSettled()
         let handReport = try handing.result(handed)
-        try require(handed.state == .completed && (handReport["report"] as? String ?? "").hasPrefix("Stopped before this step because your rules hand it to you: Water a bed."),
+        try require(handed.state == .completed && (handReport["report"] as? String ?? "").hasPrefix("Stopped before this step: Water a bed."),
                     "A hand off writes the name-free report: \(handReport["report"] as? String ?? "")")
         reports["handoff"] = handReport
-        try require(NativeCompanionWorker.handOffText(title: "Pay it", action: .payments).hasPrefix("Stopped before this step and handed it to you: Pay it. It counts as"),
+        try require(NativeCompanionWorker.handOffText(title: "Pay it", why: NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments))
+                        .hasPrefix("Stopped before this step: Pay it. \"Pay or transfer money\" is always left to you"),
                     "The floor hand off needs no name either")
 
         for (label, report) in reports {

@@ -105,7 +105,8 @@ struct ScheduledView: View {
                 ForEach(store.schedules) { schedule in
                     ScheduleRow(schedule: schedule, selected: schedule.id == selectedID,
                                 pausedNote: NativeScheduleControls.pausedNote(schedule, assistantPaused: store.isDotPaused),
-                                openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome)
+                                openOutcome: (store.scheduleRuns[schedule.id] ?? []).first { $0.outcome.isOpen }?.outcome,
+                                lastTitle: (store.scheduleRuns[schedule.id] ?? []).first.flatMap { $0.outcome == schedule.lastOutcome ? store.scheduleRunTitle($0) : nil })
                         .contentShape(Rectangle())
                         .onTapGesture { selectedID = schedule.id }
                         .contextMenu { actions(for: schedule) }
@@ -138,6 +139,7 @@ private struct ScheduleRow: View {
     let selected: Bool
     var pausedNote: String? = nil
     let openOutcome: NativeScheduleOutcome?
+    var lastTitle: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -173,7 +175,7 @@ private struct ScheduleRow: View {
             parts.append("Next \(NativeScheduleClock.relative(next, now: Date(), timeZone: schedule.timeZone))")
         }
         if let outcome = schedule.lastOutcome, let at = schedule.lastRunAt {
-            parts.append("\(outcome.title) \(NativeScheduleClock.relative(at, now: Date(), timeZone: schedule.timeZone))")
+            parts.append("\(lastTitle ?? outcome.title) \(NativeScheduleClock.relative(at, now: Date(), timeZone: schedule.timeZone))")
         }
         return .literal(parts.isEmpty ? "Waiting for its first run" : parts.joined(separator: ". "))
     }
@@ -204,7 +206,7 @@ private struct ScheduleDetail: View {
                         Text("No runs yet.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(runs) { run in
-                        ScheduleRunRow(run: run, note: store.scheduleRunNote(run), timeZone: schedule.timeZone,
+                        ScheduleRunRow(run: run, title: store.scheduleRunTitle(run), note: store.scheduleRunNote(run), timeZone: schedule.timeZone,
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
@@ -244,6 +246,7 @@ private struct ScheduleControlButtons: View {
 
 private struct ScheduleRunRow: View {
     let run: NativeScheduleRun
+    let title: String
     let note: CompanionLine
     let timeZone: TimeZone
     let onOpen: (() -> Void)?
@@ -264,7 +267,7 @@ private struct ScheduleRunRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(run.outcome.title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
+                        Text("\(title), \(NativeScheduleClock.relative(run.scheduledFor, now: Date(), timeZone: timeZone))")
                             .font(.system(size: 13, weight: .medium))
                         if !run.detail.isEmpty {
                             CompanionLineText(line: note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)

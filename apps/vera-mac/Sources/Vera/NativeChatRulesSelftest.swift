@@ -82,14 +82,17 @@ extension SelfTest {
                     "A write under ask never runs without an approved card")
         try require(await run(asking, confirmed: true) == nil && sendCount.count == 2, "A write under ask runs once after the card")
 
-        let handOffMessage = NativeRuleResolver.handOffMessage(.networkSends)
+        func handedOff(_ action: NativeActionClass) -> String {
+            RefusalCopy.forModel(NativeRuleWhy(kind: .unsaved, action: action, handsOff: true, choice: .handOff, source: .settings))
+        }
+        let handOffMessage = handedOff(.networkSends)
         let handing = ruled(send, source(rules(.handOff, for: .networkSends)))
         try require(asks(handing) == false, "A write under hand off shows no card")
         for confirmed in [false, true] {
             try require(await run(handing, confirmed: confirmed) == handOffMessage && sendCount.count == 2,
                         "A write under hand off is refused and never runs: confirmed \(confirmed)")
         }
-        try require(handOffMessage.contains(NativeActionClass.networkSends.title.lowercased()), "The hand off message names the kind")
+        try require(handOffMessage.contains(NativeActionClass.networkSends.title), "The hand off message names the kind")
 
         let plainCount = NativeChatRulesCounter()
         let plain = tool("fixture-plain", counter: plainCount)
@@ -101,7 +104,7 @@ extension SelfTest {
         try require(asks(plainActs) == false, "An undeclared write follows other changes")
         try require(await run(plainActs, confirmed: false) == nil && plainCount.count == 1, "An undeclared write runs when other changes act")
         try require(await run(ruled(plain, source(rules(.handOff, for: .otherChanges))), confirmed: true)
-                    == NativeRuleResolver.handOffMessage(.otherChanges) && plainCount.count == 1,
+                    == handedOff(.otherChanges) && plainCount.count == 1,
                     "An undeclared write is handed off under other changes")
 
         let strictCount = NativeChatRulesCounter()
@@ -315,7 +318,7 @@ extension SelfTest {
         try require(asks(ruled(create, reminderHandOff), createArguments) == false, "A handed off reminder shows no card")
         let createHanded = await run(ruled(create, reminderHandOff), createArguments, confirmed: true)
         let completeHanded = await run(ruled(complete, reminderHandOff), completeArguments, confirmed: true)
-        try require(createHanded == NativeRuleResolver.handOffMessage(.reminders) && completeHanded == NativeRuleResolver.handOffMessage(.reminders)
+        try require(createHanded == handedOff(.reminders) && completeHanded == handedOff(.reminders)
                     && reminders.createCalls == 1 && reminders.completeCalls == 1, "Handed off reminders are refused and nothing is written")
         try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID), "Background work never gets the reminder tools")
         let always = NativeToolDefinition(id: "fixture-always", name: "always_ask", title: "Publish the newsletter", description: "",
