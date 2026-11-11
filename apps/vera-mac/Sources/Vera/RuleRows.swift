@@ -144,6 +144,7 @@ enum RuleRows {
             }
         }
         if record.toolID != nil { return "\(lead): \(toolName(record))" }
+        if let action = record.action, RuleOffer.offerable(action) { return "\(lead) \(RuleOfferCopy.words(action))" }
         if let action = record.action { return "\(lead): \(lowered(action.title))" }
         return "\(lead): \(fallbackTool)"
     }

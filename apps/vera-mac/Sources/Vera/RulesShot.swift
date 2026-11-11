@@ -20,7 +20,8 @@ enum RulesShot {
         store.adoptAssistantName(companion ?? "")
         store.ensureVeraThread()
         store.prepareRuleRecords()
-        if variant == "rules-saved" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
+        if variant == "rules-saved" || variant == "rules-saved-kind" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
+        if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
         if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })

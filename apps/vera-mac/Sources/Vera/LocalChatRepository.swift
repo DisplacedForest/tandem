@@ -281,6 +281,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeRuleRecordsV35") { db in try NativeRuleRecordStore.migrate(db) }
         migrator.registerMigration("nativeRuleActionsV36") { db in try NativeRuleRecordStore.migrateActions(db) }
         migrator.registerMigration("nativeRuleCardsV37") { db in try NativeRuleRecordStore.migrateCards(db); try NativeRuleRecordStore.migratePrefixes(db) }
+        migrator.registerMigration("nativeRuleOffersV38") { db in try RuleOfferStore.migrate(db) }
         try migrator.migrate(database)
     }
 
@@ -490,6 +491,18 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func replaceDisplayBlock(_ block: NativeDisplayBlock, messageID: UUID) throws -> [NativeDisplayBlock]? {
+        try database.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT display_blocks_json FROM messages WHERE id = ?", arguments: [messageID.uuidString]) else { return nil }
+            let bytes: Data? = row["display_blocks_json"]
+            var blocks = try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? []
+            guard let index = blocks.firstIndex(where: { $0.id == block.id }) else { return nil }
+            blocks[index] = block
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?", arguments: [try nativeTaskEncoded(blocks), messageID.uuidString])
+            return blocks
+        }
+    }
+
     static func saveMessage(_ message: Message, conversationID: String, ordinal: Int, db: Database) throws {
         let activityJSON: String?
         if message.toolActivities.isEmpty {
@@ -541,6 +554,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try database.write { db in
             try Self.detachTasks(db, conversationID: id)
             try db.execute(sql: "DELETE FROM conversations WHERE id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM native_rule_offers WHERE conversation_id = ? AND conversation_id != ''", arguments: [id])
         }
     }
 

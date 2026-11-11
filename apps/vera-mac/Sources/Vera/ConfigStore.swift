@@ -749,7 +749,8 @@ final class ConfigStore: ObservableObject {
             set: { value in self.applyMemorySetting(to: store) { $0[keyPath: keyPath] = value } })
     }
 
-    func applyRule(_ choice: NativeRuleChoice, for action: NativeActionClass, store: ChatStore) {
+    @discardableResult
+    func applyRule(_ choice: NativeRuleChoice, for action: NativeActionClass, store: ChatStore) -> Bool {
         changeRules(store: store) { $0.set(choice, for: action) }
     }
 
@@ -770,13 +771,15 @@ final class ConfigStore: ObservableObject {
         changeRules(store: store) { $0.set(choice, for: action) }
     }
 
-    private func changeRules(store: ChatStore, _ update: (inout NativeRules) -> Void) {
+    @discardableResult
+    private func changeRules(store: ChatStore, _ update: (inout NativeRules) -> Void) -> Bool {
         var settings = nativeSettings
         update(&settings.rules)
         nativeSettings = settings
         let saved = (try? save()) != nil
         store.updateNativeRules(settings.rules)
         store.rulesNotice = saved ? nil : "This change applies now, but it couldn't be saved for the next launch."
+        return saved
     }
 
     func applyMemorySetting(to store: ChatStore, _ update: (inout NativeMemorySettings) -> Void) {
