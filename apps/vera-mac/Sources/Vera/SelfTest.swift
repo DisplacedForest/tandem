@@ -389,6 +389,10 @@ enum SelfTest {
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
+        do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
+        do { try await runCardSentenceLiteral() } catch { print("SELFTEST ERROR: card sentence literal \(error)"); exit(1) }
+        do { try await runCompanionSavedText() } catch { print("SELFTEST ERROR: companion saved text \(error)"); exit(1) }
+        do { try await runCompanionLibraryKeep() } catch { print("SELFTEST ERROR: companion library keep \(error)"); exit(1) }
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
@@ -400,8 +404,21 @@ enum SelfTest {
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
         do { try runNativeCardChoices() } catch { print("SELFTEST ERROR: native card choices \(error)"); exit(1) }
         do { try await runNativeCardChoiceStore() } catch { print("SELFTEST ERROR: native card choice store \(error)"); exit(1) }
+        do { try runRuleOfferModel() } catch { print("SELFTEST ERROR: rule offer model \(error)"); exit(1) }
+        do { try runRuleOfferCopy() } catch { print("SELFTEST ERROR: rule offer copy \(error)"); exit(1) }
+        do { try await runRuleOfferStore() } catch { print("SELFTEST ERROR: rule offer store \(error)"); exit(1) }
+        do { try await runRuleOfferRelaunch() } catch { print("SELFTEST ERROR: rule offer relaunch \(error)"); exit(1) }
         do { try await runNativeChatRules() } catch { print("SELFTEST ERROR: native chat rules \(error)"); exit(1) }
         do { try await runNativeChatRulesStore() } catch { print("SELFTEST ERROR: native chat rules store \(error)"); exit(1) }
+        do { try await runRuleRows() } catch { print("SELFTEST ERROR: rule rows \(error)"); exit(1) }
+        do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
+        do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
+        do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
+        do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
+        do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
+        do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
+        do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }
+        do { try await runRefusalWork() } catch { print("SELFTEST ERROR: refusal work \(error)"); exit(1) }
         do { try runCompanionTranscriptContinuity() } catch { print("SELFTEST ERROR: companion continuity \(error)"); exit(1) }
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }
@@ -2594,6 +2611,48 @@ enum SelfTest {
         """)
     }
 
+    static let bundledSendersWithoutDestination: Set<String> = ["propose_action", "author_skill"]
+
+    private static func capabilitySendsTo(_ bundled: [NativeToolDeclaration]) throws {
+        let require = NativeTaskFixture.require
+        func declaration(_ sendsTo: Any?, method: String = "POST", properties: [String: Any]? = nil) throws -> NativeToolDeclaration {
+            var object: [String: Any] = [
+                "name": "send_note", "title": "Send a note", "description": "Send a note",
+                "parameters": ["type": "object", "properties": properties ?? ["to": ["type": "string"], "body": ["type": "string"], "urgent": ["type": "boolean"]],
+                               "required": [], "additionalProperties": false],
+                "endpoint": "https://mail.example/send", "method": method, "confirmation": "none",
+            ]
+            if let sendsTo { object["sends_to"] = sendsTo }
+            return try NativeCapabilityTools.parse(object: object, source: "send_note.json")
+        }
+        func rejects(_ sendsTo: Any?, method: String = "POST", _ fragment: String) throws {
+            var reason: String?
+            do { _ = try declaration(sendsTo, method: method) } catch let error as NativeToolDeclarationError { reason = error.reason }
+            try require(reason?.contains(fragment) == true, "A sends_to line is refused: \(fragment) got \(reason ?? "no error")")
+        }
+        let listed = try declaration(["to"])
+        let targets = listed.recipients(["to": .string(" A@example.com; b@example.com ,\nA@example.com")])
+        try require(listed.sendsTo == ["to"] && targets.map(\.value) == ["a@example.com", "b@example.com"] && targets.allSatisfy { $0.kind == .recipient },
+                    "Listed fields give each address once, trimmed and lowercased: \(targets.map(\.value))")
+        let listedDefinition = NativeCapabilityTools.definition(listed, base: { nil })
+        try require(!listedDefinition.fixedDestination && listedDefinition.ruleSubjects?(["to": .string("A@example.com")]) == [[targets[0]]],
+                    "A listed field makes the address what the rules see")
+        let fixed = NativeCapabilityTools.definition(try declaration([String]()), base: { nil })
+        try require(fixed.fixedDestination && fixed.ruleSubjects == nil, "An empty list marks a tool that always sends to the same place")
+        let absent = try declaration(nil)
+        let absentDefinition = NativeCapabilityTools.definition(absent, base: { nil })
+        try require(absent.sendsTo == nil && !absentDefinition.fixedDestination && absentDefinition.ruleSubjects == nil,
+                    "No sends_to line leaves the tool with no known destination")
+        try rejects("to", "must be a list")
+        try rejects(["missing"], "not a declared string property")
+        try rejects(["urgent"], "not a declared string property")
+        try rejects(["to", "to"], "same field twice")
+        try rejects(["to"], method: "GET", "requires the POST method")
+        let unlisted = bundled.filter { $0.method == .post && !$0.reads && $0.sendsTo == nil }.map(\.name)
+        try require(Set(unlisted).isSubset(of: bundledSendersWithoutDestination),
+                    "Every bundled posting tool says where it sends, or is on the known list: \(unlisted)")
+    }
+
     private static func runNativeCapabilityTools() async {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("vera-tools-\(UUID().uuidString)", isDirectory: true)
@@ -2642,6 +2701,7 @@ enum SelfTest {
                   bundled.allSatisfy(\.needsAPIBase) else {
                 print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
             }
+            try capabilitySendsTo(bundled)
 
             let client = SelfTestHTTPToolClient()
             let base: @Sendable () -> URL? = { URL(string: "https://api.example") }
@@ -3698,7 +3758,7 @@ enum SelfTest {
             }
 
             let failures: [(PulseFeedResult, String)] = [
-                (.unconfigured, "Pulse isn't connected. Set up Vera API to continue this card."),
+                (.unconfigured, "Pulse isn't connected. Set up the vera-api service to continue this card."),
                 (.transport, "Pulse couldn't be reached. Try again."),
                 (.malformed, "This Pulse card couldn't be opened."),
                 (.success(cards: [], rawIDs: []), "This Pulse card is no longer available."),
@@ -3857,7 +3917,7 @@ enum SelfTest {
                   storedMessages[1].toolActivities.first?.result == "{\"reminders\":[]}",
                   storedMessages[1].toolActivities.last?.state == .failed,
                   storedMessages[1].toolActivities.last?.result?.contains("interrupted") == true,
-                  storedMessages[1].failure == "The response was interrupted when Vera closed" else {
+                  storedMessages[1].failure == "The response was interrupted when Tandem closed" else {
                 print("SELFTEST ERROR: native local history round-trip"); exit(1)
             }
             try reopened.deleteConversation(conversationID)

@@ -69,11 +69,11 @@ enum NativeWebTools {
     static func numbered(_ value: NativeJSONValue, sources: inout [String: Int]) -> NativeJSONValue {
         guard case .object(var fields) = value else { return value }
         func assign(_ object: inout [String: NativeJSONValue]) {
+            object["n"] = nil
             guard case .string(let url)? = object["url"] else { return }
             if let existing = sources[url] {
                 object["n"] = .number(Double(existing))
-            } else if sources.count < maximumSources {
-                let next = sources.count + 1
+            } else if let next = Optional(Set(sources.values).count + 1), next <= maximumSources {
                 sources[url] = next
                 object["n"] = .number(Double(next))
             }

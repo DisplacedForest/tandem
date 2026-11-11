@@ -26,7 +26,8 @@ struct NativeCommandRunCard: View {
     private var tint: Color {
         switch run.outcome {
         case .ran: return run.exitCode == 0 ? Theme.accent : Color.orange
-        case .timedOut, .canceled, .refused: return Color.orange
+        case .refused: return run.why == nil ? Color.orange : Theme.textSecondary
+        case .timedOut, .canceled: return Color.orange
         case .declined: return Theme.textSecondary
         }
     }
@@ -39,8 +40,14 @@ struct NativeCommandRunCard: View {
                     Text(run.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(run.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
                         .lineLimit(3).textSelection(.enabled)
-                    Text(run.directory.isEmpty ? run.statusLine : "In \(run.directoryName). \(run.statusLine)")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    if run.outcome == .refused, let why = run.why {
+                        Text(run.directory.isEmpty ? RefusalCopy.label(why) : "In \(run.directoryName). \(RefusalCopy.label(why))")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                        RefusalReasonLine(why: why)
+                    } else {
+                        Text(run.directory.isEmpty ? run.statusLine : "In \(run.directoryName). \(run.statusLine)")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    }
                     if let decision = run.decisionLine {
                         Text(decision).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     }
@@ -79,6 +86,27 @@ struct NativeCommandRunCard: View {
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
+struct RefusalReasonLine: View {
+    let why: NativeRuleWhy
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.renderSafe) private var renderSafe
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            CompanionLineText(line: RefusalCopy.line(why, places: store.rulePlaces(for: why.rule.map { [$0.record] } ?? [])))
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if RefusalCopy.offersRules(why) {
+                if renderSafe {
+                    Text(RefusalCopy.changeInRules).font(.system(size: 11)).foregroundStyle(Theme.accent)
+                } else {
+                    SettingsSectionLink(RefusalCopy.changeInRules, tab: .rules).buttonStyle(.borderless).font(.system(size: 11))
+                }
+            }
+        }
     }
 }
 
@@ -180,7 +208,7 @@ struct ConversationRulesEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
                 Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can be stricter than your settings, never looser.")
+                Text("A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in

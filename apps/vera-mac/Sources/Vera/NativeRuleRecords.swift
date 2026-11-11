@@ -357,7 +357,9 @@ struct NativeRuleQuery: Equatable, Sendable {
     }
 
     var parts: [NativeRuleQuery] {
-        subjects.isEmpty ? [self] : subjects.map { NativeRuleQuery(action: action, toolID: toolID, targets: $0) }
+        guard !subjects.isEmpty else { return [self] }
+        let split = action == .networkSends ? subjects.flatMap { $0.map { [$0] } } : subjects
+        return split.map { NativeRuleQuery(action: action, toolID: toolID, targets: $0) }
     }
 }
 

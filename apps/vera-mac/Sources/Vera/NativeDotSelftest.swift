@@ -63,7 +63,7 @@ extension SelfTest {
         guard let dotContext = store.dotContext(for: veraID, requestText: "what's next?") else {
             throw NativeTaskFixture.Failure.assertion("The Vera thread gets the standing context")
         }
-        try require(dotContext.contains(goal) && dotContext.contains("You are Ada") && dotContext.contains("Run commands in granted folders: hand off to the user.")
+        try require(dotContext.contains(goal) && dotContext.contains("You are Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
                     && dotContext.contains("always handed to the user") && dotContext.contains(NativeDotContext.coordinatorNote)
                     && dotContext.count <= NativeDotContext.limit, "The standing context carries the name, goal, coordinator role and the rules in effect")
         try require(store.dotContext(for: focused.id, requestText: "hi") == nil, "Focused chats never receive the standing context")
@@ -100,12 +100,12 @@ extension SelfTest {
                                      cadence: .daily(minuteOfDay: 9 * 60), timeZone: .current, nextRunAt: moment.addingTimeInterval(-10))
         try scheduleStore.save(due)
         let scheduler = NativeScheduler(store: scheduleStore, now: { moment }, lookup: { _ in nil },
-                                        fire: { _, _, _ in .skipped("Ada is paused.") })
+                                        fire: { _, _, _ in .skipped(CompanionSavedText.marker + " is paused.") })
         _ = await scheduler.tick()
         let skippedRuns = try scheduleStore.runs(scheduleID: due.id)
         let advanced = try scheduleStore.get(due.id)
         try require(skippedRuns.count == 1, "A paused schedule records exactly one run: \(skippedRuns)")
-        try require(skippedRuns[0].outcome == .skipped && skippedRuns[0].detail == "Ada is paused.", "A paused run is recorded as skipped with a plain reason: \(skippedRuns[0])")
+        try require(skippedRuns[0].outcome == .skipped && skippedRuns[0].detail == CompanionSavedText.marker + " is paused.", "A paused run is recorded as skipped with a plain reason: \(skippedRuns[0])")
         try require(skippedRuns[0].finishedAt == moment, "A skipped run finishes at the tick: \(String(describing: skippedRuns[0].finishedAt)) vs \(moment)")
         try require((advanced?.nextRunAt ?? .distantPast) > moment, "The schedule moves on, so resuming never catches up")
         try scheduleStore.delete(due.id)
@@ -114,7 +114,7 @@ extension SelfTest {
         store.setDotState(.paused)
         let probe = NativeScheduleRun(scheduleID: due.id, scheduledFor: moment, outcome: .running)
         let pausedFire = await store.fireSchedule(due, run: probe, bind: { _, _ in })
-        try require(pausedFire == .skipped("Ada is paused."), "The store skips a dot schedule while paused: \(pausedFire)")
+        try require(pausedFire == .skipped(CompanionSavedText.marker + " is paused."), "The store skips a dot schedule while paused: \(pausedFire)")
         var conversationOwned = due
         conversationOwned.owner = .conversation
         try liveStore.save(conversationOwned)
@@ -332,18 +332,18 @@ extension SelfTest {
                                      cadence: .daily(minuteOfDay: 420), timeZone: zone)
         var stopped = dot
         stopped.enabled = false
-        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: true, assistantName: "Ada") == "Paused with Ada",
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: true).map { CompanionSentence.plain($0, name: "Ada") } == "Paused with Ada",
                     "A schedule for a paused assistant says it is paused with them")
         try require(NativeScheduleControls.controls(for: dot, assistantPaused: true) == [.resumeAssistant, .edit],
                     "A paused assistant's schedule offers only resuming them and editing")
-        try require(NativeScheduleControls.title(.resumeAssistant, assistantName: "Ada") == "Resume Ada", "The resume control names the assistant")
-        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: false, assistantName: "Ada") == nil
+        try require(CompanionSentence.plain(NativeScheduleControls.title(.resumeAssistant), name: "Ada") == "Resume Ada", "The resume control names the assistant")
+        try require(NativeScheduleControls.pausedNote(dot, assistantPaused: false) == nil
                     && NativeScheduleControls.controls(for: dot, assistantPaused: false) == [.runNow, .pause, .edit],
                     "An active assistant's schedule keeps its normal controls")
-        try require(NativeScheduleControls.pausedNote(own, assistantPaused: true, assistantName: "Ada") == nil
+        try require(NativeScheduleControls.pausedNote(own, assistantPaused: true) == nil
                     && NativeScheduleControls.controls(for: own, assistantPaused: true) == [.runNow, .pause, .edit],
                     "A chat's own schedule ignores the assistant's pause")
-        try require(NativeScheduleControls.pausedNote(stopped, assistantPaused: true, assistantName: "Ada") == nil
+        try require(NativeScheduleControls.pausedNote(stopped, assistantPaused: true) == nil
                     && NativeScheduleControls.controls(for: stopped, assistantPaused: true) == [.runNow, .resume, .edit],
                     "A schedule paused on its own keeps its own resume")
     }
@@ -392,7 +392,7 @@ extension SelfTest {
         let pausedMidway = await store.fireSchedule(schedule, run: probe, bind: { _, _ in
             await MainActor.run { store.setDotState(.paused) }
         })
-        try require(pausedMidway == .skipped("Ada is paused."), "Pausing while a run starts skips it: \(pausedMidway)")
+        try require(pausedMidway == .skipped(CompanionSavedText.marker + " is paused."), "Pausing while a run starts skips it: \(pausedMidway)")
         try require(try repository.messages(conversationID: threadID).count == messagesBefore
                     && (try repository.taskReferences(conversationID: threadID)).isEmpty, "A run skipped mid-start saves nothing and submits nothing")
         store.setDotState(.active)
@@ -416,7 +416,7 @@ extension SelfTest {
         try require(abs((storedResume ?? .distantPast).timeIntervalSince(resumedAt)) < 0.001, "The resume time is stored")
         let claimedDuringPause = NativeScheduleRun(scheduleID: resumable.id, scheduledFor: resumedAt.addingTimeInterval(-60), outcome: .running)
         let missedFire = await store.fireSchedule(resumable, run: claimedDuringPause, bind: { _, _ in })
-        try require(missedFire == .skipped("Missed while Ada was paused."), "A run claimed during the pause never starts after resuming: \(missedFire)")
+        try require(missedFire == .skipped("Missed while " + CompanionSavedText.marker + " was paused."), "A run claimed during the pause never starts after resuming: \(missedFire)")
         try require(try repository.messages(conversationID: threadID).count == messagesBefore
                     && (try repository.taskReferences(conversationID: threadID)).isEmpty, "A missed run saves nothing and submits nothing")
         let missedMidway = await store.fireSchedule(resumable, run: claimedDuringPause, bind: { _, _ in
@@ -425,11 +425,11 @@ extension SelfTest {
                 store.setDotState(.active)
             }
         })
-        try require(missedMidway == .skipped("Missed while Ada was paused."), "A resume while a run starts still skips the missed run: \(missedMidway)")
+        try require(missedMidway == .skipped("Missed while " + CompanionSavedText.marker + " was paused."), "A resume while a run starts still skips the missed run: \(missedMidway)")
         let laterResume = store.dotProfile.resumedAt ?? resumedAt
         let afterResume = NativeScheduleRun(scheduleID: resumable.id, scheduledFor: laterResume.addingTimeInterval(60), outcome: .running)
         let laterFire = await store.fireSchedule(resumable, run: afterResume, bind: { _, _ in })
-        try require(laterFire != .skipped("Missed while Ada was paused."), "A run due after resuming is not treated as missed: \(laterFire)")
+        try require(laterFire != .skipped("Missed while " + CompanionSavedText.marker + " was paused."), "A run due after resuming is not treated as missed: \(laterFire)")
         try require(!NativeDotProfile(resumedAt: laterResume).missedWhilePaused(owner: .conversation, scheduledFor: resumedAt),
                     "Conversation schedules ignore the resume time")
         let legacy = try JSONDecoder().decode(NativeDotProfile.self, from: Data(#"{"goal":"g","state":"active"}"#.utf8))

@@ -1,5 +1,23 @@
 import Foundation
 
+struct CompanionConfigurationError: Equatable, Sendable {
+    var lead: String
+    var detail: String
+
+    var line: CompanionLine { .namedThenText(lead, detail) }
+    func plain(name: String?) -> String { line.plain(name: name) }
+}
+
+enum CompanionErrorCopy {
+    static let loadLead = "{name}'s goal and settings couldn't load: "
+    static let loadTail = " Scheduled work is paused and no services are connected until the settings are saved again."
+    static let saveLead = "{name}'s settings couldn't be saved: "
+    static let clearLead = "{name}'s settings couldn't be cleared: "
+    static let threadLead = "{name}'s thread couldn't be created: "
+    static let resetLead = "{name} couldn't start over: "
+    static let resetTail = " Nothing was removed."
+}
+
 struct NativeDotServiceOption: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
@@ -16,9 +34,11 @@ extension ChatStore {
             nativeDotProfileStore = store
             do {
                 dotProfile = try store.load() ?? NativeDotProfile()
+                resolveCompanionConfigurationError(CompanionErrorCopy.loadLead)
             } catch {
                 dotProfile = NativeDotProfile(connectedToolIDs: [], state: .paused, setupCompleted: true)
-                chatConfigurationError = "\(companion.leading)'s goal and settings couldn't load: \(error.localizedDescription) Scheduled work is paused and no services are connected until the settings are saved again."
+                reportCompanionConfigurationError(CompanionErrorCopy.loadLead, description: error.localizedDescription,
+                                                  tail: CompanionErrorCopy.loadTail)
             }
         } else {
             nativeDotProfileStore = nil
@@ -35,10 +55,11 @@ extension ChatStore {
         do {
             try nativeDotProfileStore?.save(next)
         } catch {
-            chatConfigurationError = "\(companion.leading)'s settings couldn't be saved: \(error.localizedDescription)"
+            reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: error.localizedDescription)
             return
         }
         dotProfile = next
+        resolveCompanionConfigurationError(CompanionErrorCopy.saveLead)
     }
 
     func completeDotSetup(goal: String, connectedToolIDs: Set<String>?) {
@@ -93,8 +114,7 @@ extension ChatStore {
     func turnDotContext(_ turn: NativeConversationTurn) -> String? {
         if let stored = turn.dotContext { return stored }
         guard isVeraThread(turn.conversationID) else { return nil }
-        let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
-        return dotContext(for: turn.conversationID, requestText: text)
+        return dotContext(for: turn.conversationID, requestText: typedWords(for: turn).said)
     }
 
     func memorySourceIsLive(_ source: NativeMemoryTurnSource?, generation: Int, wasVeraThread: Bool) -> Bool {
@@ -157,9 +177,37 @@ extension ChatStore {
         return summary
     }
 
-    func resetDot() {
+    var resetFailure: CompanionConfigurationError? {
+        companionConfigurationError.flatMap { (error: CompanionConfigurationError) -> CompanionConfigurationError? in
+            error.lead == CompanionErrorCopy.resetLead ? error : nil
+        }
+    }
+
+    func acknowledgeResetFailure() {
+        resolveCompanionConfigurationError(CompanionErrorCopy.resetLead)
+    }
+
+    func keepCompanionArtifacts(threadID: String) throws {
+        if let companionArtifactKeeper { return try companionArtifactKeeper(threadID) }
+        _ = try artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keepAsCompanion)
+    }
+
+    @discardableResult
+    func resetDot() -> Bool {
         let threadID = veraThreadID
-        let wasShowing = threadID != nil && selectedID == threadID
+        if let threadID {
+            do {
+                try keepCompanionArtifacts(threadID: threadID)
+                resolveCompanionConfigurationError(CompanionErrorCopy.resetLead)
+            } catch {
+                reloadArtifacts()
+                reportCompanionConfigurationError(CompanionErrorCopy.resetLead, description: error.localizedDescription,
+                                                  tail: CompanionErrorCopy.resetTail)
+                return false
+            }
+        }
+        let viewing = section
+        let wasShowing = threadID != nil && selectedID == threadID && (viewing == .vera || viewing == .chat)
         dotResetGeneration += 1
         suspendsTurnScheduling = true
         cancelCompanionWork()
@@ -172,7 +220,7 @@ extension ChatStore {
             deleteSchedule(schedule.id)
         }
         if let threadID, let memoryRepository = repository as? any NativeMemoryRepository {
-            let note = "Removed when \(companion.inline) started over"
+            let note = "Removed when the companion started over"
             for memory in (try? memoryRepository.allMemories()) ?? []
             where memory.status != .deleted && memory.sourceConversationID == threadID {
                 do { try memoryRepository.deleteMemory(memory.id, note: note) } catch {
@@ -185,13 +233,15 @@ extension ChatStore {
                 }
             }
         }
-        if let threadID { _ = try? artifactRepository?.resolveArtifacts(conversationID: threadID, choice: .keep) }
         discardVeraThread()
         reloadArtifacts()
         suspendsTurnScheduling = false
         scheduleConversationTurns()
-        do { try nativeDotProfileStore?.reset() } catch {
-            chatConfigurationError = "\(companion.leading)'s settings couldn't be cleared: \(error.localizedDescription)"
+        do {
+            try nativeDotProfileStore?.reset()
+            resolveCompanionConfigurationError(CompanionErrorCopy.clearLead)
+        } catch {
+            reportCompanionConfigurationError(CompanionErrorCopy.clearLead, description: error.localizedDescription)
         }
         dotProfile = NativeDotProfile()
         dotProfile.needsIntroduction = true
@@ -204,6 +254,8 @@ extension ChatStore {
             openVeraThread()
         } else if selectedID == nil {
             newConversation()
+            section = viewing
         }
+        return true
     }
 }

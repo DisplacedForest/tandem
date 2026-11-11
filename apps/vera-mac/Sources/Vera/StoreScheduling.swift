@@ -52,6 +52,37 @@ extension ChatStore {
         return (try? projectionRepository.taskProjection(id: uuid))?.snapshot?.decision
     }
 
+    func scheduleRunTitle(_ run: NativeScheduleRun) -> String {
+        guard run.outcome == .completed, let id = run.taskReferenceID, let uuid = UUID(uuidString: id),
+              let projectionRepository = repository as? any NativeTaskProjectionRepository,
+              let reference = try? projectionRepository.taskReference(id: uuid) else { return run.outcome.title }
+        let snapshot = (try? projectionRepository.taskProjection(id: uuid))?.snapshot ?? reference.snapshot
+        return Self.scheduleRunTitle(run, card: (try? NativeTaskProjection.display(reference: reference, snapshot: snapshot))?.card)
+    }
+
+    nonisolated static func scheduleRunTitle(_ run: NativeScheduleRun, card: NativeTaskCardPresentation?) -> String {
+        guard run.outcome == .completed, let card else { return run.outcome.title }
+        return card.listState(run.outcome.title)
+    }
+
+    func scheduleRunIsCompanionWork(_ run: NativeScheduleRun) -> Bool {
+        if let id = run.taskReferenceID, let uuid = UUID(uuidString: id) {
+            let reference = nativeTaskReferences.first { $0.id == uuid }
+                ?? (repository as? any NativeTaskProjectionRepository).flatMap { (projection: any NativeTaskProjectionRepository) -> NativeTaskReference? in
+                    (try? projection.taskReference(id: uuid)) ?? nil
+                }
+            if let reference { return reference.request.workerType == "companion" }
+        }
+        return schedules.first { $0.id == run.scheduleID }?.isCompanionWork == true
+    }
+
+    func scheduleRunNote(_ run: NativeScheduleRun) -> CompanionLine {
+        let companionWork = scheduleRunIsCompanionWork(run)
+        let detail = NativeScheduler.shownNote(run.detail)
+        return CompanionSavedText.line(detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
+                                           || detail.hasPrefix(CompanionSavedText.marker))
+    }
+
     func answerScheduleRun(_ run: NativeScheduleRun, choice: String) {
         guard let reference = run.taskReferenceID else { return }
         switch NativeScheduleAnswer.route(choice) {
@@ -75,7 +106,7 @@ extension ChatStore {
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSentence.plain(decision.prompt, name: companionName))",
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion"))",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
@@ -121,11 +152,15 @@ extension ChatStore {
             case .completed: status = .completed
             case .failed: status = .failed
             case .canceled: status = .stopped
-            case .needsDecision: status = .waiting(snapshot?.decision?.prompt ?? NativeScheduler.waitingNote)
+            case .needsDecision:
+                let prompt = snapshot?.decision?.prompt ?? NativeScheduler.waitingNote
+                status = .waiting(reference.request.workerType == "companion" ? prompt : CompanionSavedText.sanitized(prompt))
             case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active
             }
-            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status)
+            let terminal = status == .completed || status == .failed || status == .stopped
+            return NativeScheduleTaskLink(referenceID: reference.id.uuidString, status: status,
+                                          endedAt: terminal ? snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) } : nil)
         }, fire: { [weak self] schedule, run, bind in
             guard let self else { return .failed("Tandem is closing.") }
             return await self.fireSchedule(schedule, run: run, bind: bind)
@@ -185,8 +220,7 @@ extension ChatStore {
 
     func scheduleToolDefinition() -> NativeToolDefinition? {
         guard nativeScheduleStore != nil else { return nil }
-        let thread = companion.thread
-        return NativeScheduleTools.definition(companionThread: { thread }, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
+        return NativeScheduleTools.definition(searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
             guard let self else { throw NativeScheduleError.invalid("Tandem is closing.") }
             return try await self.scheduleFromChat(draft)
         })
@@ -239,7 +273,8 @@ extension ChatStore {
 
     func deleteSchedule(_ id: String) {
         guard let store = nativeScheduleStore else { return }
-        try? store.delete(id)
+        guard (try? store.delete(id)) != nil else { reloadSchedules(); return }
+        removeRules(for: .schedule(id))
         reloadSchedules()
     }
 
@@ -278,9 +313,9 @@ extension ChatStore {
 
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(companion.leading) is paused.") }
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
         if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
-            return .skipped("Missed while \(companion.inline) was paused.")
+            return .skipped("Missed while \(CompanionSavedText.marker) was paused.")
         }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
             return .failed("Background work isn't available right now.")
@@ -298,12 +333,12 @@ extension ChatStore {
         let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
         await bind(conversationID, reply.id.uuidString)
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(companion.leading) is paused.") }
+        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
         if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
-            return .skipped("Missed while \(companion.inline) was paused.")
+            return .skipped("Missed while \(CompanionSavedText.marker) was paused.")
         }
         if schedule.owner == .dot && !isVeraThread(conversationID) {
-            return .skipped("\(companion.leading) started over before this ran.")
+            return .skipped("\(CompanionSavedText.marker) started over before this ran.")
         }
         do {
             let ordinal = try repository.messages(conversationID: conversationID).count

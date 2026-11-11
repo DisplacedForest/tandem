@@ -51,6 +51,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
     case artifact(NativeResearchArtifact)
     case fileChange(NativeFileChange)
     case commandRun(NativeCommandRun)
+    case ruleOffer(NativeRuleOffer)
 
     var id: String {
         switch self {
@@ -59,6 +60,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .artifact(let artifact): return "artifact:" + artifact.id
         case .fileChange(let change): return "file:" + change.id
         case .commandRun(let run): return "command:" + run.id
+        case .ruleOffer(let offer): return offer.blockID
         }
     }
 
@@ -67,8 +69,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case taskCard = "task_card"
         case fileChange = "file_change"
         case commandRun = "command_run"
+        case ruleOffer = "rule_offer"
     }
-    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change", commandRun = "command_run" }
+    private enum Kind: String, Codable { case taskCard = "task_card", link, artifact, fileChange = "file_change", commandRun = "command_run", ruleOffer = "rule_offer" }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -78,6 +81,7 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .artifact: self = .artifact(try container.decode(NativeResearchArtifact.self, forKey: .artifact))
         case .fileChange: self = .fileChange(try container.decode(NativeFileChange.self, forKey: .fileChange))
         case .commandRun: self = .commandRun(try container.decode(NativeCommandRun.self, forKey: .commandRun))
+        case .ruleOffer: self = .ruleOffer(try container.decode(NativeRuleOffer.self, forKey: .ruleOffer))
         }
     }
 
@@ -99,6 +103,9 @@ enum NativeDisplayBlock: Codable, Hashable, Identifiable, Sendable {
         case .commandRun(let run):
             try container.encode(Kind.commandRun, forKey: .type)
             try container.encode(run, forKey: .commandRun)
+        case .ruleOffer(let offer):
+            try container.encode(Kind.ruleOffer, forKey: .type)
+            try container.encode(offer, forKey: .ruleOffer)
         }
     }
 }
@@ -147,7 +154,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
             case .stopping: return document ? "Stopping writing" : "Stopping research"
             case .stopped: return document ? "Writing stopped" : "Research stopped"
             case .completed: return document ? "Document ready" : "Research complete"
-            case .needsInput: return "Needs your input"
+            case .needsInput: return "Needs your answer"
             case .failed: return "Couldn't finish"
             }
         }
@@ -180,9 +187,13 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var covers: String? = nil
     var neverTitle: String? = nil
     var answer: String? = nil
+    var why: NativeRuleWhy? = nil
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }
+    var needsYou: Bool { isCompanion && status == .completed && why != nil }
+
+    func listState(_ otherwise: String) -> String { needsYou ? statusTitle : otherwise }
     var statusTitle: String { isCompanion ? companionTitle : status.title(document: isDocument) }
     var offeredChoices: [String] {
         guard let choices else { return canRetry ? ["retry"] : [] }
@@ -207,11 +218,11 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .working: return "Working on it"
         case .stopping: return "Stopping the work"
         case .stopped: return "Work stopped"
-        case .completed: return "Work done"
+        case .completed: return why == nil ? "Work done" : RefusalCopy.needsYou
         case .needsInput: return "Needs your answer"
         case .queued, .failed: return status.title(document: false)
         }
     }
-    var statusSymbol: String { status.symbol(document: isDocument) }
+    var statusSymbol: String { needsYou ? "hand.raised" : status.symbol(document: isDocument) }
     var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }

@@ -144,9 +144,9 @@ class Tokenizer:
                     body.append(INTERPOLATION)
                     i = self.code(after + 1, True)
                     continue
-                decoded, i = decode_escape(text, after)
-                if decoded == "\n":
-                    self.line += 1
+                decoded, end = decode_escape(text, after)
+                self.newline_count(after, end)
+                i = end
                 body.append(decoded)
                 continue
             if char == "\n":

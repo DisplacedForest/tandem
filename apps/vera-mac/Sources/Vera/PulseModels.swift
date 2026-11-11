@@ -5,7 +5,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .vera: "Vera"; case .chat: "Chats"; case .projects: "Projects"
+        case .vera: "Your companion"; case .chat: "Chats"; case .projects: "Projects"
         case .artifacts: "Library"; case .scheduled: "Scheduled"; case .integrations: "Integrations"
         case .pulse: "Pulse"; case .memory: "Memory"; case .agentic: "Workflows"
         }
@@ -27,8 +27,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")
         case .artifacts: ("Library", "Documents, images and file changes the assistant produces are collected here to open, revise and save.")
-        case .scheduled: ("Scheduled", "Work Vera runs on a schedule, with its upcoming runs and history.")
-        case .integrations: ("Integrations", "Services Vera can use, with what each one is allowed to do.")
+        case .scheduled: ("Scheduled", "Work Tandem runs on a schedule, with its upcoming runs and history.")
+        case .integrations: ("Integrations", "Services Tandem can use, with what each one is allowed to do.")
         default: nil
         }
     }
@@ -147,7 +147,7 @@ enum PulseCategory: String, CaseIterable, Identifiable {
     case vera, infra, health, update
     var id: String { rawValue }
     var title: String {
-        switch self { case .vera: "Vera"; case .infra: "Infra"; case .health: "Health"; case .update: "Updates" }
+        switch self { case .vera: "Tandem"; case .infra: "Infra"; case .health: "Health"; case .update: "Updates" }
     }
     var icon: String {
         switch self {

@@ -14,8 +14,8 @@ final class ChatStore: ObservableObject {
     @Published private(set) var veraThreadID: String?
     var lastFocusedConversationID: String?
     var drafts: [String: String] = [:]
-    static let veraThreadOriginType = "assistant"
-    static let veraThreadOriginID = "vera"
+    nonisolated static let veraThreadOriginType = "assistant"
+    nonisolated static let veraThreadOriginID = "vera"
     @Published var section: AppSection = .chat {
         didSet { if oldValue == .vera, section != .vera { markCompanionSeen() } }
     }
@@ -63,7 +63,13 @@ final class ChatStore: ObservableObject {
     @Published var attachmentError: String?
     @Published var companionDraft = ""
     @Published var companionAttachments: [Attachment] = []
-    @Published var companionError: String?
+    @Published var companionError: String? {
+        didSet {
+            if let error = companionPanelError, error.plain(name: companionName) != companionError { companionPanelError = nil }
+        }
+    }
+    @Published private(set) var companionPanelError: CompanionConfigurationError?
+    var companionArtifactKeeper: ((String) throws -> Void)?
     @Published var companionFocusTick = 0
     static let companionSeenKey = "companion_last_seen_reply"
     var companionDefaults: UserDefaults = .standard
@@ -72,7 +78,58 @@ final class ChatStore: ObservableObject {
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
-    @Published var chatConfigurationError: String?
+    @Published var chatConfigurationError: String? {
+        didSet {
+            if let error = companionConfigurationError, error.plain(name: companionName) != chatConfigurationError {
+                companionConfigurationError = nil
+            }
+        }
+    }
+    @Published private(set) var companionConfigurationError: CompanionConfigurationError?
+
+    var chatConfigurationErrorLine: CompanionLine? {
+        guard let chatConfigurationError else { return nil }
+        return companionConfigurationError?.line ?? .literal(chatConfigurationError)
+    }
+
+    var focusedChatConfigurationError: String? {
+        companionConfigurationError == nil ? chatConfigurationError : nil
+    }
+
+    var companionErrorLine: CompanionLine? {
+        guard let companionError else { return nil }
+        return companionPanelError?.line ?? .literal(companionError)
+    }
+
+    func resolveCompanionConfigurationError(_ lead: String) {
+        if companionConfigurationError?.lead == lead { chatConfigurationError = nil }
+        if companionPanelError?.lead == lead { companionError = nil }
+    }
+
+    private func reportCompanionPanelError(fallback: String) {
+        guard chatConfigurationError != nil, let error = companionConfigurationError else {
+            companionError = chatConfigurationError ?? fallback
+            return
+        }
+        companionPanelError = error
+        companionError = error.plain(name: companionName)
+    }
+
+    func reportCompanionConfigurationError(_ lead: String, description: String, tail: String = "") {
+        let error = CompanionConfigurationError(lead: lead, detail: description + tail)
+        companionConfigurationError = error
+        chatConfigurationError = error.plain(name: companionName)
+    }
+
+    private func renameCompanionConfigurationError(from old: String?) {
+        guard old != companionName else { return }
+        if let error = companionConfigurationError, chatConfigurationError == error.plain(name: old) {
+            chatConfigurationError = error.plain(name: companionName)
+        }
+        if let error = companionPanelError, companionError == error.plain(name: old) {
+            companionError = error.plain(name: companionName)
+        }
+    }
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
     @Published var pendingToolConfirmation: NativeToolConfirmationRequest?
@@ -99,7 +156,9 @@ final class ChatStore: ObservableObject {
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
-    @Published private(set) var companionName: String?
+    @Published private(set) var companionName: String? {
+        didSet { renameCompanionConfigurationError(from: oldValue) }
+    }
     var companion: CompanionSubject { CompanionSubject(companionName) }
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
@@ -179,6 +238,7 @@ final class ChatStore: ObservableObject {
     @Published var turnConfirmations: [UUID: NativeToolConfirmationRequest] = [:]
     var turnConfirmationTokens: [UUID: UUID] = [:]
     var turnExecutions: [UUID: NativeTurnExecution] = [:]
+    let ruleOfferSession = RuleOfferSession()
     static let turnProcessIdentity = UUID().uuidString
     var suspendsTurnScheduling = false
     var isSchedulingTurns = false
@@ -229,7 +289,7 @@ final class ChatStore: ObservableObject {
         if nativeTaskClient == nil, let local = repository as? LocalChatRepository {
             localEngine = NativeTaskLocalEngine.workers(database: local.database,
                 search: .live(base: { NativeWebSearch.resolvedBase() }),
-                identity: { [database = local.database] in NativePreferenceStore.identity(identity.current, database: database) },
+                identity: NativeWorkerOrigin.resolver(identity, database: local.database),
                 companion: companionRelay)
         } else {
             localEngine = nil
@@ -297,6 +357,7 @@ final class ChatStore: ObservableObject {
         }
         reloadArtifacts()
         reloadProjects()
+        sweepRuleRecords()
         for conversation in conversations where !conversation.messages.isEmpty {
             reconcileTaskArtifacts(conversationID: conversation.id)
         }
@@ -727,9 +788,10 @@ final class ChatStore: ObservableObject {
             thread.isPersisted = true
             conversations.append(thread)
             veraThreadID = thread.id
+            resolveCompanionConfigurationError(CompanionErrorCopy.threadLead)
         } catch {
             veraThreadID = nil
-            chatConfigurationError = "The Vera thread couldn't be created: \(error.localizedDescription)"
+            reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: error.localizedDescription)
         }
     }
 
@@ -1725,6 +1787,7 @@ final class ChatStore: ObservableObject {
         discardedConversationIDs.insert(id)
         let stored = (try? repository?.messages(conversationID: id)) ?? []
         try repository?.deleteConversation(id)
+        removeRules(for: .conversation(id))
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }
         }
@@ -1752,7 +1815,7 @@ final class ChatStore: ObservableObject {
         case failed(String)
     }
 
-    static let pulseContinuationDatabaseFailure = "Vera couldn't create the local conversation. Try again."
+    static let pulseContinuationDatabaseFailure = "Tandem couldn't create the local conversation. Try again."
 
     func openPulseInChat(_ card: PulseCard, onOpened: (() -> Void)? = nil) {
         if pulseContinuation[card.id] == .opening { return }
@@ -1771,7 +1834,7 @@ final class ChatStore: ObservableObject {
             return
         }
         guard let provider = pulseFeedProvider ?? (client as (any PulseFeedProviding)?) else {
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
             return
         }
         pulseContinuation[card.id] = .opening
@@ -1787,7 +1850,7 @@ final class ChatStore: ObservableObject {
     ) {
         switch result {
         case .unconfigured:
-            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up the vera-api service to continue this card.")
         case .transport:
             pulseContinuation[card.id] = .failed("Pulse couldn't be reached. Try again.")
         case .malformed:
@@ -1972,7 +2035,7 @@ final class ChatStore: ObservableObject {
     func sendCompanion() -> Bool {
         prepareCompanionThread(askForName: false)
         guard let veraThreadID else {
-            companionError = chatConfigurationError ?? repositoryInitializationError ?? "Local history couldn't open"
+            reportCompanionPanelError(fallback: repositoryInitializationError ?? "Local history couldn't open")
             return false
         }
         let text = companionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1992,7 +2055,7 @@ final class ChatStore: ObservableObject {
         }
         markCompanionSeen()
         guard sendText(text, attachments: atts, routeNote: note, conversationID: veraThreadID, fromComposer: true) else {
-            companionError = chatConfigurationError ?? "The message couldn't send."
+            reportCompanionPanelError(fallback: "The message couldn't send.")
             return false
         }
         companionDraft = ""
@@ -2163,7 +2226,7 @@ final class ChatStore: ObservableObject {
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
-        turn.dotContext = dotContext(for: id, requestText: text)
+        turn.dotContext = dotContext(for: id, requestText: fromComposer ? text : "")
         if fromComposer { turn.preferenceEligible = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
@@ -2207,7 +2270,7 @@ final class ChatStore: ObservableObject {
             persona: scopes.persona, userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(Array(conversation.messages.prefix(ri - 1)), current: user))
-        turn.dotContext = dotContext(for: conversation.id, requestText: user.text)
+        turn.dotContext = dotContext(for: conversation.id, requestText: "")
         do {
             try turnRepository?.enrollLegacyTurn(turn)
             conversations[ci].messages[ri].state = .streaming
@@ -2364,15 +2427,17 @@ final class ChatStore: ObservableObject {
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
-        let resolver = ruleResolver(for: id, requestText: text)
+        let typed = typedWords(for: turn)
+        let said = typed.said
+        let resolver = ruleResolver(for: id, requestText: said, typed: typed)
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
             let records = nativeRuleRecordStore
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
-                live: { rules.resolver(for: id, requestText: text).decision(for: $0) },
-                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: text, action: $0, subjects: $1) },
+                live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, action: $0, subjects: $1) },
                 alwaysAvailable: true))
         }
         if !turnGrants.isEmpty && commandsConsented {
@@ -2392,7 +2457,7 @@ final class ChatStore: ObservableObject {
         let turnRules = nativeRuleSource
         let turnRecords = nativeRuleRecordStore
         turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions.map {
-            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: text)
+            ChatStore.ruled($0, rules: turnRules, store: turnRecords, conversationID: id, requestText: said, typed: typed)
         })
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
@@ -2406,7 +2471,8 @@ final class ChatStore: ObservableObject {
             },
             confirm: { [weak self, turnRegistry] activity in
                 guard let self else { return false }
-                let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions, typedText: text)
+                let subject = ChatStore.cardSubject(for: activity, definitions: turnRegistry.definitions)
+                await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
@@ -2633,6 +2699,7 @@ final class ChatStore: ObservableObject {
                                 scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
                                 recordCanvasArtifacts(arts, conversationID: id,
                                                       messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                                      sources: conversations[i].messages[replyIndex].sources,
                                                       revising: revisionTarget)
                                 lastCheckpoint = Date()
                             }
@@ -2666,6 +2733,7 @@ final class ChatStore: ObservableObject {
                     let replyIndex = settled.reply
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          sources: conversations[i].messages[replyIndex].sources,
                                           revising: revisionTarget)
                     if !partialAnswer, revisionTarget != nil { clearArtifactRevisionTarget(messageID: revisionKey) }
                     if !partialAnswer, conversations[i].messages[replyIndex].id
@@ -2716,6 +2784,7 @@ final class ChatStore: ObservableObject {
                     try? repository.saveConversation(conversations[i])
                     recordCanvasArtifacts(conversations[i].messages[replyIndex].artifacts, conversationID: id,
                                           messageID: conversations[i].messages[replyIndex].id.uuidString,
+                                          sources: conversations[i].messages[replyIndex].sources,
                                           revising: revisionTarget)
                 }
             }
@@ -2733,8 +2802,8 @@ enum NativeMemorySourceState: Equatable, Sendable {
     var message: String {
         switch self {
         case .ok: ""
-        case .edited: "This message changed after Vera remembered it."
-        case .deleted: "The source message was deleted, so Vera opened the conversation instead."
+        case .edited: "This message changed after Tandem remembered it."
+        case .deleted: "The source message was deleted, so Tandem opened the conversation instead."
         case .excluded: "This conversation is excluded from memory suggestions."
         }
     }

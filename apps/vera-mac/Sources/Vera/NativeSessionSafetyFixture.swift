@@ -38,6 +38,7 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         return try base.conversationTurns()
     }
     func conversationTurnChangeToken() throws -> [Int64] { try base.conversationTurnChangeToken() }
+    func typedMessageIDs(conversationID: String) throws -> Set<UUID> { try base.typedMessageIDs(conversationID: conversationID) }
     func conversationTurnHeaders() throws -> [NativeConversationTurnHeader] { try base.conversationTurnHeaders() }
     func pollConversationTurns(watching: Set<UUID>) throws -> [NativeConversationTurn] {
         let records = try base.pollConversationTurns(watching: watching)

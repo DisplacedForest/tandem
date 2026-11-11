@@ -29,10 +29,12 @@ enum CardShot {
         var size = CGSize(width: 1180, height: 760)
         let content: AnyView
         switch variant {
-        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-send-companion":
+        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-send-companion",
+             "card-send-recipient", "card-send-unknown", "card-send-fixed":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
-        case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus":
+        case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus",
+             "card-send-recipient-menus", "card-send-unknown-menus", "card-send-fixed-menus":
             size = CGSize(width: 640, height: 420)
             let request = self.chat(String(variant.dropLast("-menus".count)), store: store).confirmation
             let answers = CardAnswers.chat(request)
@@ -55,6 +57,19 @@ enum CardShot {
             let id = seedRules(store)
             content = AnyView(ConversationRulesEditor(conversationID: id).background(Theme.bg)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 20))
+        case "card-offer-edits", "card-offer-sends", "card-offer-risky", "card-offer-allowed", "card-offer-everywhere", "card-offer-failed":
+            size = CGSize(width: 760, height: 380)
+            content = AnyView(offer(variant))
+        case "card-offer-menus":
+            size = CGSize(width: 640, height: 300)
+            let answers = CardAnswers.offer()
+            content = AnyView(VStack(alignment: .trailing, spacing: 14) {
+                RuleOfferCard(offer: NativeRuleOffer(id: "shot", action: .fileEdits), onAnswer: { _ in })
+                HStack(alignment: .top, spacing: 12) {
+                    CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
+                    CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
+                }
+            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
         case "card-scheduled-answer":
             store.section = .scheduled
             seedSchedule(store)
@@ -99,6 +114,31 @@ enum CardShot {
         }
     }
 
+    static func offer(_ variant: String) -> some View {
+        let action: NativeActionClass = variant == "card-offer-sends" ? .networkSends : variant == "card-offer-risky" ? .riskyCommands : .fileEdits
+        let state: NativeRuleOffer.State = variant == "card-offer-allowed" ? .allowedHere : variant == "card-offer-everywhere" ? .allowedEverywhere : .waiting
+        let ask: String
+        let reply: String
+        switch action {
+        case .networkSends:
+            ask = "Note that I watered the tomato bed twice today."
+            reply = "Posted to the garden log."
+        case .riskyCommands:
+            ask = "Clear the old build cache."
+            reply = "The old build cache is cleared."
+        default:
+            ask = "Add the afternoon vent check to the plan."
+            reply = "The plan now has the afternoon vent check."
+        }
+        var message = Message(role: .assistant, text: reply)
+        message.displayBlocks = [.ruleOffer(NativeRuleOffer(id: "shot", action: action, state: state, failed: variant == "card-offer-failed"))]
+        return VStack(alignment: .leading, spacing: 22) {
+            MessageRow(message: Message(role: .user, text: ask))
+            MessageRow(message: message, onRuleOffer: { _, _ in })
+        }
+        .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
     static func ruledActivity(_ definition: NativeToolDefinition, rules: NativeRules, id: String, request: String, ask: String,
                               conversationID: String) -> (NativeToolActivity, NativeCardSubject) {
         let source = NativeRuleSource()
@@ -106,7 +146,7 @@ enum CardShot {
         let ruled = ChatStore.ruled(definition, rules: source, store: nil, conversationID: conversationID, requestText: ask)
         let activity = NativeToolActivity(id: id, toolID: ruled.id, name: ruled.name, title: ruled.title, round: 1,
                                           request: request, result: nil, state: .pending, confirmationRequired: true)
-        let subject = ChatStore.cardSubject(for: activity, definitions: [ruled], typedText: ask)
+        let subject = ChatStore.cardSubject(for: activity, definitions: [ruled])
             ?? NativeCardSubject(action: .otherChanges, toolID: ruled.id, toolTitle: ruled.title)
         return (activity, subject)
     }
@@ -152,7 +192,7 @@ enum CardShot {
                                                 request: "{\"list\":\"Errands\",\"title\":\"Buy seed potatoes\"}", ask: ask, conversationID: conversationID)
         case "card-schedule", "card-schedule-companion":
             ask = "Every weekday at 7, check the frost forecast for the greenhouse."
-            let schedule = NativeScheduleTools.definition(companionThread: { CompanionSubject(nil).thread }, save: { _ in throw NativeToolError.unavailable })
+            let schedule = NativeScheduleTools.definition(save: { _ in throw NativeToolError.unavailable })
             (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
                                                 request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
                                                 ask: ask, conversationID: conversationID)
@@ -167,6 +207,23 @@ enum CardShot {
             activity = NativeToolActivity(id: "card-garden", toolID: "garden-log", name: "garden_log_post", title: "Post to the garden log", round: 1,
                                           request: "{\"entry\":\"Watered the tomato bed twice.\"}", result: nil, state: .pending, confirmationRequired: true)
             subject = NativeCardSubject(action: .networkSends, toolID: "garden-log", toolTitle: "Post to the garden log", governed: false)
+        case "card-send-recipient":
+            ask = "Let the workshop know the order is ready."
+            activity = NativeToolActivity(id: "card-mail", toolID: "workshop-mail", name: "send_email", title: "Send an email", round: 1,
+                                          request: "{\"to\":\"orders@workshop.example\",\"body\":\"The order is ready.\"}", result: nil,
+                                          state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .networkSends, toolID: "workshop-mail", toolTitle: "Send an email",
+                                        targets: [NativeRuleTarget.make(.recipient, "orders@workshop.example")].compactMap { $0 }, phrase: "send an email")
+        case "card-send-unknown":
+            ask = "Let the workshop know the order is ready."
+            activity = NativeToolActivity(id: "card-notify", toolID: "workshop-notify", name: "notify_workshop", title: "Notify the workshop", round: 1,
+                                          request: "{\"message\":\"The order is ready.\"}", result: nil, state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .networkSends, toolID: "workshop-notify", toolTitle: "Notify the workshop")
+        case "card-send-fixed":
+            ask = "Note that I watered the tomato bed twice today."
+            activity = NativeToolActivity(id: "card-fixed", toolID: "garden-log-fixed", name: "garden_log_post", title: "Post to the garden log", round: 1,
+                                          request: "{\"entry\":\"Watered the tomato bed twice.\"}", result: nil, state: .pending, confirmationRequired: true)
+            subject = NativeCardSubject(action: .networkSends, toolID: "garden-log-fixed", toolTitle: "Post to the garden log", fixed: true)
         default:
             ask = "Now rebuild the PDF."
             activity = NativeToolActivity(id: "card-command", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,

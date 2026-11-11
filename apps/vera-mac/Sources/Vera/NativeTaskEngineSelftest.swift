@@ -30,8 +30,9 @@ struct NativeTaskEngineHarness {
     static func make(repository: LocalChatRepository, counter: NativeTaskEngineCounter,
                      search customSearch: NativeResearchSearch? = nil,
                      onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
+                     identity customIdentity: (@Sendable (NativeTaskRecord) -> NativeWorkerIdentity)? = nil,
                      generate: @escaping @Sendable (NativeTaskGenerationJob) async throws -> String) throws -> NativeTaskEngineHarness {
-        try makeTurns(repository: repository, counter: counter, search: customSearch, onUpdate: onUpdate) { job in
+        try makeTurns(repository: repository, counter: counter, search: customSearch, onUpdate: onUpdate, identity: customIdentity) { job in
             .text(try await generate(job))
         }
     }
@@ -40,6 +41,7 @@ struct NativeTaskEngineHarness {
                           search customSearch: NativeResearchSearch? = nil,
                           onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                           workers extra: @escaping (NativeTaskGenerationExchange) -> [String: NativeTaskWorker] = { _ in [:] },
+                          identity customIdentity: (@Sendable (NativeTaskRecord) -> NativeWorkerIdentity)? = nil,
                           complete: @escaping @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -47,9 +49,12 @@ struct NativeTaskEngineHarness {
             return [NativeResearchSource(n: 0, title: "Fictional moon guide", url: "https://fictional.test/\(query.count)",
                                          content: "The fictional moon Luma is blue. Asked: \(query)")]
         }
+        let database = repository.database
+        let identity: @Sendable (NativeTaskRecord) -> NativeWorkerIdentity = customIdentity ?? { (task: NativeTaskRecord) -> NativeWorkerIdentity in
+            NativeWorkerOrigin.identity(NativeWorkerIdentity(assistantName: "Nova", ownerName: "Jordan"), task: task, database: database)
+        }
         let engine = NativeTaskLocalEngine(database: repository.database, admission: { .local(arbiter) }, pollSeconds: 0.05,
             workers: { exchange in
-                let identity: @Sendable () -> NativeWorkerIdentity = { NativeWorkerIdentity(assistantName: "Nova", ownerName: "Jordan") }
                 return ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
                         "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
                         "companion": NativeTaskLocalEngine.companionPlaceholder()].merging(extra(exchange)) { _, injected in injected }
@@ -142,6 +147,7 @@ struct NativeTaskEngineHarness {
 extension SelfTest {
     static func runTaskEngine() async throws {
         try await workerAudienceContract()
+        try await workerOriginContract()
         try await taskStoreContract()
         try await taskDispatcherContract()
         try await taskExchangeContract()
@@ -511,7 +517,8 @@ extension SelfTest {
             return [NativeResearchSource(n: 0, title: "Guide \(query)", url: "https://fictional.test/\(query)", content: "Luma is blue. \(query)")]
         }
         let generate: @Sendable (NativeTaskGenerationJob) async throws -> String = { job in
-            try require(job.messages.first?.content.hasPrefix("You are Nova") == true, "Worker prompts carry the configured assistant name")
+            try require(job.messages.first?.content.hasPrefix("You are the user's assistant") == true && !job.messages.contains { $0.content.contains("Nova") },
+                        "Worker prompts for work started in an ordinary chat never carry the companion's name")
             return job.phase == "plan" ? "{\"subquestions\": [\"First\", \"Second\", \"Third\"]}" : "Blue [1] and [2] and [3].\n\nSources\n[1] a\n[2] b\n[3] c"
         }
         let firstRun = try NativeTaskEngineHarness.make(repository: try LocalChatRepository(url: url), counter: counter, search: slowSearch, generate: generate)
@@ -765,7 +772,8 @@ extension SelfTest {
         let counter = NativeTaskEngineCounter()
         let harness = try NativeTaskEngineHarness.make(repository: repository, counter: counter) { job in
             let audience = job.phase == "outline" ? NativeWorkerIdentity.neutralAudience : "Jordan"
-            try require(job.messages.first?.content.hasPrefix("You are Nova, writing a document for \(audience).") == true, "Document prompts carry the assistant identity")
+            try require(job.messages.first?.content.hasPrefix("You are the user's assistant, writing a document for \(audience).") == true
+                        && !job.messages.contains { $0.content.contains("Nova") }, "Document prompts for an ordinary chat use the no-name opening")
             try require(job.messages.last?.content.contains("Workshop notes") == true, "Document prompts carry the brief")
             if job.phase == "outline" {
                 return "{\"sections\":[{\"heading\":\"Layout\",\"instructions\":\"Describe the bench layout\"},{\"heading\":\"Tools\",\"instructions\":\"List the tools\"}]}"
@@ -862,6 +870,7 @@ extension SelfTest {
             case .link: return "link"
             case .fileChange: return "file"
             case .commandRun: return "command"
+            case .ruleOffer: return "offer"
             }
         }
         try require(message.id == reference.origin.assistantMessageID && kinds == ["card", "artifact"], "The original reply carries the card and the report")

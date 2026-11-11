@@ -5,6 +5,14 @@ enum RulesCopy {
     static let sectionTemplate = "What \(CompanionSentence.placeholder) may do"
     static let infoLabel = "What each choice means"
     static let floorSectionTitle = "Always left to you"
+    static let imagesNote = "This also covers saving generated images."
+
+    static func info(for action: NativeActionClass, choice: NativeRuleChoice) -> String {
+        let detail = NativeRules.detail(for: action, choice: choice)
+        return action == .fileEdits ? detail + " " + imagesNote : detail
+    }
+
+    static func infoLabel(for action: NativeActionClass) -> String { "About: \(action.title)" }
 
     static func explanationTemplate(_ choice: NativeRuleChoice) -> String {
         switch choice {
@@ -24,21 +32,24 @@ enum RulesCopy {
         for action in NativeActionClass.allCases {
             strings.append(action.title)
             strings.append(action.detail)
+            strings.append(infoLabel(for: action))
             for choice in NativeRuleChoice.allCases {
-                strings.append(NativeRules.detail(for: action, choice: choice))
+                strings.append(info(for: action, choice: choice))
             }
         }
         for item in NativeFloorItem.allCases {
             strings.append(item.title)
             strings.append(item.reason)
         }
-        return strings
+        return strings + RulesAdvancedCopy.screenStrings(name: name)
     }
 }
 
 struct RulesChoiceHelp: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            CompanionNamedText(template: RulesCopy.headerTemplate)
+                .font(.system(size: 12))
             ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(choice.title).font(.system(size: 12))
@@ -52,10 +63,72 @@ struct RulesChoiceHelp: View {
     }
 }
 
+struct SavedRuleRow: View {
+    let row: RuleRow
+    var onToggle: () -> Void
+    var onWiden: () -> Void
+    var onRemove: () -> Void
+    @Environment(\.companionName) private var name
+
+    private var spoken: String { row.line.plain(name: name) }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                CompanionLineText(line: row.line)
+                    .foregroundStyle(row.off ? Theme.textSecondary : Theme.textPrimary)
+                if let note = row.note {
+                    CompanionLineText(line: note)
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let toggle = row.toggleTitle {
+                Menu {
+                    Button(toggle, action: onToggle)
+                    if row.widens { Button(RuleRows.applyEverywhere, action: onWiden) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("\(RuleRows.more): \(spoken)")
+                .help(RuleRows.more)
+            }
+            Button(RuleRows.remove, action: onRemove)
+                .accessibilityLabel("\(RuleRows.remove): \(spoken)")
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 struct RulesSettingsTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var showsChoiceHelp = false
+    @State private var infoFor: NativeActionClass?
+    @State private var rows: [RuleRow] = []
+    @State private var widening: RuleRow?
+    @State private var advanced: RulesAdvancedState
+
+    private let startsClosed: Bool
+
+    init() {
+        startsClosed = true
+        _advanced = State(initialValue: RulesAdvancedState())
+    }
+
+    init(showing advanced: RulesAdvancedState) {
+        startsClosed = false
+        _advanced = State(initialValue: advanced)
+    }
+
+    private func refresh() { rows = store.ruleRows() }
+
+    private func infoShown(_ action: NativeActionClass) -> Binding<Bool> {
+        Binding(get: { infoFor == action }, set: { infoFor = $0 ? action : nil })
+    }
 
     private func binding(for action: NativeActionClass) -> Binding<NativeRuleChoice> {
         Binding(
@@ -64,13 +137,7 @@ struct RulesSettingsTab: View {
     }
 
     private func detail(for action: NativeActionClass) -> String {
-        NativeRules.detail(for: action, choice: config.nativeSettings.rules.choice(for: action))
-    }
-
-    private func floorDetail(_ item: NativeFloorItem) -> String {
-        let rules = config.nativeSettings.rules
-        guard let action = item.actionClass, rules.isLifted(item) else { return item.reason }
-        return "Lifted: \(rules.choice(for: action).title)"
+        RulesCopy.info(for: action, choice: config.nativeSettings.rules.choice(for: action))
     }
 
     var body: some View {
@@ -80,16 +147,28 @@ struct RulesSettingsTab: View {
                     Label(notice, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
-                CompanionNamedText(template: RulesCopy.headerTemplate)
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 ForEach(NativeActionClass.configurable, id: \.self) { action in
-                    VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
                         Picker(action.title, selection: binding(for: action)) {
                             ForEach(NativeRuleChoice.allCases, id: \.self) { choice in
                                 Text(choice.title).tag(choice)
                             }
                         }
-                        Text(detail(for: action)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        Button {
+                            infoFor = infoFor == action ? nil : action
+                        } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(RulesCopy.infoLabel(for: action))
+                        .help(RulesCopy.infoLabel(for: action))
+                        .popover(isPresented: infoShown(action), arrowEdge: .trailing) {
+                            Text(detail(for: action))
+                                .font(.system(size: 12))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(14)
+                                .frame(width: 300, alignment: .leading)
+                        }
                     }
                     .padding(.vertical, 2)
                 }
@@ -110,16 +189,40 @@ struct RulesSettingsTab: View {
                     }
                 }
             }
-            Section(RulesCopy.floorSectionTitle) {
-                ForEach(NativeFloorItem.allCases, id: \.self) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                        Text(floorDetail(item)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    }
-                    .padding(.vertical, 2)
+            Section(RuleRows.sectionTitle) {
+                if rows.isEmpty {
+                    Text(RuleRows.empty).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
+                ForEach(rows) { row in
+                    SavedRuleRow(row: row, onToggle: { store.toggleRule(row) },
+                                 onWiden: { if row.widenQuestion == nil { store.widenRule(row) } else { widening = row } },
+                                 onRemove: { store.removeRule(row) })
                 }
             }
+            Section(RulesCopy.floorSectionTitle) {
+                ForEach(RulesAdvancedCopy.leftToYou(config.nativeSettings.rules), id: \.self) { item in
+                    RulesLeftToYouRow(item: item, state: $advanced)
+                }
+            }
+            RulesAdvancedSection(state: $advanced)
         }
         .formStyle(.grouped)
+        .onDisappear { advanced.leave() }
+        .onAppear {
+            if startsClosed { advanced.leave() }
+            store.sweepRuleRecords()
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
+        .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
+        .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }
+        .confirmationDialog(widening?.widenQuestion ?? "", isPresented: Binding(get: { widening != nil }, set: { if !$0 { widening = nil } }),
+                            titleVisibility: .visible) {
+            Button(RuleRows.widenConfirm) {
+                if let row = widening { store.widenRule(row) }
+                widening = nil
+            }
+            Button(RuleRows.cancel, role: .cancel) { widening = nil }
+        }
     }
 }

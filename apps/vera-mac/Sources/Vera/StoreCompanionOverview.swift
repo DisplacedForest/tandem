@@ -22,7 +22,7 @@ extension ChatStore {
         }
         let runs = scheduleRuns.values.flatMap { $0 }
         let activity = CompanionOverviewModel.activity(tasks: tasks, runs: runs, schedules: schedules)
-        let results = artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
+        let results = threadID == nil ? [] : artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
         let options = dotServiceOptions()
         return CompanionOverviewModel.build(
             name: companion.leading, profile: dotProfile,
@@ -62,7 +62,7 @@ extension ChatStore {
             let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
                                                            connectionNote: saved?.connectionNote)
             let outcome = display?.artifact?.report ?? display?.card.answer
-                ?? display.map { CompanionSentence.plain($0.card.milestone, name: companionName) }
+                ?? display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) }
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
                                            canOpen: conversation != nil)
         case .run(let id):
@@ -70,7 +70,7 @@ extension ChatStore {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
             }
             let reference = nativeTaskReferences.first { $0.id.uuidString.lowercased() == run.taskReferenceID?.lowercased() }
-            return CompanionActivityDetail(request: reference?.request.objective, outcome: CompanionSentence.plain(run.detail, name: companionName),
+            return CompanionActivityDetail(request: reference?.request.objective, outcome: scheduleRunNote(run).plain(name: companionName),
                                            canOpen: run.conversationID.flatMap(companionActivityConversation) != nil)
         }
     }

@@ -39,6 +39,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
     var title: String
     var outcome: String
+    var reason: String? = nil
 }
 
 struct NativeCompanionPending: Codable, Equatable, Hashable, Sendable {
@@ -62,9 +63,11 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var effects: [NativeCompanionEffectNote] = []
     var nativeUnavailable: String?
     var keep: Bool?
+    var sources: [NativeTaskSource]?
+    var aliases: [String: Int]?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
         case segmentRounds = "segment_rounds"
@@ -125,8 +128,46 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         return bytes.isEmpty ? none : cut + marker
     }
 
-    mutating func note(_ title: String, _ outcome: String) {
-        effects.append(NativeCompanionEffectNote(title: title, outcome: outcome))
+    mutating func numbered(_ value: NativeJSONValue, definition: NativeToolDefinition, requested: String? = nil) -> NativeJSONValue {
+        let web = (definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName)
+            || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName)
+        guard web, !NativeToolLoop.resultFailed(value, toolName: definition.name) else { return value }
+        var known = sources ?? []
+        var numbers = Dictionary(known.map { ($0.url, $0.n) }, uniquingKeysWith: { first, _ in first })
+            .merging(aliases ?? [:]) { first, _ in first }
+        if let requested, let number = numbers[requested], case .object(let page) = value, case .string(let landed)? = page["url"],
+           numbers[landed] == nil {
+            numbers[landed] = number
+            aliases = (aliases ?? [:]).merging([landed: number]) { first, _ in first }
+        }
+        let result = NativeWebTools.numbered(value, sources: &numbers)
+        guard case .object(let fields) = result else { return result }
+        var entries = [fields]
+        if case .array(let results)? = fields["results"] {
+            entries = results.compactMap { entry -> [String: NativeJSONValue]? in
+                guard case .object(let object) = entry else { return nil }
+                return object
+            }
+        }
+        for entry in entries {
+            guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"],
+                  !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
+            var title = ""
+            if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
+            known.append(NativeTaskSource(n: Int(n), title: title, url: url))
+        }
+        sources = known.isEmpty ? nil : known
+        return result
+    }
+
+    func cited(_ text: String) -> [[String: Any]] {
+        let known = (sources ?? []).filter { $0.url.unicodeScalars.count <= 1024 }
+        let refs = Set(CitationResolver.scan(text, known: Set(known.map(\.n))).refs)
+        return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.title, "url": $0.url] }
+    }
+
+    mutating func note(_ title: String, _ outcome: String, reason: String? = nil) {
+        effects.append(NativeCompanionEffectNote(title: title, outcome: outcome, reason: reason))
         if effects.count > 64 { effects.removeFirst(effects.count - 64) }
     }
 }
@@ -243,30 +284,57 @@ enum NativeCompanionWorker {
         return NativeRuleQuery(action: action, toolID: definition.id, subjects: subjects)
     }
 
+    typealias RuleDecision = (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String], why: NativeRuleWhy?)
+
     static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver: NativeRuleResolver,
-                             honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
+                             honoringLimitedUse: Bool) -> RuleDecision {
         let action = definition.actionClass(for: arguments) ?? .otherChanges
         let query = ruleQuery(definition, arguments, action: action)
         let footprint = query.targets.filter { $0.kind == .folder }.map(\.value)
         let scoped = resolver.tool(definition.id, subjects: query.subjects)
         if let decide = definition.ruleDecision {
             let decision = decide(arguments, scoped)
-            guard case .act = decision else { return (action, decision, [], footprint) }
-            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint)
+            guard case .act = decision else {
+                return (action, decision, [], footprint, definition.ruleWhy?(arguments, scoped) ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: decision == .handOff))
+            }
+            return (action, decision, resolver.resolve(query, honoringLimitedUse: false).authorizedBy, footprint, nil)
         }
         let resolved = resolver.resolve(query, honoringLimitedUse: honoringLimitedUse)
         if resolved.resolution == nil, action == .commands, case .string(let command)? = arguments["command"] {
             let fallback = scoped.decide(forCommand: command)
-            if case .act = fallback.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
-            return (action, fallback.decision, fallback.authorizedBy, footprint)
+            if case .act = fallback.decision {
+                if definition.demandsConfirmation { return (action, .ask, [], footprint, .tool(action)) }
+                return (action, fallback.decision, fallback.authorizedBy, footprint, nil)
+            }
+            return (action, fallback.decision, fallback.authorizedBy, footprint, scoped.explain(forCommand: command, honoringLimitedUse: honoringLimitedUse))
         }
-        if case .act = resolved.decision, definition.demandsConfirmation { return (action, .ask, [], footprint) }
-        return (action, resolved.decision, resolved.authorizedBy, footprint)
+        if case .act = resolved.decision {
+            if definition.demandsConfirmation { return (action, .ask, [], footprint, .tool(action)) }
+            return (action, resolved.decision, resolved.authorizedBy, footprint, nil)
+        }
+        return (action, resolved.decision, resolved.authorizedBy, footprint,
+                resolver.why(query, decision: resolved.decision, resolution: resolved.resolution, honoringLimitedUse: honoringLimitedUse))
     }
 
-    static func handOffText(name: String, title: String, action: NativeActionClass?) -> String {
-        guard let item = action?.floorItem else { return "\(name) stopped before this step because your rules hand it to you: \(title)." }
-        return "\(name) stopped before this step and handed it to you: \(title). It counts as \"\(item.title)\". \(item.reason)"
+    static func handOffLead(title: String) -> String {
+        "Stopped before this step: \(title)."
+    }
+
+    static func handOffText(title: String, why: NativeRuleWhy, places: RulePlaces = RulePlaces(), companion: String? = nil) -> String {
+        handOffLead(title: title) + " " + RefusalCopy.plain(why, places: places, name: companion)
+    }
+
+    static func places(threadID: String, tools: [NativeToolDefinition], taskID: String? = nil, title: String? = nil) -> RulePlaces {
+        var places = RulePlaces()
+        places.companionThreadID = threadID
+        places.tools = Dictionary(tools.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        if let taskID, let title, !title.isEmpty { places.work = [taskID: title] }
+        return places
+    }
+
+    static func notRunLine(_ notes: [NativeCompanionEffectNote]) -> String? {
+        let lines = notes.compactMap { note in note.reason.map { "Not run: \(note.title). \($0)" } }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     static func idempotencyKey(task: String, attempt: String, round: Int, call: String) -> String {
@@ -359,17 +427,20 @@ enum NativeCompanionWorker {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
-    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil) throws -> NativeTaskStepResult {
-        let body = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters))
-        let firstParagraph = body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
+    static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
+                       summary shown: String? = nil, why: NativeRuleWhy? = nil) throws -> NativeTaskStepResult {
+        let body = CompanionSavedText.sanitized(String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters)))
+        let firstParagraph = shown.map(CompanionSavedText.sanitized)
+            ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
         let summary = String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters))
         let title = assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""
         var done = checkpoint
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": $0.title, "outcome": $0.outcome] }
         var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
-                                     "summary": summary, "sources": [Any](), "effects": effects]
+                                     "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
         if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
+        if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
             result: try NativeTaskStore.canonical(result), event: "completed")
     }
@@ -432,7 +503,7 @@ private struct NativeCompanionRun {
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
-                                 alwaysAsks: definition.demandsConfirmation)
+                                 fixed: definition.fixedDestination, alwaysAsks: definition.demandsConfirmation)
     }
 
     func cardPlace(_ authority: NativeCompanionWorkerAuthority) -> NativeCardPlace {
@@ -457,28 +528,43 @@ private struct NativeCompanionRun {
     }
 
     func approvalPrompt(_ subject: NativeCardSubject?, definition: NativeToolDefinition?, title: String) -> String {
-        guard var subject, let definition else { return "\(CompanionSentence.placeholder) wants to do this: \(title)." }
+        guard var subject, let definition else { return CompanionSavedText.marker + " wants to do this: \(CompanionSavedText.sanitized(title))." }
         subject.phrase = definition.wantsPhrase
-        return NativeCardChoices.sentence(actor: CompanionSentence.placeholder, subject: subject, title: definition.title)
+        return CompanionSavedText.marker + CompanionSavedText.sanitized(NativeCardChoices.sentence(actor: "", subject: subject, title: definition.title))
     }
 
     func authority() -> NativeCompanionWorkerAuthority {
-        NativeCompanionWorker.authority(environment.authority(context.threadID, dot.assignment), taskID: task.id, origin: origin)
+        NativeCompanionWorker.authority(environment.authority(context.threadID, dot.typedRequest), taskID: task.id, origin: origin)
     }
 
     var liveRevisions: @Sendable () -> (rules: Int, grants: Int) {
         let environment = self.environment
         let thread = context.threadID
-        let assignment = dot.assignment
+        let request = dot.typedRequest
         return {
-            let current = environment.authority(thread, assignment)
+            let current = environment.authority(thread, request)
             return (current.resolver.revision, current.grantsRevision)
         }
     }
 
     func recordDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ authority: NativeCompanionWorkerAuthority,
-                        honoringLimitedUse: Bool) -> (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String]) {
+                        honoringLimitedUse: Bool) -> NativeCompanionWorker.RuleDecision {
         NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse)
+    }
+
+    var places: RulePlaces {
+        NativeCompanionWorker.places(threadID: context.threadID, tools: context.tools, taskID: task.id,
+                                     title: dot.assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) })
+    }
+
+    func sentence(_ why: NativeRuleWhy) -> String {
+        RefusalCopy.plain(why, places: places, name: nil)
+    }
+
+    func unasked(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) -> String? {
+        let decided = recordDecision(definition, arguments, authority(), honoringLimitedUse: false)
+        guard decided.decision == .ask, let why = decided.why else { return nil }
+        return sentence(why)
     }
 
     func systemPrompt(finishing: Bool) -> String {
@@ -490,6 +576,7 @@ private struct NativeCompanionRun {
             "Only report what tool results show. Never claim an action happened unless its tool result confirms it. If something was declined, not done or uncertain, say so plainly.",
             NativeCompanionWorker.privacyRule,
         ]
+        lines.append("When you used web results, cite them with the bracket numbers shown on the results, like [1], right after the sentence they support. Do not list web addresses at the end; the app adds the list of sources.")
         if !dot.goal.isEmpty { lines.append("The companion's standing goal, for context: \(dot.goal)") }
         if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
         if origin.unattended {
@@ -540,7 +627,7 @@ private struct NativeCompanionRun {
         if checkpoint.segmentRounds >= budget.rounds {
             if origin.unattended { return try await finish(&checkpoint) }
             checkpoint.pending = NativeCompanionPending(kind: "cap")
-            return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
+            return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) has used this run's working time and saved its progress. Keep going, or finish with what it has?",
                                               ["continue", "finish"])
         }
         let schemas = advertised.map(\.schema)
@@ -594,6 +681,10 @@ private struct NativeCompanionRun {
             let room = max(0, NativeCompanionWorker.reportCharacters - undone.count - 2)
             body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + undone
         }
+        if let notRun = NativeCompanionWorker.notRunLine(checkpoint.effects) {
+            let room = max(0, NativeCompanionWorker.reportCharacters - notRun.count - 2)
+            body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + notRun
+        }
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep)
     }
 
@@ -618,17 +709,23 @@ private struct NativeCompanionRun {
     }
 
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
-        var text = "\(context.companion.leading) reached the limit for this assignment before writing a full report."
+        var text = "Reached the limit for this assignment before writing a full report."
         if !checkpoint.effects.isEmpty {
-            text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" }.joined(separator: "\n")
+            text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n")
         }
-        return text
+        return CompanionSavedText.sanitized(text)
     }
 
-    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, title: String, action: NativeActionClass?) throws -> NativeTaskStepResult {
+    func handOff(_ checkpoint: inout NativeCompanionCheckpoint, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass?,
+                 why: NativeRuleWhy?) throws -> NativeTaskStepResult {
+        let reason = why ?? NativeRuleWhy(kind: .unsaved, action: action ?? .otherChanges, handsOff: true)
         checkpoint.note(title, "handed to you")
-        let text = NativeCompanionWorker.handOffText(name: context.companion.leading, title: title, action: action) + NativeCompanionWorker.effectsLine(checkpoint)
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text)
+        checkpoint.answer(call, NativeCompanionWorker.message(RefusalCopy.forModel(reason)))
+        let effects = NativeCompanionWorker.effectsLine(checkpoint)
+        let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
+                                                                                  companion: nil) + effects)
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
+                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason)
     }
 
     func answerOutstanding(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
@@ -642,7 +739,7 @@ private struct NativeCompanionRun {
                     return try await finish(&checkpoint)
                 }
                 checkpoint.pending = NativeCompanionPending(kind: "cap")
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) has used this run's actions and saved its progress. Keep going, or finish with what it has?",
+                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) has used this run's actions and saved its progress. Keep going, or finish with what it has?",
                                                   ["continue", "finish"])
             }
             if let paused = try await execute(call, &checkpoint) { return paused }
@@ -657,7 +754,7 @@ private struct NativeCompanionRun {
         }
         if let refusal = readOnlyRefusal(definition) {
             let arguments = (try? definition.validatedArguments(call.arguments)) ?? [:]
-            checkpoint.note(NativeCompanionWorker.describe(definition, arguments), NativeReadOnlyRun.outcome)
+            checkpoint.note(NativeCompanionWorker.describe(definition, arguments), NativeReadOnlyRun.outcome, reason: unasked(definition, arguments))
             checkpoint.answer(call, NativeCompanionWorker.message(refusal))
             return nil
         }
@@ -683,7 +780,10 @@ private struct NativeCompanionRun {
             checkpoint.segmentCalls += 1
             checkpoint.calls += 1
             do {
-                let value = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                let raw = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                var requested: String?
+                if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
+                let value = checkpoint.numbered(raw, definition: definition, requested: requested)
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
@@ -730,8 +830,8 @@ private struct NativeCompanionRun {
             }
         }
         let authority = authority()
-        let (action, decision, authorizedBy, footprint) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
-        if decision == .handOff { return try handOff(&checkpoint, title: title, action: action) }
+        let (action, decision, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true)
+        if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
             argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)), target: NativeCompanionWorker.target(arguments),
@@ -753,14 +853,14 @@ private struct NativeCompanionRun {
                                                      live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy)
         if !authorizedBy.isEmpty, case .admitted = admission { environment.recordsChanged() }
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title,
-                                  footprint: footprint, action: action, &checkpoint)
+                                  footprint: footprint, action: action, why: why, &checkpoint)
     }
 
     func dispatch(_ admission: NativeEffectAdmission, call: NativeTaskGenerationToolCall, definition: NativeToolDefinition,
                   arguments: [String: NativeJSONValue], key: String, title: String, footprint: [String]? = nil, action: NativeActionClass? = nil,
-                  _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
+                  why: NativeRuleWhy? = nil, _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
         guard case .admitted(let record) = admission else {
-            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, action: action, &checkpoint) }
+            if case .refused(let reason) = admission { return try refused(reason, call: call, title: title, action: action, why: why, &checkpoint) }
             return nil
         }
         checkpoint.segmentCalls += 1
@@ -807,12 +907,16 @@ private struct NativeCompanionRun {
     }
 
     func refused(_ reason: NativeEffectRefusal, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass? = nil,
-                 _ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? {
+                 why: NativeRuleWhy? = nil, _ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? {
         switch reason {
         case .taskInactive, .staleGeneration:
             throw CancellationError()
         case .ruleHandsOff:
-            return try handOff(&checkpoint, title: title, action: action)
+            return try handOff(&checkpoint, call: call, title: title, action: action, why: why)
+        case .ruleAsks where why != nil:
+            guard let why else { return nil }
+            checkpoint.note(title, "not done", reason: sentence(why))
+            checkpoint.answer(call, NativeCompanionWorker.message(RefusalCopy.forModel(why)))
         case .declined:
             checkpoint.note(title, "declined")
             checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
@@ -864,7 +968,7 @@ private struct NativeCompanionRun {
             }
         }
         checkpoint.pending = NativeCompanionPending(kind: "reconcile", callID: call.id, digest: record.digest, title: title)
-        return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) can't tell whether this happened: \(title). Please check, then say what you found.",
+        return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) can't tell whether this happened: \(CompanionSavedText.sanitized(title)). Please check, then say what you found.",
                                           ["it_happened", "it_did_not", "stop"])
     }
 
@@ -967,7 +1071,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
-                let text = "\(context.companion.leading) stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint)
+                let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
                 return try await conclude(&checkpoint, text: text)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
@@ -995,7 +1099,7 @@ private struct NativeCompanionRun {
             }
             let authority = self.authority()
             let approved = recordDecision(definition, arguments, authority, honoringLimitedUse: false)
-            if approved.decision == .handOff { return try handOff(&checkpoint, title: title, action: approved.action) }
+            if approved.decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: approved.action, why: approved.why) }
             let admission = try environment.ledger.admit(digest: digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                          grantsRevision: authority.grantsRevision, decision: .ask,
                                                          decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply,
@@ -1005,7 +1109,8 @@ private struct NativeCompanionRun {
                 if !drafts.isEmpty { _ = environment.saveRules(drafts) }
             }
             return try await dispatch(admission, call: call, definition: definition, arguments: arguments,
-                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action, &checkpoint)
+                                      key: record.proposal.idempotencyKey, title: title, footprint: approved.footprint, action: approved.action,
+                                      why: approved.why, &checkpoint)
         case "reconcile":
             guard let digest = pending.digest, let call = call(pending.callID, checkpoint) else { return nil }
             let title = pending.title ?? "an earlier step"
@@ -1025,7 +1130,7 @@ private struct NativeCompanionRun {
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
-                let text = "\(context.companion.leading) stopped at your request. It could not confirm whether this happened: \(title)."
+                let text = CompanionSavedText.sanitized("Stopped at your request. It could not be confirmed whether this happened: \(title).")
                 return try await conclude(&checkpoint, text: text)
             default:
                 if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
@@ -1034,7 +1139,7 @@ private struct NativeCompanionRun {
                     return nil
                 }
                 checkpoint.pending = pending
-                return try NativeCompanionWorker.decide(checkpoint, "\(context.companion.leading) can't tell whether this happened: \(title). Please check, then say what you found.",
+                return try NativeCompanionWorker.decide(checkpoint, "\(CompanionSavedText.marker) can't tell whether this happened: \(CompanionSavedText.sanitized(title)). Please check, then say what you found.",
                                                   ["it_happened", "it_did_not", "stop"])
             }
         default:

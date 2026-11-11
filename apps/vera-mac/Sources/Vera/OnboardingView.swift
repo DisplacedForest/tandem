@@ -166,7 +166,7 @@ struct PulseOnboardingEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pulse is Vera's daily briefing and ambient watches. It runs on a separate vera-api service; leave this empty if you don't run one.")
+            Text("Pulse is Tandem's daily briefing and ambient watches. It runs on a separate vera-api service; leave this empty if you don't run one.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             LabeledContent("Service URL") {
                 TextField("http://vera-host.example:8089", text: config.binding("vera_api_base"))

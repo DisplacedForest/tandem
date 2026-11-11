@@ -44,7 +44,7 @@ struct PluginsView: View {
     private var header: some View {
         HStack {
             Text("Plugins").font(.system(size: 22, weight: .bold))
-            InfoTip(text: "What Vera is connected to: each integration unlocks capabilities across the app.", size: 13)
+            InfoTip(text: "What Tandem is connected to: each integration unlocks capabilities across the app.", size: 13)
             if case .ready = plugins.phase {
                 Text("\(plugins.entries.filter(\.enabled).count)/\(plugins.entries.count)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)

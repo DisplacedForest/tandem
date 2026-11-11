@@ -22,16 +22,24 @@ struct NativeTaskCardView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             if !card.milestone.isEmpty {
-                CompanionNamedText(template: card.milestone)
+                CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if card.needsYou, let why = card.why {
+                RefusalReasonLine(why: why)
+            }
             if let answer = card.answer, card.status == .completed {
-                NativeArtifactMarkdown(text: answer).equatable()
+                let resolved = CitationResolver.resolve(text: answer, sources: NativeResearchReportSafety.sources(card.sources),
+                                                        allowRecovery: false)
+                CitedText(resolved: resolved, style: .chat)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
+                if !resolved.sources.isEmpty {
+                    SourcesRow(sources: resolved.sources, numbered: false)
+                }
             }
             if let details = card.details, !details.isEmpty, card.status == .needsInput {
                 let block = Text(details)
@@ -56,8 +64,9 @@ struct NativeTaskCardView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             }
-            if !card.sources.isEmpty && [.stopped, .needsInput, .failed].contains(card.status) {
-                SourcesRow(sources: NativeResearchReportSafety.sources(card.sources))
+            if !card.sources.isEmpty,
+               [.stopped, .needsInput, .failed].contains(card.status) || (card.status == .completed && !card.isCompanion) {
+                SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
             if let onSaveAnswer, card.answer != nil, card.status == .completed {
                 Button("Save as document") { onSaveAnswer() }
@@ -71,19 +80,19 @@ struct NativeTaskCardView: View {
                               onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
                               onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
                               onItem: { answer($0) })
-            } else if card.canCancel || !card.offeredChoices.isEmpty {
-                HStack(spacing: 12) {
-                    ForEach(card.offeredChoices, id: \.self) { choice in
-                        if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-                            Button(title) { answer(choice) }
-                                .buttonStyle(.bordered)
-                                .disabled(!canAnswer(choice))
-                                .accessibilityLabel("\(title), answer for \(card.title)")
-                        }
-                    }
-                    if card.canCancel { Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil) }
+            } else if let question = CardQuestion.make(choices: card.offeredChoices,
+                                                       stop: card.canCancel && onCancel != nil ? (stopTitle ?? card.stopTitle) : nil,
+                                                       answerable: canAnswer) {
+                if let decline = question.decline {
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,
+                                  onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
+                } else {
+                    Button(question.answers.allowTitle) { answer(question.allow) }
+                        .buttonStyle(.bordered).font(.system(size: 12))
+                        .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
-                .font(.system(size: 12))
+            } else if card.canCancel {
+                Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).font(.system(size: 12))
             }
         }
         .padding(14)
@@ -104,8 +113,11 @@ struct NativeTaskCardView: View {
         onDecide != nil || (choice == "retry" && onRetry != nil)
     }
 
-    private func answer(_ choice: String) {
-        if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
+    private func answer(_ id: String) {
+        switch CardQuestion.route(id) {
+        case .stop: onCancel?()
+        case .answer(let choice): if let onDecide { onDecide(choice) } else if choice == "retry" { onRetry?() }
+        }
     }
 }
 
@@ -118,6 +130,7 @@ struct NativeDisplayBlocksView: View {
     var onDecide: ((String, String) -> Void)? = nil
     var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
     @State private var openReport: NativeResearchArtifact?
 
     var body: some View {
@@ -147,6 +160,8 @@ struct NativeDisplayBlocksView: View {
                     NativeFileChangeCard(change: change)
                 case .commandRun(let run):
                     NativeCommandRunCard(run: run)
+                case .ruleOffer(let offer):
+                    RuleOfferCard(offer: offer, onAnswer: onRuleOffer.map { action in { action(block.id, $0) } })
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
                         ConversationResultRow(title: artifact.title, action: artifact.openTitle)
@@ -183,8 +198,10 @@ struct NativeResearchReportView: View {
     let artifact: NativeResearchArtifact
     @Environment(\.dismiss) private var dismiss
 
-    var reportText: String {
-        artifact.sources.isEmpty ? artifact.report : PulseMarkers.stripSourcesSection(artifact.report)
+    var resolved: ResolvedCitations {
+        CitationResolver.resolve(text: artifact.report,
+                                 sources: artifact.sources.isEmpty ? [] : NativeResearchReportSafety.sources(artifact.sources),
+                                 allowRecovery: false)
     }
 
     var body: some View {
@@ -197,12 +214,11 @@ struct NativeResearchReportView: View {
             .padding(20)
             Divider()
             ScrollView {
+                let resolved = self.resolved
                 VStack(alignment: .leading, spacing: 18) {
-                    if artifact.sources.isEmpty {
-                        NativeArtifactMarkdown(text: reportText).equatable()
-                    } else {
-                        CitedProse(text: reportText, sources: NativeResearchReportSafety.sources(artifact.sources))
-                        SourcesRow(sources: NativeResearchReportSafety.sources(artifact.sources))
+                    CitedText(resolved: resolved, style: .document)
+                    if !resolved.sources.isEmpty {
+                        SourcesRow(sources: resolved.sources, numbered: false)
                     }
                 }
                 .padding(24)
@@ -238,5 +254,11 @@ struct NativeArtifactMarkdown: View, Equatable {
         Markdown(content)
             .markdownTheme(Self.theme)
             .textSelection(.enabled)
+    }
+}
+
+extension NativeTaskCardPresentation {
+    var milestoneLine: CompanionLine {
+        CompanionSavedText.line(milestone, appWritten: isCompanion && status == .needsInput)
     }
 }

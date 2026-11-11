@@ -166,7 +166,7 @@ struct SidebarRow: View {
 
 // MARK: - Chat pane
 
-private struct ChatPane: View {
+struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
     var workCollapsed = false
     @EnvironmentObject var config: ConfigStore
@@ -296,6 +296,18 @@ private struct ChatPane: View {
                 .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
                 .accessibilityElement(children: .contain)
             }
+            if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.textSecondary)
+                    CompanionLineText(line: error.line).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+                .frame(maxWidth: ConversationMetrics.columnWidth)
+                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
+                .accessibilityElement(children: .combine)
+            }
             if let convo = conversation, !convo.messages.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -311,6 +323,9 @@ private struct ChatPane: View {
                                            onToolDecision: { decision in
                                                store.resolveTurnConfirmation(msg.id, decision: decision,
                                                    requestID: confirmation?.id, token: confirmationToken)
+                                           },
+                                           onRuleOffer: { blockID, answer in
+                                               store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config)
                                            },
                                            companionThread: store.isVeraThread(convo.id))
                                     .background(
@@ -429,7 +444,7 @@ private struct ChatPane: View {
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: ConversationMetrics.columnWidth)
             } else if store.section == .vera || store.isVeraThread(conversation?.id) {
-                CompanionOpeningView(error: store.companionOpeningError,
+                CompanionOpeningView(error: store.companionOpeningErrorLine,
                                      needsConnection: store.repository != nil && !store.pendingProfileAvailable,
                                      canRetry: store.repository != nil) {
                     store.chatConfigurationError = nil
@@ -577,14 +592,22 @@ struct EmptyChatView: View {
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
                 ComposerField()
-                if let error = store.chatConfigurationError {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.focusedChatConfigurationError.map(CompanionLine.literal) {
+                    Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive && project == nil {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else if !store.isLive {
                     Button { config.showOnboarding = true } label: {
-                        Label("\(store.conversationAssistantLead) isn't connected. Set up the connection", systemImage: "bolt.horizontal")
+                        Label {
+                            if store.isVeraThread(store.selectedID) {
+                                CompanionNamedText(template: "{name} isn't connected. Set up the connection")
+                            } else {
+                                Text("\(store.conversationAssistantLead) isn't connected. Set up the connection")
+                            }
+                        } icon: {
+                            Image(systemName: "bolt.horizontal")
+                        }
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
                             .background(Theme.surface).clipShape(Capsule())
@@ -758,6 +781,7 @@ struct MessageRow: View {
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
     var onToolDecision: ((NativeCardChoiceKind) -> Void)? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
     var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -800,7 +824,8 @@ struct MessageRow: View {
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
                             onSaveAnswer: store.saveNativeTaskAnswer,
-                            highlightedTaskID: store.highlightedTaskID)
+                            highlightedTaskID: store.highlightedTaskID,
+                            onRuleOffer: onRuleOffer)
                     }
                     if nativeActions && store.isQueuedAnswer(message.id) {
                         NativeAnswerControls(status: "Waiting to answer", canStop: true, stopLabel: "Cancel",
@@ -918,6 +943,7 @@ struct NativeToolActivityChip: View {
     private var declined: Bool { Self.isDeclined(activity) }
 
     private var icon: String {
+        if activity.why != nil { return "hand.raised" }
         if declined { return "hand.raised.slash" }
         switch activity.state {
         case .pending: return "clock"
@@ -928,6 +954,7 @@ struct NativeToolActivityChip: View {
     }
 
     private var status: String {
+        if let why = activity.why { return RefusalCopy.label(why) }
         if declined { return "Declined" }
         switch activity.state {
         case .pending: return awaitingDecision ? "Waiting for you" : (activity.progress?.label ?? "Working")
@@ -938,7 +965,7 @@ struct NativeToolActivityChip: View {
     }
 
     private var iconColor: Color {
-        if declined { return Theme.warmTextSecondary }
+        if declined || activity.why != nil { return Theme.warmTextSecondary }
         switch activity.state {
         case .failed: return Color.orange
         case .pending: return Theme.sage
@@ -954,10 +981,11 @@ struct NativeToolActivityChip: View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 8) {
                 inspected("Request", activity.request)
-                if let result = activity.result { inspected("Result", result) }
+                if activity.why == nil, let result = activity.result { inspected("Result", result) }
             }
             .padding(.top, 8)
         } label: {
+            VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 if activity.state == .pending {
                     ProgressView().controlSize(.mini)
@@ -980,6 +1008,8 @@ struct NativeToolActivityChip: View {
                 }
             }
             .foregroundStyle(Theme.warmTextPrimary)
+            if let why = activity.why, activity.toolID != NativeCommandTools.toolID { RefusalReasonLine(why: why) }
+            }
         }
         .disclosureGroupStyle(.automatic)
         .padding(.horizontal, 11).padding(.vertical, 8)
@@ -1025,6 +1055,18 @@ struct NativeToolConfirmationBar: View {
         NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
+    static func closingLine(for request: NativeToolConfirmationRequest, actor: String) -> CompanionLine? {
+        guard let closing = closing(for: request) else { return nil }
+        let line = CompanionLine.named(closing)
+        return actor == CompanionSentence.placeholder ? line : .literal(line.plain(name: nil))
+    }
+
+    static func sentenceLine(for request: NativeToolConfirmationRequest, prompt: String?, actor: String) -> CompanionLine {
+        if let first = prompt?.components(separatedBy: "\n").first { return .literal(first) }
+        let rest = sentence(for: request, actor: "")
+        return actor == CompanionSentence.placeholder ? .parts([.name, .text(rest)]) : .literal(actor + rest)
+    }
+
     static func literal(for request: NativeToolConfirmationRequest) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
@@ -1064,15 +1106,15 @@ struct NativeToolConfirmationBar: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
-                    CompanionNamedText(template: prompt?.components(separatedBy: "\n").first ?? Self.sentence(for: request, actor: actor))
+                    CompanionLineText(line: Self.sentenceLine(for: request, prompt: prompt, actor: actor))
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                     if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(block)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                if prompt == nil, let closing = Self.closing(for: request) {
-                                    CompanionNamedText(template: closing)
+                                if prompt == nil, let closing = Self.closingLine(for: request, actor: actor) {
+                                    CompanionLineText(line: closing)
                                 }
                             }
                             .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
@@ -1333,7 +1375,7 @@ struct ComposerField: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .frame(width: ComposerControlGlyph.sendSize, height: ComposerControlGlyph.sendSize)
                 .contentShape(Rectangle())
-                .help("Add files, grant a folder, or insert a saved prompt")
+                .help("Add files, share a folder, or insert a saved prompt")
                 .accessibilityLabel("Add attachments")
                 TextField("Message \(store.conversationAssistantName)", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)

@@ -121,6 +121,7 @@ extension ChatStore {
             conversations[index].projectID = nil
         }
         reloadProjects()
+        removeRules(for: .project(id))
         for conversationID in released { refreshConversationGrants(conversationID) }
         syncRuleProjects()
     }

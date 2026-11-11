@@ -35,7 +35,9 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
                     return NativeCompanionWorkerAuthority(resolver: NativeRuleResolver(global: closed, conversation: NativeConversationRules(),
                                                                                        requestText: request, revision: -1), grantsRevision: -1)
                 }
-                return NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request), grantsRevision: grants.revision)
+                return NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
+                                                                               typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
+                                                      grantsRevision: grants.revision)
             },
             ledger: NativeEffectLedgerStore(database: database),
             tasks: NativeTaskStore(database: database))
@@ -45,6 +47,7 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             var saved = true
             for record in records where (try? store.add(record)) == nil { saved = false }
             if let rules = self?.lock.withLock({ self?.rules }) { ChatStore.reloadRules(rules, from: store) }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .ruleRecordsChanged, object: nil) }
             return saved
         }
         environment.recordsChanged = { [weak self] in

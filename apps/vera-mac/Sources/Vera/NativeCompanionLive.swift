@@ -62,7 +62,7 @@ enum NativeCompanionLive {
         store.skipDotSetup()
         print("companion-live: model \(native.model), assignment: \(assignment)")
         if let failure = await store.startCompanionAssignment(assignment) {
-            print("companion-live: FAIL could not start: \(failure)")
+            print("companion-live: FAIL could not start: \(failure.plain(name: store.companionName))")
             return 1
         }
         guard let reference = store.companionWorkReferences().last else {
@@ -89,7 +89,7 @@ enum NativeCompanionLive {
                 else if decision.choices.contains("continue") { pick = answered.count <= 1 ? "continue" : "finish" }
                 else if decision.choices.contains("stop") { pick = "stop" }
                 else { pick = decision.choices.first ?? "retry" }
-                print("companion-live: decision \"\(CompanionSentence.plain(decision.prompt, name: nil))\" choices \(decision.choices) answering \(pick)")
+                print("companion-live: decision \"\(CompanionSavedText.plain(decision.prompt, name: nil, appWritten: true))\" choices \(decision.choices) answering \(pick)")
                 store.answerNativeTask(reference.id.uuidString, choice: pick)
             }
             if snapshot.state.isTerminal {

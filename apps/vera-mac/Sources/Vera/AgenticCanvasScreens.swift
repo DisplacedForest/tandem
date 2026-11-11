@@ -33,7 +33,7 @@ struct AgenticCanvasView: View {
         if drilled == nil {
             HStack(spacing: 10) {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "Everything Vera runs on her own, as one living system. Click a flow to open its workflow.", size: 13)
+                InfoTip(text: "Everything Tandem runs automatically, as one living system. Click a flow to open its workflow.", size: 13)
                 if let graph = graphStore.graph, case .ready = graphStore.phase {
                     Text("\(graph.flows.count) flows").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -69,7 +69,7 @@ struct AgenticCanvasView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .unconfigured:
             CanvasStatusCard(icon: "gearshape", title: "vera-api isn't configured",
-                             note: "Set the vera-api URL in Settings to see Vera's autonomous flows.")
+                             note: "Set the vera-api URL in Settings to see Tandem's autonomous flows.")
         case .unreachable:
             CanvasStatusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
                              note: "Couldn't load the canvas from \(graphStore.baseDescription).",

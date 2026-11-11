@@ -33,7 +33,7 @@ enum NativeFolderTools {
     static func grantNote(_ grants: [FolderGrant]) -> String? {
         guard !grants.isEmpty else { return nil }
         let list = grants.map { "- \($0.name): \($0.path)" + ($0.readOnly ? " (read-only)" : "") }.joined(separator: "\n")
-        return "Folders granted to this chat (use full paths under them with the file tools; symbolic links are not followed):\n" + list
+        return "Folders shared with this chat (use full paths under them with the file tools; symbolic links are not followed):\n" + list
     }
 
     static func definitions(grants: @escaping @Sendable () -> [FolderGrant], ledger: NativeFileChangeLedger,
@@ -74,9 +74,9 @@ enum NativeFolderTools {
         let definitions: [NativeToolDefinition] = [
             NativeToolDefinition(
                 id: toolID, name: listName, title: "List a folder",
-                description: "List the entries of a folder inside a granted folder: name, kind (file, folder, link), and size. Hidden entries are included only when requested. \(untrustedNote)",
+                description: "List the entries of a folder inside a shared folder: name, kind (file, folder, link), and size. Hidden entries are included only when requested. \(untrustedNote)",
                 parameters: schema(properties: [
-                    "path": property("string", "Full path of the folder, or a path relative to the single granted folder"),
+                    "path": property("string", "Full path of the folder, or a path relative to the single shared folder"),
                     "include_hidden": property("boolean", "Include entries whose names start with a dot (default false)"),
                 ], required: ["path"]),
                 confirmation: .none, timeout: timeout, effect: .read, isAvailable: available,
@@ -86,7 +86,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: readName, title: "Read a file",
-                description: "Read a text file inside a granted folder. Returns the text, the line range returned, and whether more remains. Binary files are refused. Default \(defaultReadBytes / 1024) KB per call, at most \(maximumReadBytes / 1024) KB; use start_line to continue. \(untrustedNote)",
+                description: "Read a text file inside a shared folder. Returns the text, the line range returned, and whether more remains. Binary files are refused. Default \(defaultReadBytes / 1024) KB per call, at most \(maximumReadBytes / 1024) KB; use start_line to continue. \(untrustedNote)",
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the file"),
                     "start_line": property("integer", "1-based line to start from (default 1)"),
@@ -101,10 +101,10 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: searchName, title: "Search files",
-                description: "Search for a literal text fragment (case-insensitive) in text files under a granted folder. Returns up to \(maximumSearchResults) matches with path, line number and the matching line. \(untrustedNote)",
+                description: "Search for a literal text fragment (case-insensitive) in text files under a shared folder. Returns up to \(maximumSearchResults) matches with path, line number and the matching line. \(untrustedNote)",
                 parameters: schema(properties: [
                     "query": property("string", "The text to look for"),
-                    "path": property("string", "Folder to search; defaults to the granted folder when there is one"),
+                    "path": property("string", "Folder to search; defaults to the shared folder when there is one"),
                     "max_results": property("integer", "At most this many matches, up to \(maximumSearchResults)"),
                 ], required: ["query"]),
                 confirmation: .none, timeout: timeout, effect: .read, isAvailable: available,
@@ -124,7 +124,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: writeName, title: "Write a file",
-                description: "Create or replace a text file inside a granted folder with the given content. The folder must already exist. Prefer \(editName) for small changes to an existing file.",
+                description: "Create or replace a text file inside a shared folder with the given content. The folder must already exist. Prefer \(editName) for small changes to an existing file.",
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the file to create or replace"),
                     "content": property("string", "The complete new content"),
@@ -139,7 +139,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: editName, title: "Edit a file",
-                description: "Replace an exact text fragment in a text file inside a granted folder. old_text must appear exactly once unless replace_all is true. Include enough surrounding text to be unique.",
+                description: "Replace an exact text fragment in a text file inside a shared folder. old_text must appear exactly once unless replace_all is true. Include enough surrounding text to be unique.",
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the file"),
                     "old_text": property("string", "The exact text to replace"),
@@ -156,7 +156,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: moveName, title: "Move or rename",
-                description: "Move or rename a file or folder inside the granted folders. The destination must not exist and its parent folder must exist. Nothing is ever deleted.",
+                description: "Move or rename a file or folder inside the shared folders. The destination must not exist and its parent folder must exist. Nothing is ever deleted.",
                 parameters: schema(properties: [
                     "from": property("string", "Full path of the existing file or folder"),
                     "to": property("string", "Full destination path"),
@@ -172,7 +172,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: mkdirName, title: "Create a folder",
-                description: "Create a folder (and missing parents) inside a granted folder.",
+                description: "Create a folder (and missing parents) inside a shared folder.",
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the folder to create"),
                 ], required: ["path"]),
@@ -187,7 +187,7 @@ enum NativeFolderTools {
                 }),
             NativeToolDefinition(
                 id: toolID, name: trashName, title: "Move to the Trash",
-                description: "Move a file or folder inside a granted folder to the macOS Trash, where the user can put it back. The granted folder itself cannot be trashed. The user's rules decide whether this runs, asks first, or is handed to the user.",
+                description: "Move a file or folder inside a shared folder to the macOS Trash, where the user can put it back. The shared folder itself cannot be trashed. The user's rules decide whether this runs, asks first, or is handed to the user.",
                 parameters: schema(properties: [
                     "path": property("string", "Full path of the file or folder to move to the Trash"),
                 ], required: ["path"]),
@@ -201,7 +201,8 @@ enum NativeFolderTools {
                 }),
         ]
         let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: [creatingKey], trashName: ["path"]]
-        return definitions.map { definition in
+        return definitions.map { original in
+            let definition = refusingOutside(original, grants: grants)
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
             targeted.governed = true
@@ -215,6 +216,20 @@ enum NativeFolderTools {
             }
             return targeted
         }
+    }
+
+    static func refusingOutside(_ definition: NativeToolDefinition, grants: @escaping @Sendable () -> [FolderGrant]) -> NativeToolDefinition {
+        var wrapped = definition
+        let execute = definition.execute
+        let action = definition.action ?? .fileEdits
+        wrapped.execute = { arguments in
+            do {
+                return try await execute(arguments)
+            } catch NativeFolderAccessError.outsideGrants(let path) where !grants().contains(where: { $0.path == path }) {
+                throw NativeRuleRefusal(why: NativeRuleWhy.folder(action, path: path))
+            }
+        }
+        return wrapped
     }
 
     static let creatingKey = "path+"
@@ -242,7 +257,7 @@ enum NativeFolderTools {
 
     static func moveToTrash(_ location: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(location)
-        guard !location.components.isEmpty else { throw NativeToolError.failed("The granted folder itself can't be moved to the Trash: \(location.path)") }
+        guard !location.components.isEmpty else { throw NativeToolError.failed("The shared folder itself can't be moved to the Trash: \(location.path)") }
         let directory = try NativeFolderIO.parent(of: location)
         guard let info = NativeFolderIO.status(directory, location.name) else { throw NativeFolderAccessError.notFound(location.path) }
         guard NativeFolderIO.kind(info) != "link" else { throw NativeFolderAccessError.symlink(location.path) }
@@ -407,7 +422,7 @@ enum NativeFolderTools {
     static func move(from: NativeFolderLocation, to: NativeFolderLocation, ledger: NativeFileChangeLedger, commit: () throws -> Void = {}) throws -> NativeJSONValue {
         try requireWritable(from)
         try requireWritable(to)
-        guard !from.components.isEmpty, !to.components.isEmpty else { throw NativeToolError.failed("A granted folder itself cannot be moved") }
+        guard !from.components.isEmpty, !to.components.isEmpty else { throw NativeToolError.failed("A shared folder itself cannot be moved") }
         guard !NativeFolderAccess.contains(root: from.path, path: to.path) else { throw NativeToolError.failed("A folder cannot be moved inside itself") }
         let fromDirectory = try NativeFolderIO.parent(of: from)
         guard let info = NativeFolderIO.status(fromDirectory, from.name) else { throw NativeFolderAccessError.notFound(from.path) }

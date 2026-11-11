@@ -190,7 +190,7 @@ enum ArtifactProducerSelftest {
 
         store.recordCanvasArtifacts(
             [Artifact(id: "sketch", title: "Sketch", type: .html, language: "", content: "<p>Hi</p>")],
-            conversationID: conversationID, messageID: messageID)
+            conversationID: conversationID, messageID: messageID, sources: [])
         let canvas = store.artifactRecords.first { $0.kind == .canvas }
         let canvasVersion = canvas.flatMap { store.artifactVersions($0.id).first }
         try check(canvasVersion?.mime == "text/html" && canvasVersion?.fileName.hasSuffix(".html") == true
@@ -203,7 +203,7 @@ enum ArtifactProducerSelftest {
                   "The revision note names the document and carries its content")
         store.recordCanvasArtifacts(
             [Artifact(id: "lisbon-guide", title: "Lisbon guide, revised", type: .markdown, language: "", content: "# Lisbon v2")],
-            conversationID: conversationID, messageID: "revision-message", revising: document.id)
+            conversationID: conversationID, messageID: "revision-message", sources: [], revising: document.id)
         let revised = store.artifactRecords.first { $0.id == document.id }
         try check(revised?.versionCount == 2 && revised?.title == "Lisbon guide, revised" && revised?.kind == .document,
                   "A canvas block during a document revision becomes the next document version")
@@ -215,9 +215,36 @@ enum ArtifactProducerSelftest {
         store.recordCanvasArtifacts(
             [Artifact(id: "twin", title: "Twin A", type: .markdown, language: "", content: "A"),
              Artifact(id: "twin", title: "Twin B", type: .markdown, language: "", content: "B")],
-            conversationID: conversationID, messageID: "twin-message")
+            conversationID: conversationID, messageID: "twin-message", sources: [])
         try check(store.artifactRecords.filter { $0.title.hasPrefix("Twin") }.count == 2,
                   "Two blocks with the same id in one reply both record")
+
+        let rain = PulseSource(n: 1, title: "Rain totals", url: "https://weather.example/rain")
+        let river = PulseSource(n: 2, title: "River levels", url: "https://gauge.example/levels")
+        let note = PulseSource(n: 10001, title: "Saved note", url: "local")
+        let otherNote = PulseSource(n: 10002, title: "Other note", url: "local")
+        let offered = [otherNote, river, note, rain]
+        let citing = Artifact(id: "rain", title: "Rain report", type: .markdown, language: "", content: "Rain fell [1]. As noted [10001].")
+        try check(ChatStore.canvasArtifactDraft(citing, sourceKey: "k", conversationID: nil, originTitle: nil, messageID: nil,
+                                                sources: offered).details.sources == [rain, note],
+                  "A reply piece keeps only the sources it cites, memory included, in number order")
+        try check(ChatStore.canvasArtifactDraft(Artifact(id: "plain", title: "Plain", type: .markdown, language: "", content: "No citations."),
+                                                sourceKey: "k", conversationID: nil, originTitle: nil, messageID: nil, sources: offered).details.sources.isEmpty
+                  && ChatStore.canvasArtifactDraft(Artifact(id: "code", title: "Code", type: .code, language: "swift", content: "let x = a[1]"),
+                                                   sourceKey: "k", conversationID: nil, originTitle: nil, messageID: nil, sources: offered).details.sources.isEmpty,
+                  "A piece that cites nothing, or code with an index, stores no sources")
+        store.recordCanvasArtifacts([citing], conversationID: conversationID, messageID: "cited-message", sources: [])
+        store.recordCanvasArtifacts([citing], conversationID: conversationID, messageID: "cited-message", sources: [rain, river])
+        let rainRecord = store.artifactRecords.first { $0.title == "Rain report" }
+        try check(rainRecord?.versionCount == 1 && rainRecord.flatMap { store.artifactVersions($0.id).first }?.details.sources == [rain],
+                  "A checkpoint save without sources gains them when the finished reply saves the same piece")
+        guard let rainID = rainRecord?.id else { throw Failure(description: "The cited piece is missing") }
+        store.recordCanvasArtifacts(
+            [Artifact(id: "rain", title: "Rain report", type: .markdown, language: "", content: "The river rose [2].")],
+            conversationID: conversationID, messageID: "cited-revision", sources: [rain, river], revising: rainID)
+        let rainVersions = store.artifactVersions(rainID)
+        try check(rainVersions.count == 2 && rainVersions.first?.details.sources == [rain] && rainVersions.last?.details.sources == [river],
+                  "A revision keeps its own sources and the earlier version keeps its own")
 
         guard let revisedRecord = revised else { throw Failure(description: "The revised document is missing") }
         store.reviseArtifact(revisedRecord, change: "  Add a day trip to Sintra  ")
@@ -278,7 +305,7 @@ enum ArtifactProducerSelftest {
         try await waitForReply(store, conversationID: secondID)
         store.recordCanvasArtifacts(
             [Artifact(id: "chart", title: "Chart", type: .svg, language: "", content: "<svg/>")],
-            conversationID: secondID, messageID: "chart-message")
+            conversationID: secondID, messageID: "chart-message", sources: [])
         let doomed = store.artifactRecords.filter { $0.conversationID == secondID }
         try check(doomed.count == 1, "The second chat has one artifact")
         let doomedVersions = doomed.flatMap { store.artifactVersions($0.id) }
@@ -345,9 +372,9 @@ enum ArtifactProducerSelftest {
         let first = Artifact(id: "draft", title: "Draft", type: .markdown, language: "", content: "A")
         var second = first
         second.content = "B"
-        store.recordCanvasArtifacts([first], conversationID: draftChat, messageID: "retried-message")
-        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message")
-        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message")
+        store.recordCanvasArtifacts([first], conversationID: draftChat, messageID: "retried-message", sources: [])
+        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message", sources: [])
+        store.recordCanvasArtifacts([second], conversationID: draftChat, messageID: "retried-message", sources: [])
         let drafts = store.artifactRecords.filter { $0.title == "Draft" }
         try check(drafts.count == 1 && drafts[0].versionCount == 2 && latestText(drafts.first) == "B",
                   "A regenerated canvas block with new content becomes the next version, and a repeat adds nothing")

@@ -15,7 +15,7 @@ enum PromptScope: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var explanation: String {
         switch self {
-        case .persona: return "Vera's durable identity, sent with every request after the app policy."
+        case .persona: return "The assistant's durable identity, sent with every request after the app policy."
         case .user: return "Context about you, sent after the persona on every request."
         }
     }
@@ -262,7 +262,7 @@ enum NativePromptMigration {
         }
         let legacy = settings.systemPrompt
         let profile = PromptProfile.fresh(
-            name: "Vera",
+            name: "Default",
             scope: .persona,
             content: legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? NativeChatSettings.defaultSystemPrompt : legacy)

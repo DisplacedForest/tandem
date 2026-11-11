@@ -1,13 +1,9 @@
 import SwiftUI
 
 enum DotProfileCopy {
-    static func subtitle(_ name: String) -> String {
-        "Give \(name) a standing goal, choose what it can reach and set what asks first. You can change all of this later from the header."
-    }
+    static let subtitle = "Give {name} a standing goal, choose what it can reach and set what asks first. You can change all of this later from the header."
 
-    static func startOver(_ name: String) -> String {
-        "Removes the conversation, what \(name) remembered from it and its schedules. Artifacts stay in Artifacts."
-    }
+    static let startOver = "Removes the conversation, what {name} remembered from it and its schedules. Artifacts stay in Artifacts."
 
     static let pausedNote = "While paused, scheduled work is skipped and nothing catches up later. Chat keeps working."
     static let servicesNote = "Turned off here means it stays off in this conversation, even when it is on in Settings."

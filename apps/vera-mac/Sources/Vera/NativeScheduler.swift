@@ -18,6 +18,7 @@ enum NativeScheduleTaskStatus: Sendable, Equatable {
 struct NativeScheduleTaskLink: Sendable, Equatable {
     let referenceID: String
     let status: NativeScheduleTaskStatus
+    var endedAt: Date? = nil
 }
 
 typealias NativeScheduleBind = @Sendable (String, String) async -> Void
@@ -25,8 +26,15 @@ typealias NativeScheduleBind = @Sendable (String, String) async -> Void
 actor NativeScheduler {
     static let defaultGrace: TimeInterval = 300
     static let defaultDowntime: TimeInterval = 60
+    static let defaultCatchUp: TimeInterval = 86_400
     static let missedHistoryCap = 24
-    static let missedNote = "Tandem wasn't running at the scheduled time. It will run next time as planned."
+    static let missedNote = "Tandem wasn't running at the scheduled time."
+    static let caughtUpNote = "Caught up after Tandem wasn't running at the scheduled time."
+    static let retiredMissedNote = missedNote + " It will run next time as planned."
+
+    static func shownNote(_ saved: String) -> String {
+        saved == retiredMissedNote ? missedNote : saved
+    }
     static let waitingNote = "Waiting for your answer."
     static let blockedNote = "Open Tandem with the saved model profile so this run can continue."
 
@@ -34,18 +42,21 @@ actor NativeScheduler {
     let now: @Sendable () -> Date
     let grace: TimeInterval
     let downtime: TimeInterval
+    let catchUp: TimeInterval
     let lookup: @Sendable (NativeScheduleRun) -> NativeScheduleTaskLink?
     let fire: @Sendable (NativeSchedule, NativeScheduleRun, NativeScheduleBind) async -> NativeScheduleFireResult
     private var firing: Set<String> = []
 
     init(store: NativeScheduleStore, now: @escaping @Sendable () -> Date = { Date() },
          grace: TimeInterval = NativeScheduler.defaultGrace, downtime: TimeInterval = NativeScheduler.defaultDowntime,
+         catchUp: TimeInterval = NativeScheduler.defaultCatchUp,
          lookup: @escaping @Sendable (NativeScheduleRun) -> NativeScheduleTaskLink?,
          fire: @escaping @Sendable (NativeSchedule, NativeScheduleRun, NativeScheduleBind) async -> NativeScheduleFireResult) {
         self.store = store
         self.now = now
         self.grace = grace
         self.downtime = downtime
+        self.catchUp = catchUp
         self.lookup = lookup
         self.fire = fire
     }
@@ -53,7 +64,8 @@ actor NativeScheduler {
     @discardableResult
     func tick() async -> Bool {
         let tickStart = now()
-        let baseline = (try? store.heartbeat()) ?? tickStart
+        let savedHeartbeat: Date? = (try? store.heartbeat()) ?? nil
+        let baseline = savedHeartbeat ?? tickStart
         var changed = settleRuns()
         var committed = true
         var verified = tickStart
@@ -81,18 +93,23 @@ actor NativeScheduler {
                 }
                 let last = occurrences[occurrences.count - 1]
                 let late = moment.timeIntervalSince(last)
-                let lastMissed = late > grace || (offlineSince.map { last > $0 } ?? false)
+                let offline = savedHeartbeat == nil ? late > grace : (offlineSince.map { last > $0 } ?? false)
+                let lastMissed = late > grace || offline
+                let catchingUp = lastMissed && late <= catchUp
                 var next = schedule
                 next.advance(after: moment, from: last)
-                var records = missedRuns(schedule.id, occurrences: lastMissed ? occurrences : Array(occurrences.dropLast()), at: moment)
+                let recordedMissed = lastMissed && !catchingUp ? occurrences : Array(occurrences.dropLast())
+                var records = missedRuns(schedule.id, occurrences: recordedMissed, at: moment)
                 var starting: NativeScheduleRun?
-                if !lastMissed {
+                if !lastMissed || catchingUp {
                     if hasActiveRun(schedule.id) {
                         records.append(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, finishedAt: moment, outcome: .skipped,
                                                          detail: "The previous run was still going."))
                     } else {
                         var run = NativeScheduleRun(scheduleID: schedule.id, scheduledFor: last, startedAt: moment, outcome: .running)
-                        if late >= 60 {
+                        if catchingUp && offline {
+                            run.detail = Self.caughtUpNote
+                        } else if late >= 60 {
                             let minutes = Int(late / 60)
                             run.detail = "Started \(minutes) \(minutes == 1 ? "minute" : "minutes") after the scheduled time."
                         }
@@ -159,7 +176,7 @@ actor NativeScheduler {
             saved.taskReferenceID = taskReferenceID
         case .failed(let reason):
             saved.outcome = .couldNotStart
-            saved.detail = reason
+            saved.detail = CompanionSavedText.sanitized(reason)
             saved.finishedAt = now()
         case .skipped(let reason):
             saved.outcome = .skipped
@@ -225,7 +242,11 @@ actor NativeScheduler {
             case .stopped: outcome = .stopped
             }
             run.outcome = outcome
-            run.finishedAt = now()
+            let moment = now()
+            let ended = link.endedAt.flatMap { (ended: Date) -> Date? in
+                ended <= moment && ended >= (run.startedAt ?? run.scheduledFor) ? ended : nil
+            }
+            run.finishedAt = ended ?? moment
             try? store.saveRun(run)
             changed = true
         }

@@ -10,7 +10,7 @@ enum ModelSelectionBasis: String, Codable, Equatable, Sendable {
     var explanation: String {
         switch self {
         case .user: return "You chose this model."
-        case .recommended: return "Vera selected the first model returned alphabetically."
+        case .recommended: return "Tandem selected the first model returned alphabetically."
         case .restored: return "This model was restored from your saved configuration."
         }
     }
@@ -355,7 +355,7 @@ enum NativeChatToolCatalog {
                 name: "Apple Reminders",
                 summary: "Reads and updates your reminder lists.",
                 available: true,
-                setup: "Enable this tool to grant Reminders access for explicit chat requests."),
+                setup: "Enable this tool to allow Reminders access for explicit chat requests."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.searchToolID,
                 name: "Web search",
@@ -370,16 +370,16 @@ enum NativeChatToolCatalog {
                 setup: "Enable this tool to let answers read pages you or a search point to."),
             NativeChatToolDescriptor(
                 id: NativeFolderTools.toolID,
-                name: "Files in granted folders",
-                summary: "Reads, searches, writes, edits and moves files inside folders you grant to a chat, and can move them to the Trash under your rules. Nothing is deleted outright.",
+                name: "Files in shared folders",
+                summary: "Reads, searches, writes, edits and moves files inside folders you share with a chat, and can move them to the Trash under your rules. Nothing is deleted outright.",
                 available: true,
-                setup: "Grant a folder from the composer to turn these on for that chat."),
+                setup: "Share a folder from the message box to turn these on for that chat."),
             NativeChatToolDescriptor(
                 id: NativeCommandTools.toolID,
-                name: "Commands in granted folders",
-                summary: "Runs shell commands with a granted folder as the working directory. Your rules decide whether each command runs, asks first, or is handed to you.",
+                name: "Commands in shared folders",
+                summary: "Runs shell commands with a shared folder as the working directory. Your rules decide whether each command runs, asks first, or is handed to you.",
                 available: true,
-                setup: "Grant a folder from the composer to turn this on for that chat. Set what asks first in the Rules tab."),
+                setup: "Share a folder from the message box to turn this on for that chat. Set what asks first in the Rules tab."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Background work",

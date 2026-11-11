@@ -13,9 +13,9 @@ struct DotSheetShot: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(settings ? store.companion.leading : "Set up \(store.companion.inline)").font(.system(size: 17, weight: .semibold))
+            CompanionNamedText(template: settings ? CompanionSentence.placeholder : "Set up {name}").font(.system(size: 17, weight: .semibold))
             if !settings {
-                Text(DotProfileCopy.subtitle(store.companion.inline))
+                CompanionNamedText(template: DotProfileCopy.subtitle)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
@@ -68,7 +68,7 @@ struct DotSheetShot: View {
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                     row("Start over") {
                         HStack(alignment: .top) {
-                            Text(DotProfileCopy.startOver(store.companion.inline))
+                            CompanionNamedText(template: DotProfileCopy.startOver)
                                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 10)

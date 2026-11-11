@@ -358,6 +358,7 @@ extension ChatStore {
     func clearTurnDecisions(_ turn: NativeConversationTurn) {
         turnDeclineSource.clear(turn: turn.id)
         turnCommandReasonSource.clear(prefix: Self.scopedBlockID("", turn: turn))
+        forgetRuleOfferCandidates(turn)
     }
 
     private func pendingTurnFailure(_ turn: NativeConversationTurn) -> String? {
@@ -420,6 +421,7 @@ extension ChatStore {
         guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt else { return }
         execution.deadline?.cancel()
         execution.task = nil
+        offerToStopAsking(after: turn)
         resolveTurnConfirmation(turn.assistantMessageID, approved: false)
         clearTurnDecisions(turn)
         if let location = turnLocation(turn) {
@@ -467,7 +469,7 @@ extension ChatStore {
         }
         if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && message.artifacts.isEmpty { revertPreferenceCapture(turn) }
         recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
-                              revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
+                              sources: message.sources, revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
         resolveTurnConfirmation(messageID, approved: false)
         clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)
@@ -540,7 +542,7 @@ extension ChatStore {
         (turn.attempt ?? turn.id).uuidString.lowercased() + ":" + id
     }
 
-    nonisolated static func cardSubject(for activity: NativeToolActivity, definitions: [NativeToolDefinition], typedText: String) -> NativeCardSubject? {
+    nonisolated static func cardSubject(for activity: NativeToolActivity, definitions: [NativeToolDefinition]) -> NativeCardSubject? {
         guard let definition = definitions.first(where: { $0.name == activity.name && $0.id == activity.toolID }),
               let data = activity.request.data(using: .utf8), let arguments = try? NativeJSONValue.piRead(data).piObject,
               let action = definition.actionClass(for: arguments) else { return nil }
@@ -549,7 +551,7 @@ extension ChatStore {
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
                                  governed: definition.governed,
-                                 typedText: typedText, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
+                                 fixed: definition.fixedDestination, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
     }
 
     func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil) async -> Bool {
@@ -627,6 +629,7 @@ extension ChatStore {
                 attachDisplayBlock(.commandRun(NativeCommandRun(id: Self.scopedBlockID(request.id, turn: execution.record), command: command, directory: directory, outcome: .declined)), turn: execution.record)
             }
         }
+        recordRuleOfferDecision(decision, request: request, turn: turn, chosen: owned && requestID != nil)
         if let request, !decision.approves {
             turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
         }

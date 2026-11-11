@@ -414,7 +414,13 @@ enum ArtifactExportSelftest {
             kind: .canvas, title: "Sketch", conversationID: nil, originTitle: nil, messageID: nil,
             sourceKey: "selftest:canvas", data: citedBytes, mime: "text/markdown", fileExtension: "md",
             details: ArtifactDetails(sources: citedSources, canvasType: .markdown))) else { throw Failure(description: "The store records a canvas") }
-        try check(store.librarySaveData(canvas) == .success(citedBytes), "A canvas saves its original bytes")
+        try check(store.librarySaveData(canvas) == .success(Data(citedSaved.utf8)),
+                  "A cited Markdown piece from a reply saves with its Sources list, like a document")
+        guard let page = store.recordArtifact(ArtifactDraft(
+            kind: .canvas, title: "Page", conversationID: nil, originTitle: nil, messageID: nil,
+            sourceKey: "selftest:page", data: citedBytes, mime: "text/html", fileExtension: "html",
+            details: ArtifactDetails(sources: citedSources, canvasType: .html))) else { throw Failure(description: "The store records a page") }
+        try check(store.librarySaveData(page) == .success(citedBytes), "A page canvas saves its original bytes")
 
         try copiesPlainFiles(in: root.appendingPathComponent("files", isDirectory: true))
 

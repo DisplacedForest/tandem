@@ -222,10 +222,10 @@ struct NativeModelEditor: View {
             Label("Authentication failed. Check the API key, save it, then retry.", systemImage: "lock.trianglebadge.exclamationmark")
                 .font(.system(size: 12)).foregroundStyle(.red)
         case .networkFailed:
-            Label("Vera could not reach the endpoint. Check its URL and network connection, then retry.", systemImage: "network.slash")
+            Label("Tandem could not reach the endpoint. Check its URL and network connection, then retry.", systemImage: "network.slash")
                 .font(.system(size: 12)).foregroundStyle(.red)
         case .malformed:
-            Label("The endpoint returned a model response Vera could not read.", systemImage: "doc.badge.ellipsis")
+            Label("The endpoint returned a model response Tandem could not read.", systemImage: "doc.badge.ellipsis")
                 .font(.system(size: 12)).foregroundStyle(.red)
         case .failed(let message):
             Label(message, systemImage: "xmark.circle.fill")
@@ -334,7 +334,7 @@ struct NativeVisionBridgeEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("When the selected model does not accept images, Vera can send attachments to this separate OpenAI-compatible vision endpoint and share its description with your model, clearly labeled in the conversation.")
+            Text("When the selected model does not accept images, Tandem can send attachments to this separate OpenAI-compatible vision endpoint and share its description with your model, clearly labeled in the conversation.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             LabeledContent("Base URL") {
                 TextField("https://vision-host.example/v1", text: config.visionBridgeBinding(\.baseURL))
@@ -356,7 +356,7 @@ struct NativeVisionBridgeEditor: View {
                       systemImage: "checkmark.circle.fill")
                     .font(.system(size: 12)).foregroundStyle(.green)
             } else {
-                Label("No bridge configured. When the model cannot take an attachment, Vera asks whether to send the message without it.",
+                Label("No bridge configured. When the model cannot take an attachment, Tandem asks whether to send the message without it.",
                       systemImage: "circle.dashed")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
@@ -540,10 +540,10 @@ struct NativeMemorySettingsTab: View {
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
                 Toggle("Use approved memory in native chat", isOn: live(\.enabled))
-                Text("Approved memory is stored only on this Mac. Vera only recalls approved items, and every model-suggested change waits for your review.")
+                Text("Approved memory is stored only on this Mac. Tandem only recalls approved items, and every model-suggested change waits for your review.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 Toggle("Search past chats", isOn: live(\.searchPastChats))
-                Text("When enabled, Vera may use completed local chats to suggest memory changes. Chats are not copied into memory.")
+                Text("When enabled, Tandem may use completed local chats to suggest memory changes. Chats are not copied into memory.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 Toggle("Generate proposals from completed chats", isOn: live(\.generateFromChats))
                 Text("Suggestions appear in the Memory review queue. They never become approved memory on their own.")
@@ -592,7 +592,7 @@ struct NativeMemorySettingsTab: View {
                     Text("Family").tag("family")
                     Text("Projects").tag("projects")
                 }
-                Text("Vera gathers up to \(NativeMemoryRetrievalLimits.lexicalCandidates) matches by words and \(NativeMemoryRetrievalLimits.semanticCandidates) by meaning, merges them, reranks the top \(NativeMemoryRetrievalLimits.rerankCount) when a rerank model is set, and keeps at most \(NativeMemoryRetrievalLimits.itemLimit) items within about \(NativeMemoryRetrievalLimits.tokenBudget) tokens. Expired, suppressed, deleted, pending, and unrelated items are excluded.")
+                Text("Tandem gathers up to \(NativeMemoryRetrievalLimits.lexicalCandidates) matches by words and \(NativeMemoryRetrievalLimits.semanticCandidates) by meaning, merges them, reranks the top \(NativeMemoryRetrievalLimits.rerankCount) when a rerank model is set, and keeps at most \(NativeMemoryRetrievalLimits.itemLimit) items within about \(NativeMemoryRetrievalLimits.tokenBudget) tokens. Expired, suppressed, deleted, pending, and unrelated items are excluded.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Section {
@@ -940,7 +940,7 @@ struct CompanionShortcutRecorder: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .help("Press it from any app to open a small composer over the companion thread. Escape hides it.")
+            .help("Press it from any app to open a small message box over the companion thread. Escape hides it.")
             .accessibilityLabel("Quick ask shortcut")
             .accessibilityValue(recording ? "Press a shortcut" : config.companionShortcut.displayName)
             .accessibilityHint("Click, then press the keys you want.")

@@ -152,9 +152,9 @@ enum ArtifactLibrarySelectionSelftest {
         state.apply(conversation: nil, open: nil, in: records)
         try check(state == ArtifactLibrarySelection(selectedID: "doc-b"), "No pending request changes nothing")
 
-        try check(ArtifactLibrarySelection.companionFilterTitle(name: nil) == "From your companion",
+        try check(CompanionSentence.plain(ArtifactLibrarySelection.companionFilterTitle, name: nil) == "From your companion",
                   "An unnamed companion is your companion in the filter label")
-        try check(ArtifactLibrarySelection.companionFilterTitle(name: "Juniper") == "From Juniper", "A chosen name is used in the filter label")
+        try check(CompanionSentence.plain(ArtifactLibrarySelection.companionFilterTitle, name: "Juniper") == "From Juniper", "A chosen name is used in the filter label")
 
         try check(ArtifactLibrarySelection.companionOriginLabel(name: nil) == "Your companion",
                   "An unnamed companion is your companion in a row and in the detail header")
