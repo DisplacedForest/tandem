@@ -89,7 +89,7 @@ enum NativeInstruction {
         guard marks.count == 2, marks[1] - marks[0] > 1 else { return nil }
         let open = marks[0], close = marks[1]
         guard open == 0 || characters[open - 1].isWhitespace else { return nil }
-        guard !characters[open + 1].isWhitespace, !characters[close - 1].isWhitespace else { return nil }
+        guard !characters[open + 1].isWhitespace, !characters[close - 1].isWhitespace, !".,;:!?".contains(characters[close - 1]) else { return nil }
         let after = String(characters[(close + 1)...])
         guard after.isEmpty || after.first?.isWhitespace == true || after == "." || after.hasPrefix(". ") else { return nil }
         return String(characters[..<open]) + String(characters[(open + 1)..<close]) + after

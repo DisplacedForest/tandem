@@ -122,7 +122,7 @@ extension SelfTest {
         let loose = try target(.folder, "/shared/notes.txt")
         for typed in ["Delete /shared/prefix:notes.txt", "Delete x,notes.txt", "Delete my-notes.txt", "Delete ~notes.txt", "Delete other/notes.txt",
                       "Delete /shared/archive(notes.txt)", "Delete /shared/archive(/shared/notes.txt)", "Delete `` /shared/notes.txt` ``",
-                      "Delete (notes.txt)", "Delete `notes.txt`x", "Delete x`notes.txt`", "Delete ``notes.txt``", "Delete `notes.txt` and `other.txt`"] {
+                      "Delete (notes.txt)", "Delete `notes.txt`x", "Delete `/shared/notes.txt,`", "Delete `notes.txt.`", "Delete `notes.txt;` now", "Delete x`notes.txt`", "Delete ``notes.txt``", "Delete `notes.txt` and `other.txt`"] {
             try require(resolver(rules(.ask, for: .trash), typed: NativeTypedWords(typed: typed), claim: trashClaim, targets: [loose]).decision(for: .trash) == .ask,
                         "A file name that is only the end of something longer is not that file: \(typed)")
         }
