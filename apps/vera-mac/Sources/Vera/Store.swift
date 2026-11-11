@@ -69,6 +69,7 @@ final class ChatStore: ObservableObject {
         }
     }
     @Published private(set) var companionPanelError: CompanionConfigurationError?
+    var companionArtifactKeeper: ((String) throws -> Void)?
     @Published var companionFocusTick = 0
     static let companionSeenKey = "companion_last_seen_reply"
     var companionDefaults: UserDefaults = .standard

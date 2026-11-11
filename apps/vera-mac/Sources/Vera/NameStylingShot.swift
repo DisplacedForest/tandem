@@ -3,20 +3,22 @@ import SwiftUI
 
 @MainActor
 enum NameStylingShot {
-    static let views: Set<String> = ["name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
+    static let views: Set<String> = ["name-dot-settings-reset-failed", "name-dot-settings", "name-surfaces", "name-surfaces-chat", "name-appearance-draft",
                                      "name-not-connected", "name-not-connected-chat", "name-artifacts-filter", "name-scheduled-paused",
                                      "name-thread-error", "name-saved-report", "name-saved-approval", "name-saved-scheduled",
-                                     "name-saved-library"]
+                                     "name-saved-library", "name-library-after-reset", "name-panel-after-reset"]
 
     static func render(to path: String, view: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let name = CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)
-        let store = view == "name-artifacts-filter" || view == "name-saved-library" ? ArtifactShotFixture.store(variant: "artifacts").store
+        let library: Set<String> = ["name-artifacts-filter", "name-saved-library", "name-library-after-reset", "name-panel-after-reset"]
+        let store = library.contains(view) ? ArtifactShotFixture.store(variant: "artifacts").store
             : ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try? LocalChatRepository(inMemory: true))
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(),
                                  readConfiguration: { name.map { ["assistant_name": $0] } ?? [:] },
                                  writeConfiguration: { _ in })
+        if view.hasSuffix("-after-reset") { CompanionLibraryKeepFixture.startOver(store, name: name) }
         NativeDotShotFixture.populate(store, paused: view == "name-surfaces", setupCompleted: true)
         let colors = CompanionAppearance(shape: .pebble, color: .apricot)
         let size: NSSize
@@ -25,6 +27,10 @@ enum NameStylingShot {
         case "name-dot-settings":
             size = NSSize(width: 560, height: 700)
             root = AnyView(DotSettingsView())
+        case "name-dot-settings-reset-failed":
+            size = NSSize(width: 560, height: 760)
+            store.reportCompanionConfigurationError(CompanionErrorCopy.resetLead, description: "The disk is full.", tail: CompanionErrorCopy.resetTail)
+            root = AnyView(DotSettingsView(showsResetFailure: true))
         case "name-appearance-draft":
             size = NSSize(width: 680, height: 470)
             let fixture = CompanionAppearanceFixtureStore()
@@ -65,6 +71,14 @@ enum NameStylingShot {
             CompanionNameShot.apply(to: store)
             let selection = CompanionSavedTextFixture.libraryItems(store)
             root = AnyView(ArtifactsView(initialSelection: selection))
+        case "name-library-after-reset":
+            size = NSSize(width: 1000, height: 600)
+            if let thread = store.veraThreadID { CompanionLibraryKeepFixture.save(store, title: "Vent schedule", conversationID: thread) }
+            let kept = store.artifactRecords.first { (record: ArtifactRecord) -> Bool in record.title == "Frost checklist" }?.id
+            root = AnyView(ArtifactsView(initialSelection: kept, conversationFilter: store.veraThreadID))
+        case "name-panel-after-reset":
+            size = NSSize(width: 340, height: 700)
+            root = AnyView(CompanionThreadPanel(fixed: store.companionOverviewModel()))
         case "name-artifacts-filter":
             size = NSSize(width: 1000, height: 600)
             root = AnyView(ArtifactsView(conversationFilter: store.veraThreadID))
