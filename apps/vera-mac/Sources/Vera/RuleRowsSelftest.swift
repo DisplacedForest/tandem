@@ -69,6 +69,12 @@ extension SelfTest {
                                        (id: "c", title: "Mail", hints: ["mail.example"])])
         try require(Set(bare.values).count == 3 && bare["a"] == "Mail (1)" && RuleRows.toolNames([]).isEmpty,
                     "Tools that can't be told apart by anything they declare are numbered, and nothing crashes on an empty list")
+        let literal = RuleRows.toolNames([(id: "a", title: "Mail", hints: ["mail.example"]), (id: "b", title: "Mail", hints: ["post.example"]),
+                                          (id: "c", title: "Mail (mail.example)", hints: ["archive.example"])])
+        let numbered = RuleRows.toolNames([(id: "a", title: "Mail", hints: []), (id: "b", title: "Mail", hints: []),
+                                           (id: "c", title: "Mail (1)", hints: ["x.example"]), (id: "d", title: "mail (2)", hints: [])])
+        try require(Set(literal.values.map { $0.lowercased() }).count == 3 && Set(numbered.values.map { $0.lowercased() }).count == 4,
+                    "A tool whose own title matches another tool's generated label still gets a label of its own")
         let twinA = record(action: .networkSends, tool: "a", target: workshop, statement: "x")
         let twinB = record(action: .networkSends, tool: "b", target: workshop, statement: "x")
         try require(RuleRows.sentence(twinA, tools: twins) != RuleRows.sentence(twinB, tools: twins),

@@ -103,6 +103,18 @@ enum RuleRows {
                 names[entry.id] = "\(plain(entry.title)) (\(labels.isEmpty ? String(index + 1) : labels[index]))"
             }
         }
+        var taken: Set<String> = []
+        for id in names.keys.sorted() {
+            guard let label = names[id] else { continue }
+            var unique = label
+            var number = 2
+            while taken.contains(unique.lowercased()) {
+                unique = "\(label) (\(number))"
+                number += 1
+            }
+            taken.insert(unique.lowercased())
+            names[id] = unique
+        }
         return names
     }
 
