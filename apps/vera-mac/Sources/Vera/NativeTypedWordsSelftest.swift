@@ -22,6 +22,21 @@ extension SelfTest {
                         && !NativeTypedWords(typed: "It said \u{201C}mail ana@example.org\u{201D}").names(ana)
                         && !NativeTypedWords(typed: "~~~\nana@example.org\n~~~").names(ana),
                     "Text inside quote marks or a quoted block does not make a target typed")
+        try require(!NativeTypedWords(typed: "```\nana@example.org\n```").names(ana)
+                        && !NativeTypedWords(typed: "Notes:\n```text\nmail ana@example.org").names(ana)
+                        && !NativeTypedWords(typed: "The page says 'don't forget ana@example.org'.").names(ana)
+                        && !NativeTypedWords(typed: "It read 'the dogs' bowl goes to ana@example.org' I think").names(ana)
+                        && !NativeTypedWords(typed: "It said 'mail ana@example.org and stop").names(ana)
+                        && !NativeTypedWords(typed: "It said \u{201C}mail ana@example.org\nand more").names(ana),
+                    "A fenced block, a quote with an apostrophe inside it and a quote that never closes do not make a target typed")
+        try require(NativeTypedWords(typed: "Don't wait, it's fine to mail ana@example.org").names(ana)
+                        && NativeTypedWords(typed: "Can you mail ana@example.org?").names(ana)
+                        && NativeTypedWords(typed: "Mail `ana@example.org` today").names(ana)
+                        && NativeTypedWords(typed: "Mail <ana@example.org>, thanks!").names(ana),
+                    "Apostrophes in ordinary words, closing punctuation and code marks do not hide a typed address")
+        for other in ["ops!ana@example.org", "ops#ana@example.org", "a/ana@example.org", "x=ana@example.org", "o'ana@example.org", "ops~ana@example.org"] {
+            try require(!NativeTypedWords(typed: "Mail \(other) today").names(ana), "A different mailbox that ends the same way is not the same address: \(other)")
+        }
         try require(!NativeTypedWords(typed: nil).names(ana) && NativeTypedWords(typed: nil).isEmpty && NativeTypedWords.none.isEmpty,
                     "Words that did not come from the message box name nothing")
         let earlier = NativeTypedWords(typed: "Go on then.", earlier: ["My sister is ana@example.org", "Thanks"])

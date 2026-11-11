@@ -69,6 +69,27 @@ extension SelfTest {
         try require(pair.decision(for: .networkSends) == .ask && pairWhy?.kind == .unnamed && pairWhy?.subject == ana.value,
                     "Two addresses with only one allowed asks and names the other: \(String(describing: pairWhy))")
 
+        let bothTyped = NativeTypedWords(typed: "Send it to orders@workshop.example and ana@example.com")
+        let toolAllow = NativeRuleRecord(action: .networkSends, toolID: "mail", target: orders, effect: .allow, statement: "Always allow sending to orders")
+        let anaNever = NativeRuleRecord(action: .networkSends, target: ana, effect: .forbid, statement: "Never send to ana")
+        for grouped in [[[orders, ana]], [[orders], [ana]]] {
+            var mixed = resolver(typed: bothTyped, records: [toolAllow, anaNever], targets: [])
+            mixed = mixed.tool("mail", subjects: grouped)
+            try require(mixed.decision(for: .networkSends) == .handOff,
+                        "An allow for one address never carries a send past a never for another address in the same call")
+            var untypedMixed = resolver(typed: .none, records: [toolAllow, anaNever], targets: [])
+            untypedMixed = untypedMixed.tool("mail", subjects: grouped)
+            try require(untypedMixed.decision(for: .networkSends) == .handOff, "The never still wins when nothing was typed")
+            let once = NativeRuleRecord(action: .networkSends, toolID: "mail", target: ana, effect: .allow, statement: "Allow sending to ana once", remainingUses: 1)
+            var spending = resolver(typed: .none, records: [toolAllow, once], targets: [])
+            spending = spending.tool("mail", subjects: grouped)
+            let spent = spending.decide(for: .networkSends, honoringLimitedUse: true)
+            try require(acts(spent.decision) && Set(spent.authorizedBy) == Set([toolAllow.id, once.id]),
+                        "Every saved allow a send to several addresses relies on is reported, so a one-use allow is spent: \(spent.authorizedBy)")
+            try require(spending.decide(for: .networkSends, honoringLimitedUse: false).decision == .ask,
+                        "A one-use allow that is not being honored does not cover its address")
+        }
+
         let broad = NativeRuleRecord(action: .networkSends, effect: .allow, statement: "Always allow sending")
         let broadHere = NativeRuleRecord(scope: .conversation(chat), action: .networkSends, effect: .allow, statement: "Always allow sending in this chat")
         for record in [broad, broadHere] {

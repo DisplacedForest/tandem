@@ -184,7 +184,7 @@ enum NativeCapabilityTools {
             if !fields.isEmpty {
                 definition.ruleSubjects = { arguments in
                     let targets = declaration.recipients(arguments)
-                    return targets.isEmpty ? [] : [targets]
+                    return targets.map { [$0] }
                 }
             }
         }
