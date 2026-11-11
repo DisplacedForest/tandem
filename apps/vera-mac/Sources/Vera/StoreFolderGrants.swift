@@ -213,10 +213,11 @@ extension ChatStore {
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
-                                           action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
+                                           action: NativeActionClass, subjects: [[NativeRuleTarget]], roots: [String] = [],
+                                           listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeRuleVerdict {
         var resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeFolderTools.toolID, subjects: subjects)
         resolver.uses = uses
-        resolver.asked = NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) }
+        resolver.asked = NativeFolderTools.instructionClaim(action, targets: subjects.flatMap { $0 }, roots: roots, listing: listing)
         return instructedVerdict(resolver, action: action, rules: rules, store: store)
     }
 

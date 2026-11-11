@@ -294,7 +294,10 @@ enum NativeCompanionWorker {
                   NativeCommandClassifier.unplain(command, directory: arguments.folderString("directory")) == nil else { return nil }
             return NativeInstructionClaim(verbs: NativeCommandTools.verbs)
         }
-        if definition.id == NativeFolderTools.toolID { return NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) } }
+        if definition.id == NativeFolderTools.toolID {
+            return NativeFolderTools.instructionClaim(action, targets: ruleQuery(definition, arguments, action: action).targets,
+                                                      roots: definition.folderRoots?() ?? [])
+        }
         guard !definition.verbs.isEmpty else { return nil }
         return NativeInstructionClaim(verbs: definition.verbs, names: definition.instructionNames?(arguments) ?? [], nothing: definition.namesNothing)
     }
