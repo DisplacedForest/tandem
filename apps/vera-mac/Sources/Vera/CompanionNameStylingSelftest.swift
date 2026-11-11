@@ -62,21 +62,43 @@ extension SelfTest {
             store.adoptAssistantName(name)
             let subject = name ?? "Your companion"
             store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "disk full")
+            let saved = CompanionLine.namedThenText(CompanionErrorCopy.saveLead, "disk full")
             try require(store.chatConfigurationError == "\(subject)'s settings couldn't be saved: disk full", "The plain error is finished text")
-            try require(store.chatConfigurationErrorTemplate == CompanionErrorCopy.saveLead + "disk full", "The template is kept beside it")
-            try require(store.chatConfigurationErrorLine == .named(CompanionErrorCopy.saveLead + "disk full"), "Real text draws the styled template")
-            try require(store.companionOpeningErrorLine == .named(CompanionErrorCopy.saveLead + "disk full"), "The opening view draws the styled template")
+            try require(store.chatConfigurationErrorLine == saved, "Real text draws the styled line")
+            try require(store.companionOpeningErrorLine == saved, "The opening view draws the styled line")
+            try require(store.focusedChatConfigurationError == nil, "An ordinary chat is not shown the companion's error")
+            store.companionError = store.chatConfigurationError
+            try require(store.companionErrorLine == saved, "The quick panel draws the same styled line")
+            store.adoptAssistantName("Moss")
+            try require(store.chatConfigurationError == "Moss's settings couldn't be saved: disk full" && store.chatConfigurationErrorLine == saved,
+                        "A rename carries into the error and keeps it styled")
+            try require(store.companionError == "Moss's settings couldn't be saved: disk full" && store.companionErrorLine == saved,
+                        "A rename carries into the quick panel's copy")
+            store.adoptAssistantName(nil)
+            try require(store.chatConfigurationError == "Your companion's settings couldn't be saved: disk full" && store.chatConfigurationErrorLine == saved,
+                        "Removing the name carries into the error")
+            store.adoptAssistantName(name)
+            store.companionError = nil
             store.chatConfigurationError = "Messages couldn't load: offline"
-            try require(store.chatConfigurationErrorTemplate == nil, "An unrelated error clears the template")
+            try require(store.companionConfigurationError == nil, "An unrelated error replaces the companion's")
             try require(store.chatConfigurationErrorLine == .literal("Messages couldn't load: offline"), "An unrelated error draws as plain text")
+            try require(store.focusedChatConfigurationError == "Messages couldn't load: offline", "An ordinary chat still shows an ordinary error")
+            store.adoptAssistantName("Moss")
+            try require(store.chatConfigurationError == "Messages couldn't load: offline", "A rename leaves an unrelated error alone")
+            store.adoptAssistantName(name)
             store.reportCompanionConfigurationError(CompanionErrorCopy.threadLead, description: "disk full")
             store.chatConfigurationError = nil
-            try require(store.chatConfigurationErrorTemplate == nil && store.chatConfigurationErrorLine == nil, "Clearing the error clears the template")
+            try require(store.companionConfigurationError == nil && store.chatConfigurationErrorLine == nil, "Clearing the error clears the styled line")
             store.reportCompanionConfigurationError(CompanionErrorCopy.loadLead, description: "bad {name} value", tail: CompanionErrorCopy.loadTail)
-            try require(store.chatConfigurationErrorTemplate == nil, "A description holding the placeholder sets no template")
             try require(store.chatConfigurationError == "\(subject)'s goal and settings couldn't load: bad {name} value" + CompanionErrorCopy.loadTail,
                         "A description holding the placeholder is kept word for word")
-            try require(store.chatConfigurationErrorLine == .literal(store.chatConfigurationError ?? ""), "That error draws as plain text")
+            try require(store.chatConfigurationErrorLine == .namedThenText(CompanionErrorCopy.loadLead, "bad {name} value" + CompanionErrorCopy.loadTail),
+                        "That error still draws its own name styled")
+            store.chatConfigurationError = nil
         }
+        try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: "Ada") == "Focused chats, Ada", "The scope list names the companion")
+        try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: nil) == "Focused chats, your companion", "The scope list reads plainly unnamed")
+        try require(IntegrationsText.scopes(["assistant"]).plain(name: nil) == "Your companion", "A lone companion scope starts with a capital")
+        try require(IntegrationsText.scopes(["focused", "worker"]) == .literal("Focused chats, Background work"), "A list without the companion is finished text")
     }
 }

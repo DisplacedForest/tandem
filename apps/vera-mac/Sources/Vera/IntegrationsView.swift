@@ -21,8 +21,11 @@ enum IntegrationsText {
         [("focused", "Focused chats"), ("assistant", companion.leading), ("worker", "Background work")]
     }
 
-    static func scopes(_ scopes: Set<String>, companion: CompanionSubject) -> String {
-        scopeOrder(companion).filter { scopes.contains($0.key) }.map(\.title).joined(separator: ", ")
+    static func scopes(_ scopes: Set<String>) -> CompanionLine {
+        let titles = scopeOrder(CompanionSubject(nil)).filter { scopes.contains($0.key) }
+            .map { (scope: (key: String, title: String)) -> String in scope.key == "assistant" ? CompanionSentence.placeholder : scope.title }
+        let text = titles.joined(separator: ", ")
+        return scopes.contains("assistant") ? .named(text) : .literal(text)
     }
 
     static func authentication(_ authentication: NativeMCPServerConfiguration.Authentication) -> String {
@@ -319,7 +322,7 @@ private struct IntegrationsDestination: View {
                 }
             }
             IntegrationsSection(title: "Available in") {
-                Text(IntegrationsText.scopes(configuration.scopes, companion: store.companion)).font(.system(size: 13))
+                CompanionLineText(line: IntegrationsText.scopes(configuration.scopes)).font(.system(size: 13))
             }
             if let consentError {
                 IntegrationsNotice(text: consentError)

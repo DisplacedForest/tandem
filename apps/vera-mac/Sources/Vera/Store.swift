@@ -74,30 +74,43 @@ final class ChatStore: ObservableObject {
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
     @Published var chatConfigurationError: String? {
         didSet {
-            if let template = chatConfigurationErrorTemplate, CompanionSentence.plain(template, name: companionName) != chatConfigurationError {
-                chatConfigurationErrorTemplate = nil
+            if let error = companionConfigurationError, error.plain(name: companionName) != chatConfigurationError {
+                companionConfigurationError = nil
             }
         }
     }
-    @Published private(set) var chatConfigurationErrorTemplate: String?
+    @Published private(set) var companionConfigurationError: CompanionConfigurationError?
 
     var chatConfigurationErrorLine: CompanionLine? {
         guard let chatConfigurationError else { return nil }
-        if let template = chatConfigurationErrorTemplate, CompanionSentence.plain(template, name: companionName) == chatConfigurationError {
-            return .named(template)
-        }
-        return .literal(chatConfigurationError)
+        return companionConfigurationError?.line ?? .literal(chatConfigurationError)
+    }
+
+    var focusedChatConfigurationError: String? {
+        companionConfigurationError == nil ? chatConfigurationError : nil
+    }
+
+    var companionErrorLine: CompanionLine? {
+        guard let companionError else { return nil }
+        if let error = companionConfigurationError, error.plain(name: companionName) == companionError { return error.line }
+        return .literal(companionError)
     }
 
     func reportCompanionConfigurationError(_ lead: String, description: String, tail: String = "") {
-        guard !description.contains(CompanionSentence.placeholder) else {
-            chatConfigurationErrorTemplate = nil
-            chatConfigurationError = CompanionSentence.plain(lead, name: companionName) + description + tail
-            return
-        }
-        let template = lead + description + tail
-        chatConfigurationErrorTemplate = template
-        chatConfigurationError = CompanionSentence.plain(template, name: companionName)
+        let error = CompanionConfigurationError(lead: lead, detail: description + tail)
+        companionConfigurationError = error
+        chatConfigurationError = error.plain(name: companionName)
+    }
+
+    private func renameCompanionConfigurationError(from old: String?) {
+        guard let error = companionConfigurationError, old != companionName else { return }
+        let before = error.plain(name: old)
+        let after = error.plain(name: companionName)
+        guard chatConfigurationError == before else { return }
+        companionConfigurationError = nil
+        chatConfigurationError = after
+        companionConfigurationError = error
+        if companionError == before { companionError = after }
     }
     @Published var lastRequestTrace: NativeRequestTrace?
     @Published var parameterRejection: NativeParameterRejectionPrompt?
@@ -125,7 +138,9 @@ final class ChatStore: ObservableObject {
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
     private var nativeOwnerName: String?
-    @Published private(set) var companionName: String?
+    @Published private(set) var companionName: String? {
+        didSet { renameCompanionConfigurationError(from: oldValue) }
+    }
     var companion: CompanionSubject { CompanionSubject(companionName) }
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]

@@ -577,7 +577,7 @@ struct EmptyChatView: View {
                         .foregroundStyle(Theme.warmTextPrimary)
                 }
                 ComposerField()
-                if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.chatConfigurationError.map(CompanionLine.literal) {
+                if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.focusedChatConfigurationError.map(CompanionLine.literal) {
                     Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive && project == nil {

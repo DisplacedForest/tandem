@@ -1,5 +1,13 @@
 import Foundation
 
+struct CompanionConfigurationError: Equatable, Sendable {
+    var lead: String
+    var detail: String
+
+    var line: CompanionLine { .namedThenText(lead, detail) }
+    func plain(name: String?) -> String { line.plain(name: name) }
+}
+
 enum CompanionErrorCopy {
     static let loadLead = "{name}'s goal and settings couldn't load: "
     static let loadTail = " Scheduled work is paused and no services are connected until the settings are saved again."

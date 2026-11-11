@@ -322,10 +322,10 @@ struct CompanionPanelView: View {
                     Spacer(minLength: 0)
                 }
             }
-            if let error = store.companionError {
+            if let error = store.companionErrorLine {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                    Text(error).font(.system(size: 11))
+                    CompanionLineText(line: error).font(.system(size: 11))
                 }
                 .foregroundStyle(Theme.textSecondary)
             }

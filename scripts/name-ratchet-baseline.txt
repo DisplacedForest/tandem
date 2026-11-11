@@ -7,7 +7,6 @@
 1 apps/vera-mac/Sources/Vera/NativePiCandidate.swift
 3 apps/vera-mac/Sources/Vera/NativePiPresentation.swift
 3 apps/vera-mac/Sources/Vera/NativePiProduction.swift
-1 apps/vera-mac/Sources/Vera/NativeProviderSmoke.swift
 1 apps/vera-mac/Sources/Vera/NativeRules.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskTransportTiming.swift
 1 apps/vera-mac/Sources/Vera/SafeAppReplacement.swift
