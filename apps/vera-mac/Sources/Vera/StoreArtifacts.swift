@@ -84,25 +84,29 @@ extension ChatStore {
 
     static func canvasArtifactDraft(
         _ artifact: Artifact, sourceKey: String, conversationID: String?, originTitle: String?,
-        messageID: String?, asDocument: Bool = false
+        messageID: String?, asDocument: Bool = false, sources: [PulseSource] = []
     ) -> ArtifactDraft {
         let format = asDocument ? (mime: "text/markdown", fileExtension: "md") : canvasFormat(artifact)
         let language = artifact.language.trimmingCharacters(in: .whitespaces)
+        let cited = asDocument || artifact.type == .markdown
+            ? Set(CitationResolver.scan(artifact.content, known: Set(sources.map(\.n))).refs) : []
         return ArtifactDraft(
             kind: asDocument ? .document : .canvas, title: artifact.title, conversationID: conversationID,
             originTitle: originTitle, messageID: messageID, sourceKey: sourceKey, data: Data(artifact.content.utf8),
             mime: format.mime, fileExtension: format.fileExtension,
-            details: ArtifactDetails(canvasType: artifact.type, language: language.isEmpty ? nil : language))
+            details: ArtifactDetails(sources: sources.filter { cited.contains($0.n) }.sorted { $0.n < $1.n },
+                                     canvasType: artifact.type, language: language.isEmpty ? nil : language))
     }
 
-    func recordCanvasArtifacts(_ artifacts: [Artifact], conversationID: String, messageID: String, revising target: String? = nil) {
+    func recordCanvasArtifacts(_ artifacts: [Artifact], conversationID: String, messageID: String, sources: [PulseSource],
+                               revising target: String? = nil) {
         guard let artifactRepository, !artifacts.isEmpty else { return }
         let origin = conversations.first(where: { $0.id == conversationID })?.title
         let revisingDocument = target.flatMap { try? artifactRepository.artifact($0) }?.kind == .document
         for (index, artifact) in artifacts.enumerated() {
             recordArtifact(Self.canvasArtifactDraft(
                 artifact, sourceKey: "canvas:\(messageID):\(index):\(artifact.id)", conversationID: conversationID,
-                originTitle: origin, messageID: messageID, asDocument: revisingDocument), revising: target)
+                originTitle: origin, messageID: messageID, asDocument: revisingDocument, sources: sources), revising: target)
         }
     }
 
