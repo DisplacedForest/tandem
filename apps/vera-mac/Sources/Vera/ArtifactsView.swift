@@ -150,6 +150,16 @@ extension ChatStore {
         return exported == text ? result : .success(Data(exported.utf8))
     }
 
+    func artifactOriginLine(_ record: ArtifactRecord, lead: String = "", tail: String = "") -> CompanionLine {
+        let companion = isVeraThread(record.conversationID) || record.originTitle == CompanionSavedText.marker
+        guard companion, companionName != nil else { return .literal(lead + artifactOriginLabel(record) + tail) }
+        var parts: [CompanionLinePart] = []
+        if !lead.isEmpty { parts.append(.text(lead)) }
+        parts.append(.name)
+        if !tail.isEmpty { parts.append(.text(tail)) }
+        return .parts(parts)
+    }
+
     func artifactOriginLabel(_ record: ArtifactRecord) -> String {
         if let id = record.conversationID, isVeraThread(id) {
             return ArtifactLibrarySelection.companionOriginLabel(name: companionName)
@@ -256,7 +266,7 @@ struct ArtifactsView: View {
                 ShotSafeScroll(renderSafe: renderSafe) {
                     VStack(spacing: 2) {
                         ForEach(filtered) { record in
-                            ArtifactRow(record: record, origin: store.artifactOriginLabel(record),
+                            ArtifactRow(record: record, origin: store.artifactOriginLine(record, tail: " · \(ArtifactDateLabel.text(record.updatedAt))"),
                                         selected: record.id == selected?.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture { state.selectedID = record.id }
@@ -433,7 +443,7 @@ private struct ArtifactFilterPill: View {
 
 private struct ArtifactRow: View {
     let record: ArtifactRecord
-    let origin: String
+    let origin: CompanionLine
     let selected: Bool
 
     var body: some View {
@@ -442,7 +452,7 @@ private struct ArtifactRow: View {
                 .frame(width: 18).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text("\(origin) · \(ArtifactDateLabel.text(record.updatedAt))")
+                CompanionLineText(line: origin)
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -494,7 +504,8 @@ private struct ArtifactDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(record.title).font(.system(size: 17, weight: .semibold)).lineLimit(2)
                         .textSelection(.enabled)
-                    Text("\(record.kind.label) · \(store.artifactOriginLabel(record)) · \(ArtifactDateLabel.text(version?.createdAt ?? record.updatedAt))")
+                    CompanionLineText(line: store.artifactOriginLine(record, lead: "\(record.kind.label) · ",
+                                                                     tail: " · \(ArtifactDateLabel.text(version?.createdAt ?? record.updatedAt))"))
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)

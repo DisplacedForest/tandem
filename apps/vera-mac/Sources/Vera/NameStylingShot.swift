@@ -48,7 +48,7 @@ enum NameStylingShot {
             }
             root = AnyView(
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(cards, id: \.id) { (card: NativeTaskCardPresentation) in NativeTaskCardView(card: card) }
+                    ForEach(cards, id: \.id) { (card: NativeTaskCardPresentation) in NativeTaskCardView(card: card, onDecide: { _ in }) }
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

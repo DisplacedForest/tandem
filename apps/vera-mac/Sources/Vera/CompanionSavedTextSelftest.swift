@@ -45,7 +45,8 @@ enum CompanionSavedTextFixture {
         for (state, result, decision) in [("completed", handOffResult(), nil), ("completed", declinedResult(), nil),
                                           ("needs_decision", nil, approvalDecision())] as [(String, [String: Any]?, [String: Any]?)] {
             if let reference = try? reference(state: state, result: result, decision: decision),
-               let card = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card {
+               var card = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card {
+                card.choices = reference.snapshot?.decision?.choices.filter { (choice: String) -> Bool in NativeTaskCardPresentation.choiceTitle(choice) != nil }
                 cards.append(card)
             }
         }
