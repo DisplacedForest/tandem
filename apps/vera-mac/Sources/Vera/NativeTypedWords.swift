@@ -100,15 +100,8 @@ struct NativeTypedWords: Hashable, Sendable {
     static func finishes(_ text: String, at index: String.Index) -> Bool {
         var cursor = index
         while cursor < text.endIndex, text[cursor] == "`" { cursor = text.index(after: cursor) }
-        guard cursor < text.endIndex else { return true }
-        if cursor != index { return text[cursor].isWhitespace || stops(text, at: cursor) }
-        return !leads(text[cursor]) || stops(text, at: cursor)
-    }
-
-    static func stops(_ text: String, at index: String.Index) -> Bool {
-        guard ".!?".contains(text[index]) else { return false }
-        let next = text.index(after: index)
-        return next == text.endIndex || text[next].isWhitespace
+        while cursor < text.endIndex, ".,;:!?)>".contains(text[cursor]) { cursor = text.index(after: cursor) }
+        return cursor == text.endIndex || text[cursor].isWhitespace
     }
 
     static func starts(_ text: String, at index: String.Index) -> Bool {
@@ -125,14 +118,11 @@ struct NativeTypedWords: Hashable, Sendable {
 
     static func fused(_ text: String, before index: String.Index) -> Bool {
         var cursor = index
-        var marks = 0
-        while cursor > text.startIndex, text[text.index(before: cursor)] == "`" {
-            cursor = text.index(before: cursor)
-            marks += 1
-        }
+        while cursor > text.startIndex, text[text.index(before: cursor)] == "`" { cursor = text.index(before: cursor) }
         guard cursor > text.startIndex else { return false }
         let previous = text[text.index(before: cursor)]
-        return marks > 0 ? !previous.isWhitespace : leads(previous)
+        if previous.isWhitespace { return false }
+        return cursor != index || !"(<".contains(previous)
     }
 
     static func ends(_ text: String, at index: String.Index) -> Bool {

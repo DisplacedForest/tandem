@@ -158,6 +158,18 @@ extension SelfTest {
         try require(resolver(typed: NativeTypedWords(typed: "Send the notes to ana and bo@greenhouse.test!"), targets: [])
                         .tool("fixture-notes", subjects: [[alias], [bo]]).decision(for: .networkSends) == .act(.instruction),
                     "Two recipients each named on their own both count, with closing punctuation after the last")
+        let service = try target(.service, "https://api.greenhouse.test")
+        for typed in ["Send the notes to https://api.greenhouse.test:8443", "Send the notes to https://api.greenhouse.test/other",
+                      "Send the notes to https://api.greenhouse.test.evil.test", "Send the notes to x:https://api.greenhouse.test",
+                      "Send the notes to =https://api.greenhouse.test"] {
+            try require(resolver(typed: NativeTypedWords(typed: typed), targets: [service]).decision(for: .networkSends) == .ask,
+                        "A longer address is not the shorter one it contains: \(typed)")
+        }
+        try require(resolver(typed: NativeTypedWords(typed: "Send the notes to https://api.greenhouse.test, thanks."), targets: [service])
+                        .decision(for: .networkSends) == .act(.instruction)
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to <\(address)>."), targets: [ana]).decision(for: .networkSends) == .act(.instruction)
+                        && resolver(typed: NativeTypedWords(typed: "Send the notes to (\(address))!"), targets: [ana]).decision(for: .networkSends) == .act(.instruction),
+                    "An address followed only by closing punctuation is that address")
         let hello = try target(.folder, "/shared/hello.md")
         try require(resolver(rules(.ask, for: .fileEdits), typed: NativeTypedWords(typed: "Save a short hello note as hello.md"), claim: saveClaim, targets: [hello])
                         .decision(for: .fileEdits) == .act(.instruction)
