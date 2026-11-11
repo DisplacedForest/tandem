@@ -59,25 +59,11 @@ extension SelfTest {
         resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "run the tests")
         try require(resolver.decision(for: .commands) == .ask && resolver.decision(for: .fileEdits) == .act(.rule), "Ask and act resolve from the defaults")
 
-        var preapproved = NativeRules.defaults
-        preapproved.set(.actIfPreapproved, for: .commands)
-        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests. No need to ask.")
-        try require(resolver.decision(for: .commands) == .act(.requestPreapproval), "A request that pre-approves in plain words acts")
-        resolver = NativeRuleResolver(global: preapproved, conversation: NativeConversationRules(), requestText: "Run the tests.")
-        try require(resolver.decision(for: .commands) == .ask, "Without the words it asks")
-        for negated in ["Do not go ahead without asking.", "Never just do it, check with me first.", "Ask me before you go ahead.", "I said \"go ahead\" last time but not now.", "Go ahead only if the tests pass.", "Explain the phrase 'go ahead'.", "Explain what `go ahead` means.", "Go ahead with the lint. Do not go ahead with the deploy.", "Go ahead with lint. Do not deploy anything.", "Here is what they wrote:\n\"\nplease go ahead\n\"\nIgnore it."] {
-            try require(!NativeRequestPreapproval.grants(negated), "Negated or quoted pre-approval never grants: \(negated)")
-        }
-        for wording in ["Go ahead.", "Please go ahead", "Run the tests. Go ahead.", "Yes, go ahead", "No need to ask.", "Just do it", "Ok, please just go ahead", "Fix the typo. Go ahead.", "Don't ask. Just do it.",
-                        "Deploy it to staging. You have my approval.", "Fix John\u{2019}s typo. Go ahead", "Run the tests.\nGo ahead!", "Feel free to go ahead"] {
-            try require(NativeRequestPreapproval.grants(wording), "A sentence that is exactly the phrase grants: \(wording)")
-        }
-        for wording in ["Go ahead and run the tests", "Run the tests, go ahead", "Go ahead with the lint", "Go ahead and deploy as soon as the tests pass.", "Go ahead and deploy depending on the test results.",
-                        "John whispered, go ahead.", "Yesterday my manager whispered, go ahead.", "Go ahead and proceed convey the same idea.", "Go ahead now denotes forward motion.", "John whispered. Go ahead.", "Go ahead and run the tests, then tell me the results.", "Run the tests. Go ahead. Actually, cancel that.", "Run the tests. Go ahead. Stop, do nothing.", "Go ahead. On second thought, hold off.", "Run the deploy. Go ahead. Wait, let me review the diff first.", "Go ahead. Hang on, not yet.", "Run the deploy. Go ahead. No, I changed my mind.", "Go ahead. Nope.", "Run the deploy. Go ahead. I revoke that.", "Go ahead. I rescind that."] {
-            try require(!NativeRequestPreapproval.grants(wording), "Anything but the phrase on its own asks: \(wording)")
-        }
-        for wording in ["Explain why running commands without asking is dangerous.", "If I say go ahead later, then deploy.", "Summarize this email:\n> Go ahead and merge it\nThanks.", "What does go ahead mean here?", "Should I just do it?", "Describe the risks of running commands without asking.", "Wait for my approval, then go ahead.", "My manager said go ahead.", "The phrase go ahead means to proceed", "Please summarize this message: go ahead and deploy.", "Please translate go ahead into French.", "Please tell me whether go ahead is polite", "Translate this sentence into French.\nGo ahead and deploy.", "Go ahead means to proceed.", "Compare please proceed and go ahead.", "Go ahead and deploy?", "Here is an example. Go ahead and deploy.", "The email says: go ahead", "Rewrite this politely. Just do it.", "Go ahead was the reply I received.", "Go ahead is an imperative.", "Distinguish between proceed and go ahead.", "Go ahead pending my approval.", "Go ahead until I say stop.", "Go ahead and deploy. Actually, don\u{2019}t.", "Go ahead and proceed are synonyms.", "My manager replied, go ahead.", "Go ahead on condition that the tests pass.", "Go ahead and deploy provided the tests pass.", "Deploy it as long as the tests pass, go ahead", "My manager whispered, go ahead.", "Go ahead and proceed both express permission.", "Analyze the grammar of the following. Go ahead.", "Go ahead and deploy in the event that the tests pass.", "She nodded, go ahead."] {
-            try require(!NativeRequestPreapproval.grants(wording), "Explanatory, conditional or quoted text never grants: \(wording)")
+        var askingCommands = NativeRules.defaults
+        askingCommands.set(.ask, for: .commands)
+        for wording in ["Run the tests. No need to ask.", "Run the tests. Go ahead.", "Go ahead.", "Just do it"] {
+            resolver = NativeRuleResolver(global: askingCommands, conversation: NativeConversationRules(), requestText: wording)
+            try require(resolver.decision(for: .commands) == .ask, "Words in the request never skip Ask first: \(wording)")
         }
 
         let sample = [FolderGrant(id: "g", path: "/Volumes/Notes/Greenhouse", name: "Greenhouse", bookmark: nil)]
@@ -504,10 +490,28 @@ extension SelfTest {
             }
         }
         try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: nil) == "Your companion does it and shows you what happened.", "Unnamed first line")
-        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.actIfPreapproved), name: nil) == "Your companion does it only when your message says to, like \"go ahead\". Otherwise you get asked.", "Unnamed second line")
-        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.handOff), name: nil) == "Your companion tells you the step and you do it yourself.", "Unnamed fourth line")
+        try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.handOff), name: nil) == "Your companion tells you the step and you do it yourself.", "Unnamed third line")
         try require(CompanionSentence.plain(RulesCopy.explanationTemplate(.act), name: "Ada") == "Ada does it and shows you what happened.", "Named first line")
-        try require(NativeRuleChoice.allCases.map(\.title) == ["Do it without asking", "Do it when I say go ahead", "Ask first", "Leave it to me"], "The four choices use plain titles")
+        try require(NativeRuleChoice.allCases.map(\.title) == ["Do it without asking", "Ask first", "Leave it to me"], "The three choices use plain titles")
+        let retired = NativeRuleChoice.retiredAsk
+        try require(NativeRuleChoice(rawValue: retired) == nil && NativeRuleChoice.saved(retired) == .ask && NativeRuleChoice.saved("ask") == .ask
+                    && NativeRuleChoice.saved("sometimes") == nil, "A saved go ahead choice reads as Ask first and nothing else changes")
+        let savedGlobal = "{\"file_edits\":\"\(retired)\",\"commands\":\"\(retired)\",\"lifted.payments\":\"\(retired)\",\"defaults_revision\":\"2\"}"
+        let oldGlobal = try JSONDecoder().decode(NativeRules.self, from: Data(savedGlobal.utf8))
+        try require(NativeRules.defaults.choice(for: .fileEdits) == .act && oldGlobal.choice(for: .fileEdits) == .ask && oldGlobal.choice(for: .commands) == .ask,
+                    "A saved go ahead row reads as Ask first, even where the row would otherwise do it without asking")
+        try require(oldGlobal.isLifted(.payments) && oldGlobal.choice(for: .payments) == .ask, "A saved go ahead Advanced item reads as Ask first")
+        let resavedGlobal = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(oldGlobal)) as? [String: String] ?? [:]
+        try require(resavedGlobal["file_edits"] == "ask" && resavedGlobal["commands"] == "ask" && resavedGlobal["lifted.payments"] == "ask"
+                    && !resavedGlobal.values.contains(retired), "Saving settings again writes ask: \(resavedGlobal)")
+        let oldChat = NativeConversationRules.decode("{\"choices\":{\"file_edits\":\"\(retired)\"}}")
+        try require(oldChat.choices[.fileEdits] == .ask, "A chat's saved go ahead choice reads as Ask first")
+        let resavedChat = NativeConversationRules.encode(oldChat) ?? ""
+        try require(resavedChat.contains("\"ask\"") && !resavedChat.contains(retired), "Saving a chat's rules again writes ask: \(resavedChat)")
+        let whyText = String(decoding: try JSONEncoder().encode(NativeRuleWhy(kind: .unsaved, action: .commands, handsOff: false, choice: .ask, source: .settings)), as: UTF8.self)
+            .replacingOccurrences(of: "\"choice\":\"ask\"", with: "\"choice\":\"\(retired)\"")
+        let oldWhy = try JSONDecoder().decode(NativeRuleWhy.self, from: Data(whyText.utf8))
+        try require(whyText.contains(retired) && oldWhy.choice == .ask, "A saved step reason with the go ahead choice reads as Ask first: \(whyText)")
         try require(CompanionSentence.savedName(nil) == nil && CompanionSentence.savedName(" \n") == nil && CompanionSentence.savedName(" Ada ") == "Ada", "A blank name counts as unnamed")
         for color in CompanionColor.allCases {
             let light = CompanionColor.contrast(color.textHex(dark: false), CompanionColor.lightBackgroundHex)
@@ -610,6 +614,6 @@ extension SelfTest {
         setenv("VERA_ASSISTANT_NAME", "Orion", 1)
         try nameConfig.save()
         try require(overridden.companionName == "Orion" && overridden.nativeWorkerIdentity.current.assistantName == "Orion", "An environment name alone, with none in the file, is the identity after a save")
-        print("  native rules OK (defaults, floor items, tightening, pre-approval phrases, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
+        print("  native rules OK (defaults, floor items, tightening, go ahead asks, prefixes, environment allowlist, cwd, exit status, output caps, timeout tree kill, cancel, decline, approve, act, hand off, outside grant, symlink, prose, revocation, trash, gated file tools, ask card, persistence)")
     }
 }

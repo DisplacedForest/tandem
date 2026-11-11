@@ -49,6 +49,9 @@ extension SelfTest {
         }
         let risky = try NativeCompanionProfileTools.change(["action": .string("rule"), "value": .string("ask"), "category": .string("risky_commands")])
         try require(risky.category == "risky_commands" && risky.value == "ask", "A profile rule change accepts risky commands")
+        var retiredRefused = false
+        do { _ = try NativeCompanionProfileTools.change(["action": .string("rule"), "value": .string("act_if_preapproved"), "category": .string("commands")]) } catch { retiredRefused = true }
+        try require(retiredRefused, "A profile rule change refuses the retired go ahead choice")
         let installed = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil, nativeAssistantName: "Installed")
         CompanionNameShot.apply(to: installed, environment: [:])
         try require(installed.companionName == CompanionNameShot.sampleName, "A shot never shows the installed companion name: it uses the sample name by default")

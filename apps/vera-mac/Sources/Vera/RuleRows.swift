@@ -287,7 +287,6 @@ enum RuleRows {
     static func chatSentence(_ action: NativeActionClass, _ choice: NativeRuleChoice) -> String {
         switch choice {
         case .act: return "Always allow \(doing(action))"
-        case .actIfPreapproved: return "Always wait for my go-ahead before \(doing(action))"
         case .ask: return "Always ask before \(doing(action))"
         case .handOff: return "Always leave \(thing(action)) to me"
         }

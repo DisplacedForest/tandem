@@ -1462,16 +1462,6 @@ enum NativeRuleRecordsSelftest {
         let broken = source()
         broken.fail()
         try require(asks(broken, "echo hello"), "A saved prefix allow in failed mode presents a confirmation")
-        let preapproved = NativeRuleSource()
-        preapproved.setGlobal(NativeRules(choices: [.commands: .actIfPreapproved]))
-        preapproved.setRecords([record(.ask, .commands)])
-        try require(preapproved.resolver(for: "c1", requestText: "Go ahead and run it, no need to ask.").decision(forCommand: "echo hello") == .ask,
-                    "A saved ask record also overrides a request pre-approval")
-        let failedPreapproval = NativeRuleSource()
-        failedPreapproval.setGlobal(NativeRules(choices: [.commands: .actIfPreapproved]))
-        failedPreapproval.fail()
-        try require(failedPreapproval.resolver(for: "c1", requestText: "Go ahead and run it, no need to ask.").decision(forCommand: "echo hello") == .ask,
-                    "Failed mode also overrides a request pre-approval")
     }
 
     private static func commandValidationFirst(_ require: (Bool, String) throws -> Void) async throws {
