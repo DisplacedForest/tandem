@@ -18,8 +18,8 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .fileEdits: return "Edit files in granted folders"
-        case .commands: return "Run commands in granted folders"
+        case .fileEdits: return "Edit files in shared folders"
+        case .commands: return "Run commands in shared folders"
         case .trash: return "Move files to the Trash"
         case .networkSends: return "Send on your behalf"
         case .riskyCommands: return "Run risky commands"
@@ -34,9 +34,9 @@ enum NativeActionClass: String, Codable, CaseIterable, Hashable, Sendable {
 
     var detail: String {
         switch self {
-        case .fileEdits: return "Writing, editing, moving and creating files and folders inside a folder you granted."
-        case .commands: return "Running a command inside a folder you granted."
-        case .trash: return "Moving a file or folder from a folder you granted to the Trash. Nothing is ever deleted outright."
+        case .fileEdits: return "Writing, editing, moving and creating files and folders inside a folder you shared."
+        case .commands: return "Running a command inside a folder you shared."
+        case .trash: return "Moving a file or folder from a folder you shared to the Trash. Nothing is ever deleted outright."
         case .networkSends: return "Connected services that send messages, posts or uploads for you."
         case .riskyCommands: return "Commands that need administrator rights, reach into system or password locations, or can't be fully checked before they run."
         case .reminders: return "Adding, editing and completing Apple Reminders when you ask in a chat."
@@ -68,7 +68,7 @@ enum NativeFloorItem: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .credentialEntry: return "Enter a credential, card number or one-time code"
         case .payments: return "Pay or transfer money"
-        case .permanentDeletion: return "Delete permanently outside a granted folder, or empty the Trash"
+        case .permanentDeletion: return "Delete permanently outside a shared folder, or empty the Trash"
         case .ruleChanges: return "Loosen a rule because a message said to"
         }
     }

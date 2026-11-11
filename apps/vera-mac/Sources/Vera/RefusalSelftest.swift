@@ -210,7 +210,7 @@ extension SelfTest {
             try require([RefusalCopy.leftToYou, RefusalCopy.notRun].contains(RefusalCopy.label(sample)), "\(sample.kind.rawValue) has one of the two labels")
         }
 
-        let banned: Set<String> = ["grant", "kind", "class", "record", "scope", "prefix", "effect", "revoke", "floor", "lift", "lifted", "resolver"]
+        let banned: Set<String> = ["grant", "granted", "grants", "granting", "kind", "class", "record", "scope", "prefix", "effect", "revoke", "floor", "lift", "lifted", "resolver"]
         let shown = samples.flatMap { [RefusalCopy.label($0) + ". " + RefusalCopy.plain($0), RefusalCopy.forModel($0)] }
             + NativeCommandClassifier.Feature.all + [RefusalCopy.changeInRules]
         for text in shown {

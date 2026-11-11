@@ -87,7 +87,7 @@ extension SelfTest {
         failing.leaveToMe(.credentialEntry, store: other)
         try require(other.nativeRules.holds(.credentialEntry) && other.rulesNotice != nil, "Putting it back applies now even when it can't be saved")
 
-        let banned = ["floor", "lift", "lifted", "unlock", "grant", "kind", "class", "record", "scope", "effect", "revoke"]
+        let banned = ["floor", "lift", "lifted", "unlock", "grant", "granted", "grants", "granting", "kind", "class", "record", "scope", "effect", "revoke"]
         for name in [Optional("Ada"), nil] {
             for text in RulesAdvancedCopy.screenStrings(name: name) {
                 for fragment in ["Ver" + "a", "Tandem", "{name}", " her ", " she "] {
@@ -262,7 +262,7 @@ extension SelfTest {
             return (action, decision)
         }
         var deletion = NativeRules.defaults
-        try require(destructive(deletion) == (.permanentDeletion, .handOff), "A destructive command outside a granted folder hands off while permanent deletion is not on")
+        try require(destructive(deletion) == (.permanentDeletion, .handOff), "A destructive command outside a shared folder hands off while permanent deletion is not on")
         deletion.lift(.permanentDeletion)
         try require(destructive(deletion) == (.permanentDeletion, .ask), "It asks once permanent deletion is on")
         deletion.set(.act, for: .permanentDeletion)

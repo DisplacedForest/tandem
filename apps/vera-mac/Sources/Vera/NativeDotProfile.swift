@@ -171,7 +171,7 @@ enum NativeDotContext {
         switch item {
         case .credentialEntry: return "entering credentials"
         case .payments: return "paying or transferring money"
-        case .permanentDeletion: return "permanently deleting outside a granted folder"
+        case .permanentDeletion: return "permanently deleting outside a shared folder"
         case .ruleChanges: return nil
         }
     }

@@ -82,9 +82,9 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notADirectory(let path): return "\(path) is not a folder."
-        case .noGrants: return "No folder has been granted to this chat."
-        case .relativeWithoutAnchor(let path): return "\(path) is a relative path and this chat has more than one granted folder. Use a full path."
-        case .outsideGrants(let path): return "\(path) is outside every folder granted to this chat."
+        case .noGrants: return "No folder has been shared with this chat."
+        case .relativeWithoutAnchor(let path): return "\(path) is a relative path and this chat has more than one shared folder. Use a full path."
+        case .outsideGrants(let path): return "\(path) is outside every folder shared with this chat."
         case .symlink(let path): return "\(path) goes through a symbolic link, which the file tools do not follow."
         case .notFound(let path): return "\(path) does not exist."
         case .exists(let path): return "\(path) already exists."

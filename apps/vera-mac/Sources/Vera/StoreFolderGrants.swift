@@ -79,7 +79,7 @@ extension ChatStore {
     var folderToolsSupported: Bool { activeCapabilityResolution?.profile.supportsTools ?? false }
 
     var folderToolsUnsupportedReason: String? {
-        guard let resolution = activeCapabilityResolution else { return "No model is set up, so a granted folder couldn't be used yet." }
+        guard let resolution = activeCapabilityResolution else { return "No model is set up, so a shared folder couldn't be used yet." }
         guard !resolution.profile.supportsTools else { return nil }
         let model = currentNativeConfig?.model ?? "This model"
         return "\(model) can't call tools, so it can't read or change files. Pick a model with tool calling in Settings, Model, or adjust this model's capabilities there."
@@ -284,7 +284,7 @@ extension ChatStore {
     func grantFolder(_ url: URL) {
         if selectedID == nil || !conversations.contains(where: { $0.id == selectedID }) { newConversation() }
         guard let id = selectedID, let index = conversations.firstIndex(where: { $0.id == id }) else {
-            grantError = "Open a chat first, then grant the folder."
+            grantError = "Open a chat first, then share the folder."
             return
         }
         grantError = nil
@@ -295,7 +295,7 @@ extension ChatStore {
         }
         if conversations[index].grants.contains(where: { $0.path == grant.path }) { return }
         if let inside = conversations[index].grants.first(where: { NativeFolderAccess.contains(root: $0.path, path: grant.path) }) {
-            grantError = "\(grant.name) is already inside the granted folder \(inside.name)."
+            grantError = "\(grant.name) is already inside the shared folder \(inside.name)."
             return
         }
         conversations[index].grants.removeAll { NativeFolderAccess.contains(root: grant.path, path: $0.path) }
@@ -318,7 +318,7 @@ extension ChatStore {
             conversations[index].isPersisted = true
             try repository.saveConversation(conversations[index])
         } catch {
-            grantError = "The folder grant couldn't be saved: \(error.localizedDescription)"
+            grantError = "The shared folder couldn't be saved: \(error.localizedDescription)"
         }
     }
 
