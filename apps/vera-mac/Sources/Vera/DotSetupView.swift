@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum DotProfileCopy {
-    static let subtitle = "Give {name} a standing goal, choose what it can reach and set what asks first. You can change all of this later from the header."
+    static let subtitle = "Choose what {name} can reach and set what asks first. You can change all of this later from the header."
 
     static let startOver = "Removes the conversation, what {name} remembered from it and its schedules. Artifacts stay in Artifacts."
 
@@ -28,11 +28,6 @@ enum DotProfileCopy {
         }
     }
 
-    static func counter(_ count: Int) -> String? {
-        guard count > NativeDotProfile.goalLimit - 300 else { return nil }
-        return "\(count.formatted()) of \(NativeDotProfile.goalLimit.formatted()) characters"
-    }
-
     @MainActor
     static func saveName(_ name: String, config: ConfigStore, store: ChatStore) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -53,33 +48,14 @@ enum DotProfileCopy {
 struct DotProfileForm: View {
     @EnvironmentObject var store: ChatStore
     @Binding var name: String
-    @Binding var goal: String
     @Binding var selected: Set<String>
     @Binding var rules: [NativeActionClass: NativeRuleChoice]
     @Binding var revokedPrefixes: Set<String>
     let options: [NativeDotServiceOption]
 
-    private var goalBinding: Binding<String> {
-        Binding(get: { goal }, set: { goal = String($0.prefix(NativeDotProfile.goalLimit)) })
-    }
-
     var body: some View {
         Form {
             TextField("Name", text: $name, prompt: Text("Name"))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Goal")
-                TextEditor(text: goalBinding)
-                    .font(.system(size: 13))
-                    .frame(minHeight: 90)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .background(Theme.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-                if let counter = DotProfileCopy.counter(goal.count) {
-                    Text(counter).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                }
-            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Connected services")
                 if options.isEmpty {
