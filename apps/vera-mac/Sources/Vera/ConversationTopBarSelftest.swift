@@ -60,6 +60,37 @@ extension SelfTest {
         return inked > 20 && inked < side * side - 20
     }
 
+    struct IconGeometry: Equatable {
+        let bytes: Int
+        let hash: UInt64
+    }
+
+    static let iconGeometry: [InterfaceIcon: IconGeometry] = [
+        .search: IconGeometry(bytes: 500, hash: 11666982603186441170),
+        .add: IconGeometry(bytes: 265, hash: 13205456113675037522),
+        .sidebar: IconGeometry(bytes: 1366, hash: 10167534887057486873),
+        .sidebarShown: IconGeometry(bytes: 2225, hash: 14390550895553307252),
+        .more: IconGeometry(bytes: 100, hash: 9401086856371832709),
+    ]
+
+    static func iconGeometry(_ svg: String) -> IconGeometry {
+        var paths: [String] = []
+        var rest = svg[...]
+        while let start = rest.range(of: " d=\"") {
+            let after = rest[start.upperBound...]
+            guard let end = after.firstIndex(of: "\"") else { break }
+            paths.append(String(after[..<end]))
+            rest = after[after.index(after: end)...]
+        }
+        let bytes = Array(paths.joined(separator: "\n").utf8)
+        var hash: UInt64 = 14695981039346656037
+        for byte in bytes {
+            hash ^= UInt64(byte)
+            hash = hash &* 1099511628211
+        }
+        return IconGeometry(bytes: bytes.count, hash: hash)
+    }
+
     static func runConversationTopBar() throws {
         let require = NativeTaskFixture.require
 
@@ -68,7 +99,8 @@ extension SelfTest {
             guard let url = icon.url, let svg = try? String(contentsOf: url, encoding: .utf8) else {
                 throw SelfTestFailure("The \(icon.rawValue) icon file is missing from the app resources")
             }
-            try require(svg.contains("viewBox=\"0 0 24 24\"") && svg.contains(" d=\"M"), "The \(icon.rawValue) icon keeps its source geometry")
+            try require(svg.contains("viewBox=\"0 0 24 24\"") && iconGeometry(svg) == iconGeometry[icon],
+                        "The \(icon.rawValue) icon keeps its source geometry")
             guard let image = icon.image else { throw SelfTestFailure("The \(icon.rawValue) icon does not load as an image") }
             try require(image.isTemplate, "The \(icon.rawValue) icon takes the text color")
             try require(iconDraws(image), "The \(icon.rawValue) icon draws visible marks")
@@ -120,12 +152,41 @@ extension SelfTest {
         let move = filed.first { $0.title == "Move to project" }
         try require(move?.children.map(\.title) == ["Garden", "House"] && move?.children.map(\.checked) == [true, false]
                     && move?.children.first?.action == .moveToProject("garden"), "Move to project lists every project and marks the current one")
+        try require(Set(filed.map(\.id)).count == filed.count, "Every chat menu item has its own identity")
+
+        let twins = [ConversationTopBarShot.project("garden-a", "Garden"), ConversationTopBarShot.project("garden-b", "Garden")]
+        let twinMove = ConversationTopBarModel.chatMenu(ConversationTopBarShot.titledChat(), projects: twins, companionThread: false)
+            .first { $0.title == "Move to project" }?.children ?? []
+        try require(twinMove.count == 2 && Set(twinMove.map(\.id)).count == 2,
+                    "Two projects with the same name stay separate entries in Move to project")
+        try require(twinMove.map(\.action) == [.moveToProject("garden-a"), .moveToProject("garden-b")],
+                    "Each same-named project entry moves the chat to its own project")
+
+        let first = ConversationTopBarShot.titledChat()
+        var second = Conversation(id: "top-bar-second-chat", title: "Weekend errands",
+                                  messages: [Message(role: .user, text: "What do I need this weekend?")], updatedAt: Date(), isPersisted: true)
+        second.titleSource = .generated
+        let list = [first, second]
+        var selection: Conversation? = first
+        let captured = ConversationTopBarTarget(selection)
+        selection = second
+        try require(captured?.resolve(in: list)?.id == first.id && selection?.id == second.id,
+                    "Rename and instructions act on the chat that opened them after the selection moves")
+        try require(captured?.resolve(in: [second]) == nil, "A captured chat that was deleted resolves to nothing")
+        try require(ConversationTopBarTarget(nil) == nil, "No chat, nothing to act on")
 
         try require(ConversationTopBarModel.chatTitle(ConversationTopBarShot.titledChat(), companionThread: false) == ConversationTopBarShot.chatTitle,
                     "A titled chat shows its title")
         try require(ConversationTopBarModel.chatTitle(nil, companionThread: false) == nil, "No chat, no title")
         try require(ConversationTopBarModel.chatTitle(Conversation(id: "fresh", title: "New chat", messages: [], updatedAt: Date()),
                                                       companionThread: false) == nil, "A chat that has not started has no title yet")
+        try require(ConversationTopBarModel.chatTitle(Conversation(id: "saved-empty", title: "New chat", messages: [], updatedAt: Date(),
+                                                                   isPersisted: true), companionThread: false) == nil,
+                    "A saved chat with no messages and the default title has no title pill")
+        var renamedEmpty = Conversation(id: "renamed-empty", title: "Seed list", messages: [], updatedAt: Date(), isPersisted: true)
+        renamedEmpty.titleSource = .user
+        try require(ConversationTopBarModel.chatTitle(renamedEmpty, companionThread: false) == "Seed list",
+                    "A chat the person named shows its title before its history loads")
         try require(ConversationTopBarModel.chatTitle(ConversationTopBarShot.titledChat(), companionThread: true) == nil,
                     "The companion's conversation shows the companion pill instead")
 

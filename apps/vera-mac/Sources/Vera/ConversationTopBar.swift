@@ -26,16 +26,66 @@ enum ConversationTopBarAction: Hashable, Sendable {
     case excludeFromMemory
     case allowMemory
     case delete
+
+    var key: String {
+        switch self {
+        case .toggleProfile: "toggle-profile"
+        case .pause: "pause"
+        case .resume: "resume"
+        case .companionSettings: "companion-settings"
+        case .rename: "rename"
+        case .pin: "pin"
+        case .unpin: "unpin"
+        case .instructions: "instructions"
+        case .moveToProject(let project): "move-to-project:\(project)"
+        case .removeFromProject: "remove-from-project"
+        case .excludeFromMemory: "exclude-from-memory"
+        case .allowMemory: "allow-memory"
+        case .delete: "delete"
+        }
+    }
 }
 
 struct ConversationTopBarMenuItem: Hashable, Identifiable, Sendable {
+    let id: String
     let title: String
-    var action: ConversationTopBarAction? = nil
-    var destructive = false
-    var checked = false
-    var children: [ConversationTopBarMenuItem] = []
+    var action: ConversationTopBarAction?
+    var destructive: Bool
+    var checked: Bool
+    var children: [ConversationTopBarMenuItem]
 
-    var id: String { title }
+    init(title: String, action: ConversationTopBarAction, destructive: Bool = false, checked: Bool = false) {
+        self.id = action.key
+        self.title = title
+        self.action = action
+        self.destructive = destructive
+        self.checked = checked
+        self.children = []
+    }
+
+    init(id: String, title: String, children: [ConversationTopBarMenuItem]) {
+        self.id = id
+        self.title = title
+        self.action = nil
+        self.destructive = false
+        self.checked = false
+        self.children = children
+    }
+}
+
+struct ConversationTopBarTarget: Hashable, Identifiable, Sendable {
+    let id: String
+
+    init(id: String) { self.id = id }
+
+    init?(_ conversation: Conversation?) {
+        guard let conversation else { return nil }
+        self.id = conversation.id
+    }
+
+    func resolve(in conversations: [Conversation]) -> Conversation? {
+        conversations.first { $0.id == id }
+    }
 }
 
 struct ConversationSidebarControl {
@@ -83,7 +133,7 @@ enum ConversationTopBarModel {
             ConversationTopBarMenuItem(title: "Instructions\u{2026}", action: .instructions),
         ]
         if !projects.isEmpty {
-            items.append(ConversationTopBarMenuItem(title: "Move to project", children: projects.map {
+            items.append(ConversationTopBarMenuItem(id: "move-to-project", title: "Move to project", children: projects.map {
                 ConversationTopBarMenuItem(title: $0.name, action: .moveToProject($0.id), checked: conversation.projectID == $0.id)
             }))
         }
@@ -100,8 +150,12 @@ enum ConversationTopBarModel {
     static func chatTitle(_ conversation: Conversation?, companionThread: Bool) -> String? {
         guard let conversation, !companionThread else { return nil }
         let title = conversation.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !conversation.messages.isEmpty || conversation.isPersisted else { return nil }
+        guard !title.isEmpty, hasStarted(conversation) else { return nil }
         return title
+    }
+
+    static func hasStarted(_ conversation: Conversation) -> Bool {
+        !conversation.messages.isEmpty || conversation.titleSource != .fallback
     }
 }
 
@@ -136,8 +190,9 @@ struct ConversationTopBar: View {
     var fixed: CompanionOverviewModel? = nil
     var conversation: Conversation? = nil
     @State private var renaming = false
+    @State private var renameTarget: ConversationTopBarTarget?
     @State private var renameText = ""
-    @State private var editingInstructions = false
+    @State private var instructionsTarget: ConversationTopBarTarget?
     @State private var showingCompanionSettings = false
     @State private var moreHovering = false
 
@@ -174,13 +229,13 @@ struct ConversationTopBar: View {
                 .frame(height: ConversationTopBarMetrics.fade)
                 .allowsHitTesting(false)
         }
-        .alert("Rename chat", isPresented: $renaming) {
+        .alert("Rename chat", isPresented: $renaming, presenting: renameTarget) { target in
             TextField("Title", text: $renameText)
-            Button("Rename") { if let id = conversation?.id { store.renameConversation(id, title: renameText) } }
+            Button("Rename") { store.renameConversation(target.id, title: renameText) }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $editingInstructions) {
-            if let conversation { ConversationInstructionsEditor(conversation: conversation) }
+        .sheet(item: $instructionsTarget) { target in
+            if let captured = target.resolve(in: store.conversations) { ConversationInstructionsEditor(conversation: captured) }
         }
         .sheet(isPresented: $showingCompanionSettings) {
             DotSettingsView().environmentObject(store).environmentObject(config)
@@ -303,10 +358,12 @@ struct ConversationTopBar: View {
         case .resume: store.setDotState(.active)
         case .companionSettings: showingCompanionSettings = true
         case .rename:
-            renameText = conversation?.title ?? ""
+            guard let target = ConversationTopBarTarget(conversation) else { return }
+            renameTarget = target
+            renameText = target.resolve(in: store.conversations)?.title ?? conversation?.title ?? ""
             renaming = true
         case .pin, .unpin: if let id { store.togglePin(id) }
-        case .instructions: editingInstructions = true
+        case .instructions: instructionsTarget = ConversationTopBarTarget(conversation)
         case .moveToProject(let project): if let id { store.moveConversation(id, toProject: project) }
         case .removeFromProject: if let id { store.moveConversation(id, toProject: nil) }
         case .excludeFromMemory, .allowMemory: if let id { store.toggleMemoryExclusion(id) }

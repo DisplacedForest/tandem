@@ -420,7 +420,6 @@ enum SelfTest {
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try await runCompanionAskedWork() } catch { print("SELFTEST ERROR: companion asked work \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
-        do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runTransientRetry() } catch { print("SELFTEST ERROR: transient retry \(error)"); exit(1) }
         do { try runConversationPresence() } catch { print("SELFTEST ERROR: conversation presence \(error)"); exit(1) }

@@ -6,24 +6,11 @@ enum ConversationFigure: Equatable {
     case none
 }
 
-enum ConversationHeaderKind: Equatable {
-    case conversation
-    case none
-}
-
 enum ConversationPresence {
     static func assistantName(companionThread: Bool, savedName: String) -> String {
         companionThread ? savedName : "Tandem"
     }
 
-    static func headerTitle(conversationTitle: String?) -> String {
-        guard let title = conversationTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Tandem" }
-        return title
-    }
-
-    static func headerKind(companionThread: Bool) -> ConversationHeaderKind { companionThread ? .none : .conversation }
-    static func headerFigure(companionThread: Bool) -> ConversationFigure { companionThread ? .companion : .none }
-    static func headerShowsStatus(companionThread: Bool) -> Bool { companionThread }
     static func greetingFigure(companionThread: Bool) -> ConversationFigure { companionThread ? .companion : .mark }
     static func replyFigure(companionThread: Bool) -> ConversationFigure { companionThread ? .companion : .none }
 
