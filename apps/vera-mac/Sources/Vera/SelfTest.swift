@@ -412,6 +412,7 @@ enum SelfTest {
         do { try runEndpointEditor() } catch { print("SELFTEST ERROR: endpoint editor \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
+        do { try runConversationTopBar() } catch { print("SELFTEST ERROR: conversation top bar \(error)"); exit(1) }
         do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
         do { try await runCardSentenceLiteral() } catch { print("SELFTEST ERROR: card sentence literal \(error)"); exit(1) }
         do { try await runCompanionSavedText() } catch { print("SELFTEST ERROR: companion saved text \(error)"); exit(1) }

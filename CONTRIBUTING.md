@@ -110,6 +110,10 @@ Run all of the above before opening a PR. CI must be green to merge.
 
 **Feature requests**: describe the problem before the solution. The Tandem server stays one shared container with parameterized capabilities; proposals that fit that shape are straightforward to land.
 
+## Interface icons
+
+The round buttons at the top of a conversation and the sidebar draw their icons through the shared icon view in `apps/vera-mac/Sources/Vera/InterfaceIcon.swift`. Views ask for an icon by what it means (search, add, sidebar, more), never by file name. The vendored SVG files live in `apps/vera-mac/Sources/Vera/Resources/InterfaceIcons/`, and their source and licence are in `THIRD-PARTY-NOTICES.md` at the repository root, with a copy shipped in the app next to the icons. If you add an icon from another project, add its notice in both places.
+
 ## License
 
 By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
