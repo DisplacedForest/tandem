@@ -1411,9 +1411,9 @@ struct ComposerField: View {
                         return .handled
                     }
                     .onKeyPress(.return, phases: .down) { press in
+                        if ComposerEditing.composing(ComposerEditing.editor) { return .ignored }
                         if press.modifiers.contains(.shift) {
-                            draft.wrappedValue += "\n"
-                            return .handled
+                            return ComposerEditing.newline(in: ComposerEditing.editor) ? .handled : .ignored
                         }
                         if pickerVisible {
                             pickMention(mentionRows[mentionIndex])

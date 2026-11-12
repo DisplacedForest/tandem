@@ -409,6 +409,7 @@ enum SelfTest {
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runTransientRetry() } catch { print("SELFTEST ERROR: transient retry \(error)"); exit(1) }
         do { try runConversationPresence() } catch { print("SELFTEST ERROR: conversation presence \(error)"); exit(1) }
+        do { try runComposerEditing() } catch { print("SELFTEST ERROR: composer editing \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
