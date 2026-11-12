@@ -454,6 +454,18 @@ enum NativeCompanionWorker {
                     unsure: checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title))
     }
 
+    static func ran(_ record: NativeEffectRecord) -> Bool? {
+        switch record.state {
+        case .completed:
+            return !ranWithFailure(record.receipt ?? .null)
+        case .uncertain:
+            if case .object(let receipt)? = record.receipt, receipt["observed"] == .string("absent") { return nil }
+            return false
+        case .proposed, .admitted, .declined, .expired:
+            return nil
+        }
+    }
+
     static func earlierLine(done: [String], unsure: [String]) -> String? {
         var parts: [String] = []
         if !done.isEmpty { parts.append("Earlier in this work: " + done.joined(separator: "; ") + ".") }
@@ -793,16 +805,14 @@ private struct NativeCompanionRun {
             .map { NativeEffectProposal.canonicalArguments(.object($0)) }
         let step = NativeCompanionWorker.stepLiteral(toolID: record?.proposal.toolID ?? tool?.id, toolTitle: tool?.title,
                                                      argumentsJSON: record?.proposal.argumentsJSON ?? validated ?? call.arguments, title: title)
-        var done = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title)
-        var unsure = checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
-        for other in checkpoint.outstandingCalls where other.id != call.id {
-            let key = NativeCompanionWorker.idempotencyKey(task: task.id, attempt: checkpoint.attempt, round: checkpoint.rounds, call: other.id)
-            guard let found = try? environment.ledger.record(taskID: task.id, idempotencyKey: key), found.digest != record?.digest,
-                  found.state == .completed || found.state == .uncertain else { continue }
-            let known = context.tools.first { $0.name == other.name }
-            let name = known.map { NativeCompanionWorker.describe($0, (try? $0.validatedArguments(found.proposal.argumentsJSON)) ?? [:]) }
+        var done: [String] = []
+        var unsure: [String] = []
+        for other in (try? environment.ledger.records(taskID: task.id)) ?? [] where other.digest != record?.digest {
+            guard let ran = NativeCompanionWorker.ran(other) else { continue }
+            let known = context.tools.first { $0.name == other.proposal.function }
+            let name = known.map { NativeCompanionWorker.describe($0, (try? $0.validatedArguments(other.proposal.argumentsJSON)) ?? [:]) }
                 ?? "an earlier step"
-            if found.state == .completed, !NativeCompanionWorker.ranWithFailure(found.receipt ?? .null) { done.append(name) } else { unsure.append(name) }
+            if ran { done.append(name) } else { unsure.append(name) }
         }
         return NativeTaskStop(reason: reason, step: step, earlier: NativeCompanionWorker.earlierLine(done: done, unsure: unsure))
     }
