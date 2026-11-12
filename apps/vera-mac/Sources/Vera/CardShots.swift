@@ -383,7 +383,8 @@ enum CardShot {
 extension CompanionShotFixture {
     static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed", "companion-quick-working"]
 
-    static let workingViews: Set<String> = ["companion-working-one", "companion-working-three", "companion-working-two-left"]
+    static let workingViews: Set<String> = ["companion-working-one", "companion-working-three", "companion-working-two-left",
+                                           "companion-working-writing", "companion-working-changing"]
 
     static func seedWorking(_ store: ChatStore, view: String) {
         guard let threadID = store.veraThreadID else { return }
@@ -393,6 +394,8 @@ extension CompanionShotFixture {
         switch view {
         case "companion-working-three": work = all
         case "companion-working-two-left": work = Array(all.prefix(2))
+        case "companion-working-writing": work = [("Workshop plan", "document")]
+        case "companion-working-changing": work = [("the seed folders", "companion")]
         default: work = Array(all.suffix(1))
         }
         store.nativeTaskReferences = work.compactMap {

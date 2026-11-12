@@ -74,6 +74,8 @@ enum Shot {
             size = CGSize(width: 900, height: 320)
         } else if view == "companion-picker" {
             size = CGSize(width: 640, height: 560)
+        } else if view == "companion-states-small" {
+            size = CGSize(width: 520, height: 300)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 760)
         } else if view == "companion-activity-detail" {
@@ -432,6 +434,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-states-small" {
+            content = AnyView(
+                ShotCompanionStates(figure: 20)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "companion-states" {
             content = AnyView(
                 ShotCompanionStates()
@@ -467,7 +475,7 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if ["companion-thread", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
             let populated = view != "companion-thread-empty" && view != "companion-thread-error"
@@ -1532,9 +1540,10 @@ private struct ShotBrandMarks: View {
 
 private struct ShotCompanionStates: View {
     private let appearance = CompanionAppearance(shape: .pebble, color: .sage)
+    var figure: CGFloat = 120
 
     var body: some View {
-        Grid(horizontalSpacing: 48, verticalSpacing: 36) {
+        Grid(horizontalSpacing: 48, verticalSpacing: figure < 60 ? 24 : 36) {
             ForEach(0..<3, id: \.self) { row in
                 GridRow {
                     ForEach(0..<3, id: \.self) { column in
@@ -1547,7 +1556,7 @@ private struct ShotCompanionStates: View {
 
     private func cell(_ state: CompanionState) -> some View {
         VStack(spacing: 14) {
-            CompanionAvatarView(appearance: appearance, state: state, size: 120, renderSafe: true)
+            CompanionAvatarView(appearance: appearance, state: state, size: figure, renderSafe: true)
             Text(state.displayName)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)

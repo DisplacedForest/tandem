@@ -103,13 +103,23 @@ extension SelfTest {
 
         for state in CompanionState.allCases {
             let motion = CompanionMotion.of(state)
-            for channel in [motion.body, motion.face, motion.eyes] {
+            for channel in [motion.body, motion.face, motion.eyes, motion.prop] {
                 guard let track = channel.track else { continue }
                 try require(track.stops.first?.at == 0 && track.stops.last?.at == 1, "\(state.displayName) motion covers its cycle")
                 if track.repeats {
                     try require(track.pose(at: 0) == track.pose(at: track.duration), "\(state.displayName) motion loops seamlessly")
                 }
             }
+        }
+        try require(CompanionProp.of(.researching) == .magnifier && CompanionProp.of(.writing) == .pencil && CompanionProp.of(.changing) == .wrench,
+                    "Each kind of work holds its own prop")
+        for state in CompanionState.allCases where !state.working {
+            try require(CompanionProp.of(state) == nil, "\(state.displayName) holds no prop")
+        }
+        for prop in [CompanionProp.magnifier, .pencil, .wrench] {
+            let bounds = prop.strokes(unit: 1).boundingRect
+            try require(bounds.minX >= 0 && bounds.minY >= 0 && bounds.maxX <= 100 && bounds.maxY <= 100 && bounds.width >= 20,
+                        "A prop is drawn inside the figure's box and is large enough to read")
         }
         let hop = CompanionMotion.of(.needsYou).body
         try require(hop.track?.repeats == false, "Needs you hops once")
