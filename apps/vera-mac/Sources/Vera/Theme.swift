@@ -42,6 +42,7 @@ enum Theme {
     static let sage = accent
     static let onSage = onAccent
     static let statusGreen = Color(light: "#286D36", dark: "#86C78A")
+    static let attention = Color(light: "#D9771A", dark: "#F0963C")
     static let warmTextPrimary = textPrimary
     static let warmTextSecondary = textSecondary
 

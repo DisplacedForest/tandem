@@ -29,6 +29,12 @@ extension SelfTest {
                     && CompanionCurrentWork.kind(workerType: "research", phase: "synthesize") == .writing
                     && CompanionCurrentWork.kind(workerType: "document", phase: nil) == .writing
                     && CompanionCurrentWork.kind(workerType: "companion", phase: nil) == .changing, "Each kind of work has its own look")
+        store.nativeTaskReferences = [foreign, running]
+        try require(!store.companionWantsAttention, "The badge stays quiet while work runs and nothing waits for an answer")
+        store.nativeTaskReferences = [decision]
+        try require(store.companionWantsAttention, "The badge changes when the companion needs an answer")
+        store.nativeTaskReferences = []
+        try require(!store.companionWantsAttention, "The badge goes quiet again once nothing is waiting")
         store.generating = true
         store.nativeTaskReferences = [foreign]
         try require(state() == .ready && background().isEmpty && background().current == nil,

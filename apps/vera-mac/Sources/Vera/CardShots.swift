@@ -402,10 +402,16 @@ extension CompanionShotFixture {
     static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed", "companion-quick-working"]
 
     static let workingViews: Set<String> = ["companion-working-one", "companion-working-three", "companion-working-two-left",
-                                           "companion-working-writing", "companion-working-changing"]
+                                           "companion-working-writing", "companion-working-changing", "companion-working-attention"]
 
     static func seedWorking(_ store: ChatStore, view: String) {
         guard let threadID = store.veraThreadID else { return }
+        if view == "companion-working-attention" {
+            let reference = try? CompanionSavedTextFixture.reference(state: "needs_decision", conversationID: threadID,
+                                                                     decision: CompanionSavedTextFixture.approvalDecision())
+            store.nativeTaskReferences = reference.map { [$0] } ?? []
+            return
+        }
         let all: [(String, String)] = [("Lumber prices this month", "research"), ("Workshop plan", "document"),
                                        ("new Indy restaurants", "research")]
         let work: [(String, String)]

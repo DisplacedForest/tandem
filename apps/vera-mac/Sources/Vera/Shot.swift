@@ -488,7 +488,7 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if ["companion-thread", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-working-attention", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
             let populated = view != "companion-thread-empty" && view != "companion-thread-error"

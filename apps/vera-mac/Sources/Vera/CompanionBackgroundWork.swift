@@ -70,6 +70,10 @@ enum CompanionBackgroundTarget: Equatable {
 
 @MainActor
 extension ChatStore {
+    var companionWantsAttention: Bool {
+        companionUnreadCount > 0 || companionAwaitingApproval || companionBackgroundWork.needsAnswer > 0
+    }
+
     private var companionBackgroundSurvey: (work: CompanionBackgroundWork, waiting: [CompanionBackgroundTarget]) {
         var work = CompanionBackgroundWork()
         var waiting: [CompanionBackgroundTarget] = []
