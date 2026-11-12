@@ -465,7 +465,7 @@ Where a rule or setting decided it, **Change in Rules** opens Settings, Rules. N
 
 ### Preferences
 
-Settings, Persona, Preferences lists the standing preferences your companion follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
+Settings, Persona, Preferences lists the standing preferences Tandem follows in every chat, companion task and scheduled run: tone, formatting, characters to avoid, how to talk to you. Add, edit or remove them there.
 
 You can also just say one in chat, like "never respond with em dashes". Tandem notices it, asks the chat model whether it's a real standing preference, saves it, checks the save, and only then lets the assistant acknowledge it. If the model can't answer, a plain instruction like "never use em dashes" or "don't say 'X'" is still saved. If the save fails, the assistant tells you it wasn't saved. Only messages you type count: picking one of the assistant's suggested options or asking for a revision never sets or removes a preference. You can keep up to 40 preferences of up to 300 characters each. Say "forget that" or "never mind" on the next message to take it back. Saying the same preference again updates it instead of adding a copy. When a preference is saved or removed from a conversation, a small marker appears under that message so you can see where it happened.
 

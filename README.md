@@ -84,7 +84,7 @@ Settings, Knowledge manages document collections stored in vera-api's document e
 
 ### Foreground model priority
 
-When the native app has the Tandem server configured as its engine, chat and vision requests reserve foreground capacity before calling the model directly. Background worker generations and automatic memory extraction yield to waiting foreground requests. One background generation per shared endpoint is the default, with a bounded generation deadline. The app keeps its provider key locally; admission sends only an endpoint fingerprint and timing metadata. No engine configured leaves standalone native chat unchanged. See [inference admission](docs/SETUP.md#inference-admission) for failure behavior and configuration.
+When the native app has an engine configured, chat and vision requests reserve foreground capacity before calling the model directly. Background worker generations and automatic memory extraction yield to waiting foreground requests. One background generation per shared endpoint is the default, with a bounded generation deadline. The app keeps its provider key locally; admission sends only an endpoint fingerprint and timing metadata. No engine configured leaves standalone native chat unchanged. See [inference admission](docs/SETUP.md#inference-admission) for failure behavior and configuration.
 
 ### Your companion and ordinary chats
 
