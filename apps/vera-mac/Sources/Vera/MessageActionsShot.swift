@@ -23,7 +23,7 @@ enum MessageActionsShot {
         default: pressed = nil
         }
         if view == "message-reaction", let answer { store.messageRatings[answer.id] = "up" }
-        return MessageActionsModel(open: pressed.map { MessageActionsTarget(message: $0, conversationID: conversationID) })
+        return MessageActionsModel(open: pressed.map { MessageActionsTarget(messageID: $0.id, conversationID: conversationID) })
     }
 
     static func render(view: String, to path: String, appearance: String) {

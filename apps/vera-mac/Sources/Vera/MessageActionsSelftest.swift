@@ -13,6 +13,10 @@ enum MessageActionsSelftest {
         try holdRule()
         try offeredItems()
         try copySweep()
+        try openStateFollowsBubble()
+        try holdAfterScroll()
+        try copyUsesCurrentMessage()
+        try eventPolicy()
         print("MESSAGE ACTIONS SELFTEST OK")
     }
 
@@ -170,5 +174,108 @@ enum MessageActionsSelftest {
             try require(hit == nil, "\"\(text)\" has no banned word")
             try require(!text.contains("\u{2014}"), "\"\(text)\" has no em dash")
         }
+    }
+
+    static func openStateFollowsBubble() throws {
+        let model = MessageActionsModel()
+        let first = UUID()
+        let second = UUID()
+        let frame = CGRect(x: 100, y: 200, width: 400, height: 60)
+        try require(!model.present(first, conversationID: "c"), "Nothing opens on a bubble that isn't drawn")
+        model.register(first, conversationID: "c", frame: frame, visible: frame)
+        model.register(second, conversationID: "c", frame: frame.offsetBy(dx: 0, dy: 100), visible: frame.offsetBy(dx: 0, dy: 100))
+        try require(model.present(first, conversationID: "c") && model.open?.messageID == first, "Opens on a drawn bubble")
+        model.unregister(first)
+        try require(model.open == nil, "Unregistering the open bubble closes it")
+        try require(model.present(second, conversationID: "c") && model.open?.messageID == second, "A new open succeeds after that")
+
+        model.register(first, conversationID: "c", frame: frame, visible: frame)
+        try require(model.present(first, conversationID: "c") && model.open?.messageID == first, "A new open replaces one already open")
+
+        model.register(first, conversationID: "c", frame: frame.insetBy(dx: 0, dy: -20).offsetBy(dx: 0, dy: 20), visible: frame)
+        try require(model.open?.messageID == first, "The open bubble growing below its top edge stays open")
+        model.register(first, conversationID: "c", frame: frame.offsetBy(dx: 0, dy: -300), visible: .zero)
+        try require(model.open == nil, "The open bubble moving, as in any scroll, closes it")
+
+        let message = Message(role: .assistant, text: "Here")
+        let conversation = Conversation(id: "c", title: "C", messages: [message], updatedAt: Date())
+        model.register(message.id, conversationID: "c", frame: frame, visible: frame)
+        _ = model.present(message.id, conversationID: "c")
+        model.closeIfGone(in: [conversation])
+        try require(model.open?.messageID == message.id, "Stays open while the message exists")
+        var emptied = conversation
+        emptied.messages = []
+        model.closeIfGone(in: [emptied])
+        try require(model.open == nil, "Closes when the message is no longer in the conversation")
+    }
+
+    static func holdAfterScroll() throws {
+        let origin = CGPoint(x: 100, y: 100)
+        let pointer = CGPoint(x: 150, y: 220)
+        let frame = CGRect(x: 100, y: 200, width: 400, height: 60)
+
+        var steady = MessageHoldTracker()
+        steady.down(at: origin, time: 10)
+        try require(steady.opens(at: 10.6, bubbleFrame: frame, pointer: pointer), "A steady hold over its bubble opens")
+
+        var scrolled = MessageHoldTracker()
+        scrolled.down(at: origin, time: 10)
+        scrolled.cancel()
+        try require(!scrolled.opens(at: 11) && !scrolled.opens(at: 11, bubbleFrame: frame, pointer: pointer), "A scroll during the hold never opens")
+        try require(scrolled.abandoned, "A scroll abandons the hold for good")
+        scrolled.moved(to: origin)
+        try require(!scrolled.opens(at: 20), "A cancelled hold stays cancelled")
+
+        var shifted = MessageHoldTracker()
+        shifted.down(at: origin, time: 10)
+        try require(!shifted.opens(at: 10.6, bubbleFrame: frame.offsetBy(dx: 0, dy: 300), pointer: pointer),
+                    "The bubble moved away from the pointer never opens")
+        try require(!shifted.opens(at: 10.6, bubbleFrame: nil, pointer: pointer), "A bubble that is gone never opens")
+        try require(!shifted.opens(at: 10.6, bubbleFrame: frame, pointer: nil), "An unknown pointer never opens")
+    }
+
+    static func copyUsesCurrentMessage() throws {
+        var message = Message(role: .assistant, text: "Partial ans", state: .streaming)
+        let target = MessageActionsTarget(messageID: message.id, conversationID: "c")
+        var conversation = Conversation(id: "c", title: "C", messages: [message], updatedAt: Date())
+        try require(target.current(in: [conversation]).map(MessageActions.copiedText) == "Partial ans", "Copy reads the message as it is now")
+        message.text = "The finished answer."
+        message.state = .complete
+        conversation.messages = [message]
+        try require(target.current(in: [conversation]).map(MessageActions.copiedText) == "The finished answer.",
+                    "Copy after the reply changed yields the new text")
+        conversation.messages = []
+        try require(target.current(in: [conversation]) == nil, "A removed message resolves to nothing")
+    }
+
+    static func eventPolicy() throws {
+        let own = MessageActionsEventContext(hostWindow: true, key: true, sheet: false, overlayOpen: true, onBubble: true, onOverlayControls: false)
+        try require(MessageActionsEventPolicy.consumes(.escape, own), "Escape in the host window with it open is consumed")
+        try require(MessageActionsEventPolicy.consumes(.secondaryClick, own), "A right click on a bubble in the host window is consumed")
+        try require(!MessageActionsEventPolicy.consumes(.holdStart, own), "A press never consumes its event")
+        try require(MessageActionsEventPolicy.acts(.holdStart, own), "A press on a bubble may start a hold even with one open")
+
+        var closed = own
+        closed.overlayOpen = false
+        try require(!MessageActionsEventPolicy.consumes(.escape, closed), "Escape passes through when nothing is open")
+
+        for (label, change) in [("another window", { (c: inout MessageActionsEventContext) in c.hostWindow = false }),
+                                ("a window that isn't key", { (c: inout MessageActionsEventContext) in c.key = false }),
+                                ("a window with a sheet", { (c: inout MessageActionsEventContext) in c.sheet = true })] {
+            var context = own
+            change(&context)
+            for kind in [MessageActionsEventKind.escape, .secondaryClick, .holdStart] {
+                try require(!MessageActionsEventPolicy.acts(kind, context) && !MessageActionsEventPolicy.consumes(kind, context),
+                            "Nothing is acted on or consumed in \(label)")
+            }
+        }
+
+        var offBubble = own
+        offBubble.onBubble = false
+        try require(!MessageActionsEventPolicy.consumes(.secondaryClick, offBubble), "A right click off any bubble passes through")
+        var onControls = own
+        onControls.onOverlayControls = true
+        try require(!MessageActionsEventPolicy.acts(.secondaryClick, onControls) && !MessageActionsEventPolicy.acts(.holdStart, onControls),
+                    "Clicks on the row or menu are left to them")
     }
 }

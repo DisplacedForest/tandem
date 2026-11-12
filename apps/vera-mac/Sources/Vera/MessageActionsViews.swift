@@ -3,6 +3,7 @@ import AppKit
 
 struct MessageActionsHost: ViewModifier {
     static let space = "message-actions-host"
+    static let anchorCheck: Duration = .milliseconds(200)
 
     @EnvironmentObject private var store: ChatStore
     @State private var model: MessageActionsModel
@@ -18,17 +19,35 @@ struct MessageActionsHost: ViewModifier {
             .coordinateSpace(.named(Self.space))
             .overlayPreferenceValue(MessageActionsAnchorKey.self) { anchor in
                 GeometryReader { proxy in
-                    if let target = model.open, let anchor {
-                        MessageActionsOverlay(target: target, frame: proxy[anchor],
+                    if let target = model.open, let anchor, let message = target.current(in: store.conversations) {
+                        MessageActionsOverlay(target: target, message: message, frame: proxy[anchor],
                                               bounds: CGRect(origin: .zero, size: proxy.size), model: model)
                             .transition(reduceMotion ? .identity : .opacity)
                     }
                 }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: model.open?.message.id)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: model.open?.messageID)
+            }
+            .onPreferenceChange(MessageActionsShownKey.self) { shown in
+                MainActor.assumeIsolated {
+                    model.anchorShown = shown
+                    if !shown, let target = model.open { closeUnlessShown(target) }
+                }
             }
             .background(MessageActionsEventBridge(model: model))
-            .onChange(of: store.selectedID) { model.close(); model.selecting = nil }
-            .onChange(of: store.section) { model.close(); model.selecting = nil }
+            .onReceive(store.$conversations) { model.closeIfGone(in: $0) }
+            .onChange(of: model.open) { _, target in
+                if let target { closeUnlessShown(target) }
+            }
+            .onChange(of: store.selectedID) { model.dismissAll(); model.selecting = nil }
+            .onChange(of: store.section) { model.dismissAll(); model.selecting = nil }
+            .onDisappear { model.dismissAll() }
+    }
+
+    private func closeUnlessShown(_ target: MessageActionsTarget) {
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.anchorCheck)
+            if model.open == target, !model.anchorShown { model.close() }
+        }
     }
 }
 
@@ -36,12 +55,13 @@ struct MessageActionsOverlay: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.colorScheme) private var scheme
     let target: MessageActionsTarget
+    let message: Message
     let frame: CGRect
     let bounds: CGRect
     let model: MessageActionsModel
 
     private var cutout: CGRect {
-        guard let visible = model.visibleFrame(target.message.id) else { return frame }
+        guard let visible = model.visibleFrame(target.messageID) else { return frame }
         let clipped = frame.intersection(visible)
         return clipped.isNull ? frame : clipped
     }
@@ -55,26 +75,39 @@ struct MessageActionsOverlay: View {
                 .contentShape(Rectangle())
                 .onTapGesture { model.close() }
                 .accessibilityHidden(true)
-            MessageReactionRow(marks: MessageReaction.marks(rating: store.messageRatings[target.message.id])) { react($0) }
+            MessageReactionRow(marks: MessageReaction.marks(rating: store.messageRatings[target.messageID])) { react($0) }
                 .offset(x: placement.row.x, y: placement.row.y)
             MessageActionsMenu { perform($0) }
                 .offset(x: placement.menu.x, y: placement.menu.y)
         }
         .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
+        .onChange(of: placement, initial: true) { _, placed in
+            model.controls = [CGRect(origin: placed.row, size: MessageActionsMetrics.rowSize),
+                              CGRect(origin: placed.menu, size: MessageActionsMetrics.menuSize)]
+        }
+    }
+
+    private func current() -> Message? {
+        let found = target.current(in: store.conversations)
+        if found == nil { model.close() }
+        return found
     }
 
     private func react(_ reaction: MessageReaction) {
-        MessageActionsPerform.react(reaction, to: target.message, conversationID: target.conversationID, store: store)
+        if let message = current() {
+            MessageActionsPerform.react(reaction, to: message, conversationID: target.conversationID, store: store)
+        }
         model.close()
     }
 
     private func perform(_ action: MessageMenuAction) {
+        guard let message = current() else { return }
         switch action {
         case .copy:
-            MessageActions.copy(target.message)
+            MessageActions.copy(message)
             model.close()
         case .selectText:
-            model.beginSelecting(target.message.id)
+            model.beginSelecting(message.id)
         }
     }
 }
@@ -203,6 +236,11 @@ struct MessageReactionMark: View {
     }
 }
 
+struct MessageActionsBubbleGeometry: Equatable {
+    let frame: CGRect
+    let visible: CGRect
+}
+
 struct MessageActionsBubble: ViewModifier {
     @Environment(\.messageActions) private var model
     @EnvironmentObject private var store: ChatStore
@@ -221,12 +259,13 @@ struct MessageActionsBubble: ViewModifier {
     }
 
     private func decorated(_ content: Content, model: MessageActionsModel) -> some View {
-        let isOpen = model.open?.message.id == message.id
+        let isOpen = model.open?.messageID == message.id
         let marks = MessageReaction.marks(rating: store.messageRatings[message.id])
         let conversationID = store.veraThreadID
+        let id = message.id
         return Group {
             if model.selecting == message.id {
-                MessageSelectionText(text: MessageActions.selectableText(message)) { model.endSelecting(message.id) }
+                MessageSelectionText(text: MessageActions.selectableText(message)) { model.endSelecting(id) }
                     .padding(.horizontal, ConversationMetrics.bubblePaddingH)
                     .padding(.vertical, ConversationMetrics.bubblePaddingV)
                     .background(fill)
@@ -235,16 +274,18 @@ struct MessageActionsBubble: ViewModifier {
                 content
             }
         }
-        .onGeometryChange(for: CGRect.self) { proxy in
+        .onGeometryChange(for: MessageActionsBubbleGeometry.self) { proxy in
             let frame = proxy.frame(in: .named(MessageActionsHost.space))
             let local = CGRect(origin: .zero, size: proxy.size)
             let shown = proxy.bounds(of: .scrollView).map { local.intersection($0) } ?? local
-            return shown.isNull ? .zero : shown.offsetBy(dx: frame.minX, dy: frame.minY)
-        } action: { frame in
-            model.register(message, conversationID: conversationID, frame: frame)
+            let visible = shown.isNull ? .zero : shown.offsetBy(dx: frame.minX, dy: frame.minY)
+            return MessageActionsBubbleGeometry(frame: frame, visible: visible)
+        } action: { geometry in
+            model.register(id, conversationID: conversationID, frame: geometry.frame, visible: geometry.visible)
         }
-        .onDisappear { model.unregister(message.id) }
+        .onDisappear { model.unregister(id) }
         .anchorPreference(key: MessageActionsAnchorKey.self, value: .bounds) { isOpen ? $0 : nil }
+        .preference(key: MessageActionsShownKey.self, value: isOpen)
         .overlay(alignment: trailing ? .bottomTrailing : .bottomLeading) {
             if !marks.isEmpty {
                 MessageReactionMark(marks: marks)
@@ -267,8 +308,7 @@ struct MessageActionsBubble: ViewModifier {
         .focusable(interactions: .activate)
         .onKeyPress(.return, phases: .down) { press in
             guard press.modifiers.contains(.control) else { return .ignored }
-            model.present(message, conversationID: conversationID)
-            return .handled
+            return model.present(id, conversationID: conversationID) ? .handled : .ignored
         }
     }
 
@@ -349,7 +389,14 @@ struct MessageActionsEventBridge: NSViewRepresentable {
     let model: MessageActionsModel
 
     final class BridgeView: NSView {
+        var onWindow: (NSWindow?) -> Void = { _ in }
+
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow(window)
+        }
     }
 
     @MainActor
@@ -358,6 +405,8 @@ struct MessageActionsEventBridge: NSViewRepresentable {
         weak var view: NSView?
         var monitor: Any?
         var watcher: Task<Void, Never>?
+        var observers: [NSObjectProtocol] = []
+        weak var observedWindow: NSWindow?
 
         init(model: MessageActionsModel) { self.model = model }
 
@@ -368,26 +417,86 @@ struct MessageActionsEventBridge: NSViewRepresentable {
                 let consumed = MainActor.assumeIsolated { self?.consumes(event) ?? false }
                 return consumed ? nil : event
             }
+            observe(NSApplication.didResignActiveNotification, object: nil)
         }
 
         func remove() {
-            watcher?.cancel()
+            stopWatching()
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers = []
+            observedWindow = nil
+            model.dismissAll()
         }
 
-        private func point(_ event: NSEvent) -> CGPoint? {
-            guard let view, let window = view.window, event.window === window, window.attachedSheet == nil else { return nil }
-            let local = view.convert(event.locationInWindow, from: nil)
+        func attach(_ window: NSWindow?) {
+            guard window !== observedWindow else { return }
+            dismiss()
+            let windowNames: [Notification.Name] = [NSWindow.didResignKeyNotification, NSWindow.didResizeNotification,
+                                                    NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification,
+                                                    NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                                                    NSWindow.willBeginSheetNotification, NSWindow.didMiniaturizeNotification]
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers = []
+            observe(NSApplication.didResignActiveNotification, object: nil)
+            observedWindow = window
+            guard let window else { return }
+            windowNames.forEach { observe($0, object: window) }
+        }
+
+        private func observe(_ name: Notification.Name, object: AnyObject?) {
+            let token = NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.dismiss() }
+            }
+            observers.append(token)
+        }
+
+        func dismiss() {
+            stopWatching()
+            model.dismissAll()
+        }
+
+        private func stopWatching() {
+            watcher?.cancel()
+            watcher = nil
+            model.cancelHold()
+        }
+
+        private func hostPoint(windowPoint: NSPoint) -> CGPoint? {
+            guard let view else { return nil }
+            let local = view.convert(windowPoint, from: nil)
             return CGPoint(x: local.x, y: view.isFlipped ? local.y : view.bounds.height - local.y)
+        }
+
+        private func pointerNow() -> CGPoint? {
+            guard let window = view?.window else { return nil }
+            return hostPoint(windowPoint: window.convertPoint(fromScreen: NSEvent.mouseLocation))
+        }
+
+        private func context(_ event: NSEvent) -> (MessageActionsEventContext, MessageActionsModel.Bubble?) {
+            let window = view?.window
+            let hostWindow = window != nil && event.window === window
+            let point = hostWindow ? hostPoint(windowPoint: event.locationInWindow) : nil
+            let bubble = point.flatMap { model.bubble(at: $0) }
+            let controls = point.map { model.onControls($0) } ?? false
+            let context = MessageActionsEventContext(hostWindow: hostWindow, key: window?.isKeyWindow ?? false,
+                                                     sheet: window?.attachedSheet != nil, overlayOpen: model.open != nil,
+                                                     onBubble: bubble != nil, onOverlayControls: controls)
+            return (context, bubble)
         }
 
         private func consumes(_ event: NSEvent) -> Bool {
             switch event.type {
             case .keyDown:
-                return key(event)
-            case .scrollWheel:
+                guard event.keyCode == 53 else { return false }
+                let (context, _) = context(event)
+                guard MessageActionsEventPolicy.acts(.escape, context) else { return false }
                 model.close()
+                return MessageActionsEventPolicy.consumes(.escape, context)
+            case .scrollWheel:
+                stopWatching()
+                if event.window === view?.window { model.close() }
                 return false
             case .rightMouseDown:
                 return secondary(event)
@@ -406,38 +515,40 @@ struct MessageActionsEventBridge: NSViewRepresentable {
             }
         }
 
-        private func key(_ event: NSEvent) -> Bool {
-            let escape = event.keyCode == 53
-            guard escape, model.open != nil else { return false }
-            model.close()
-            return true
-        }
-
         private func secondary(_ event: NSEvent) -> Bool {
-            guard model.open == nil, let point = point(event), let bubble = model.bubble(at: point) else { return false }
-            model.present(bubble.message, conversationID: bubble.conversationID)
-            return true
+            let (context, bubble) = context(event)
+            guard MessageActionsEventPolicy.acts(.secondaryClick, context), let bubble else { return false }
+            stopWatching()
+            let opened = model.present(bubble.messageID, conversationID: bubble.conversationID)
+            return opened && MessageActionsEventPolicy.consumes(.secondaryClick, context)
         }
 
         private func begin(_ event: NSEvent) {
-            watcher?.cancel()
-            model.hold.reset()
-            guard model.open == nil, let point = point(event), let bubble = model.bubble(at: point) else { return }
+            stopWatching()
+            let (context, bubble) = context(event)
+            guard MessageActionsEventPolicy.acts(.holdStart, context), let bubble else { return }
+            let id = bubble.messageID
             model.hold.down(at: NSEvent.mouseLocation, time: ProcessInfo.processInfo.systemUptime)
-            let id = bubble.message.id
+            model.holdTarget = id
             watcher = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(40))
-                    guard let self, !Task.isCancelled else { return }
-                    let buttonUp = NSEvent.pressedMouseButtons & 1 == 0
-                    if buttonUp { self.model.hold.release() }
+                    guard let self, !Task.isCancelled, self.model.holdTarget == id else { return }
+                    if NSEvent.pressedMouseButtons & 1 == 0 { self.model.hold.release() }
                     self.model.hold.moved(to: NSEvent.mouseLocation)
-                    if self.model.hold.abandoned { return }
-                    if self.model.hold.opens(at: ProcessInfo.processInfo.systemUptime) {
-                        guard let current = self.model.bubbles[id] else { return }
-                        self.model.present(current.message, conversationID: current.conversationID)
+                    if self.model.hold.abandoned {
+                        self.model.holdTarget = nil
                         return
                     }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    guard self.model.hold.opens(at: now) else { continue }
+                    let current = self.model.bubbles[id]
+                    if self.model.hold.opens(at: now, bubbleFrame: current?.visible, pointer: self.pointerNow()) {
+                        self.model.present(id, conversationID: current?.conversationID)
+                    } else {
+                        self.model.cancelHold()
+                    }
+                    return
                 }
             }
         }
@@ -447,8 +558,10 @@ struct MessageActionsEventBridge: NSViewRepresentable {
 
     func makeNSView(context: Context) -> BridgeView {
         let view = BridgeView()
-        context.coordinator.view = view
-        context.coordinator.install()
+        let coordinator = context.coordinator
+        coordinator.view = view
+        view.onWindow = { [weak coordinator] window in coordinator?.attach(window) }
+        coordinator.install()
         return view
     }
 
@@ -457,6 +570,7 @@ struct MessageActionsEventBridge: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: BridgeView, coordinator: Coordinator) {
+        view.onWindow = { _ in }
         coordinator.remove()
     }
 }

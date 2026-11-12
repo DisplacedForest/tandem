@@ -105,12 +105,12 @@ struct MessageHoldTracker: Equatable {
     private(set) var startedAt: TimeInterval = 0
     private(set) var farthest: CGFloat = 0
     private(set) var released = false
+    private(set) var cancelled = false
 
     mutating func down(at point: CGPoint, time: TimeInterval) {
+        self = MessageHoldTracker()
         origin = point
         startedAt = time
-        farthest = 0
-        released = false
     }
 
     mutating func moved(to point: CGPoint) {
@@ -120,6 +120,8 @@ struct MessageHoldTracker: Equatable {
 
     mutating func release() { released = true }
 
+    mutating func cancel() { cancelled = true }
+
     mutating func reset() { self = MessageHoldTracker() }
 
     func opens(at time: TimeInterval) -> Bool {
@@ -127,10 +129,48 @@ struct MessageHoldTracker: Equatable {
         let stillDown = !released
         let heldLongEnough = time - startedAt >= Self.threshold
         let stayedPut = farthest <= Self.tolerance
-        return pressed && stillDown && heldLongEnough && stayedPut
+        return pressed && stillDown && !cancelled && heldLongEnough && stayedPut
     }
 
-    var abandoned: Bool { origin == nil || released || farthest > Self.tolerance }
+    func opens(at time: TimeInterval, bubbleFrame: CGRect?, pointer: CGPoint?) -> Bool {
+        guard let bubbleFrame, let pointer else { return false }
+        let stillUnderPointer = !bubbleFrame.isEmpty && bubbleFrame.contains(pointer)
+        return opens(at: time) && stillUnderPointer
+    }
+
+    var abandoned: Bool { origin == nil || released || cancelled || farthest > Self.tolerance }
+}
+
+enum MessageActionsEventKind: Equatable {
+    case escape
+    case secondaryClick
+    case holdStart
+}
+
+struct MessageActionsEventContext: Equatable {
+    var hostWindow: Bool
+    var key: Bool
+    var sheet: Bool
+    var overlayOpen: Bool
+    var onBubble: Bool
+    var onOverlayControls: Bool
+}
+
+enum MessageActionsEventPolicy {
+    static func acts(_ kind: MessageActionsEventKind, _ context: MessageActionsEventContext) -> Bool {
+        let ownWindow = context.hostWindow && context.key && !context.sheet
+        guard ownWindow else { return false }
+        switch kind {
+        case .escape:
+            return context.overlayOpen
+        case .secondaryClick, .holdStart:
+            return context.onBubble && !context.onOverlayControls
+        }
+    }
+
+    static func consumes(_ kind: MessageActionsEventKind, _ context: MessageActionsEventContext) -> Bool {
+        kind != .holdStart && acts(kind, context)
+    }
 }
 
 struct MessageActionsPlacement: Equatable {
@@ -204,8 +244,17 @@ enum MessageActionsMetrics {
 }
 
 struct MessageActionsTarget: Equatable {
-    let message: Message
+    let messageID: UUID
     let conversationID: String?
+
+    func current(in conversations: [Conversation]) -> Message? {
+        let owner = conversations.first { $0.id == conversationID }
+        let pool = owner.map { [$0] } ?? conversations
+        for conversation in pool {
+            if let message = conversation.messages.first(where: { $0.id == messageID }) { return message }
+        }
+        return nil
+    }
 }
 
 @MainActor
@@ -214,41 +263,83 @@ final class MessageActionsModel {
     var open: MessageActionsTarget?
     var selecting: UUID?
 
-    struct Bubble {
-        let message: Message
+    struct Bubble: Equatable {
+        let messageID: UUID
         let conversationID: String?
         let frame: CGRect
+        let visible: CGRect
     }
 
     @ObservationIgnored private(set) var bubbles: [UUID: Bubble] = [:]
     @ObservationIgnored var hold = MessageHoldTracker()
+    @ObservationIgnored var holdTarget: UUID?
+    @ObservationIgnored var controls: [CGRect] = []
+    @ObservationIgnored private(set) var openedAt: CGRect?
+    @ObservationIgnored var anchorShown = false
+
+    static let moveTolerance: CGFloat = 0.5
 
     init(open: MessageActionsTarget? = nil) { self.open = open }
 
-    func register(_ message: Message, conversationID: String?, frame: CGRect) {
-        bubbles[message.id] = Bubble(message: message, conversationID: conversationID, frame: frame)
+    func register(_ id: UUID, conversationID: String?, frame: CGRect, visible: CGRect) {
+        bubbles[id] = Bubble(messageID: id, conversationID: conversationID, frame: frame, visible: visible)
+        guard open?.messageID == id else { return }
+        guard let openedAt else { return }
+        let movedX = abs(frame.minX - openedAt.minX) > Self.moveTolerance
+        let movedY = abs(frame.minY - openedAt.minY) > Self.moveTolerance
+        if movedX || movedY { close() }
     }
 
-    func unregister(_ id: UUID) { bubbles[id] = nil }
+    func unregister(_ id: UUID) {
+        bubbles[id] = nil
+        if open?.messageID == id { close() }
+        if holdTarget == id { cancelHold() }
+    }
 
     func bubble(at point: CGPoint) -> Bubble? {
-        bubbles.values.first { !$0.frame.isEmpty && $0.frame.contains(point) }
+        bubbles.values.first { !$0.visible.isEmpty && $0.visible.contains(point) }
     }
 
-    func visibleFrame(_ id: UUID) -> CGRect? { bubbles[id]?.frame }
+    func onControls(_ point: CGPoint) -> Bool {
+        open != nil && controls.contains { $0.contains(point) }
+    }
 
-    func present(_ message: Message, conversationID: String?) {
+    func visibleFrame(_ id: UUID) -> CGRect? { bubbles[id]?.visible }
+
+    @discardableResult
+    func present(_ id: UUID, conversationID: String?) -> Bool {
+        guard let bubble = bubbles[id] else { return false }
         selecting = nil
-        hold.reset()
-        open = MessageActionsTarget(message: message, conversationID: conversationID)
+        cancelHold()
+        controls = []
+        openedAt = bubble.frame
+        open = MessageActionsTarget(messageID: id, conversationID: conversationID ?? bubble.conversationID)
+        return true
     }
 
     func close() {
+        controls = []
+        openedAt = nil
         if open != nil { open = nil }
     }
 
+    func dismissAll() {
+        close()
+        cancelHold()
+    }
+
+    func cancelHold() {
+        hold.cancel()
+        holdTarget = nil
+    }
+
+    func closeIfGone(in conversations: [Conversation]) {
+        guard let open, open.current(in: conversations) == nil else { return }
+        close()
+    }
+
     func beginSelecting(_ id: UUID) {
-        open = nil
+        close()
         selecting = id
     }
 
@@ -259,6 +350,13 @@ final class MessageActionsModel {
 
 extension EnvironmentValues {
     @Entry var messageActions: MessageActionsModel? = nil
+}
+
+struct MessageActionsShownKey: PreferenceKey {
+    static var defaultValue: Bool { false }
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = value || nextValue()
+    }
 }
 
 struct MessageActionsAnchorKey: PreferenceKey {
