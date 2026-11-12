@@ -318,7 +318,7 @@ extension ChatStore {
             return .skipped("Missed while \(CompanionSavedText.marker) was paused.")
         }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
-            return .failed("Background work isn't available right now.")
+            return .failed("Scheduled runs aren't available right now.")
         }
         guard let nativeConfig = currentNativeConfig else { return .failed("No model is set up. Add one in Settings.") }
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
@@ -329,8 +329,10 @@ extension ChatStore {
         guard let conversationID = scheduleConversation(schedule) else {
             return .failed("The chat for this schedule couldn't be created.")
         }
-        let user = Message(role: .user, text: schedule.instruction)
-        let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
+        var user = Message(role: .user, text: schedule.instruction)
+        user.contentType = .runOrigin
+        var reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
+        reply.contentType = .runOrigin
         await bind(conversationID, reply.id.uuidString)
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
         guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(CompanionSavedText.marker) is paused.") }

@@ -59,32 +59,32 @@ enum OngoingWork {
         }
     }
 
-    static func item(_ reference: NativeTaskReference) -> OngoingWorkItem {
+    static func item(_ reference: NativeTaskReference, newFlow: Set<UUID> = []) -> OngoingWorkItem {
         let document = reference.createRequest.workerType == "document"
         let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
         let status = display?.card.status ?? .preparing
-        let artifact = display?.artifact
+        let artifact = newFlow.contains(reference.id) ? nil : display?.artifact
         let shown = presentation(status: status, document: document, hasArtifact: artifact != nil)
         return OngoingWorkItem(reference: reference, title: reference.request.displayTitle,
                                state: display?.card.listState(shown.state) ?? shown.state, glyph: shown.glyph, artifact: artifact)
     }
 
-    static func items(_ references: [NativeTaskReference], conversationID: String?) -> [OngoingWorkItem] {
+    static func items(_ references: [NativeTaskReference], conversationID: String?, newFlow: Set<UUID> = []) -> [OngoingWorkItem] {
         guard let conversationID else { return [] }
-        return references.reversed().filter { $0.origin.conversationID == conversationID }.map(item)
+        return references.reversed().filter { $0.origin.conversationID == conversationID }.map { item($0, newFlow: newFlow) }
     }
 
     static func activeCount(_ references: [NativeTaskReference], conversationID: String?) -> Int {
         items(references, conversationID: conversationID).filter(\.isActive).count
     }
 
-    static func groups(_ references: [NativeTaskReference], conversations: [Conversation]) -> [OngoingWorkGroup] {
+    static func groups(_ references: [NativeTaskReference], conversations: [Conversation], newFlow: Set<UUID> = []) -> [OngoingWorkGroup] {
         let titles = Dictionary(conversations.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
         var order: [String] = []
         var known: [String: [OngoingWorkItem]] = [:]
         var other: [OngoingWorkItem] = []
         for reference in references.reversed() {
-            let entry = item(reference)
+            let entry = item(reference, newFlow: newFlow)
             guard titles[entry.conversationID] != nil else { other.append(entry); continue }
             if known[entry.conversationID] == nil { order.append(entry.conversationID) }
             known[entry.conversationID, default: []].append(entry)
@@ -113,6 +113,7 @@ extension ChatStore {
     func revealOngoingWork(_ reference: NativeTaskReference) {
         let target = reference.origin.conversationID
         guard conversations.contains(where: { $0.id == target }) else { return }
+        if revealDeliveredResult(reference.id, conversationID: target) { return }
         taskRevealGeneration &+= 1
         if selectedID != target || !(section == .chat || section == .vera) { select(target) }
         pendingTaskReveal = reference.id.uuidString
@@ -190,7 +191,7 @@ struct OngoingWorkPanel: View {
     @State private var showingAll = false
 
     var body: some View {
-        let items = OngoingWork.items(store.nativeTaskReferences, conversationID: conversationID)
+        let items = OngoingWork.items(store.nativeTaskReferences, conversationID: conversationID, newFlow: store.nativeTaskNewFlowIDs)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Text("Ongoing work")
@@ -255,7 +256,7 @@ struct OngoingWorkAllSheet: View {
     let onGo: (NativeTaskReference) -> Void
 
     var body: some View {
-        let groups = OngoingWork.groups(store.nativeTaskReferences, conversations: store.conversations)
+        let groups = OngoingWork.groups(store.nativeTaskReferences, conversations: store.conversations, newFlow: store.nativeTaskNewFlowIDs)
         VStack(spacing: 0) {
             HStack {
                 Text("All work")
