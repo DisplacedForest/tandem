@@ -15,18 +15,6 @@ enum NativeTaskTools {
         let message: String
     }
 
-    final class CallCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var issued = 0
-
-        func next() -> Int {
-            lock.lock(); defer { lock.unlock() }
-            let index = issued
-            issued += 1
-            return index
-        }
-    }
-
     static func enabledIDs(_ existing: Set<String>, hasEngine: Bool, hasRepository: Bool, general: Bool = false) -> Set<String> {
         let base = existing.subtracting([toolID])
         guard general || base.contains(NativeWebTools.researchToolID), hasEngine, hasRepository else { return base }
@@ -39,7 +27,6 @@ enum NativeTaskTools {
                            allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.chatWorkerTypes },
                            general: (@Sendable (_ assignment: String) async throws -> NativeResearchTaskRequest)? = nil,
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
-        let counter = CallCounter()
         let kinds: [NativeJSONValue] = [.string("research"), .string("document")] + (general == nil ? [] : [.string(generalWorkerType)])
         return NativeToolDefinition(id: toolID, name: toolName, title: "Start background work",
             description: "Start one background task per separate request only when the current user message explicitly asks for research or for a written document to be produced in the background. Earlier conversation requests do not authorize another task. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for documents. Then acknowledge briefly. Progress and the result appear on the task card. Do not repeat task status on unrelated turns, expose internal identifiers, wait for the result, or claim completion."
@@ -56,7 +43,8 @@ enum NativeTaskTools {
                         "items": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(500)])]),
                 ]),
             ]), confirmation: .none, timeout: .seconds(10), effect: .read, isAvailable: { true }, execute: { arguments in
-                let position = general == nil ? nil : counter.next()
+                let position = NativeToolCallContext.sameToolOrdinal
+                if general != nil, position == nil { throw NativeToolError.failed(notStarted) }
                 guard Set(arguments.keys).isSubset(of: ["worker_type", "title", "objective", "deliverables"]),
                       case .string(let workerType) = arguments["worker_type"],
                       NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) || (general != nil && workerType == generalWorkerType),
@@ -77,6 +65,7 @@ enum NativeTaskTools {
                     }
                     do {
                         request = try await general(assignment)
+                        try Task.checkCancellation()
                     } catch let refusal as NotStarted {
                         return .object(["message": .string(refusal.message), "started": .bool(false)])
                     }
@@ -106,7 +95,8 @@ enum NativeTaskTools {
                     request = try NativeResearchTaskRequest(objective: objective, deliverables: deliverables, workerType: workerType, title: title)
                 }
                 var placed = origin
-                if let position, position > 0 { placed.index = position }
+                if general != nil, let position, position > 0 { placed.index = position }
+                try Task.checkCancellation()
                 let reference = try await service.submit(origin: placed, request: request, profile: profile)
                 await didSave(reference)
                 let kind = reference.request.workerType
