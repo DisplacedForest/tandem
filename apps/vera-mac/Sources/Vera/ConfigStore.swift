@@ -53,6 +53,7 @@ final class ConfigStore: ObservableObject {
     @Published private(set) var capabilityTools: NativeCapabilityToolCatalog
     private let credentialStore: any NativeCredentialStore
     private let writeConfiguration: ([String: Any]) throws -> Void
+    private let readConfiguration: () -> [String: Any]
     private var savedCredentials: [String: String]
     private var piCommittedSettings: NativeChatSettings
     private var piCommittedCredentials: [String: String]
@@ -93,9 +94,10 @@ final class ConfigStore: ObservableObject {
     ]
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
-         readConfiguration: () -> [String: Any] = { ConfigFile.read() },
+         readConfiguration: @escaping () -> [String: Any] = { ConfigFile.read() },
          nativeMCP injectedMCP: NativeMCPManager? = nil,
          writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
+        self.readConfiguration = readConfiguration
         let loaded = readConfiguration()
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
@@ -189,6 +191,7 @@ final class ConfigStore: ObservableObject {
         let asks = rows[index]["asks_tools"] as? [String] ?? []
         let added = names.intersection(reads).subtracting(asks).sorted()
         guard !added.isEmpty else { return true }
+        guard NSDictionary(dictionary: readConfiguration()).isEqual(to: raw) else { return false }
         rows[index]["asks_tools"] = asks + added
         do { try commitNativeMCPServers(rows, pruning: []); return true } catch { return false }
     }

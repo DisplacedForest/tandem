@@ -190,7 +190,8 @@ final class NativeMCPAccess: @unchecked Sendable {
             let previous = (Array(oauthOwners.values), Array(authorizations.values), observer)
             oauthOwners = [:]
             authorizations = [:]
-            states = servers.map { NativeMCPServerState(configuration: $0) }
+            let remembered = Dictionary(states.map { ($0.id, $0.configuration.asksTools) }, uniquingKeysWith: { first, _ in first })
+            states = servers.map { NativeMCPServerState(configuration: $0.asking($0.asksTools.union(remembered[$0.id] ?? []))) }
             revision += 1
             return previous
         }

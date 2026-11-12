@@ -71,6 +71,7 @@ enum NativeMCPChangesSelftest {
         try await rewrites()
         try await remembered()
         try await rememberedWithoutSaving()
+        try await rememberedBesideAnEdit()
         try await rememberedWhileSigningIn()
         try await dispatched()
         try await oversized()
@@ -477,10 +478,29 @@ enum NativeMCPChangesSelftest {
             await manager.connect(id)
             try await stillAsks(manager, connection, "unsaved " + label)
         }
+        await connection.set([tool("lookup")])
+        await manager.replaceConfiguration(NativeMCPServerConfiguration.load(disk.contents).0)
+        await manager.connect(id)
+        try await stillAsks(manager, connection, "unsaved, after the whole configuration is replaced")
         disk.fails = false
         await manager.disconnect(id)
         await manager.connect(id)
         try require((savedRow(disk)?["asks_tools"] as? [String]) == ["lookup"], "A save that failed is tried again on the next connection, even after the service stopped marking the tool")
+        withExtendedLifetime(config) {}
+    }
+
+    static func rememberedBesideAnEdit() async throws {
+        let disk = Disk()
+        let (manager, config, connection, id) = try await service(disk, tools: [tool("lookup", destructive: true)])
+        var edited = disk.contents
+        var rows = edited["native_mcp_servers"] as? [[String: Any]] ?? []
+        rows[0]["act_tools"] = ["post_update"]
+        edited["native_mcp_servers"] = rows
+        disk.contents = edited
+        await manager.connect(id)
+        try require((savedRow(disk)?["act_tools"] as? [String]) == ["post_update"] && savedRow(disk)?["asks_tools"] == nil,
+                    "A file edited since it was loaded is not overwritten to remember a marking")
+        try await stillAsks(manager, connection, "file edited elsewhere")
         withExtendedLifetime(config) {}
     }
 
