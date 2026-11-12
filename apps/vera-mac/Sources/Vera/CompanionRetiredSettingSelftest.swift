@@ -222,6 +222,103 @@ extension SelfTest {
             do { _ = try invalid() } catch { copy.append(error.localizedDescription) }
         }
         try requireRetiredFree(copy, "Companion copy")
+        try await checkRetiredStoredContext()
+        try checkCarriedValues()
         print("  companion retired setting OK (old profile and requests load, nothing shows or tells the model about it)")
+    }
+    private static func oldStoredContext(_ sentence: String) -> String {
+        let resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
+        let current = NativeDotContext.render(name: "Ada", resolver: resolver).components(separatedBy: "\n")
+        let oldCoordinator = current[1].replacingOccurrences(of: "longer work is handed to", with: "work on the " + retiredWord + " is handed to")
+        return ([current[0], sentence, oldCoordinator] + current.dropFirst(2)).joined(separator: "\n")
+    }
+
+    private static var oldContexts: [String] {
+        [oldStoredContext("Your standing " + retiredWord + ": Grow tomatoes on the balcony. Keep this " + retiredWord + " in mind when it is relevant; do not force it into unrelated conversations."),
+         oldStoredContext("No standing " + retiredWord + " has been set yet.")]
+    }
+
+    private static func checkRetiredStoredContext() async throws {
+        let require = NativeTaskFixture.require
+        let resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
+        let current = NativeDotContext.render(name: "Ada", resolver: resolver)
+        for old in oldContexts {
+            let cleaned = NativeDotContext.retired(old)
+            try requireRetiredFree([cleaned], "A stored context from before")
+            try require(cleaned == current, "Only the retired lines change and every rule line stays byte for byte: \(cleaned)")
+            let kept = old.components(separatedBy: "\n").filter { !$0.lowercased().contains(retiredWord) }
+            try require(kept.allSatisfy { cleaned.components(separatedBy: "\n").contains($0) }, "Every other stored line survives unchanged")
+        }
+        try require(NativeDotContext.retired("Stored block\nRun commands in shared folders: hand off to the user.")
+                    == "Stored block\nRun commands in shared folders: hand off to the user.", "A current stored block is returned unchanged")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("companion-retired-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("history.sqlite")
+        let first = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: NativeCompanionIntroductionTransport(),
+                              repository: try LocalChatRepository(url: url), nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
+        await first.connect()
+        first.suspendsTurnScheduling = true
+        first.openVeraThread()
+        guard let threadID = first.veraThreadID, let pending = first.conversationTurns.first(where: { $0.conversationID == threadID }),
+              pending.dotContext != nil else { throw NativeTaskFixture.Failure.assertion("A pending companion turn stores its context") }
+        first.stopNativeTaskRecovery()
+        let repository = try LocalChatRepository(url: url)
+        let oldContext = oldContexts[0]
+        try await repository.database.write { db in
+            guard let raw = try String.fetchOne(db, sql: "SELECT record_json FROM native_conversation_turns WHERE id = ?", arguments: [pending.id.uuidString]),
+                  var object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+                throw NativeTaskFixture.Failure.assertion("The pending turn is stored")
+            }
+            object["dotContext"] = oldContext
+            let rewritten = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+            try db.execute(sql: "UPDATE native_conversation_turns SET record_json = ? WHERE id = ?", arguments: [rewritten, pending.id.uuidString])
+        }
+        try require(try repository.conversationTurns().first { $0.id == pending.id }?.dotContext == oldContexts[0], "The turn now carries a context from before")
+        let transport = NativeCompanionIntroductionTransport()
+        let resumed = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
+                                nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
+        await resumed.connect()
+        defer { resumed.stopNativeTaskRecovery() }
+        resumed.openVeraThread()
+        try await NativeSessionFixture.eventually("The saved turn is sent") { !transport.histories.isEmpty }
+        guard let system = transport.histories.first?.first(where: { $0.role == "system" })?.content else {
+            throw NativeTaskFixture.Failure.assertion("The saved turn sends a system prompt")
+        }
+        let standing = system.components(separatedBy: "\n\n").filter { $0.hasPrefix("Your standing role") }.joined()
+        try require(standing.contains("Run commands in shared folders: hand off to the user.") && standing.contains("You are Ada"),
+                    "The saved turn keeps its own rules")
+        try requireRetiredFree([standing], "The saved turn's standing context")
+        try require(!system.contains("Grow tomatoes on the balcony"), "The saved text never reaches the model")
+    }
+
+    private static func checkCarriedValues() throws {
+        let require = NativeTaskFixture.require
+        func parsed(_ data: Data) throws -> [String: Any] { try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:] }
+        let values: [Any] = [NSNull(), "", " padded ", 123, 1.5, ["plan": ["beds": 3], "done": false]]
+        for value in values {
+            let object: [String: Any] = [retiredWord: value, "state": "active", "updated_at": 1_800_000_000.0]
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            var profile = try JSONDecoder().decode(NativeDotProfile.self, from: data)
+            profile.setupCompleted = true
+            let again = try parsed(JSONEncoder().encode(profile))
+            try require(again.keys.contains(retiredWord), "The carried key survives a save: \(value)")
+            try require(NSDictionary(dictionary: [retiredWord: again[retiredWord] ?? "missing"]).isEqual(to: [retiredWord: value]),
+                        "The carried value survives a save exactly: \(value) became \(String(describing: again[retiredWord]))")
+            if let text = value as? String { try require(again[retiredWord] as? String == text, "Saved text keeps its exact spacing") }
+        }
+        let absent = try JSONDecoder().decode(NativeDotProfile.self, from: Data(#"{"state":"active"}"#.utf8))
+        try require(try parsed(JSONEncoder().encode(absent))[retiredWord] == nil, "An absent value stays absent")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        for carried in [nil, "\"\"", "\"Grow tomatoes on the balcony.\"", "null"] as [String?] {
+            let body = "{" + (carried.map { "\"\(retiredWord)\":\($0)," } ?? "") + #""assignment":"Check the seed tray","mode":"manual"}"#
+            let sorted = try JSONSerialization.data(withJSONObject: try JSONSerialization.jsonObject(with: Data(body.utf8)), options: [.sortedKeys])
+            let payload = try JSONDecoder().decode(NativeCompanionTaskPayload.self, from: sorted)
+            let wire = try encoder.encode(NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: payload)))
+            let expected = #"{"assignment":"Check the seed tray","# + (carried.map { "\"\(retiredWord)\":\($0)," } ?? "") + #""mode":"manual"}"#
+            try require(String(decoding: wire, as: UTF8.self) == expected, "A saved request round trips byte for byte: \(String(decoding: wire, as: UTF8.self))")
+        }
     }
 }

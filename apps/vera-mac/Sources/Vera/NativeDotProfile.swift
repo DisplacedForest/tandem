@@ -5,6 +5,54 @@ enum NativeDotState: String, Codable, Sendable {
     case active, paused
 }
 
+enum NativeCarriedJSON: Codable, Equatable, Hashable, Sendable {
+    case null
+    case bool(Bool)
+    case integer(Int64)
+    case number(Double)
+    case string(String)
+    case array([NativeCarriedJSON])
+    case object([String: NativeCarriedJSON])
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null }
+        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+        else if let value = try? container.decode(Int64.self) { self = .integer(value) }
+        else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([NativeCarriedJSON].self) { self = .array(value) }
+        else { self = .object(try container.decode([String: NativeCarriedJSON].self)) }
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null: try container.encodeNil()
+        case .bool(let value): try container.encode(value)
+        case .integer(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .string(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        }
+    }
+
+    static func carried<Key: CodingKey>(_ container: KeyedDecodingContainer<Key>, _ key: Key) -> NativeCarriedJSON? {
+        guard container.contains(key) else { return nil }
+        if (try? container.decodeNil(forKey: key)) == true { return .null }
+        return try? container.decode(NativeCarriedJSON.self, forKey: key)
+    }
+
+    static func carry<Key: CodingKey>(_ value: NativeCarriedJSON?, _ container: inout KeyedEncodingContainer<Key>, _ key: Key) throws {
+        switch value {
+        case nil: return
+        case .null?: try container.encodeNil(forKey: key)
+        case let value?: try container.encode(value, forKey: key)
+        }
+    }
+}
+
 struct NativeDotProfile: Codable, Equatable, Sendable {
     var connectedToolIDs: Set<String>? = nil
     var state: NativeDotState = .active
@@ -12,7 +60,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
     var needsIntroduction: Bool = false
     var updatedAt: Date = Date()
     var resumedAt: Date? = nil
-    private var savedGoal: String? = nil
+    private var savedGoal: NativeCarriedJSON? = nil
 
     var isPaused: Bool { state == .paused }
 
@@ -37,7 +85,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        savedGoal = (try? container.decodeIfPresent(String.self, forKey: .goal)) ?? nil
+        savedGoal = NativeCarriedJSON.carried(container, .goal)
         if !container.contains(.connectedToolIDs) || ((try? container.decodeNil(forKey: .connectedToolIDs)) ?? false) {
             connectedToolIDs = nil
         } else {
@@ -56,7 +104,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(savedGoal, forKey: .goal)
+        try NativeCarriedJSON.carry(savedGoal, &container, .goal)
         try container.encodeIfPresent(connectedToolIDs.map { $0.sorted() }, forKey: .connectedToolIDs)
         try container.encode(state.rawValue, forKey: .state)
         try container.encode(setupCompleted, forKey: .setupCompleted)
@@ -214,6 +262,13 @@ enum NativeDotContext {
         let handed = nouns(.handOff)
         if !handed.isEmpty { sentences.append("Hands off \(list(handed)).") }
         return sentences.isEmpty ? "Acts without asking" : sentences.joined(separator: " ")
+    }
+
+    static func retired(_ stored: String) -> String {
+        stored.components(separatedBy: "\n")
+            .filter { !$0.hasPrefix("Your standing goal:") && $0 != "No standing goal has been set yet." }
+            .map { $0.replacingOccurrences(of: "work on the goal is handed to", with: "longer work is handed to") }
+            .joined(separator: "\n")
     }
 
     static func render(name: String, resolver: NativeRuleResolver) -> String {

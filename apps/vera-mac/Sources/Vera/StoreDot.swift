@@ -110,7 +110,7 @@ extension ChatStore {
     }
 
     func turnDotContext(_ turn: NativeConversationTurn) -> String? {
-        if let stored = turn.dotContext { return stored }
+        if let stored = turn.dotContext { return NativeDotContext.retired(stored) }
         guard isVeraThread(turn.conversationID) else { return nil }
         return dotContext(for: turn.conversationID, requestText: typedWords(for: turn).said)
     }

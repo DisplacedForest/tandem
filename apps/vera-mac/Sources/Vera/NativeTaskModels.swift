@@ -149,7 +149,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     let mode: String
     let connectedToolIDs: [String]?
     let scheduleID: String?
-    private var savedGoal: String? = nil
+    private var savedGoal: NativeCarriedJSON? = nil
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
@@ -191,14 +191,14 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
                       mode: container.decode(String.self, forKey: .mode),
                       connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
                       scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID))
-        savedGoal = try container.decodeIfPresent(String.self, forKey: .goal)
+        savedGoal = NativeCarriedJSON.carried(container, .goal)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(assignment, forKey: .assignment)
         try container.encode(mode, forKey: .mode)
-        try container.encodeIfPresent(savedGoal, forKey: .goal)
+        try NativeCarriedJSON.carry(savedGoal, &container, .goal)
         try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
         try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
     }
