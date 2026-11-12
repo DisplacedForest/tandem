@@ -65,27 +65,13 @@ final class CompanionPresence: ObservableObject {
                          voicePlaying: Bool = false, voiceConversationID: String? = nil) -> CompanionStateSnapshot {
         var snapshot = CompanionStateSnapshot()
         let threadID = store.veraThreadID
-        let ownedSchedules = Set(store.schedules.filter { $0.owner == .dot }.map(\.id))
-        let runs = store.scheduleRuns.values.flatMap { $0 }.filter { ownedSchedules.contains($0.scheduleID) }
-        let linkedIDs = Set(runs.compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
-        let references = store.nativeTaskReferences.filter {
-            (threadID != nil && $0.origin.conversationID == threadID) || linkedIDs.contains($0.id)
-        }
-        let knownIDs = Set(references.map(\.id))
-        for reference in references {
-            guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { continue }
-            snapshot.decisionPending = snapshot.decisionPending || display.card.status == .needsInput
-            snapshot.foregroundGenerating = snapshot.foregroundGenerating || display.card.status == .working
-        }
-        for run in runs {
-            if let id = run.taskReferenceID.flatMap(UUID.init(uuidString:)), knownIDs.contains(id) { continue }
-            snapshot.decisionPending = snapshot.decisionPending || run.outcome == .waiting
-            snapshot.foregroundGenerating = snapshot.foregroundGenerating || run.outcome == .running
-        }
+        let background = store.companionBackgroundWork
+        snapshot.backgroundRunning = background.running
+        snapshot.backgroundNeedsAnswer = background.needsAnswer
         let foreground = threadID != nil && store.turnExecutions.values.contains { $0.record.conversationID == threadID }
         let legacyForeground = store.isVeraThread(store.selectedID) && TandemLogoPresence.selectedTurnRunning(store)
-        snapshot.foregroundGenerating = snapshot.foregroundGenerating || foreground || legacyForeground
-        snapshot.decisionPending = snapshot.decisionPending || store.companionAwaitingApproval
+        snapshot.foregroundGenerating = foreground || legacyForeground
+        snapshot.decisionPending = store.companionAwaitingApproval
             || (store.isVeraThread(store.selectedID) && TandemLogoPresence.selectedDecisionPending(store))
         snapshot.explicitlyResting = store.dotProfile.isPaused
         snapshot.appInactive = !appActive

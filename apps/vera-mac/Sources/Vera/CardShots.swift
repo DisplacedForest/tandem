@@ -381,9 +381,19 @@ enum CardShot {
 }
 
 extension CompanionShotFixture {
-    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed"]
+    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed", "companion-work-background"]
+
+    static func seedBackground(_ store: ChatStore) {
+        guard let threadID = store.veraThreadID else { return }
+        store.nativeTaskReferences = [
+            try? OngoingWorkFixture.reference(conversationID: threadID, title: "Lumber prices this month", state: "running"),
+            try? OngoingWorkFixture.reference(conversationID: threadID, title: "Compare insulation options",
+                                              state: "needs_decision", decision: OngoingWorkFixture.decision),
+        ].compactMap { $0 }
+    }
 
     static func seedWaiting(_ store: ChatStore, outer: ChatStore, view: String) {
+        if view == "companion-work-background" { return seedBackground(store) }
         guard waitingViews.contains(view), let threadID = store.veraThreadID else { return }
         if view.hasSuffix("-unnamed") {
             store.adoptAssistantName(nil)

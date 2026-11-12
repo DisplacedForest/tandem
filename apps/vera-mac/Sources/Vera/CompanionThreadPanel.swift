@@ -111,6 +111,10 @@ struct CompanionThreadPanel: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(current.name), \(stateLine)")
+                CompanionBackgroundLines(work: store.companionBackgroundWork) {
+                    store.revealCompanionBackgroundWaiting()
+                    onClose?()
+                }
                 if !current.goal.isEmpty {
                     Text(current.goal).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
                         .fixedSize(horizontal: false, vertical: true)

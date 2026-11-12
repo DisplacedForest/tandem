@@ -7,6 +7,8 @@ struct CompanionStateSnapshot: Equatable, Sendable {
     var decisionPending = false
     var explicitlyResting = false
     var appInactive = false
+    var backgroundRunning = 0
+    var backgroundNeedsAnswer = 0
 }
 
 enum CompanionStateMapper {

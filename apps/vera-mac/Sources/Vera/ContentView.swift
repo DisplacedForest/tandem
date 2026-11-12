@@ -471,6 +471,7 @@ struct ChatPane: View {
         }
         .overlay(alignment: .topTrailing) {
             if workCollapsed, store.isVeraThread(conversation?.id) {
+                VStack(alignment: .trailing, spacing: 6) {
                 Button { showingWork = true } label: {
                     HStack(spacing: 8) {
                         CompanionAvatar(size: 18)
@@ -485,6 +486,8 @@ struct ChatPane: View {
                 .buttonStyle(.plain)
                 .help("\(store.companion.leading)'s state, activity and results")
                 .accessibilityLabel("Details for \(store.companion.inline)")
+                CompanionBackgroundLines(work: store.companionBackgroundWork) { store.revealCompanionBackgroundWaiting() }
+                }
                 .padding(.top, 44).padding(.trailing, 20)
             }
         }
