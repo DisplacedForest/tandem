@@ -6,8 +6,8 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let builtIn = "Ver" + "a"
         for name in [nil, "Ada"] as [String?] {
-            var harness = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
-                NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
+            var harness = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
+                NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
             }
             let tools = NativeCompanionHarness.tools(harness.service, reconcile: false)
             let thread = harness.thread
@@ -17,13 +17,13 @@ extension SelfTest {
             let system = harness.model.allRequests.first?.first { $0.role == "system" }?.content ?? ""
             let question = try harness.decision(waiting)["prompt"] as? String ?? ""
             if let name {
-                try require(system.hasPrefix("You are \(name), working on one assignment") && question.hasPrefix(CompanionSavedText.marker + " has used this run's") && !question.contains(name) && CompanionSavedText.plain(question, name: name, appWritten: true).hasPrefix("\(name) has used this run's"),
+                try require(system.hasPrefix("You are \(name), working on one assignment") && question.hasPrefix(CompanionSavedText.marker + " wants to ") && !question.contains(name) && CompanionSavedText.plain(question, name: name, appWritten: true).hasPrefix("\(name) wants to "),
                             "A named companion's worker prompt and its question to the person use the name")
             } else {
                 try require(system.hasPrefix("You are the user's assistant, working on one assignment")
                                 && !system.contains("our companion") && !system.contains(builtIn),
                             "An unnamed companion's worker prompt claims no name: \(system.prefix(80))")
-                try require(question.hasPrefix(CompanionSavedText.marker + " has used this run's") && CompanionSavedText.plain(question, name: nil, appWritten: true).hasPrefix("Your companion has used this run's") && !question.contains(builtIn),
+                try require(question.hasPrefix(CompanionSavedText.marker + " wants to ") && CompanionSavedText.plain(question, name: nil, appWritten: true).hasPrefix("Your companion wants to ") && !question.contains(builtIn),
                             "An unnamed companion's question to the person starts with Your companion: \(question.prefix(80))")
             }
         }

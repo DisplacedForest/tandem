@@ -32,7 +32,7 @@ struct NativeTaskRecord: Equatable, Sendable {
             "created_at": createdAt, "updated_at": updatedAt,
         ]
         object["id"] = id
-        return try NativeTaskStore.canonical(object)
+        return try NativeTaskStore.canonical(object, limit: NativeTaskStore.maximumSnapshotBytes)
     }
 
     func decisionID() -> String? {
@@ -66,6 +66,8 @@ struct NativeTaskStepResult: Sendable {
 
 final class NativeTaskStore: Sendable {
     static let maximumJSONBytes = 262144
+    static let maximumCheckpointBytes = 720896
+    static let maximumSnapshotBytes = 1048576
     static let maximumEventBytes = 16384
     static let emptyObject = Data("{}".utf8)
     let database: DatabaseQueue
@@ -252,7 +254,7 @@ final class NativeTaskStore: Sendable {
         guard (step.state == .needsDecision) == (step.decision != nil) else {
             throw NativeTaskStoreError.invalid("A decision is required only when waiting for a decision")
         }
-        let checkpoint = try Self.canonical(step.checkpoint)
+        let checkpoint = try Self.canonical(step.checkpoint, limit: Self.maximumCheckpointBytes)
         let result = try step.result.map { try Self.canonical($0) }
         var decisionData: Data?
         if let decision = step.decision {
