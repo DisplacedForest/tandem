@@ -143,19 +143,20 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
 
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
-    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id"]
+    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said"]
 
     let assignment: String
     let mode: String
     let connectedToolIDs: [String]?
     let scheduleID: String?
+    let said: String?
     private var savedGoal: NativeCarriedJSON? = nil
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
-    var typedRequest: String { mode == "manual" ? assignment : "" }
+    var typedRequest: String { said ?? (mode == "manual" ? assignment : "") }
 
-    init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil) throws {
+    init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
             throw NativeTaskError.invalidRequest("The assignment must contain 1 to 5,000 characters.")
@@ -173,6 +174,10 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         guard NativeRunOrigin.validSchedule(scheduleID), scheduleID == nil || mode == "scheduled" else {
             throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
         }
+        guard (said?.unicodeScalars.count ?? 0) <= 5000 else {
+            throw NativeTaskError.invalidRequest("The request must contain at most 5,000 characters.")
+        }
+        self.said = said
         self.assignment = cleanAssignment
         self.mode = mode
         self.connectedToolIDs = connectedToolIDs
@@ -183,6 +188,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         case assignment, mode, goal
         case connectedToolIDs = "connected_tool_ids"
         case scheduleID = "schedule_id"
+        case said
     }
 
     init(from decoder: Decoder) throws {
@@ -190,7 +196,8 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         try self.init(assignment: container.decode(String.self, forKey: .assignment),
                       mode: container.decode(String.self, forKey: .mode),
                       connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
-                      scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID))
+                      scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID),
+                      said: container.decodeIfPresent(String.self, forKey: .said))
         savedGoal = NativeCarriedJSON.carried(container, .goal)
     }
 
@@ -201,6 +208,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         try NativeCarriedJSON.carry(savedGoal, &container, .goal)
         try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
         try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
+        try container.encodeIfPresent(said, forKey: .said)
     }
 }
 
@@ -397,6 +405,7 @@ struct NativeTaskOrigin: Codable, Equatable, Hashable, Sendable {
     let conversationID: String
     let userMessageID: UUID
     let assistantMessageID: UUID
+    var index: Int? = nil
 }
 
 enum NativeTaskDeliveryState: String, Codable, Equatable, Hashable, Sendable {
@@ -454,9 +463,10 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     let failureReason: String?
     var effects: [NativeCompanionEffectNote] = []
     var pending: NativeCompanionPending? = nil
+    var note: NativeTaskNote? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case phase, sources, outline, drafts, revisions, effects, pending
+        case phase, sources, outline, drafts, revisions, effects, pending, note
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
         case nextQuery = "next_query"
@@ -474,6 +484,7 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         effects = (try? container.decodeIfPresent([NativeCompanionEffectNote].self, forKey: .effects)) ?? []
         pending = try? container.decodeIfPresent(NativeCompanionPending.self, forKey: .pending)
+        note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
     }
 
     var unconfirmedEffects: [String] {
@@ -493,6 +504,7 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var shape: String? = nil
     var why: NativeRuleWhy? = nil
     var stop: NativeTaskStop? = nil
+    var keep: Bool? = nil
 }
 
 struct NativeTaskStop: Codable, Equatable, Hashable, Sendable {

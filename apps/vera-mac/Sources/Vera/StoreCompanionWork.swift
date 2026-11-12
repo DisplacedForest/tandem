@@ -1,15 +1,6 @@
 import Foundation
 
-enum CompanionWorkCopy {
-    static let describe = "Describe what {name} should work on."
-    static let paused = "{name} is paused. Resume to give it work."
-    static let conversation = "{name}'s conversation couldn't be opened."
-    static let couldNotStart = "{name} couldn't start this work."
-}
-
 extension ChatStore {
-    static let companionAssignmentLimit = 4000
-
     func companionWorkReferences() -> [NativeTaskReference] {
         nativeTaskReferences.filter { $0.createRequest.workerType == "companion" }
     }
@@ -68,56 +59,19 @@ extension ChatStore {
         }
     }
 
-    @discardableResult
-    func startCompanionAssignment(_ text: String) async -> CompanionLine? {
-        let assignment = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !assignment.isEmpty else { return .named(CompanionWorkCopy.describe) }
-        guard assignment.count <= Self.companionAssignmentLimit else { return .literal("Keep the assignment under \(Self.companionAssignmentLimit) characters.") }
-        guard !dotProfile.isPaused else { return .named(CompanionWorkCopy.paused) }
-        guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
-            return .literal("Background work isn't available right now.")
-        }
-        guard let nativeConfig = currentNativeConfig else { return .literal("No model is set up. Add one in Settings.") }
-        let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
-        if nativeTaskConfiguration != nil && profile == nil { return .literal("The model profile couldn't be prepared.") }
-        let request: NativeResearchTaskRequest
-        do {
-            let payload = try NativeCompanionTaskPayload(assignment: assignment, mode: "manual",
-                                                        connectedToolIDs: dotProfile.connectedToolIDs?.sorted())
-            request = try NativeResearchTaskRequest(dot: payload)
-        } catch {
-            return .literal(error.localizedDescription)
-        }
-        ensureVeraThread()
-        guard let conversationID = veraThreadID else { return .named(CompanionWorkCopy.conversation) }
-        let user = Message(role: .user, text: assignment)
-        let reply = Message(role: .assistant, text: "", state: .complete, modelID: nativeConfig.model)
-        do {
-            let ordinal = try repository.messages(conversationID: conversationID).count
-            try repository.saveMessage(user, conversationID: conversationID, ordinal: ordinal)
-            try repository.saveMessage(reply, conversationID: conversationID, ordinal: ordinal + 1)
-        } catch {
-            return .literal("The assignment couldn't be saved: \(error.localizedDescription)")
-        }
-        if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
-            if !conversations[index].messages.isEmpty || selectedID == conversationID {
-                conversations[index].messages.append(contentsOf: [user, reply])
+    func companionHandOff() -> @Sendable (String) async throws -> NativeResearchTaskRequest {
+        { [weak self] assignment in
+            let live: (paused: Bool, connected: [String]?)? = await MainActor.run { [weak self] in
+                self.map { ($0.dotProfile.isPaused, $0.dotProfile.connectedToolIDs?.sorted()) }
             }
-            conversations[index].updatedAt = Date()
-            conversations[index].isPersisted = true
-            try? repository.saveConversation(conversations[index])
+            guard let live else { throw NativeTaskTools.NotStarted(message: NativeTaskTools.notStarted) }
+            guard !live.paused else { throw NativeTaskTools.NotStarted(message: NativeTaskTools.pausedReply) }
+            return try ChatStore.companionRequest(assignment, connectedToolIDs: live.connected, said: "")
         }
-        let origin = NativeTaskOrigin(conversationID: conversationID, userMessageID: user.id, assistantMessageID: reply.id)
-        do {
-            let reference = try await service.submit(origin: origin, request: request, profile: profile)
-            reloadNativeTaskReferences()
-            if reference.deliveryState == NativeTaskDeliveryState.rejected {
-                return reference.lastDeliveryError.map(CompanionLine.literal) ?? .named(CompanionWorkCopy.couldNotStart)
-            }
-            return nil
-        } catch {
-            return .literal(error.localizedDescription)
-        }
+    }
+
+    nonisolated static func companionRequest(_ assignment: String, connectedToolIDs: [String]?, said: String? = nil) throws -> NativeResearchTaskRequest {
+        try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", connectedToolIDs: connectedToolIDs, said: said))
     }
 
     func cancelCompanionWork() {

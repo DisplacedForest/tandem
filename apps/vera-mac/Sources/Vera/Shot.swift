@@ -80,7 +80,9 @@ enum Shot {
             size = CGSize(width: 900, height: 760)
         } else if view == "companion-activity-detail" {
             size = CGSize(width: 340, height: 700)
-        } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) {
+        } else if view == "result-two-at-once" {
+            size = CGSize(width: 1180, height: 1380)
+        } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) || NativeTaskDeliveryShot.views.contains(view) {
             size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             size = CompanionPanelController.size
@@ -471,6 +473,18 @@ enum Shot {
                 ShotView(store: store, chrome: .dotSheet(settings: view == "vera-settings"))
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if NativeTaskDeliveryShot.views.contains(view) {
+            let section = NativeTaskDeliveryShot.seed(store, view: view)
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                ShotView(store: store, section: section, dotHeader: false, height: size.height,
+                         transcript: store.selected?.messages ?? [], width: size.width)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .environmentObject(config)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )

@@ -283,6 +283,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeRuleCardsV37") { db in try NativeRuleRecordStore.migrateCards(db); try NativeRuleRecordStore.migratePrefixes(db) }
         migrator.registerMigration("nativeRuleOffersV38") { db in try RuleOfferStore.migrate(db) }
         migrator.registerMigration(NativeEffectLedgerStore.turnsMigration) { db in try NativeEffectLedgerStore.migrateTurns(db) }
+        migrator.registerMigration(NativeTaskDelivery.migration) { db in try NativeTaskDelivery.migrate(db) }
         return migrator
     }
 
@@ -1013,11 +1014,18 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 message.pulse = card
                 message.sources = card.sourceList
             }
+            if contentType == .deliveredResult || contentType == .deliveredLine,
+               let raw: String = row["metadata_json"] {
+                message.delivery = try? JSONDecoder().decode(NativeDeliveredMessage.self, from: Data(raw.utf8))
+            }
             return message
         }
     }
 
     private static func metadataJSON(for message: Message) -> String? {
+        if let delivery = message.delivery, message.contentType == .deliveredResult || message.contentType == .deliveredLine {
+            return (try? nativeTaskEncoded(delivery)).map { String(decoding: $0, as: UTF8.self) }
+        }
         guard message.contentType == .pulseCard, let card = message.pulse else { return nil }
         return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
     }

@@ -3,6 +3,9 @@ import Foundation
 enum MessageContentType: String {
     case text
     case pulseCard = "pulse_card"
+    case deliveredResult = "delivered_result"
+    case deliveredLine = "delivered_line"
+    case runOrigin = "run_origin"
 }
 
 /// A chat message in the UI.
@@ -27,6 +30,7 @@ struct Message: Identifiable, Hashable {
     var routeNote: MessageRouteNote? = nil
     var spokenText: String? = nil
     var displayBlocks: [NativeDisplayBlock] = []
+    var delivery: NativeDeliveredMessage? = nil
 
     var nativeEnvelope: NativeMessageEnvelope {
         NativeMessageEnvelope(spokenText: spokenText ?? text, displayBlocks: displayBlocks)

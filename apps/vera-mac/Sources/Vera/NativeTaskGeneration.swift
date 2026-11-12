@@ -275,7 +275,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
     static func validPhase(_ phase: String) -> Bool {
         let parts = phase.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
         guard let name = parts.first.map(String.init), NativeTaskTransportTiming.Phase(rawValue: name) != nil else { return false }
-        if parts.count == 1 { return ["plan", "synthesize", "outline"].contains(name) }
+        if parts.count == 1 { return ["plan", "review", "synthesize", "outline"].contains(name) }
         let index = parts[1]
         let digits = name == "work" ? 1...9 : 1...2
         guard digits.contains(index.count), index.allSatisfy(\.isNumber), let number = Int(index) else { return false }
