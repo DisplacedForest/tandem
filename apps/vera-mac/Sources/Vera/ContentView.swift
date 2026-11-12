@@ -848,6 +848,7 @@ struct MessageRow: View {
             } else {
                 Spacer(minLength: 60)
                 VStack(alignment: .trailing, spacing: 8) {
+                    MessageReplyChip(message: message, companionThread: companionThread)
                     if !message.attachments.isEmpty {
                         SentAttachmentsBar(attachments: message.attachments, store: attachmentStore)
                     }
@@ -1367,6 +1368,7 @@ struct ComposerField: View {
                 FolderGrantChips(grants: store.selectedGrants, unsupported: store.folderToolsUnsupportedReason,
                                  onRemove: { store.revokeGrant($0) })
             }
+            ComposerReplyBar()
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }

@@ -65,25 +65,45 @@ enum MessageActionsSelftest {
     }
 
     static func thumbRules() throws {
-        let store = ChatStore()
-        let conversation = Conversation(id: "thumbs", title: "Thumbs", messages: [], updatedAt: Date())
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try LocalChatRepository(inMemory: true),
+                              artifactPersistenceEnabled: false)
+        store.ensureVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else {
+            throw NativeBoundedToolFixture.Failure.assertion("The companion conversation exists")
+        }
         let first = Message(role: .assistant, text: "One")
         let second = Message(role: .assistant, text: "Two")
-        func marks(_ message: Message) -> [MessageReaction] { MessageReaction.marks(rating: store.messageRatings[message.id]) }
+        for (ordinal, message) in [first, second].enumerated() {
+            try store.repository?.saveMessage(message, conversationID: threadID, ordinal: ordinal)
+        }
+        store.conversations[index].messages = [first, second]
+        let up = MessageReaction.thumbsUp.emoji
+        let down = MessageReaction.thumbsDown.emoji
+        func marks(_ message: Message) -> [String] { store.reactions(on: message.id) }
 
         try require(marks(first).isEmpty, "No mark before a pick")
-        store.rateMessage(first, in: conversation, MessageReaction.thumbsUp.rating)
-        try require(marks(first) == [.thumbsUp], "Thumbs up shows its mark")
-        store.rateMessage(first, in: conversation, MessageReaction.thumbsUp.rating)
+        MessageActionsPerform.react(up, to: first, store: store)
+        try require(marks(first) == [up], "Thumbs up shows its mark")
+        MessageActionsPerform.react(up, to: first, store: store)
         try require(marks(first).isEmpty, "Picking thumbs up again clears it")
-        store.rateMessage(first, in: conversation, MessageReaction.thumbsUp.rating)
-        store.rateMessage(first, in: conversation, MessageReaction.thumbsDown.rating)
-        try require(marks(first) == [.thumbsDown], "Thumbs down replaces thumbs up")
+        MessageActionsPerform.react(up, to: first, store: store)
+        MessageActionsPerform.react(down, to: first, store: store)
+        try require(marks(first) == [up, down], "Thumbs up and thumbs down can both be on, in the order picked")
         try require(marks(second).isEmpty, "Another message keeps its own state")
-        store.rateMessage(second, in: conversation, MessageReaction.thumbsUp.rating)
-        try require(marks(first) == [.thumbsDown] && marks(second) == [.thumbsUp], "Each message holds one thumb of its own")
-        try require(MessageReaction.onAnnouncement(marks(second)) == "Thumbs up is on", "The row announces the thumb that is on")
-        try require(MessageReaction.onAnnouncement([]) == "No reaction", "The row announces when no thumb is on")
+        MessageActionsPerform.react(up, to: second, store: store)
+        try require(marks(first) == [up, down] && marks(second) == [up], "Each message holds its own reactions")
+        try require(store.messageRatings.isEmpty, "Companion reactions never touch the ordinary thumbs")
+        try require(MessageReaction.onAnnouncement(marks(second)) == "Thumbs up is on", "The row announces the reaction that is on")
+        try require(MessageReaction.onAnnouncement([]) == "No reaction", "The row announces when no reaction is on")
+
+        let ordinary = Conversation(id: "thumbs", title: "Thumbs", messages: [], updatedAt: Date())
+        store.rateMessage(first, in: ordinary, "up")
+        try require(store.messageRatings[first.id] == "up", "The ordinary icon row still sets its thumb in memory")
+        store.rateMessage(first, in: ordinary, "down")
+        try require(store.messageRatings[first.id] == "down", "The ordinary icon row still keeps one thumb")
+        store.rateMessage(first, in: ordinary, "down")
+        try require(store.messageRatings[first.id] == nil, "The ordinary icon row still toggles off")
+        try require(marks(first) == [up, down], "The ordinary thumbs never change the companion's reactions")
     }
 
     static func placement() throws {
@@ -157,13 +177,15 @@ enum MessageActionsSelftest {
     }
 
     static func offeredItems() throws {
-        try require(MessageReaction.offered == [.thumbsUp, .thumbsDown], "The row offers thumbs up then thumbs down")
-        try require(MessageReaction.offered.map(\.label) == ["Thumbs up", "Thumbs down"], "Reaction labels")
-        try require(MessageReaction.offered.map(\.emoji) == ["\u{1F44D}", "\u{1F44E}"], "Reactions are emoji")
-        try require(MessageMenuAction.offered == [.copy, .selectText], "The menu offers Copy then Select text")
-        try require(MessageMenuAction.offered.map(\.label) == ["Copy", "Select text"], "Menu labels")
-        try require(MessageActions.accessibilityLabels == ["Copy", "Select text", "Thumbs up", "Thumbs down"],
-                    "Accessibility actions are Copy, Select text, Thumbs up, Thumbs down")
+        try require(MessageReaction.offered == [.heart, .thumbsUp, .thumbsDown, .emphasis, .laugh, .check],
+                    "The row offers heart, thumbs up, thumbs down, emphasis, laugh, check")
+        try require(MessageReaction.offered.map(\.label) == ["Heart", "Thumbs up", "Thumbs down", "Emphasis", "Laugh", "Check"], "Reaction labels")
+        try require(MessageReaction.offered.allSatisfy { MessageReaction.emoji(in: $0.emoji) == $0.emoji }, "Reactions are emoji")
+        try require(MessageMenuAction.offered == [.copy, .selectText, .reply], "The menu offers Copy, Select text, then Reply")
+        try require(MessageMenuAction.offered.map(\.label) == ["Copy", "Select text", "Reply"], "Menu labels")
+        try require(MessageActions.accessibilityLabels == ["Copy", "Select text", "Reply", "Heart", "Thumbs up", "Thumbs down",
+                                                           "Emphasis", "Laugh", "Check", "Add reaction"],
+                    "Accessibility actions are the menu, the six reactions, then Add reaction")
     }
 
     static func copySweep() throws {

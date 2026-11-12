@@ -50,6 +50,7 @@ final class ChatStore: ObservableObject {
     @Published var groundingStatus: [String: KnowledgeGroundingStatus] = [:]
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
     @Published var messageRatings: [UUID: String] = [:]   // chat messageID → "up"/"down"
+    @Published var companionMarks = CompanionMessageMarks()
     @Published var bookmarkedPulseIDs: Set<String> = []
     @Published var readPulseIDs: Set<String> = []         // cards whose detail this person has opened
     @Published var restoreState: [String: String] = [:]   // "<cardID>:<opIndex>" → running/done/failed
@@ -822,6 +823,7 @@ final class ChatStore: ObservableObject {
     }
 
     private func loadMessagesIfNeeded(_ id: String) {
+        if isVeraThread(id) { loadCompanionMarks() }
         guard let repository,
               let idx = conversations.firstIndex(where: { $0.id == id }),
               conversations[idx].messages.isEmpty else { return }
@@ -2167,7 +2169,7 @@ final class ChatStore: ObservableObject {
         case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: effectiveBridgeConfig?.model)
         default: note = nil
         }
-        if sendText(text, attachments: atts, routeNote: note, fromComposer: true) {
+        if sendText(text, attachments: atts, routeNote: note, fromComposer: true, reply: pendingReplyToSend) {
             draft = ""
             attachments = []
         }
@@ -2182,7 +2184,7 @@ final class ChatStore: ObservableObject {
             attachmentError = "There is no message text to send without the attachment. Add text or remove the attachment."
             return
         }
-        if sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld), fromComposer: true) {
+        if sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld), fromComposer: true, reply: pendingReplyToSend) {
             draft = ""
             attachments = []
         }
@@ -2215,7 +2217,7 @@ final class ChatStore: ObservableObject {
     @discardableResult
     func sendText(
         _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil,
-        conversationID: String? = nil, fromComposer: Bool = false
+        conversationID: String? = nil, fromComposer: Bool = false, reply pendingReply: PendingReply? = nil
     ) -> Bool {
         guard let turnRepository, let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
@@ -2247,6 +2249,7 @@ final class ChatStore: ObservableObject {
         if fromComposer { turn.preferenceEligible = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
+            if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id) }
             requestSystemAccess(enabledIDs: baseToolIDs)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
@@ -2685,6 +2688,7 @@ final class ChatStore: ObservableObject {
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])
                         + accessNotes,
                     assistantProfile: turnDotContext(turn)))
+                turnMessages = companionRequestMessages(turnMessages, turn: turn)
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
                         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
