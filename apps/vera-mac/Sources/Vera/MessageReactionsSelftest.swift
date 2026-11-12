@@ -79,6 +79,15 @@ enum MessageReactionsSelftest {
         try require(try repository.toggleReaction(fox, messageID: answer.id, at: base) == [heart, up, fox], "It can be put back")
         try require(try repository.toggleReaction(heart, messageID: answer.id, at: base) == [up, fox], "Toggling the first again removes it and keeps the order")
         try repository.recordReply(MessageReply(answeredID: answer.id, quote: "Here"), messageID: ask.id)
+        let turnAsk = Message(role: .user, text: "And this?")
+        let turnAnswer = Message(role: .assistant, text: "", state: .streaming)
+        let turn = NativeConversationTurn(id: UUID(), conversationID: conversation.id, userMessageID: turnAsk.id, assistantMessageID: turnAnswer.id,
+            mode: .chat, profile: "", enabledToolIDs: [], persona: "Persona", userScope: "", instructions: "", grounding: [],
+            memorySettings: .fresh, createdAt: Date(), history: [NativeTurnHistoryMessage(turnAsk)])
+        let quoted = MessageReply(answeredID: answer.id, quote: "Here too")
+        try repository.acceptTurn(turn, conversation: conversation, user: turnAsk, reply: turnAnswer, answering: quoted)
+        try require(try repository.messageMarks(conversationID: conversation.id).replies[turnAsk.id] == quoted,
+                    "A reply is saved in the same write that accepts its message")
         let reopened = try LocalChatRepository(url: url).messageMarks(conversationID: conversation.id)
         try require(reopened.reactions[answer.id] == [up, fox], "A fresh repository on the same database returns them in order")
         try require(reopened.replies[ask.id] == MessageReply(answeredID: answer.id, quote: "Here"), "A fresh repository returns the reply")
@@ -159,7 +168,12 @@ enum MessageReactionsSelftest {
         try repository.recordReply(MessageReply(answeredID: answer.id, quote: "Hi there"), messageID: ask.id)
         let saved = try repository.database.read { db in try count(db, "message_reactions") == 1 && count(db, "message_replies") == 1 }
         try require(saved, "The reaction and reply are saved")
+        store.loadCompanionMarks()
+        store.startReply(to: answer)
+        let held = store.companionMarks.pending[threadID] != nil && !store.companionMarks.replies.isEmpty
+        try require(held, "A pending reply and the saved marks are held before starting over")
         try require(store.resetDot(), "Starting the companion over succeeds")
+        try require(store.companionMarks == CompanionMessageMarks(), "Starting over forgets the pending reply and every mark")
         let gone = try repository.database.read { db in try count(db, "message_reactions") == 0 && count(db, "message_replies") == 0 }
         try require(gone, "Starting the companion over removes its reactions and replies through the cascade")
     }
@@ -224,17 +238,6 @@ enum MessageReactionsSelftest {
         try require(transport.histories.count == requests && store.conversationTurns.count == turns,
                     "A reaction starts no turn and sends nothing")
         try require(try repository.conversationTurns().count == turns, "A reaction saves no turn")
-
-        guard let asked = saved.last(where: { $0.role == .user }) else { throw NativeTaskFixture.Failure.assertion("The request exists") }
-        let unsaved = MessageReply(answeredID: answer.id, quote: "Kept")
-        store.companionMarks.unsavedReplies[asked.id] = unsaved
-        store.loadCompanionMarks()
-        let retried = try repository.messageMarks(conversationID: threadID).replies[asked.id]
-        let cleared = store.companionMarks.unsavedReplies.isEmpty
-        try require(retried == unsaved && cleared && store.companionMarks.replies[asked.id] == unsaved,
-                    "A reply that didn't save is written on the next load and keeps its chip")
-        try await repository.database.write { db in try db.execute(sql: "DELETE FROM message_replies WHERE message_id = ?", arguments: [asked.id.uuidString]) }
-        store.loadCompanionMarks()
 
         store.startReply(to: answer)
         store.draft = "Is it open late?"

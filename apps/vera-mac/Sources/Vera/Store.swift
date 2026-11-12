@@ -1818,6 +1818,7 @@ final class ChatStore: ObservableObject {
         }
         conversations.removeAll { $0.id == id }
         drafts.removeValue(forKey: id)
+        discardCompanionMarks(conversationID: id)
         memoryRetrievalTraces[id] = nil
         if selectedID == id {
             selectedID = nil
@@ -2248,8 +2249,13 @@ final class ChatStore: ObservableObject {
         turn.dotContext = dotContext(for: id, requestText: fromComposer ? text : "")
         if fromComposer { turn.preferenceEligible = true }
         do {
-            try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
-            let replySaved = pendingReply.map { recordReply($0, messageID: user.id, conversationID: id) } ?? true
+            let answered = answering(pendingReply, conversationID: id)
+            if let answered, let local = turnRepository as? LocalChatRepository {
+                try local.acceptTurn(turn, conversation: conversation, user: user, reply: reply, answering: answered)
+            } else {
+                try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
+            }
+            if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id, saved: answered != nil && turnRepository is LocalChatRepository) }
             requestSystemAccess(enabledIDs: baseToolIDs)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
@@ -2261,7 +2267,7 @@ final class ChatStore: ObservableObject {
             }
             if fromComposer { composerSend = ComposerSend(conversationID: id, count: composerSend.count + 1) }
             generating = true
-            chatConfigurationError = replySaved ? nil : MessageReplyCopy.replyFailed
+            chatConfigurationError = nil
         } catch {
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
             return false

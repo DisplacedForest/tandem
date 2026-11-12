@@ -257,6 +257,11 @@ extension LocalChatRepository: NativeConversationTurnRepository {
     }
 
     func acceptTurn(_ turn: NativeConversationTurn, conversation: Conversation, user: Message, reply: Message) throws {
+        try acceptTurn(turn, conversation: conversation, user: user, reply: reply, answering: nil)
+    }
+
+    func acceptTurn(_ turn: NativeConversationTurn, conversation: Conversation, user: Message, reply: Message,
+                    answering: MessageReply?) throws {
         try database.write { db in
             if try Self.readTurn(turn.id, db: db) != nil { return }
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_conversation_turns WHERE state='pending'") ?? 0
@@ -268,6 +273,7 @@ extension LocalChatRepository: NativeConversationTurnRepository {
                                            arguments: [conversation.id]) ?? -1) + 1
             try Self.saveMessage(user, conversationID: conversation.id, ordinal: ordinal, db: db)
             try Self.saveMessage(reply, conversationID: conversation.id, ordinal: ordinal + 1, db: db)
+            if let answering { try MessageReactionStore.recordReply(db, answering, messageID: user.id) }
             try Self.writeTurn(turn, db: db)
         }
     }
