@@ -370,6 +370,7 @@ struct CompanionPanelView: View {
                     .padding(.vertical, 8)
                     .accessibilityLabel("Message")
                     .onKeyPress(.return, phases: .down) { press in
+                        if ComposerEditing.composing(ComposerEditing.editor) { return .ignored }
                         if press.modifiers.contains(.shift) { return .ignored }
                         send()
                         return .handled
