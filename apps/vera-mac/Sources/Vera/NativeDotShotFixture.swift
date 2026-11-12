@@ -3,7 +3,6 @@ import Foundation
 @MainActor
 enum NativeDotShotFixture {
     static let name = "Ada"
-    static let goal = "Keep the greenhouse on track this season: watering, vent checks and a short weekly note on what changed."
 
     static func populate(_ store: ChatStore, paused: Bool, setupCompleted: Bool) {
         CompanionNameShot.apply(to: store)
@@ -17,7 +16,7 @@ enum NativeDotShotFixture {
         ]
         store.tightenConversationRule(.handOff, for: .commands, conversationID: id)
         store.tightenConversationRule(.ask, for: .fileEdits, conversationID: id)
-        store.dotProfile = NativeDotProfile(goal: setupCompleted ? goal : "", state: paused ? .paused : .active, setupCompleted: setupCompleted)
+        store.dotProfile = NativeDotProfile(state: paused ? .paused : .active, setupCompleted: setupCompleted)
         store.openVeraThread()
     }
 

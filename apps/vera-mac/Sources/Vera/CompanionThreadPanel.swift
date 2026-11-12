@@ -34,7 +34,7 @@ struct CompanionThreadPanel: View {
         self.fixed = fixed
         self.onClose = onClose
         _selectedID = State(initialValue: selectedID)
-        _model = State(initialValue: fixed ?? CompanionOverviewModel(name: "", goal: "", services: "", rules: "", paused: false, activity: [], outputs: []))
+        _model = State(initialValue: fixed ?? CompanionOverviewModel(name: "", services: "", rules: "", paused: false, activity: [], outputs: []))
     }
 
     private var current: CompanionOverviewModel { fixed ?? model }
@@ -111,10 +111,6 @@ struct CompanionThreadPanel: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(current.name), \(stateLine)")
-                if !current.goal.isEmpty {
-                    Text(current.goal).font(.system(size: 13)).foregroundStyle(Theme.warmTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 HStack(spacing: 8) {
                     Button {
                         store.setDotState(current.paused ? .active : .paused)
@@ -136,7 +132,7 @@ struct CompanionThreadPanel: View {
                             .frame(width: 26, height: 24).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("\(current.name)'s goal, services, rules and start over")
+                    .help("\(current.name)'s services, rules and start over")
                     .accessibilityLabel("Settings for \(current.mention)")
                 }
                 if current.paused {

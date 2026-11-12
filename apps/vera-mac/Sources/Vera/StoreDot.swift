@@ -9,7 +9,7 @@ struct CompanionConfigurationError: Equatable, Sendable {
 }
 
 enum CompanionErrorCopy {
-    static let loadLead = "{name}'s goal and settings couldn't load: "
+    static let loadLead = "{name}'s settings couldn't load: "
     static let loadTail = " Scheduled work is paused and no services are connected until the settings are saved again."
     static let saveLead = "{name}'s settings couldn't be saved: "
     static let clearLead = "{name}'s settings couldn't be cleared: "
@@ -50,7 +50,6 @@ extension ChatStore {
     func saveDotProfile(_ mutate: (inout NativeDotProfile) -> Void) {
         var next = dotProfile
         mutate(&next)
-        next.goal = NativeDotProfile.clean(next.goal)
         next.updatedAt = Date()
         do {
             try nativeDotProfileStore?.save(next)
@@ -62,9 +61,8 @@ extension ChatStore {
         resolveCompanionConfigurationError(CompanionErrorCopy.saveLead)
     }
 
-    func completeDotSetup(goal: String, connectedToolIDs: Set<String>?) {
+    func completeDotSetup(connectedToolIDs: Set<String>?) {
         saveDotProfile {
-            $0.goal = goal
             $0.connectedToolIDs = connectedToolIDs
             $0.setupCompleted = true
         }
@@ -112,7 +110,7 @@ extension ChatStore {
     }
 
     func turnDotContext(_ turn: NativeConversationTurn) -> String? {
-        if let stored = turn.dotContext { return stored }
+        if let stored = turn.dotContext { return NativeDotContext.retired(stored) }
         guard isVeraThread(turn.conversationID) else { return nil }
         return dotContext(for: turn.conversationID, requestText: typedWords(for: turn).said)
     }
@@ -129,7 +127,7 @@ extension ChatStore {
 
     func dotContext(for conversationID: String, requestText: String) -> String? {
         guard isVeraThread(conversationID) else { return nil }
-        return NativeDotContext.render(name: companionName ?? "", goal: dotProfile.goal,
+        return NativeDotContext.render(name: companionName ?? "",
                                        resolver: ruleResolver(for: conversationID, requestText: requestText))
     }
 
@@ -163,7 +161,7 @@ extension ChatStore {
     }
 
     func dotRemovalSummary() -> NativeDotRemovalSummary {
-        var summary = NativeDotRemovalSummary(hasGoal: dotProfile.hasGoal, services: dotProfile.connectedToolIDs != nil)
+        var summary = NativeDotRemovalSummary(services: dotProfile.connectedToolIDs != nil)
         summary.artifacts = veraThreadID.flatMap { try? artifactRepository?.artifactIDs(conversationID: $0).count } ?? 0
         summary.schedules = ((try? nativeScheduleStore?.all()) ?? schedules).filter { $0.owner == .dot }.count
         guard let threadID = veraThreadID else { return summary }

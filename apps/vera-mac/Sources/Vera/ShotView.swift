@@ -125,8 +125,7 @@ struct ShotView: View {
         ZStack {
             ShotView(store: store, section: .vera, dotHeader: true).opacity(0.5)
             Color.black.opacity(0.35)
-            DotSheetShot(settings: settings, options: NativeDotShotFixture.options, selected: NativeDotShotFixture.selected,
-                         goal: NativeDotShotFixture.goal)
+            DotSheetShot(settings: settings, options: NativeDotShotFixture.options, selected: NativeDotShotFixture.selected)
                 .environmentObject(store)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

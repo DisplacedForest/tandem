@@ -82,7 +82,7 @@ extension ChatStore {
         if nativeTaskConfiguration != nil && profile == nil { return .literal("The model profile couldn't be prepared.") }
         let request: NativeResearchTaskRequest
         do {
-            let payload = try NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: dotProfile.goal,
+            let payload = try NativeCompanionTaskPayload(assignment: assignment, mode: "manual",
                                                         connectedToolIDs: dotProfile.connectedToolIDs?.sorted())
             request = try NativeResearchTaskRequest(dot: payload)
         } catch {

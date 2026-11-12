@@ -16,7 +16,7 @@ final class NativeCompanionIntroductionTransport: NativeChatTransport, @unchecke
         var call: NativeChatToolCall?
         var content = "What would you like to call me?"
         if messages.last?.role == "tool" {
-            content = current == "Call yourself Moss" ? "What should I work on?" : "What may I do without asking?"
+            content = "What may I do without asking?"
         } else if tools.contains(where: { $0.name == NativeCompanionProfileTools.name }) {
             let arguments: String?
             switch current {
@@ -29,7 +29,7 @@ final class NativeCompanionIntroductionTransport: NativeChatTransport, @unchecke
             case "Connect Apple Reminders": arguments = "{\"action\":\"connect\",\"value\":\"Apple Reminders\"}"
             case "Disconnect Apple Reminders": arguments = "{\"action\":\"disconnect\",\"value\":\"Apple Reminders\"}"
             case "Setup is done": arguments = "{\"action\":\"finish_setup\",\"value\":\"\"}"
-            default: arguments = nil; content = "I changed the goal to nothing."
+            default: arguments = nil; content = "I changed nothing."
             }
             if let arguments { call = NativeChatToolCall(id: UUID().uuidString, name: NativeCompanionProfileTools.name, arguments: arguments) }
         }
@@ -117,8 +117,9 @@ extension SelfTest {
         }
         try await send("Call yourself Moss")
         try require(persistedName == "Moss" && store.companionName == "Moss", "Name saved through current tool call")
+        let profileBeforeRetired = store.dotProfile
         try await send("Watch the greenhouse")
-        try require(store.dotProfile.goal == "Watch the greenhouse", "Goal saved through current tool call")
+        try require(store.dotProfile == profileBeforeRetired, "A retired profile action changes nothing")
         try await send("Hand commands to me")
         try require(store.ruleResolver(for: id, requestText: "").choice(for: .commands) == .handOff && store.turnConfirmations.isEmpty, "Tightening applies without widening card")
         try require(store.sendText("Ask before commands", conversationID: id), "Accept widening request")
@@ -130,12 +131,12 @@ extension SelfTest {
         try require(store.ruleResolver(for: id, requestText: "").choice(for: .commands) == .handOff, "Decline preserves rule")
         try require(store.sendText("Ask before commands", conversationID: id), "Accept stale widening request")
         try await NativeSessionFixture.eventually("Stale widening asks first") { !store.turnConfirmations.isEmpty }
-        store.saveDotProfile { $0.goal = "A newer user goal" }
+        store.saveDotProfile { $0.connectedToolIDs = [] }
         if let (reply, request) = store.turnConfirmations.first { store.resolveTurnConfirmation(reply, approved: true, requestID: request.id) }
         try await NativeSessionFixture.eventually("Stale approval settles", settled)
         try require(store.ruleResolver(for: id, requestText: "").choice(for: .commands) == .handOff,
                     "Approval cannot apply after the profile changes")
-        store.saveDotProfile { $0.goal = "Watch the greenhouse" }
+        store.saveDotProfile { $0.connectedToolIDs = nil }
         try require(store.sendText("Ask before commands", conversationID: id), "Accept second widening request")
         try await NativeSessionFixture.eventually("Widening still asks first") { !store.turnConfirmations.isEmpty }
         guard let (approvedReply, approvedRequest) = store.turnConfirmations.first else { throw NativeTaskFixture.Failure.assertion("Second confirmation exists") }
@@ -145,8 +146,9 @@ extension SelfTest {
         try require(store.sendText("Run commands without asking", conversationID: id), "Accept over-ceiling request")
         try await NativeSessionFixture.eventually("Over-ceiling request settles", settled)
         try require(store.ruleResolver(for: id, requestText: "").choice(for: .commands) == .ask, "Approval cannot cross global ceiling")
+        let profileBeforeProse = store.dotProfile
         try await send("Just describe a profile change")
-        try require(store.dotProfile.goal == "Watch the greenhouse", "Model prose does not mutate profile")
+        try require(store.dotProfile == profileBeforeProse, "Model prose does not mutate profile")
         try await send("Remember I prefer brief replies")
         try require(try repository.pendingProposals().isEmpty, "Memory off never creates preference records")
         var memorySettings = store.nativeMemorySettings
@@ -176,17 +178,21 @@ extension SelfTest {
         try require(store.dotSelectedServices(store.dotServiceOptions()).contains("apple-reminders"), "Approved service joins companion scope")
         try await send("Setup is done")
         try require(store.dotProfile.setupCompleted, "Setup can finish through the tool")
-        var oldProfile = store.dotProfile
-        oldProfile.updatedAt = Date().addingTimeInterval(-ChatStore.companionGoalStaleInterval - 10)
-        try store.nativeDotProfileStore?.save(oldProfile)
-        store.dotProfile = oldProfile
+        store.prepareCompanionRefinement()
+        try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement }, "Nothing to follow up on admits no refinement")
+        let finished = try OngoingWorkFixture.reference(conversationID: id, title: "Greenhouse note", workerType: "document", state: "completed",
+                                                        result: OngoingWorkFixture.documentResult("Greenhouse note"),
+                                                        updatedAt: Date().timeIntervalSince1970)
+        store.nativeTaskReferences.append(finished)
         store.draft = "A new request"
         store.prepareCompanionRefinement()
         try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement }, "Refinement does not interrupt a draft")
         store.draft = ""
         store.prepareCompanionRefinement()
-        try await NativeSessionFixture.eventually("Stale goal refinement completes", settled)
-        try require(store.conversationTurns.filter { $0.companionEvent?.kind == .refinement }.count == 1, "Stale goal admits one refinement")
+        try await NativeSessionFixture.eventually("Finished work refinement completes", settled)
+        try require(store.conversationTurns.filter { $0.companionEvent?.kind == .refinement }.count == 1, "Finished work admits one refinement")
+        try require(store.conversationTurns.first { $0.companionEvent?.kind == .refinement }?.companionEvent?.key == "work:" + finished.id.uuidString,
+                    "The refinement follows the finished work")
         store.prepareCompanionRefinement()
         try require(store.conversationTurns.filter { $0.companionEvent?.kind == .refinement }.count == 1, "Refinement is rate limited")
         store.prepareCompanionRefinement(now: Date().addingTimeInterval(ChatStore.companionRefinementInterval + 10))
@@ -251,12 +257,12 @@ extension SelfTest {
         let configured = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport,
                                    repository: configuredRepository, artifactPersistenceEnabled: false)
         await configured.connect()
-        configured.saveDotProfile { $0.setupCompleted = true; $0.goal = "Keep my existing goal" }
+        configured.saveDotProfile { $0.setupCompleted = true; $0.connectedToolIDs = ["apple-reminders"] }
         configured.openVeraThread()
         try await NativeSessionFixture.eventually("Saved empty profile opens") { configured.selected?.messages.first?.state == .complete }
         try require(configured.conversationTurns.first(where: { $0.companionEvent != nil })?.companionEvent?.kind == .welcome,
                     "Existing empty profile opens without re-onboarding")
-        try require(configured.dotProfile.goal == "Keep my existing goal", "Opening preserves saved profile")
+        try require(configured.dotProfile.setupCompleted && configured.dotProfile.connectedToolIDs == ["apple-reminders"], "Opening preserves saved profile")
 
     }
 }

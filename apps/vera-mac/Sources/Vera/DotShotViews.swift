@@ -5,7 +5,6 @@ struct DotSheetShot: View {
     let settings: Bool
     let options: [NativeDotServiceOption]
     let selected: Set<String>
-    let goal: String
 
     private var resolver: NativeRuleResolver {
         store.ruleResolver(for: store.veraThreadID ?? "", requestText: "")
@@ -22,7 +21,6 @@ struct DotSheetShot: View {
             }
             VStack(alignment: .leading, spacing: 12) {
                 row("Name") { box(Text(store.companionName ?? "Name").font(.system(size: 13)).foregroundStyle(store.companionName == nil ? Theme.textSecondary : Theme.textPrimary), height: nil) }
-                row("Goal") { box(Text(goal).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true), height: settings ? 54 : 74) }
                 row("Connected services") {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(options) { option in
