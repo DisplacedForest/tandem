@@ -224,8 +224,7 @@ actor NativeTaskTracker {
               let saved = try? repository.taskProjection(id: reference.id)?.snapshot,
               NativeTaskProjection.carriesOn(saved), let decision = saved.decision,
               !carriedOn.contains(decision.id) else { return }
-        carriedOn.insert(decision.id)
-        await decide(reference.id, choice: "continue")
+        if await decide(reference.id, choice: "continue") { carriedOn.insert(decision.id) }
     }
 
     func cancel(_ id: UUID) async {
@@ -249,20 +248,22 @@ actor NativeTaskTracker {
         await decide(id, choice: "retry")
     }
 
-    func decide(_ id: UUID, choice: String) async {
+    @discardableResult
+    func decide(_ id: UUID, choice: String) async -> Bool {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
-              decision.choices.contains(choice), !reference.cancelRequested else { return }
+              decision.choices.contains(choice), !reference.cancelRequested else { return false }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
             let intent = try repository.prepareTaskDecision(id: id, decisionID: decision.id, choice: choice)
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
                 connectionNote: nil, lease: lease, generation: nil) { await onUpdate([update]) }
             await deliverRetry(intent, lease: lease)
-        } catch {}
+            return true
+        } catch { return false }
     }
 
     private func deliverRetry(_ intent: NativeTaskDecisionIntent, lease: NativeTaskStreamLease) async {

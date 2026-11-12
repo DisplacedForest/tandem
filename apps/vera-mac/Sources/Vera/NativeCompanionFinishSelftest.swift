@@ -178,7 +178,12 @@ extension SelfTest {
         try await companionFinishFallbackKeepsPages()
         try await companionLongWorkThroughEngine()
         try await companionOldQuestionCarriesOn()
-        print("  companion finish OK (long work never asks or ends early, running out of room survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, older saved work carries on, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, the closing write-up is used when it fits, a write-up that can't run keeps the pages, over a hundred steps through the engine, a saved old question carries on by itself)")
+        try await companionManyCallsInOneReply()
+        try await companionEndingSavedFirst()
+        try await companionResultFitsItsLimit()
+        try await companionOldQuestionSaveFails()
+        try companionAppendKeepsSuffix()
+        print("  companion finish OK (long work never asks or ends early, running out of room survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, older saved work carries on, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, the closing write-up is used when it fits, a write-up that can't run or comes back unusable keeps the pages, over a hundred steps through the engine, a saved old question carries on by itself, more than 64 calls in one reply, the ending is saved before the closing request, the saved result fits its limit, a failed answer save is tried again, an appended line survives a long paragraph)")
     }
 
     private static func companionClosingOnly(_ rig: NativeCompanionFinishRig, after mark: Int) -> Bool {
@@ -337,10 +342,14 @@ extension SelfTest {
             checkpoint.threadID = "companion-thread-1"
             checkpoint.finishing = true
             checkpoint.sources = [source]
-            for _ in 0..<4 { checkpoint.note(described, "done") }
+            for _ in 0..<4 { checkpoint.effects.append(NativeCompanionEffectNote(title: described, outcome: "done")) }
             let longLine = "a" + String(repeating: "\u{0301}", count: variant == "both" ? 16000 : 30000)
-            if variant == "undone" || variant == "both" { checkpoint.note(longLine, NativeReadOnlyRun.outcome) }
-            if variant == "not run" || variant == "both" { checkpoint.note(longLine, "not done", reason: "The room was closed.") }
+            if variant == "undone" || variant == "both" {
+                checkpoint.effects.append(NativeCompanionEffectNote(title: longLine, outcome: NativeReadOnlyRun.outcome))
+            }
+            if variant == "not run" || variant == "both" {
+                checkpoint.effects.append(NativeCompanionEffectNote(title: longLine, outcome: "not done", reason: "The room was closed."))
+            }
             try require((NativeCompanionWorker.earlierLine(checkpoint) ?? "").unicodeScalars.count > NativeCompanionWorker.reportScalars,
                         "The completed steps exceed the report limit in scalars")
             _ = try rig.seed(id, checkpoint: try checkpoint.encoded())
@@ -605,7 +614,7 @@ extension SelfTest {
     private static func companionFinishFallbackKeepsPages() async throws {
         let moved = "https://moved.example/rain-totals"
         let require = NativeTaskFixture.require
-        for variant in ["tight", "empty", "calls", "closing"] {
+        for variant in ["tight", "empty", "calls", "closing", "unusable"] {
             let (client, web) = companionWebTools()
             client.page("https://weather.example/rain", .init(body: "<html><head><title>Rain totals page</title></head><body><p>Two inches fell.</p></body></html>",
                                                               finalURL: moved))
@@ -631,6 +640,7 @@ extension SelfTest {
             let used = try NativeTaskGenerationJob.wireBytes(saved.transcript, tools: rig.tools.map(\.schema))
             rig.environment.budget = NativeCompanionWorkerBudget(transcriptBytes: variant == "tight" ? used : used + 16383)
             let mark = rig.model.calls.count
+            if variant == "unusable" { rig.model.failClosing(NativeTaskGenerationFailure(code: "provider_response")) }
             let ended = try await rig.settle()
             let result = try rig.report(ended.record)
             let report = result["report"] as? String ?? ""
@@ -639,6 +649,8 @@ extension SelfTest {
                         "The \(variant) work ends once without asking: \(ended.states)")
             try require(variant == "tight" ? rig.model.calls.count == mark : companionClosingOnly(rig, after: mark),
                         "The \(variant) finish \(variant == "tight" ? "never asks for" : "asks only for") the closing write-up")
+            try require(variant != "unusable" || rig.model.calls.dropFirst(mark).count == 1,
+                        "An unusable closing write-up is not asked for again: \(rig.model.calls.dropFirst(mark))")
             if variant == "closing" {
                 try require(report == NativeCompanionWorker.outOfRoomLead + "\n\nTwo inches of rain fell [1]."
                             && sources.compactMap { $0["url"] as? String } == [moved],
@@ -762,8 +774,203 @@ extension SelfTest {
     }
 }
 
+final class NativeCompanionHeldAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held = true
+    private var tries = 0
+
+    var attempts: Int { lock.withLock { tries } }
+
+    func check() -> Bool { lock.withLock { tries += 1; return held } }
+
+    func release() { lock.withLock { held = false } }
+}
+
+@MainActor
+extension SelfTest {
+    private static func companionManyCallsInOneReply() async throws {
+        let require = NativeTaskFixture.require
+        let calls = (0..<65).map { NativeTaskGenerationToolCall(id: "many-\($0)", name: NativeCompanionFinishRig.lookupName, arguments: "{}") }
+        let reply = NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
+        let tools = NativeCompanionFinishRig.libraryTools().map(\.schema)
+        let opening = [NativeTaskGenerationMessage(role: "system", content: "Work on the assignment."),
+                       NativeTaskGenerationMessage(role: "user", content: "Assignment:\nCheck the reading room hours")]
+        let job = NativeTaskGenerationJob(id: UUID().uuidString, taskID: "task-many", bindingID: "binding-many", enrollmentDigest: "digest",
+            admissionBase: URL(string: "https://provider.example.org/v1")!, phase: "work-0", attempt: "many", messages: opening,
+            messagesDigest: NativeTaskGenerationJob.digest(opening, tools: tools, toolChoice: "auto"), deadlineSeconds: 60,
+            generation: 1, tools: tools, toolChoice: "auto")
+        try require((try? reply.validated(for: job)) == reply, "A reply with 65 tool calls is accepted")
+        let transcript = opening + [NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: calls)]
+            + calls.map { NativeTaskGenerationMessage(role: "tool", content: "{\"seats\":40}", toolCallID: $0.id) }
+        try require(NativeTaskGenerationJob.validShape(transcript, tools: tools, toolChoice: "auto", budget: .dot),
+                    "A saved transcript with 65 calls in one reply is accepted")
+
+        let model = NativeCompanionFinishModel { messages in
+            NativeCompanionScriptedModel.toolResults(messages).isEmpty
+                ? NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
+                : .text("The central reading room has forty seats.")
+        }
+        let rig = try NativeCompanionFinishRig(model: model)
+        let id = try rig.create()
+        let settled = try await rig.settle()
+        let saved = try rig.checkpoint(settled.record)
+        let answered = saved.transcript.filter { $0.role == "tool" }.compactMap(\.toolCallID)
+        try require(settled.record.state == .completed && (try rig.asked(id)) == 0 && saved.calls == 65
+                    && answered.sorted() == calls.map(\.id).sorted() && NativeCompanionFinishRig.answeredOnce(saved),
+                    "All 65 calls in one reply run and are answered once: \(saved.calls) \(answered.count)")
+        try require(saved.transcript.filter { $0.role == "tool" }.allSatisfy { $0.content.contains("seats") },
+                    "Every one of the 65 calls ran its tool")
+    }
+
+    private static func companionEndingSavedFirst() async throws {
+        let require = NativeTaskFixture.require
+        let small = NativeCompanionFinishRig.libraryTools()
+        let large = NativeCompanionFinishRig.paddedTools(8)
+        var rig = try NativeCompanionFinishRig(tools: large, model: .looping())
+        let id = try rig.create()
+        let first = try await rig.step()
+        let saved = try rig.checkpoint(first)
+        try require(first.state == .queued && saved.rounds == 1 && saved.outstandingCalls.isEmpty, "The first step runs one round")
+        let smallBytes = try NativeTaskGenerationJob.wireBytes(saved.transcript, tools: small.map(\.schema))
+        let largeBytes = try NativeTaskGenerationJob.wireBytes(saved.transcript, tools: large.map(\.schema))
+        let budget = NativeCompanionWorkerBudget(transcriptBytes: smallBytes + 16384 + (largeBytes - smallBytes) / 2)
+        rig.environment.budget = budget
+        let mark = rig.model.calls.count
+        let ending = try await rig.step()
+        let ended = try rig.checkpoint(ending)
+        try require(ending.state == .queued && ended.finishing == true && rig.model.calls.count == mark,
+                    "The step that runs out of room saves the ending without asking the model: \(ending.state) \(rig.model.calls.count - mark)")
+        try require(ended.transcript == saved.transcript && ended.rounds == saved.rounds && ending.result == nil,
+                    "Saving the ending changes nothing else")
+
+        var control = try NativeCompanionFinishRig(tools: small, model: .looping())
+        control.environment.budget = budget
+        var unmarked = saved
+        unmarked.finishing = nil
+        _ = try control.seed(try control.create(), checkpoint: try unmarked.encoded())
+        _ = try await control.step()
+        try require(control.model.calls.last.map { $0.choice == "auto" && !$0.attempt.hasSuffix("-finish") } == true,
+                    "With fewer tools a working request fits again")
+
+        rig.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: small) }
+        let settled = try await rig.settle()
+        let final = try rig.checkpoint(settled.record)
+        let report = try rig.report(settled.record)["report"] as? String ?? ""
+        try require(settled.record.state == .completed && (try rig.asked(id)) == 0 && companionClosingOnly(rig, after: mark),
+                    "Saved ending work goes to the closing request even when a working request would fit: \(rig.model.calls.dropFirst(mark))")
+        try require(final.calls == saved.calls && final.transcript.filter { $0.role == "tool" }.count == saved.transcript.filter { $0.role == "tool" }.count,
+                    "No tool runs after the ending is saved")
+        try require(report == NativeCompanionWorker.outOfRoomLead + "\n\nThe central reading room has forty seats.",
+                    "The result says the work ran out of room: \(report)")
+    }
+
+    private static func companionResultFitsItsLimit() async throws {
+        let require = NativeTaskFixture.require
+        let wide = "a" + String(repeating: "\u{0301}", count: 7000)
+        var noted = NativeCompanionCheckpoint()
+        noted.threadID = "companion-thread-1"
+        for index in 0..<64 { noted.note(wide, index.isMultiple(of: 2) ? "done" : "not done", reason: wide) }
+        try require(noted.effects.count == 64 && noted.effects.allSatisfy {
+                        $0.title.unicodeScalars.count == NativeCompanionWorker.noteScalars
+                            && $0.reason?.unicodeScalars.count == NativeCompanionWorker.noteScalars
+                    }, "Saved step titles and reasons are cut when they are noted")
+        var object = try NativeTaskStore.object(try noted.encoded())
+        var effects = object["effects"] as? [[String: Any]] ?? []
+        for index in 0..<16 { effects[index]["title"] = wide }
+        object["effects"] = effects
+        let older = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try NativeTaskStore.canonical(object, limit: NativeTaskStore.maximumCheckpointBytes))
+        try require(older.effects.prefix(16).allSatisfy { $0.title.unicodeScalars.count == 7001 },
+                    "Older saved work still holds its long step titles")
+        let text = String(repeating: "\u{1D538}", count: NativeCompanionWorker.reportScalars)
+        let assignment = "Check the reading room hours at the central library"
+        for (name, checkpoint) in [("noted", noted), ("older", older)] {
+            let rig = try NativeCompanionFinishRig(model: .looping())
+            let id = try rig.create(assignment)
+            let step = try NativeCompanionWorker.report(checkpoint, assignment: assignment, text: text)
+            let data = step.result ?? Data()
+            let result = try NativeTaskStore.object(data)
+            let saved = result["effects"] as? [[String: Any]] ?? []
+            try require(data.count <= NativeTaskStore.maximumJSONBytes && saved.count == 64
+                        && saved.allSatisfy { (($0["title"] as? String) ?? "").unicodeScalars.count <= NativeCompanionWorker.noteScalars },
+                        "The \(name) result fits its size limit: \(data.count)")
+            guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+            let record = try rig.store.commitStep(id, generation: claimed.generation, step: step)
+            let display = try rig.display(record, assignment: assignment)
+            let shown = display.card.answer ?? display.artifact?.report ?? ""
+            try require(record.state == .completed && display.card.status == .completed && !shown.isEmpty
+                        && shown == result["report"] as? String,
+                        "The completed projection accepts the \(name) result")
+        }
+    }
+
+    private static func companionOldQuestionSaveFails() async throws {
+        let require = NativeTaskFixture.require
+        let old = Data(#"{"attempt":"0ldattempt","calls":4,"effects":[],"pending":{"kind":"cap"},"rounds":4,"segment_calls":4,"segment_rounds":4,"thread_id":"companion-thread-1","transcript":[{"content":"","role":"assistant","tool_calls":[{"arguments":"{}","id":"old-1","name":"room_hours"}]},{"content":"{\"seats\":40}","role":"tool","tool_call_id":"old-1"}]}"#.utf8)
+        let decision: [String: Any] = ["prompt": CompanionSavedText.marker + " has used this run's working time and saved its progress. Keep going, or finish with what it has?",
+                                       "choices": ["continue", "finish"]]
+        let repository = try LocalChatRepository(inMemory: true)
+        let gate = NativeCompanionHeldAnswer()
+        let held = DatabaseFunction("held_answer", argumentCount: 0, pure: false) { _ in gate.check() }
+        try repository.database.inDatabase { db in
+            db.add(function: held)
+            try db.execute(sql: "CREATE TEMP TRIGGER held_answer BEFORE INSERT ON native_task_retries WHEN held_answer() BEGIN SELECT RAISE(ABORT, 'held'); END")
+        }
+        let recorder = NativeTaskJobRecorder()
+        let first = NativeTaskStepResult(state: .needsDecision, checkpoint: old, event: "progress",
+                                         data: try NativeTaskStore.canonical(["message": "saved"]), decision: try NativeTaskStore.canonical(decision))
+        let (harness, tasks) = try companionEngineHarness(repository, recorder: recorder, rounds: 3, first: first)
+        try await harness.start()
+        let reference = try await harness.submitDot("Check the reading room hours at the central library")
+        func answers() throws -> Int {
+            try repository.database.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_retries WHERE reference_id = ?", arguments: [reference.id.uuidString]) ?? 0
+            }
+        }
+        try require(try await harness.wait(seconds: 60) { gate.attempts >= 3 },
+                    "A carried on answer that could not be saved is tried again: \(gate.attempts)")
+        try require(try answers() == 0 && (try harness.state(reference))?.isTerminal != true, "Nothing is answered while saving fails")
+        gate.release()
+        try require(try await harness.wait(seconds: 180) { try harness.state(reference)?.isTerminal == true },
+                    "Once saving works again the work carries on: \(String(describing: try? harness.state(reference)))")
+        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
+            throw NativeTaskFixture.Failure.assertion("The handoff has an engine id")
+        }
+        let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try tasks.get(remote).checkpoint)
+        try require(try harness.state(reference) == .completed && (try answers()) == 1 && saved.rounds == 7,
+                    "The answer is saved once and the work completes: \(saved.rounds)")
+        try require(repository.taskProjection(id: reference.id)?.snapshot?.result?.report == "The central reading room has forty seats.",
+                    "The tracker shows the work's own answer")
+        await harness.stop()
+    }
+
+    private static func companionAppendKeepsSuffix() throws {
+        let require = NativeTaskFixture.require
+        let suffix = "The room was closed."
+        let paragraph = "Reading room notes " + String(repeating: "b", count: NativeCompanionWorker.reportScalars)
+        for body in [paragraph, NativeCompanionWorker.outOfRoomLead + "\n\n" + paragraph] {
+            let appended = NativeCompanionWorker.appendingReport(suffix, to: body)
+            try require(appended.hasSuffix("\n\n" + suffix) && appended.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
+                        "A line appended to one long paragraph is kept within the limit: \(appended.unicodeScalars.count)")
+            try require(appended.hasPrefix(String(body.prefix(2000))), "The start of the long paragraph is kept")
+        }
+        let led = NativeCompanionWorker.appendingReport(suffix, to: NativeCompanionWorker.outOfRoomLead + "\n\n" + paragraph)
+        try require(led.hasPrefix(NativeCompanionWorker.outOfRoomLead + "\n\nReading room notes"), "The ran out of room line survives")
+    }
+}
+
 extension NativeCompanionFinishRig {
     static let lookupName = "room_hours"
+
+    static func paddedTools(_ count: Int) -> [NativeToolDefinition] {
+        let object: NativeJSONValue = .object(["type": .string("object"), "properties": .object([:])])
+        return libraryTools() + (0..<count).map { index in
+            var shelf = NativeToolDefinition(id: "shelf-\(index)", name: "shelf_notes_\(index)", title: "Read the shelf notes",
+                                             description: String(repeating: "Shelf notes. ", count: 300), parameters: object,
+                                             confirmation: .none, isAvailable: { true }, execute: { _ in .object([:]) })
+            shelf.effect = .read
+            return shelf
+        }
+    }
 
     static func libraryTools() -> [NativeToolDefinition] {
         let object: NativeJSONValue = .object(["type": .string("object"), "properties": .object([:])])

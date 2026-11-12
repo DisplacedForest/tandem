@@ -139,7 +139,7 @@ struct NativeTaskGenerationCompletion: Codable, Equatable, Sendable {
         }
         let ids = toolCalls.map(\.id)
         guard ["stop", "tool_calls"].contains(finishReason), (finishReason == "tool_calls") != toolCalls.isEmpty,
-              toolCalls.count <= 64, Set(ids).count == ids.count,
+              Set(ids).count == ids.count,
               toolCalls.allSatisfy({ NativeTaskGenerationJob.validCall($0) }),
               !toolCalls.isEmpty || !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               content.utf8.count <= 262144 else {
@@ -316,7 +316,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
                 guard message.toolCallID == nil else { return false }
                 if let calls = message.toolCalls {
                     let ids = calls.map(\.id)
-                    guard !calls.isEmpty, calls.count <= 64, calls.allSatisfy(validCall),
+                    guard !calls.isEmpty, calls.allSatisfy(validCall),
                           Set(ids).count == ids.count, issued.isDisjoint(with: ids) else { return false }
                     issued.formUnion(ids)
                 }

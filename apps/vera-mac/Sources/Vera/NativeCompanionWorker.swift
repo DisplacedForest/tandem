@@ -178,7 +178,8 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     }
 
     mutating func note(_ title: String, _ outcome: String, reason: String? = nil) {
-        effects.append(NativeCompanionEffectNote(title: title, outcome: outcome, reason: reason))
+        effects.append(NativeCompanionEffectNote(title: NativeCompanionWorker.cut(title, scalars: NativeCompanionWorker.noteScalars), outcome: outcome,
+                                                 reason: reason.map { NativeCompanionWorker.cut($0, scalars: NativeCompanionWorker.noteScalars) }))
         if effects.count > 64 { effects.removeFirst(effects.count - 64) }
     }
 }
@@ -186,6 +187,7 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
 enum NativeCompanionWorker {
     static let stepTimeoutSeconds: Double = 1800
     static let reportScalars = 40000
+    static let noteScalars = 240
     static let outOfRoomLead = "I ran out of room to keep reading before I finished. Here's what I found so far."
     static let outOfRoomFallback = "I ran out of room to keep reading before I finished, and I couldn't write it up."
     static let summaryCharacters = 280
@@ -511,6 +513,10 @@ enum NativeCompanionWorker {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
+    static func cut(_ text: String, scalars limit: Int) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.prefix(max(0, limit))))
+    }
+
     static func fittedReport(_ text: String, scalars limit: Int = reportScalars) -> String {
         let clean = CompanionSavedText.sanitized(text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard clean.unicodeScalars.count > limit else { return clean }
@@ -523,8 +529,7 @@ enum NativeCompanionWorker {
 
     static func appendingReport(_ line: String, to text: String) -> String {
         let body = fittedReport(text)
-        let lead = body.components(separatedBy: "\n\n").first ?? body
-        let suffix = fittedReport(line, scalars: max(0, reportScalars - lead.unicodeScalars.count - 2))
+        let suffix = fittedReport(line, scalars: reportScalars / 2)
         guard !suffix.isEmpty else { return body }
         let room = reportScalars - suffix.unicodeScalars.count - 2
         return fittedReport(body, scalars: room) + "\n\n" + suffix
@@ -532,21 +537,29 @@ enum NativeCompanionWorker {
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
                        summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil) throws -> NativeTaskStepResult {
-        let body = fittedReport(text)
-        let firstParagraph = shown.map(CompanionSavedText.sanitized)
-            ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
-        let summary = String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters))
-        let title = assignment.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } ?? ""
+        let title = cut(assignment.split(whereSeparator: \.isNewline).first.map(String.init) ?? "", scalars: 200)
         var done = checkpoint
         done.pending = nil
-        let effects = checkpoint.effects.map { ["title": $0.title, "outcome": $0.outcome] }
-        var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
-                                     "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
-        if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
-        if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
-        if let stop { result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stop)) }
-        return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
-            result: try NativeTaskStore.canonical(result), event: "completed")
+        let effects = checkpoint.effects.map { ["title": cut($0.title, scalars: noteScalars), "outcome": $0.outcome] }
+        var room = reportScalars
+        while true {
+            let body = fittedReport(text, scalars: room)
+            let firstParagraph = shown.map(CompanionSavedText.sanitized)
+                ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
+            let summary = cut(String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters)), scalars: summaryCharacters)
+            var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
+                                         "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
+            if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
+            if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
+            if let stop { result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stop)) }
+            let data = try JSONSerialization.data(withJSONObject: result)
+            if data.count > NativeTaskStore.maximumJSONBytes, room > 1000 {
+                room /= 2
+                continue
+            }
+            return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
+                result: try NativeTaskStore.canonical(result), event: "completed")
+        }
     }
 }
 
@@ -790,7 +803,7 @@ private struct NativeCompanionRun {
         let schemas = advertised.map(\.schema)
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: false)
-        guard fits(prompt, tools: tools) else { return try await finish(&checkpoint) }
+        guard fits(prompt, tools: tools) else { return try ending(&checkpoint) }
         let completion = try await model("work-\(checkpoint.rounds)", checkpoint.attempt, 0, prompt, tools, "auto")
         checkpoint.rounds += 1
         checkpoint.automaticRetryRound = nil
@@ -806,10 +819,15 @@ private struct NativeCompanionRun {
         var assistant = NativeTaskGenerationMessage(role: "assistant", content: completion.content, toolCalls: completion.toolCalls)
         if try !recordable(assistant) {
             assistant = NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: completion.toolCalls)
-            if try !recordable(assistant) { return try await finish(&checkpoint) }
+            if try !recordable(assistant) { return try ending(&checkpoint) }
         }
         checkpoint.transcript.append(assistant)
         if let paused = try await answerOutstanding(&checkpoint) { return paused }
+        return try progress(checkpoint)
+    }
+
+    func ending(_ checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult {
+        checkpoint.finishing = true
         return try progress(checkpoint)
     }
 
@@ -824,6 +842,8 @@ private struct NativeCompanionRun {
                 completion = try await model("work-\(checkpoint.rounds)", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
             } catch let failure as NativeTaskGenerationFailure where NativeTaskWorkerFailures.terminalCodes.contains(failure.code) {
                 return try await conclude(&checkpoint, text: NativeCompanionWorker.unfinishedReport(checkpoint))
+            } catch let failure as NativeTaskGenerationFailure where failure.code == "provider_response" {
+                return try await conclude(&checkpoint, text: NativeCompanionWorker.fallbackReport(checkpoint))
             }
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
