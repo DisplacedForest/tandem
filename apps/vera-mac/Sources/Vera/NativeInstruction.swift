@@ -10,10 +10,30 @@ struct NativeInstructionClaim: Hashable, Sendable {
 final class NativeInstructionUses: @unchecked Sendable {
     private let lock = NSLock()
     private var spent: Set<String> = []
+    let store: NativeInstructionUseStore?
+    let messageID: UUID?
+    let conversationID: String?
+    let holder: String?
+
+    init() {
+        store = nil
+        messageID = nil
+        conversationID = nil
+        holder = nil
+    }
+
+    init(store: NativeInstructionUseStore, messageID: UUID, conversationID: String, holder: String?) {
+        self.store = store
+        self.messageID = messageID
+        self.conversationID = conversationID
+        self.holder = holder
+    }
 
     func used(_ signature: String) -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return spent.contains(signature)
+        let inMemory = lock.withLock { spent.contains(signature) }
+        if inMemory { return true }
+        guard let store, let messageID else { return false }
+        return store.used(messageID, signature: signature, excluding: holder)
     }
 
     @discardableResult

@@ -6,7 +6,7 @@ extension ChatStore {
         let ledger = NativeChatEffectLedger(
             ledger: NativeEffectLedgerStore(database: local.database, now: chatEffectClock), rules: nativeRuleSource,
             grants: nativeGrantSource, records: nativeRuleRecordStore, conversationID: turn.conversationID,
-            turnID: turn.id.uuidString, attempt: attempt.uuidString)
+            turnID: turn.id.uuidString, attempt: attempt.uuidString, userMessageID: turn.userMessageID)
         var hook = NativeChatEffectHook(
             revisions: { ledger.revisions() },
             propose: { await ledger.propose($0) },

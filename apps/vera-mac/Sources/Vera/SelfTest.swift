@@ -446,6 +446,7 @@ enum SelfTest {
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
         do { try await runInstructions() } catch { print("SELFTEST ERROR: instructions \(error)"); exit(1) }
         do { try await runInstructionCheck() } catch { print("SELFTEST ERROR: instruction check \(error)"); exit(1) }
+        do { try await runInstructionSpent() } catch { print("SELFTEST ERROR: instruction spent \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
         do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }

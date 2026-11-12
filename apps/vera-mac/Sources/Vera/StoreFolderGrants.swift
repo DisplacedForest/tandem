@@ -382,7 +382,10 @@ extension ChatStore {
     func turnInstructionUses(for turn: NativeConversationTurn) -> NativeInstructionUses {
         let key = turn.attempt ?? turn.id
         if let existing = turnInstructionUseSources[key] { return existing }
-        let created = NativeInstructionUses()
+        let created = (repository as? LocalChatRepository).map {
+            NativeInstructionUses(store: NativeInstructionUseStore(database: $0.database), messageID: turn.userMessageID,
+                                  conversationID: turn.conversationID, holder: NativeInstructionSpend.replyHolder(key.uuidString))
+        } ?? NativeInstructionUses()
         turnInstructionUseSources[key] = created
         return created
     }

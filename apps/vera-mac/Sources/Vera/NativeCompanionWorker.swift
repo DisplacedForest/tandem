@@ -34,6 +34,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var preferences: @Sendable () -> [String] = { [] }
     var recordsChanged: @Sendable () -> Void = {}
     var saveRules: @Sendable ([NativeRuleRecord]) -> Bool = { _ in false }
+    var instructionUses: NativeInstructionUseStore? = nil
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -323,6 +324,16 @@ enum NativeCompanionWorker {
         guard let claim = instructionClaim(definition, arguments, action: action, listed: false) else { return nil }
         return NativeInstruction.signature(action: action, toolID: definition.id, targets: ruleQuery(definition, arguments, action: action).targets,
                                            names: claim.names)
+    }
+
+    static func instructedSignature(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver base: NativeRuleResolver,
+                                    honoringLimitedUse: Bool) -> String? {
+        let action = definition.actionClass(for: arguments) ?? .otherChanges
+        let query = ruleQuery(definition, arguments, action: action)
+        var resolver = base
+        resolver.uses = nil
+        resolver.asked = instructionClaim(definition, arguments, action: action)
+        return resolver.tool(definition.id, subjects: query.subjects).instructed(query, honoringLimitedUse: honoringLimitedUse)
     }
 
     static func ruleDecision(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver base: NativeRuleResolver,
@@ -717,8 +728,14 @@ private struct NativeCompanionRun {
         NativeCompanionWorker.ruleDecision(definition, arguments, resolver: authority.resolver, honoringLimitedUse: honoringLimitedUse, uses: uses)
     }
 
+    var typedOrigin: NativeTaskOrigin? {
+        environment.instructionUses?.origin(taskID: task.id)
+    }
+
     func instructionUses(excluding key: String, refused: [String] = []) throws -> NativeInstructionUses {
-        let uses = NativeInstructionUses()
+        let uses = environment.instructionUses.flatMap { store in
+            typedOrigin.map { NativeInstructionUses(store: store, messageID: $0.userMessageID, conversationID: $0.conversationID, holder: key) }
+        } ?? NativeInstructionUses()
         for signature in refused { uses.take(signature) }
         let spent: Set<NativeEffectState> = [.admitted, .completed, .uncertain]
         for record in try environment.ledger.records(taskID: task.id)
@@ -1038,8 +1055,13 @@ private struct NativeCompanionRun {
         let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
                                                                              uses: try instructionUses(excluding: key, refused: checkpoint.refused ?? []))
         var decision = decided
+        var spend: NativeInstructionSpend?
         if decision == .act(.instruction) {
             let confirmed = try await confirmsInstruction(definition, arguments, action: action, key: key, checkpoint)
+            if confirmed, let origin = typedOrigin,
+               let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: authority.resolver, honoringLimitedUse: true) {
+                spend = NativeInstructionSpend(messageID: origin.userMessageID, conversationID: origin.conversationID, signature: signature, holder: key)
+            }
             if !confirmed {
                 if let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: action),
                    !(checkpoint.refused ?? []).contains(signature) {
@@ -1056,7 +1078,7 @@ private struct NativeCompanionRun {
             conversationID: context.threadID, expiresAtMilliseconds: NativeEffectProposal.expiry(from: environment.now()),
             idempotencyKey: key)
         let record = try environment.ledger.propose(proposal)
-        if decision == .ask {
+        let ask = { (checkpoint: inout NativeCompanionCheckpoint) throws -> NativeTaskStepResult? in
             let subject = cardSubject(definition, arguments, action: action)
             checkpoint.pending = NativeCompanionPending(kind: "approval", callID: call.id, digest: record.digest, title: title,
                                                         coverage: NativeCardChoices.signature(subject))
@@ -1065,9 +1087,12 @@ private struct NativeCompanionRun {
                                               extra: approvalExtra(subject, title: definition.title, digest: record.digest, authority: authority,
                                                                    argumentsJSON: record.proposal.argumentsJSON))
         }
+        if decision == .ask { return try ask(&checkpoint) }
         let admission = try environment.ledger.admit(digest: record.digest, generation: task.generation, rulesRevision: authority.resolver.revision,
                                                      grantsRevision: authority.grantsRevision, decision: decision, decisionID: nil, reply: nil,
-                                                     live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy)
+                                                     live: liveRevisions, rulesDurable: authority.resolver.durable, authorizedBy: authorizedBy,
+                                                     instruction: decision == .act(.instruction) ? spend : nil)
+        if case .refused(.instructionSpent) = admission { return try ask(&checkpoint) }
         if !authorizedBy.isEmpty, case .admitted = admission { environment.recordsChanged() }
         return try await dispatch(admission, call: call, definition: definition, arguments: arguments, key: key, title: title,
                                   footprint: footprint, action: action, why: why, &checkpoint)
@@ -1142,7 +1167,7 @@ private struct NativeCompanionRun {
         case .staleRules, .staleGrants, .grantSpent:
             checkpoint.note(title, "not done")
             checkpoint.answer(call, NativeCompanionWorker.message("Not run: the person's rules or folder access changed. Propose it again only if it is still needed."))
-        case .digestMismatch, .notFound, .alreadySettled, .ruleAsks:
+        case .digestMismatch, .notFound, .alreadySettled, .ruleAsks, .instructionSpent:
             checkpoint.note(title, "not done")
             checkpoint.answer(call, NativeCompanionWorker.message("Not run: this action was not approved as proposed."))
         }

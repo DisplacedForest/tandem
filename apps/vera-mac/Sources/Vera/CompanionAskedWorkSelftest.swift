@@ -118,9 +118,9 @@ enum CompanionAskedWorkFixture {
         return Harness(store: store, repository: repository, transport: transport, threadID: threadID, posts: posts)
     }
 
-    static func send(_ harness: Harness, _ text: String, conversationID: String? = nil) async throws -> Message {
+    static func send(_ harness: Harness, _ text: String, conversationID: String? = nil, typed: Bool = false) async throws -> Message {
         let id = conversationID ?? harness.threadID
-        try NativeTaskFixture.require(harness.store.sendText(text, conversationID: id), "The message is accepted: \(text)")
+        try NativeTaskFixture.require(harness.store.sendText(text, conversationID: id, fromComposer: typed), "The message is accepted: \(text)")
         guard let user = try harness.repository.messages(conversationID: id).last(where: { $0.role == .user && $0.text == text }) else {
             throw NativeTaskFixture.Failure.assertion("The message is saved")
         }
@@ -183,7 +183,7 @@ enum CompanionAskedWorkFixture {
                 return CompanionAskedWorkTransport.hand([CompanionAskedWorkTransport.general(user)])
             }
             defer { harness.store.conversationTurnLoop?.cancel() }
-            let answer = try await send(harness, library)
+            let answer = try await send(harness, library, typed: true)
             let saved = try references(harness)
             try require(saved.count == 1, "One piece of work is saved: \(saved.count)")
             let reference = saved[0]
@@ -197,14 +197,15 @@ enum CompanionAskedWorkFixture {
             try require(result.contains("Saved.") && result.contains("\"started\":true"), "The tool result says it started: \(result)")
             try require(answer.text == reply, "The reply is the model's one line, never empty: \(answer.text)")
             let box = try NativeCompanionTaskPayload(assignment: written, mode: "manual", connectedToolIDs: ["notes", "calendar"].sorted())
-            try require(reference.request.dot?.connectedToolIDs == box.connectedToolIDs && reference.request.dot?.said == ""
-                        && reference.request.dot?.typedRequest == "",
-                        "The saved request has the services the panel would have saved, and nothing in it counts as typed")
-            _ = try await send(harness, ordinary)
-            _ = try await send(harness, command)
+            try require(reference.request.dot?.connectedToolIDs == box.connectedToolIDs && reference.request.dot?.said == library
+                        && reference.request.dot?.typedRequest == library,
+                        "The saved request has the services the panel would have saved, and only the typed message counts as typed")
+            _ = try await send(harness, ordinary, typed: true)
+            _ = try await send(harness, command, typed: true)
             let commanded = try harness.repository.taskReferences(conversationID: nil).filter { $0.request.objective == command }
-            try require(commanded.count == 2 && commanded.allSatisfy { $0.request.dot?.said == "" && $0.request.dot?.typedRequest == "" },
-                        "A command never counts as typed, whether the model wrote it or the person did")
+            try require(commanded.count == 2 && commanded.map { $0.request.dot?.said ?? "-" }.sorted() == [ordinary, command].sorted()
+                            && commanded.allSatisfy { $0.request.dot?.typedRequest == $0.request.dot?.said },
+                        "The work carries what the person typed, never the assignment the model wrote")
             let held = try await send(harness, "What is 7 plus 8?")
             let state = try harness.repository.taskReference(id: reference.id)?.snapshot?.state
             try require(held.text == "15" && state == .running && results(held).isEmpty,
@@ -214,6 +215,8 @@ enum CompanionAskedWorkFixture {
             let other = both.first { $0.request.objective == seeds }
             try require(both.count == 4 && other?.request.objective == seeds && other?.origin.assistantMessageID == second.id,
                         "A second request while the first runs gets its own work")
+            try require(other?.request.dot?.said == "" && other?.request.dot?.typedRequest == "",
+                        "Work from a message the person did not type carries nothing typed")
             let lines = results(answer) + results(second) + [answer.text, second.text, NativeTaskTools.pausedReply, NativeTaskTools.laterRound]
             for line in lines {
                 try require(!line.contains("Ver" + "a") && !line.contains(CompanionSavedText.marker), "No name leaks into what is written: \(line)")
@@ -452,6 +455,10 @@ enum CompanionAskedWorkFixture {
         let resumedResult = try await call(paused)
         try require(resumedResult.contains("Saved.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "Resuming before the call lets the work start")
+        let long = try await harness.store.companionHandOff(said: String(repeating: "a", count: NativeCompanionTaskPayload.saidLimit + 1))(seeds)
+        let fits = try await harness.store.companionHandOff(said: String(repeating: "a", count: NativeCompanionTaskPayload.saidLimit))(seeds)
+        try require(long.dot?.said == "" && long.dot?.typedRequest == "" && fits.dot?.said?.unicodeScalars.count == NativeCompanionTaskPayload.saidLimit,
+                    "A typed message too long to carry starts the work with nothing typed instead of failing")
     }
 
     static func retriedReply() async throws {
