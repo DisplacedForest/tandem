@@ -455,12 +455,53 @@ enum NativeCompanionWorker {
         return line
     }
 
+    static func earlierLine(_ checkpoint: NativeCompanionCheckpoint) -> String? {
+        earlierLine(done: checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title),
+                    unsure: checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title))
+    }
+
+    static func ran(_ record: NativeEffectRecord) -> Bool? {
+        switch record.state {
+        case .completed:
+            return !ranWithFailure(record.receipt ?? .null)
+        case .uncertain:
+            if case .object(let receipt)? = record.receipt, receipt["observed"] == .string("absent") { return nil }
+            return false
+        case .proposed, .admitted, .declined, .expired:
+            return nil
+        }
+    }
+
+    static func earlierLine(done: [String], unsure: [String]) -> String? {
+        var parts: [String] = []
+        if !done.isEmpty { parts.append("Earlier in this work: " + done.joined(separator: "; ") + ".") }
+        if !unsure.isEmpty { parts.append("These may have changed something: " + unsure.joined(separator: "; ") + ".") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    static func stepLiteral(toolID: String?, toolTitle: String?, argumentsJSON: String?, title: String) -> String {
+        var literal = ""
+        if let argumentsJSON, let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any], !object.isEmpty {
+            if toolID == NativeCommandTools.toolID, let command = object["command"] as? String {
+                literal = (object["directory"] as? String).map { command + "\nin " + $0 } ?? command
+            } else {
+                let name = toolTitle ?? title.components(separatedBy: ": ").first ?? ""
+                let lines = details(name, argumentsJSON: argumentsJSON)
+                literal = name.isEmpty ? lines : name + "\n" + lines
+            }
+        }
+        if literal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { literal = title }
+        var kept = String.UnicodeScalarView()
+        kept.append(contentsOf: CompanionSavedText.sanitized(literal).unicodeScalars.prefix(NativeTaskStop.stepScalars))
+        return String(kept)
+    }
+
     static func remainingLimit(_ checkpoint: NativeCompanionCheckpoint, cap: Int, budget: NativeCompanionWorkerBudget) -> Int {
         max(1024, min(cap, budget.transcriptBytes - 32768 - transcriptBytes(checkpoint)))
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
-                       summary shown: String? = nil, why: NativeRuleWhy? = nil) throws -> NativeTaskStepResult {
+                       summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil) throws -> NativeTaskStepResult {
         let body = CompanionSavedText.sanitized(String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportCharacters)))
         let firstParagraph = shown.map(CompanionSavedText.sanitized)
             ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
@@ -473,6 +514,7 @@ enum NativeCompanionWorker {
                                      "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
         if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
         if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
+        if let stop { result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stop)) }
         return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
             result: try NativeTaskStore.canonical(result), event: "completed")
     }
@@ -719,7 +761,7 @@ private struct NativeCompanionRun {
         return try await conclude(&checkpoint, text: fallback)
     }
 
-    func conclude(_ checkpoint: inout NativeCompanionCheckpoint, text: String) async throws -> NativeTaskStepResult {
+    func conclude(_ checkpoint: inout NativeCompanionCheckpoint, text: String, stop: NativeTaskStop? = nil) async throws -> NativeTaskStepResult {
         if checkpoint.keep == nil {
             checkpoint.keep = try await classify(checkpoint)
         }
@@ -732,7 +774,7 @@ private struct NativeCompanionRun {
             let room = max(0, NativeCompanionWorker.reportCharacters - notRun.count - 2)
             body = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(room)) + "\n\n" + notRun
         }
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep)
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep, stop: stop)
     }
 
     func classify(_ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
@@ -788,6 +830,25 @@ private struct NativeCompanionRun {
         return CompanionSavedText.sanitized(text)
     }
 
+    func stopped(_ reason: String, call: NativeTaskGenerationToolCall, record: NativeEffectRecord?, title: String,
+                 _ checkpoint: NativeCompanionCheckpoint) -> NativeTaskStop {
+        let tool = context.tools.first { $0.name == (record?.proposal.function ?? call.name) }
+        let validated = tool.flatMap { try? $0.validatedArguments(call.arguments) }
+            .map { NativeEffectProposal.canonicalArguments(.object($0)) }
+        let step = NativeCompanionWorker.stepLiteral(toolID: record?.proposal.toolID ?? tool?.id, toolTitle: tool?.title,
+                                                     argumentsJSON: record?.proposal.argumentsJSON ?? validated ?? call.arguments, title: title)
+        var done: [String] = []
+        var unsure: [String] = []
+        for other in (try? environment.ledger.records(taskID: task.id)) ?? [] where other.digest != record?.digest {
+            guard let ran = NativeCompanionWorker.ran(other) else { continue }
+            let known = context.tools.first { $0.name == other.proposal.function }
+            let name = known.map { NativeCompanionWorker.describe($0, (try? $0.validatedArguments(other.proposal.argumentsJSON)) ?? [:]) }
+                ?? "an earlier step"
+            if ran { done.append(name) } else { unsure.append(name) }
+        }
+        return NativeTaskStop(reason: reason, step: step, earlier: NativeCompanionWorker.earlierLine(done: done, unsure: unsure))
+    }
+
     func handOff(_ checkpoint: inout NativeCompanionCheckpoint, call: NativeTaskGenerationToolCall, title: String, action: NativeActionClass?,
                  why: NativeRuleWhy?) throws -> NativeTaskStepResult {
         let reason = why ?? NativeRuleWhy(kind: .unsaved, action: action ?? .otherChanges, handsOff: true)
@@ -796,8 +857,9 @@ private struct NativeCompanionRun {
         let effects = NativeCompanionWorker.effectsLine(checkpoint)
         let text = CompanionSavedText.sanitized(NativeCompanionWorker.handOffText(title: title, why: reason, places: places,
                                                                                   companion: nil) + effects)
+        let stop = stopped(NativeTaskStop.left, call: call, record: nil, title: title, checkpoint)
         return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text,
-                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason)
+                                                summary: NativeCompanionWorker.handOffLead(title: title) + effects, why: reason, stop: stop)
     }
 
     func answerOutstanding(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
@@ -1150,13 +1212,14 @@ private struct NativeCompanionRun {
                     let drafts = NativeCardChoices.records(.never, subject: shown, place: cardPlace(standing), originMessageID: nil)
                     if !drafts.isEmpty { _ = environment.saveRules(drafts) }
                 }
+                let stop = stopped(NativeTaskStop.declined, call: call, record: record, title: title, checkpoint)
                 checkpoint.note(title, "declined")
                 checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
-                return try await conclude(&checkpoint, text: text)
+                return try await conclude(&checkpoint, text: text, stop: stop)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
                 var again = pending
@@ -1210,12 +1273,14 @@ private struct NativeCompanionRun {
                 checkpoint.answer(call, NativeCompanionWorker.message("The person checked and this did not happen. Propose it again only if it is still needed; it will need the usual approval."))
                 return nil
             case "stop":
+                let stop = stopped(NativeTaskStop.unconfirmed, call: call, record: try? environment.ledger.record(digest: digest), title: title,
+                                   checkpoint)
                 checkpoint.note(title, "unconfirmed")
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person asked to stop."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped at your request. It could not be confirmed whether this happened: \(title).")
-                return try await conclude(&checkpoint, text: text)
+                return try await conclude(&checkpoint, text: text, stop: stop)
             default:
                 if let record = try environment.ledger.record(digest: digest), readOnlyRefusal(record.proposal) != nil {
                     checkpoint.note(title, "unconfirmed")

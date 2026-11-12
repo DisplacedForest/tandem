@@ -432,11 +432,13 @@ extension SelfTest {
         try require(handed.card.statusTitle == RefusalCopy.needsYou && handed.card.why == settingsWhy && handed.card.needsYou
                         && handed.card.status == .completed,
                     "A handed off task's card reads Needs you and carries its reason: \(handed.card.statusTitle)")
-        try require(handed.card.milestone.contains("Water a bed") && !handed.card.milestone.contains(RefusalCopy.plain(settingsWhy)),
-                    "The card shows the step once and leaves the reason to the reason line: \(handed.card.milestone)")
+        try require(handed.card.milestone.isEmpty && handed.card.stop?.reason == NativeTaskStop.left && !(handed.card.stop?.step ?? "").isEmpty
+                        && !(handed.card.stop?.step ?? "").contains(RefusalCopy.plain(settingsWhy)) && !handed.artifact,
+                    "The card shows the step once and leaves the reason to the reason line: \(String(describing: handed.card.stop))")
         let card = try JSONDecoder().decode(NativeTaskCardPresentation.self, from: JSONEncoder().encode(handed.card))
         var plainCard = try JSONSerialization.jsonObject(with: JSONEncoder().encode(handed.card)) as? [String: Any] ?? [:]
         plainCard["why"] = nil
+        plainCard["stop"] = nil
         let olderCard = try JSONDecoder().decode(NativeTaskCardPresentation.self, from: JSONSerialization.data(withJSONObject: plainCard))
         try require(card == handed.card && olderCard.why == nil && olderCard.statusTitle == "Work done",
                     "A saved card keeps its reason, and a card saved before reasons existed still reads as before")
