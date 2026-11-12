@@ -60,7 +60,7 @@ enum NativeFolderTools {
                                                    approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
             try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
-            return {}
+            return { NativeToolCallContext.effectStarts() }
         }
         let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> () throws -> Void = { action, arguments, keys, planned in
             if NativeRuleAdmission.admitted { return {} }
@@ -69,7 +69,7 @@ enum NativeFolderTools {
                                                    approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
             try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
-            return {}
+            return { NativeToolCallContext.effectStarts() }
         }
         let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> () throws -> Void = { arguments, keys in
             try checkGate(.fileEdits, arguments, keys, edits)
@@ -214,6 +214,14 @@ enum NativeFolderTools {
             targeted.governed = true
             targeted.ruleSubjects = declared(paths)
             targeted.folderRoots = { access().roots.map(\.path) }
+            if let action = definition.action {
+                let planned = action == .trash ? trash : edits
+                let subjectsFor = declared(paths)
+                targeted.chatDecision = { arguments in
+                    let decision = liveTargets.map { $0(action, subjectsFor(arguments))?.decision ?? planned } ?? (live(action) ?? planned)
+                    return NativeChatDecision(action: action, decision: decision)
+                }
+            }
             if let liveTargets, let action = definition.action {
                 let fallback = definition.confirmation == .required
                 let subjectsFor = declared(paths)
