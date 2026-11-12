@@ -184,6 +184,12 @@ extension SelfTest {
                                                         result: OngoingWorkFixture.documentResult("Greenhouse note"),
                                                         updatedAt: Date().timeIntervalSince1970)
         store.nativeTaskReferences.append(finished)
+        store.draft = ""
+        store.prepareCompanionRefinement()
+        try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement },
+                    "Work whose result arrives as its own message admits no refinement")
+        try repository.recordSettledBeforeDelivery(id: finished.id)
+        store.nativeTaskResultDeliveries[finished.id] = .some(nil)
         store.draft = "A new request"
         store.prepareCompanionRefinement()
         try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement }, "Refinement does not interrupt a draft")

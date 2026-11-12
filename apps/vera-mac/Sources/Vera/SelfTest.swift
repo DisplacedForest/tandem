@@ -312,6 +312,11 @@ enum SelfTest {
             catch { print("COMPANION ATTENTION SELFTEST FAILED: \(error)"); exit(1) }
             exit(0)
         }
+        if ProcessInfo.processInfo.environment["VERA_ASKED_WORK_SELFTEST"] == "1" {
+            do { try await runCompanionAskedWork(); print("COMPANION ASKED WORK SELFTEST OK") }
+            catch { print("COMPANION ASKED WORK SELFTEST FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if ProcessInfo.processInfo.environment["VERA_PROJECT_CONTEXT_SELFTEST"] == "1" {
             do { try await ProjectContextSelftest.checkProviderProjectContext(); print("PROJECT PROVIDER CONTEXT OK") }
             catch { print("PROJECT PROVIDER CONTEXT FAILED: \(error)"); exit(1) }
@@ -367,6 +372,10 @@ enum SelfTest {
             }
             return
         }
+        if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "delivery" {
+            do { try await NativeTaskDeliverySelftest.run(); exit(0) }
+            catch { print("SELFTEST ERROR: result delivery \(error)"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "unit" {
             do {
                 try await NativeTaskFixture.run()
@@ -381,6 +390,10 @@ enum SelfTest {
         catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
         catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
+        do { try await NativeTaskDeliverySelftest.run() }
+        catch { print("SELFTEST ERROR: result delivery \(error)"); exit(1) }
+        do { try MessageActionsSelftest.run() }
+        catch { print("SELFTEST ERROR: message actions \(error)"); exit(1) }
         do { try await WorkflowSelectionTests.run() }
         catch { print("WORKFLOW SELECTION SELFTEST FAILED: \(error.localizedDescription)"); exit(1) }
         runPure()
@@ -404,6 +417,7 @@ enum SelfTest {
         do { try await runCompanionSavedText() } catch { print("SELFTEST ERROR: companion saved text \(error)"); exit(1) }
         do { try await runCompanionLibraryKeep() } catch { print("SELFTEST ERROR: companion library keep \(error)"); exit(1) }
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
+        do { try await runCompanionAskedWork() } catch { print("SELFTEST ERROR: companion asked work \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }

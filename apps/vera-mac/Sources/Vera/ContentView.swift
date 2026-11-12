@@ -54,6 +54,7 @@ struct ContentView: View {
         .ignoresSafeArea(.container, edges: .top)
         .task { await store.connect() }
         .modifier(CompanionAttentionWindow())
+        .modifier(MessageActionsHost())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .onChange(of: companionThread) { _, showing in
             if !showing { companionProfile.close(now: Date()) }
@@ -220,7 +221,7 @@ struct ChatPane: View {
         store.pendingTaskReveal = nil
         guard let owner = OngoingWork.owningMessageID(taskID: taskID, fallback: reference.origin.assistantMessageID,
                                                       in: convo.messages) else { return }
-        let artifact = OngoingWork.item(reference).artifact
+        let artifact = OngoingWork.item(reference, newFlow: store.nativeTaskNewFlowIDs).artifact
         let origin = convo.id
         let generation = store.taskRevealGeneration
         cancelTaskReveal()
@@ -317,7 +318,7 @@ struct ChatPane: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(convo.messages) { msg in
+                            ForEach(convo.messages.filter(TranscriptVisibility.shows)) { msg in
                                 let confirmation = store.turnConfirmations[msg.id]
                                 let confirmationToken = store.turnConfirmationTokens[msg.id]
                                 MessageRow(message: msg, nativeActions: true,
@@ -765,6 +766,7 @@ struct MessageRow: View {
             if message.role == .assistant {
                 if ConversationPresence.replyFigure(companionThread: companionThread) == .companion {
                     CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
+                        .environment(\.companionLiveState, .ready)
                         .padding(.top, 4)
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -818,7 +820,7 @@ struct MessageRow: View {
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))
                     }
-                    AssistantBody(message: message, section: .actions, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    AssistantBody(message: message, section: .actions, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                 }
                 Spacer(minLength: 0)
             } else {
@@ -835,6 +837,8 @@ struct MessageRow: View {
                             .padding(.vertical, ConversationMetrics.bubblePaddingV)
                             .background(Theme.userBubble)
                             .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+                            .modifier(MessageActionsBubble(message: message, companionThread: companionThread, fill: Theme.userBubble,
+                                                           trailing: true, selectableText: message.text))
                     }
                     if let note = message.routeNote {
                         AttachmentRouteBadge(
@@ -1280,6 +1284,10 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.isVeraThread(store.selectedID) {
+                CompanionWorkingLine(work: store.companionBackgroundWork.current)
+                    .padding(.horizontal, 22).padding(.bottom, 8)
+            }
             composer
             if let project {
                 HStack(spacing: 18) {

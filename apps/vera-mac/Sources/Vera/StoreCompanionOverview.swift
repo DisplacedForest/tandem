@@ -18,7 +18,7 @@ extension ChatStore {
                 ?? conversations.first { $0.id == threadID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
                 ?? .distantPast
             tasks.append(CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: snapshot?.decision,
-                                                         hasArtifact: display.artifact != nil, date: date))
+                                                         hasArtifact: display.artifact != nil && settledBeforeDelivery(reference.id), date: date))
         }
         let runs = scheduleRuns.values.flatMap { $0 }
         let activity = CompanionOverviewModel.activity(tasks: tasks, runs: runs, schedules: schedules)
@@ -66,8 +66,10 @@ extension ChatStore {
                 StoppedStepCopy.plain(stop, why: display?.card.why, places: rulePlaces(for: display?.card.why?.rule.map { [$0.record] } ?? []),
                                       name: companionName)
             }
-            let outcome = stopped ?? display?.artifact?.report ?? display?.card.answer
-                ?? display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) }
+            let settled = settledBeforeDelivery(id)
+            let delivered = resultWasDelivered(id)
+            let outcome = stopped ?? (settled ? display?.artifact?.report ?? display?.card.answer : nil)
+                ?? (delivered ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
                                            canOpen: conversation != nil)
         case .run(let id):

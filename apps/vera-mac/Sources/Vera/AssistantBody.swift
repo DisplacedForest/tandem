@@ -24,9 +24,11 @@ struct AssistantBody: View {
         case .extras:
             if message.pulse == nil { extras }
         case .actions:
-            if message.pulse == nil { actions }
+            if message.pulse == nil && Self.showsActionRow(companionThread: companionThread) { actions }
         }
     }
+
+    static func showsActionRow(companionThread: Bool) -> Bool { !companionThread }
 
     private var parsed: (clean: String, calls: [ToolCall]) { ToolCallParser.parse(message.text) }
 
@@ -35,7 +37,10 @@ struct AssistantBody: View {
         let sources: [PulseSource]
     }
 
-    private func replyCitations(_ clean: String) -> ReplyCitations? {
+    private func replyCitations(_ clean: String) -> ReplyCitations? { Self.replyCitations(clean, of: message) }
+
+    private static func replyCitations(_ clean: String, of message: Message) -> ReplyCitations? {
+        if message.delivery != nil { return nil }
         if !message.sources.isEmpty {
             return ReplyCitations(body: CitationResolver.withoutMatchingList(clean, sources: message.sources), sources: message.sources)
         }
@@ -44,7 +49,25 @@ struct AssistantBody: View {
         return ReplyCitations(body: recovered.body, sources: recovered.sources)
     }
 
+    static func copiedText(_ message: Message) -> String {
+        let clean = ToolCallParser.parse(message.text).clean
+        return CitationResolver.exportText(clean, sources: replyCitations(clean, of: message)?.sources ?? [])
+    }
+
+    static func shownText(_ message: Message) -> String {
+        let clean = ToolCallParser.parse(message.text).clean
+        return replyCitations(clean, of: message)?.body ?? clean
+    }
+
     @ViewBuilder private var bubble: some View {
+        if message.delivery != nil {
+            content.safeReportContent()
+        } else {
+            content
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         let clean = parsed.clean
         let cited = replyCitations(clean)
         let display = cited?.body ?? clean
@@ -64,6 +87,8 @@ struct AssistantBody: View {
             .padding(.vertical, companionThread ? ConversationMetrics.bubblePaddingV : 0)
             .background(companionThread ? Theme.assistantBubble : .clear)
             .clipShape(RoundedRectangle(cornerRadius: companionThread ? ConversationMetrics.bubbleRadius : 0, style: .continuous))
+            .modifier(MessageActionsBubble(message: message, companionThread: companionThread, fill: Theme.assistantBubble,
+                                           trailing: false, selectableText: Self.shownText(message)))
         } else if message.state == .streaming && message.toolActivities.isEmpty && message.ask == nil {
             ProgressView().controlSize(.small)
                 .padding(.horizontal, companionThread ? ConversationMetrics.bubblePaddingH : 0)
@@ -102,7 +127,7 @@ struct AssistantBody: View {
         if !clean.isEmpty {
             HStack(spacing: 16) {
                 msgAction("doc.on.doc", label: "Copy response") {
-                    copyText(CitationResolver.exportText(clean, sources: replyCitations(clean)?.sources ?? []))
+                    copyText(Self.copiedText(message))
                 }
                 if nativeActions {
                     msgAction("hand.thumbsup", label: "Good response", on: store.messageRatings[message.id] == "up") { rate("up") }

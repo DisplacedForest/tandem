@@ -267,7 +267,7 @@ extension SelfTest {
         gate.release()
         _ = try await originFinish(harness, renamed, "The renamed companion task", require)
         let afterRename = await recorder.messages(renamedID).filter { $0.role == "system" }.map(\.content)
-        try require(afterRename.count == 2 && afterRename[1].hasPrefix("You are Grace"), "The step after a rename uses the new name")
+        try require(afterRename.count == 3 && afterRename.dropFirst().allSatisfy { $0.hasPrefix("You are Grace") }, "The steps after a rename use the new name")
         let ordinaryAfter = try await originFinish(harness, try await originSubmit(harness, companion: false, request: originResearch()), "Ordinary research after the rename", require)
         try await check(ordinaryAfter, named: nil, "Research from an ordinary chat after a rename")
 
@@ -402,8 +402,9 @@ extension SelfTest {
             try String.fetchOne(db, sql: "SELECT conversation_id FROM native_task_outbox WHERE id = ?", arguments: [reference.id.uuidString])
         }
         try require(delivered == deliveryID && stored == deliveryID, "\(label) still delivers to the conversation it started in")
-        let reply = try finisher.repository.messages(conversationID: deliveryID).first { $0.id == reference.origin.assistantMessageID }
-        try require(reply?.displayBlocks.contains { if case .artifact = $0 { return true }; return false } == true,
+        _ = try finisher.repository.deliverTaskMessages(id: reference.id)
+        let arrived = try finisher.repository.messages(conversationID: deliveryID).filter { $0.delivery?.referenceID == reference.id.uuidString }
+        try require(arrived.count == 1 && arrived.first?.delivery?.finished == true,
                     "\(label) puts its result in the conversation it started in")
     }
 

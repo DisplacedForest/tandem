@@ -33,6 +33,7 @@ struct ShotView: View {
     var voiceAvailability = ComposerVoiceAvailability(dictation: false, voiceChat: false)
     var dictating = false
     var cardChat: CardShotChat? = nil
+    var transcript: [Message]? = nil
     var width: CGFloat = 1180
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
@@ -341,6 +342,7 @@ struct ShotView: View {
     // Demo messages for the chat screenshot — includes a Vera structured-question card.
     private var shotMessages: [Message] {
         if let cardChat { return cardChat.messages }
+        if let transcript { return transcript.filter(TranscriptVisibility.shows) }
         if dotHeader || companionPanel != nil { return store.selected?.messages ?? [] }
         if schedule { return scheduleMessages }
         if command { return commandMessages }
@@ -585,6 +587,11 @@ struct ShotView: View {
             .clipped()
             .overlay(alignment: .bottom) {
                 if jumpToLatest { JumpToLatestButton(action: {}).padding(.bottom, 8) }
+            }
+            if section == .vera {
+                CompanionWorkingLine(work: store.companionBackgroundWork.current)
+                    .padding(.horizontal, 38).padding(.top, 6)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
             }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {

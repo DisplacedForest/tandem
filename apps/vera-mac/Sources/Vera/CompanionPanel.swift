@@ -173,7 +173,12 @@ struct CompanionPanelView: View {
         return store.conversations.first { $0.id == id }
     }
 
-    private var recent: [Message] { Array((thread?.messages ?? []).suffix(6)) }
+    private var recent: [Message] {
+        Array((thread?.messages ?? []).filter { message in
+            guard TranscriptVisibility.shows(message), message.contentType != .runOrigin else { return false }
+            return message.delivery == nil || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.suffix(6))
+    }
 
     private var canSend: Bool {
         !store.companionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.companionAttachments.isEmpty
@@ -314,6 +319,7 @@ struct CompanionPanelView: View {
             if store.companionApprovalWaiting {
                 approvalBanner
             }
+            CompanionWorkingLine(work: store.companionBackgroundWork.current, size: 12)
             if !store.companionAttachments.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(store.companionAttachments) { attachment in

@@ -37,7 +37,7 @@ extension ChatStore {
         guard written == text, !written.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var previous: String?
         if let stored, let position = stored.firstIndex(where: { $0.id == turn.userMessageID }) {
-            previous = stored[..<position].last(where: { $0.role == .user })?.id.uuidString
+            previous = stored[..<position].last(where: { $0.role == .user && $0.contentType != .runOrigin })?.id.uuidString
         }
         return NativePreferenceCaptureRequest(
             key: NativePreferenceCaptureKey(turnID: turn.id.uuidString, conversationID: turn.conversationID,

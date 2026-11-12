@@ -45,9 +45,13 @@ enum CardShot {
                     CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
                 }
             }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
-        case "card-task", "card-task-command", "card-task-asks":
+        case "card-task", "card-task-command", "card-task-asks", "card-asked-work":
             size = CGSize(width: 1180, height: 1040)
-            seedTask(command: variant == "card-task-command", asks: variant == "card-task-asks", store: store)
+            if variant == "card-asked-work" {
+                seedAskedWork(store)
+            } else {
+                seedTask(command: variant == "card-task-command", asks: variant == "card-task-asks", store: store)
+            }
             let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
@@ -283,6 +287,22 @@ enum CardShot {
         ]
     }
 
+    static let askedWork = "Find three public libraries near the river with quiet reading spaces and compare them."
+    static let askedReply = "I'll compare quiet reading spaces at three public libraries using their official websites."
+
+    static func seedAskedWork(_ store: ChatStore) {
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
+        store.openVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }),
+              let reference = try? OngoingWorkFixture.reference(conversationID: threadID, title: askedWork, workerType: "companion", state: "running"),
+              let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
+        store.nativeTaskEngine.set(engineURL)
+        store.nativeTaskReferences = [reference]
+        var message = Message(role: .assistant, text: askedReply)
+        message.displayBlocks = [.taskCard(display.card)]
+        store.conversations[index].messages = [Message(role: .user, text: askedWork), message]
+    }
+
     static func stopResult(_ variant: String, title: String) throws -> [String: Any] {
         var checkpoint = NativeCompanionCheckpoint()
         if variant == "card-stop-left-earlier" { checkpoint.note("Edit a file: plan.md", "done") }
@@ -399,9 +419,36 @@ enum CardShot {
 }
 
 extension CompanionShotFixture {
-    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed"]
+    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed", "companion-quick-working"]
+
+    static let workingViews: Set<String> = ["companion-working-one", "companion-working-three", "companion-working-two-left",
+                                           "companion-working-writing", "companion-working-changing", "companion-working-attention"]
+
+    static func seedWorking(_ store: ChatStore, view: String) {
+        guard let threadID = store.veraThreadID else { return }
+        if view == "companion-working-attention" {
+            let reference = try? CompanionSavedTextFixture.reference(state: "needs_decision", conversationID: threadID,
+                                                                     decision: CompanionSavedTextFixture.approvalDecision())
+            store.nativeTaskReferences = reference.map { [$0] } ?? []
+            return
+        }
+        let all: [(String, String)] = [("Lumber prices this month", "research"), ("Workshop plan", "document"),
+                                       ("new Indy restaurants", "research")]
+        let work: [(String, String)]
+        switch view {
+        case "companion-working-three": work = all
+        case "companion-working-two-left": work = Array(all.prefix(2))
+        case "companion-working-writing": work = [("Workshop plan", "document")]
+        case "companion-working-changing": work = [("the seed folders", "companion")]
+        default: work = Array(all.suffix(1))
+        }
+        store.nativeTaskReferences = work.compactMap {
+            try? OngoingWorkFixture.reference(conversationID: threadID, title: $0.0, workerType: $0.1, state: "running")
+        }
+    }
 
     static func seedWaiting(_ store: ChatStore, outer: ChatStore, view: String) {
+        if view == "companion-quick-working" { return seedWorking(store, view: "companion-working-three") }
         guard waitingViews.contains(view), let threadID = store.veraThreadID else { return }
         if view.hasSuffix("-unnamed") {
             store.adoptAssistantName(nil)

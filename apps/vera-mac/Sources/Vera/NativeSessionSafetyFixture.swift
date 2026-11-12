@@ -455,9 +455,10 @@ enum NativeSessionSafetyFixture {
         store.stopAnswer(messages[1].id)
         let saved = try repository.taskReference(id: reference.id)!
         let transcript = try repository.messages(conversationID: origin.conversationID)
-        try NativeTaskFixture.require(!saved.cancelRequested && transcript[1].displayBlocks.contains {
-            if case .taskCard(let card) = $0 { return card.canCancel }; return false
-        }, "Stop answer must retain the independent research card and its Stop research action")
+        let stillRunning = !saved.cancelRequested && saved.snapshot?.state.isTerminal != true
+        let noRunningCard = !transcript[1].displayBlocks.contains { if case .taskCard = $0 { return true }; return false }
+        try NativeTaskFixture.require(stillRunning && noRunningCard,
+                                      "Stop answer must leave the independent research running, with no card drawn while it runs")
         let canceled = try await store.nativeTaskService!.requestCancellation(reference.id)
         try NativeTaskFixture.require(canceled.cancelRequested && canceled.cancelDelivered,
                                       "The retained research task must remain independently cancellable: \(canceled.cancelRequested), \(canceled.cancelDelivered), \(canceled.lastDeliveryError ?? "none")")

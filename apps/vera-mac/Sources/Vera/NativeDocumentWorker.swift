@@ -19,9 +19,10 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
     var nativeUnavailable: String?
     var failureReason: String?
     var automaticRetryStep: String?
+    var note: NativeTaskNote?
 
     private enum CodingKeys: String, CodingKey {
-        case phase, outline, drafts, revisions, retry, attempt, errors
+        case phase, outline, drafts, revisions, retry, attempt, errors, note
         case bulletCount = "bullet_count"
         case outlineLimit = "outline_limit"
         case outlineAttempts = "outline_attempts"
@@ -49,6 +50,7 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
+        note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
     }
 
     func encoded() throws -> Data {
@@ -188,6 +190,7 @@ enum NativeDocumentWorker {
                 if index < checkpoint.drafts.count { context["draft"] = checkpoint.drafts[index] }
             }
         }
+        instruction += " " + NativeTaskDelivery.notePrompt
         if let preferences = NativePreferencePrompt.section(identity.preferences) { instruction += "\n\n" + preferences }
         let user = (try? NativeTaskStore.canonical(context)).map { String(decoding: $0, as: UTF8.self) } ?? payload.query
         return [NativeTaskGenerationMessage(role: "system", content: instruction),
@@ -331,6 +334,7 @@ enum NativeDocumentWorker {
             }
             var planned = checkpoint
             planned.outline = sections
+            checkpoint.note = NativeTaskDelivery.note(in: response)
             planned.phase = "draft"
             let plannedSize = promptSize(messages(payload: payload, checkpoint: planned, identity: identity))
             if plannedSize > promptBytes {
