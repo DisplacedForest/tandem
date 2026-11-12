@@ -195,11 +195,12 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
                 SELECT choice FROM native_task_retries WHERE reference_id = ? AND pending = 1 AND decision_id = ? LIMIT 1
                 """, arguments: [id.uuidString, canonical?.decision?.id ?? ""])
             var display = try NativeTaskProjection.display(reference: reference, snapshot: canonical,
-                                                            connectionNote: connectionNote, retryPending: pendingChoice != nil)
+                                                            connectionNote: connectionNote, retryPending: pendingChoice != nil,
+                                                            answered: pendingChoice)
             if let canonical, canonical.state == .needsDecision, let decision = canonical.decision {
                 display.card.choices = pendingChoice == nil
                     ? decision.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil } : []
-                if let pendingChoice, pendingChoice != "retry" {
+                if let pendingChoice, pendingChoice != "retry", display.card.pause == nil {
                     display.card.milestone = "Your answer is saved. Waiting to continue."
                 }
             }

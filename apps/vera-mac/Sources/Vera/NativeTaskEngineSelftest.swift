@@ -42,6 +42,7 @@ struct NativeTaskEngineHarness {
                           onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                           workers extra: @escaping (NativeTaskGenerationExchange) -> [String: NativeTaskWorker] = { _ in [:] },
                           identity customIdentity: (@Sendable (NativeTaskRecord) -> NativeWorkerIdentity)? = nil,
+                          available: @escaping @Sendable () async -> Bool = { true },
                           complete: @escaping @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -67,7 +68,7 @@ struct NativeTaskEngineHarness {
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
             savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
         let broker = NativeTaskGenerationBroker(repository: repository, client: engine.client, configuredBase: base,
-            isProfileAvailable: { _ in true }, complete: { _, job in
+            isProfileAvailable: { _ in await available() }, complete: { _, job in
                 await counter.bump("generate:\(job.phase)")
                 return try await complete(job)
             })

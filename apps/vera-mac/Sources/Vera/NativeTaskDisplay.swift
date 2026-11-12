@@ -189,6 +189,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var answer: String? = nil
     var why: NativeRuleWhy? = nil
     var stop: NativeTaskStop? = nil
+    var pause: NativeTaskPause? = nil
 
     static let workStopped = "Work stopped"
 
@@ -224,10 +225,14 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .stopping: return "Stopping the work"
         case .stopped: return Self.workStopped
         case .completed: return stoppedHere ? Self.workStopped : needsYou ? RefusalCopy.needsYou : "Work done"
-        case .needsInput: return "Needs your answer"
+        case .needsInput: return pausedAnswered ? "Working on it" : "Needs your answer"
         case .queued, .failed: return status.title(document: false)
         }
     }
-    var statusSymbol: String { needsYou ? "hand.raised" : stoppedHere ? Status.stopped.symbol : status.symbol(document: isDocument) }
+    var pausedAnswered: Bool { isCompanion && status == .needsInput && pause?.answer != nil }
+    var statusSymbol: String {
+        if pausedAnswered { return Status.working.symbol(document: isDocument) }
+        return needsYou ? "hand.raised" : stoppedHere ? Status.stopped.symbol : status.symbol(document: isDocument)
+    }
     var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }

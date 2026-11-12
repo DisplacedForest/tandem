@@ -48,6 +48,10 @@ extension ChatStore {
         if case .task(let id) = item.source { retryNativeTask(id.uuidString) }
     }
 
+    func answerCompanionWork(_ item: CompanionActivityItem, choice: String) {
+        if case .task(let id) = item.source { answerNativeTask(id.uuidString, choice: choice) }
+    }
+
     func companionActivityDetail(_ item: CompanionActivityItem) -> CompanionActivityDetail {
         switch item.source {
         case .task(let id):
@@ -59,16 +63,22 @@ extension ChatStore {
             let snapshot = saved?.snapshot ?? reference.snapshot
             let conversation = companionActivityConversation(reference.origin.conversationID)
             let request = conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
+            let answered = snapshot.flatMap { shown -> String? in
+                guard PausedWorkCopy.applies(shown), let decision = shown.decision else { return nil }
+                return (try? projection?.pendingTaskRetries())??.first { $0.referenceID == id && $0.decisionID == decision.id }?.choice
+            }
             let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
-                                                           connectionNote: saved?.connectionNote)
+                                                           connectionNote: saved?.connectionNote,
+                                                           retryPending: answered != nil, answered: answered)
             let stopped = display?.card.stoppedStep.map { stop -> String in
                 StoppedStepCopy.plain(stop, why: display?.card.why, places: rulePlaces(for: display?.card.why?.rule.map { [$0.record] } ?? []),
                                       name: companionName)
             }
             let outcome = stopped ?? display?.artifact?.report ?? display?.card.answer
                 ?? display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) }
-            return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
-                                           canOpen: conversation != nil)
+            let pause = display?.card.pausedWork
+            return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: pause == nil ? outcome : nil,
+                                           canOpen: conversation != nil, pause: pause)
         case .run(let id):
             guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)

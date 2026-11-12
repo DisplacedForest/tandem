@@ -24,7 +24,10 @@ struct NativeTaskCardView: View {
             if let stop = card.stoppedStep {
                 StoppedStepView(stop: stop, why: card.why)
             }
-            if !card.milestone.isEmpty, card.stoppedStep == nil {
+            if let pause = card.pausedWork {
+                PausedWorkView(pause: pause)
+            }
+            if !card.milestone.isEmpty, card.stoppedStep == nil, card.pausedWork == nil {
                 CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
@@ -87,14 +90,14 @@ struct NativeTaskCardView: View {
                                                        stop: card.canCancel && onCancel != nil ? (stopTitle ?? card.stopTitle) : nil,
                                                        answerable: canAnswer) {
                 if let decline = question.decline {
-                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even || card.pausedWork != nil,
                                   onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                 } else {
                     Button(question.answers.allowTitle) { answer(question.allow) }
                         .buttonStyle(.bordered).font(.system(size: 12))
                         .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
-            } else if card.canCancel {
+            } else if card.canCancel, card.pausedWork?.answer == nil {
                 Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).font(.system(size: 12))
             }
         }

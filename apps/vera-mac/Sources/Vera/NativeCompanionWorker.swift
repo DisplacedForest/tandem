@@ -66,9 +66,10 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var sources: [NativeTaskSource]?
     var aliases: [String: Int]?
     var refused: [String]?
+    var finishing: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, finishing
         case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
@@ -151,12 +152,14 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
                 return object
             }
         }
+        let fetched = definition.id == NativeWebTools.fetchToolID
         for entry in entries {
-            guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"],
-                  !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
+            guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"] else { continue }
+            if fetched, let index = known.firstIndex(where: { $0.n == Int(n) }) { known[index].read = true }
+            guard !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
             var title = ""
             if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
-            known.append(NativeTaskSource(n: Int(n), title: title, url: url))
+            known.append(NativeTaskSource(n: Int(n), title: title, url: url, read: fetched ? true : nil))
         }
         sources = known.isEmpty ? nil : known
         return result
@@ -456,8 +459,12 @@ enum NativeCompanionWorker {
     }
 
     static func earlierLine(_ checkpoint: NativeCompanionCheckpoint) -> String? {
-        earlierLine(done: checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title),
-                    unsure: checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title))
+        earlierLine(effects: checkpoint.effects)
+    }
+
+    static func earlierLine(effects: [NativeCompanionEffectNote]) -> String? {
+        earlierLine(done: effects.filter { $0.outcome.hasPrefix("done") }.map(\.title),
+                    unsure: effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title))
     }
 
     static func ran(_ record: NativeEffectRecord) -> Bool? {
@@ -695,6 +702,12 @@ private struct NativeCompanionRun {
             checkpoint.pending = nil
             if let early = try await resolve(pending, &checkpoint) { return early }
         }
+        if checkpoint.finishing == true {
+            for remaining in checkpoint.outstandingCalls {
+                checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: this work is finishing with what it has."))
+            }
+            return try await finish(&checkpoint)
+        }
         if let paused = try await reconcileUncertain(&checkpoint) { return paused }
         if !checkpoint.outstandingCalls.isEmpty {
             if let paused = try await answerOutstanding(&checkpoint) { return paused }
@@ -747,11 +760,17 @@ private struct NativeCompanionRun {
     }
 
     func finish(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult {
+        checkpoint.finishing = true
         let schemas = advertised.map(\.schema)
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: true)
         if checkpoint.rounds < 64, fits(prompt, tools: tools) {
-            let completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
+            let completion: NativeTaskGenerationCompletion
+            do {
+                completion = try await model("work-\(min(checkpoint.rounds, 63))", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
+            } catch let failure as NativeTaskGenerationFailure where NativeTaskWorkerFailures.terminalCodes.contains(failure.code) {
+                return try await conclude(&checkpoint, text: unfinishedReport(checkpoint))
+            }
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return try await conclude(&checkpoint, text: completion.content)
@@ -827,6 +846,23 @@ private struct NativeCompanionRun {
         if !checkpoint.effects.isEmpty {
             text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n")
         }
+        return CompanionSavedText.sanitized(text)
+    }
+
+    func unfinishedReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
+        let found = (checkpoint.sources ?? []).sorted { $0.n < $1.n }
+        let earlier = NativeCompanionWorker.earlierLine(checkpoint)
+        var text = found.isEmpty && earlier == nil
+            ? "The write-up could not be finished, and nothing was found before it stopped."
+            : "The write-up could not be finished. This is what was saved before it stopped."
+        func listed(_ sources: [NativeTaskSource]) -> String {
+            sources.map { "- " + ($0.title.isEmpty ? $0.url : $0.title) + " [\($0.n)]" }.joined(separator: "\n")
+        }
+        let read = found.filter { $0.read == true }
+        let unread = found.filter { $0.read != true }
+        if !read.isEmpty { text += "\n\nPages read:\n" + listed(read) }
+        if !unread.isEmpty { text += "\n\nFound in a search, not read:\n" + listed(unread) }
+        if let earlier { text += "\n\n" + earlier }
         return CompanionSavedText.sanitized(text)
     }
 

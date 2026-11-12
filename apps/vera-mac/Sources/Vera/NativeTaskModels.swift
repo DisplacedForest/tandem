@@ -441,6 +441,7 @@ struct NativeTaskSource: Codable, Equatable, Hashable, Sendable {
     let n: Int
     let title: String
     let url: String
+    var read: Bool? = nil
 }
 
 struct NativeTaskDecision: Codable, Equatable, Hashable, Sendable {
@@ -464,9 +465,10 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     let failureReason: String?
     var effects: [NativeCompanionEffectNote] = []
     var pending: NativeCompanionPending? = nil
+    var finishing: Bool? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case phase, sources, outline, drafts, revisions, effects, pending
+        case phase, sources, outline, drafts, revisions, effects, pending, finishing
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
         case nextQuery = "next_query"
@@ -484,6 +486,7 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         effects = (try? container.decodeIfPresent([NativeCompanionEffectNote].self, forKey: .effects)) ?? []
         pending = try? container.decodeIfPresent(NativeCompanionPending.self, forKey: .pending)
+        finishing = try? container.decodeIfPresent(Bool.self, forKey: .finishing)
     }
 
     var unconfirmedEffects: [String] {
