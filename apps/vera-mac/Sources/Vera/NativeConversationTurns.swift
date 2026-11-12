@@ -21,7 +21,7 @@ struct NativeTurnHistoryMessage: Codable, Sendable {
     init(_ message: Message) {
         id = message.id
         role = message.role.rawValue
-        text = message.delivery == nil ? message.text : NativeTaskDelivery.modelText(message.text)
+        text = message.delivery.map { NativeTaskDelivery.modelText(message.text.isEmpty ? $0.title : message.text) } ?? message.text
         attachments = message.attachments
         routeNote = message.routeNote
         activities = message.toolActivities

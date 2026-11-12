@@ -142,7 +142,7 @@ enum NativeTaskDelivery {
             let documentTitle = title ?? reference.request.displayTitle
             let summary = result.summary.map { CitationResolver.scan($0, known: Set(sources.map(\.n))).text }?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let line = summary.isEmpty ? documentTitle : String(summary.prefix(280))
+            let line = summary.isEmpty ? "" : String(summary.prefix(280))
             var message = delivered(text: line, kind: NativeDeliveredMessage.result,
                                     delivery: NativeDeliveredMessage(referenceID: id, kind: NativeDeliveredMessage.result,
                                                                      title: documentTitle, finished: true, document: true), now: now)
@@ -237,6 +237,7 @@ enum NativeTaskDelivery {
         let byNumber = Dictionary(safe.map { ($0.n, $0) }, uniquingKeysWith: { first, _ in first })
         guard let expression = try? NSRegularExpression(pattern: "(?:[ \\t]?\\[[0-9]{1,3}\\])+") else { return body }
         let text = body as NSString
+        let sentenceEnds: Set<Character> = [".", "!", "?"]
         var output = ""
         var cursor = 0
         var cited: Set<Int> = []
@@ -256,8 +257,16 @@ enum NativeTaskDelivery {
                     if !links.contains(rendered) { links.append(rendered) }
                 }
             }
-            if !links.isEmpty { output += " " + links.joined(separator: ", ") }
-            cursor = match.range.location + match.range.length
+            let end = match.range.location + match.range.length
+            let following = text.substring(from: end).first { $0 != " " && $0 != "\t" }
+            let lastOnLine = following == nil || following == "\n" || following == "\r"
+            let preceding = output.last { $0 != " " && $0 != "\t" }
+            let afterSentence = preceding.map { sentenceEnds.contains($0) } ?? true
+            if !links.isEmpty {
+                let joined = links.joined(separator: ", ")
+                output += lastOnLine || afterSentence ? " " + joined : " (" + joined + ")"
+            }
+            cursor = end
         }
         output += text.substring(from: cursor)
         let leftovers = safe.filter { !cited.contains($0.n) && $0.url != "local" }

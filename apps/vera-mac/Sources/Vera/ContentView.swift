@@ -841,7 +841,7 @@ struct MessageRow: View {
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))
                     }
-                    AssistantBody(message: message, section: .actions, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    AssistantBody(message: message, section: .actions, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                 }
                 Spacer(minLength: 0)
             } else {

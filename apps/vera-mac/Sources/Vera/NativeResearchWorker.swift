@@ -19,9 +19,10 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
     var failureReason: String?
     var automaticRetryStep: String?
     var note: NativeTaskNote?
+    var reviewed = false
 
     private enum CodingKeys: String, CodingKey {
-        case phase, subquestions, sources, errors, retry, attempt, note
+        case phase, subquestions, sources, errors, retry, attempt, note, reviewed
         case nextQuery = "next_query"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
@@ -43,6 +44,7 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
         note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
+        reviewed = (try? container.decodeIfPresent(Bool.self, forKey: .reviewed)) ?? false
     }
 
     func encoded() throws -> Data {
@@ -155,6 +157,12 @@ enum NativeResearchWorker {
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
         "\(identity.opening), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else. " + NativeTaskDelivery.notePrompt
+    }
+
+    static let reviewCharacters = 300
+
+    static func reviewPrompt(identity: NativeWorkerIdentity) -> String {
+        "\(identity.opening). You have finished reading pages for a research question and are about to write it up. Output ONLY a JSON object with a \"note\" string, nothing else. " + NativeTaskDelivery.notePrompt
     }
 
     static func synthesisPrompt(identity: NativeWorkerIdentity) -> String {
@@ -318,6 +326,17 @@ enum NativeResearchWorker {
                 checkpoint.phase = "gather"
                 checkpoint.nextQuery = 0
                 return try pause(&checkpoint, "No usable sources were gathered.")
+            }
+            if !checkpoint.reviewed {
+                checkpoint.reviewed = true
+                let read = checkpoint.sources.map { "[\($0.n)] \($0.title)\n\(String($0.content.prefix(reviewCharacters)))" }.joined(separator: "\n\n")
+                if let response = try? await exchange.complete(task: task, binding: binding, phase: "review", attempt: attempt, ordinal: 0, messages: [
+                    NativeTaskGenerationMessage(role: "system", content: reviewPrompt(identity: identity)),
+                    NativeTaskGenerationMessage(role: "user", content: "Question: \(payload.query)\n\nPages read:\n" + read),
+                ]), let note = NativeTaskDelivery.note(in: response) {
+                    checkpoint.note = note
+                }
+                return try progress(checkpoint)
             }
             let block = checkpoint.sources.map { "[\($0.n)] \($0.title) (\($0.url))\n\(String($0.content.prefix(perSourceCharacters)))" }
                 .joined(separator: "\n\n")

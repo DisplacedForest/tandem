@@ -43,6 +43,9 @@ enum NativeTaskDeliverySelftest {
         try streamingOrdinal()
         try await arrivalLeavesTheReaderAlone()
         try twoAtOnce()
+        try actionRow()
+        try parentheses()
+        try await researchNotes()
         try laterTurn()
         try copySweep()
         print("  result delivery OK (one line then the result, once, no card while running, lines, failed, companion, documents, scheduled, old history, reader left alone, model context, copy)")
@@ -335,9 +338,11 @@ enum NativeTaskDeliverySelftest {
             if case .artifact(let artifact) = block { return artifact }
             return nil
         }.first
-        try require(message?.text == "Winter reading plan" && attached?.isDocument == true && attached?.openTitle == "Open document"
-                    && !hasCard(try replyMessage(repository, work)),
-                    "A document request arrives as a message with the document attached and no card")
+        let onlyTheRow = message?.text.isEmpty == true && message.map(TranscriptVisibility.shows) == true
+        let modelSeesTitle = message.map { NativeTurnHistoryMessage($0).text.contains("Winter reading plan") } == true
+        try require(onlyTheRow && modelSeesTitle && attached?.isDocument == true && attached?.title == "Winter reading plan"
+                    && attached?.openTitle == "Open document" && !hasCard(try replyMessage(repository, work)),
+                    "A document with no summary arrives as just the document row, still drawn, and later turns get its title")
         let legacy = try LocalChatRepository(inMemory: true)
         let earlier = try self.work(legacy, workerType: "document", title: "Old plan")
         try legacy.recordSettledBeforeDelivery(id: earlier.reference.id)
@@ -515,6 +520,92 @@ enum NativeTaskDeliverySelftest {
         }
         let secondLineCounted = lines.contains { $0.delivery?.referenceID == second.reference.id.uuidString }
         try require(secondLineCounted, "One piece's timing never silenced the other's line")
+    }
+
+    static func actionRow() throws {
+        try require(!AssistantBody.showsActionRow(companionThread: true) && AssistantBody.showsActionRow(companionThread: false),
+                    "The copy and rating row is gone in the companion's conversation and stays in ordinary chats")
+    }
+
+    static func parentheses() throws {
+        let one = [PulseSource(n: 1, title: "Advisory notice", url: "https://example.org/a")]
+        let two = one + [PulseSource(n: 2, title: "Archive notice", url: "https://example.org/b")]
+        let a = "[Advisory notice](https://example.org/a)"
+        let b = "[Archive notice](https://example.org/b)"
+        let cases: [(String, [PulseSource], String)] = [
+            ("Fixed in version 0.37.2 [1]. I found nothing.", one, "Fixed in version 0.37.2 (\(a)). I found nothing."),
+            ("Fixed in version 0.37.2 [1] and nothing else.", one, "Fixed in version 0.37.2 (\(a)) and nothing else."),
+            ("- It is the quietest of the three. [1]\n- Next.", one, "- It is the quietest of the three. \(a)\n- Next."),
+            ("It is the quietest of the three [1]\n\nNext paragraph.", one, "It is the quietest of the three \(a)\n\nNext paragraph."),
+            ("Fixed in version 0.37.2 [1][2]. I found nothing.", two, "Fixed in version 0.37.2 (\(a), \(b)). I found nothing."),
+            ("Fixed in version 0.37.2 [1][2] and nothing else.", two, "Fixed in version 0.37.2 (\(a), \(b)) and nothing else."),
+            ("- It is the quietest. [1][2]\n- Next.", two, "- It is the quietest. \(a), \(b)\n- Next."),
+            ("It is the quietest [1][2]", two, "It is the quietest \(a), \(b)"),
+        ]
+        for (input, sources, expected) in cases {
+            let output = NativeTaskDelivery.linked(input, sources: sources)
+            try require(output == expected, "A link mid-sentence goes in parentheses and stays bare after the sentence: \(output)")
+        }
+    }
+
+    @MainActor final class NoteLog {
+        var posts: [NativeTaskDeliveredPost] = []
+    }
+
+    static func researchNotes() async throws {
+        let planNote = "I'm splitting the quiet reading spaces question into each library's own reading room."
+        let readNote = "I've read all three libraries' pages about their quiet reading spaces and Chicago's is the least strict."
+        for spaced in [true, false] {
+            let repository = try LocalChatRepository(inMemory: true)
+            let gate = NativeTaskEngineCounter()
+            let log = NoteLog()
+            let at = Date().addingTimeInterval(-NativeTaskLineRules.spacingSeconds * 10)
+            let shift = spaced ? -NativeTaskLineRules.spacingSeconds * 5 : 0
+            let harness = try NativeTaskEngineHarness.make(repository: repository, counter: NativeTaskEngineCounter(),
+                search: NativeResearchSearch { query, _ in
+                    while await gate.count("plan-line") == 0 { try await Task.sleep(for: .milliseconds(20)) }
+                    return [NativeResearchSource(n: 0, title: "Library page", url: "https://library.test/\(query.count)", content: "Quiet rooms.")]
+                },
+                onUpdate: { updates in
+                    for id in Set(updates.compactMap(\.referenceID)) {
+                        let posts = (try? repository.deliverTaskMessages(id: id, now: Date().addingTimeInterval(shift))) ?? []
+                        log.posts += posts
+                        if posts.contains(where: { $0.message.text == planNote }) { Task { await gate.bump("plan-line") } }
+                        if let note = (try? repository.taskProjection(id: id))?.snapshot?.checkpoint.note, note.text == readNote {
+                            Task { await gate.bump("read-seen") }
+                        }
+                    }
+                }) { job in
+                switch job.phase {
+                case "plan": return "{\"subquestions\": [\"Which rooms are quiet?\"], \"note\": \"\(planNote)\"}"
+                case "review": return "{\"note\": \"\(readNote)\"}"
+                default:
+                    while await gate.count("read-seen") == 0 { try await Task.sleep(for: .milliseconds(20)) }
+                    return "Bates Hall is the quietest. [1]"
+                }
+            }
+            let conversation = Conversation(id: UUID().uuidString, title: "Reading rooms", messages: [], updatedAt: at)
+            try repository.saveConversation(conversation)
+            let user = Message(role: .user, text: "Compare quiet reading spaces", createdAt: at)
+            let answer = Message(role: .assistant, text: reply, createdAt: at, state: .complete)
+            try repository.saveMessage(user, conversationID: conversation.id, ordinal: 0)
+            try repository.saveMessage(answer, conversationID: conversation.id, ordinal: 1)
+            try await harness.start()
+            let request = try NativeResearchTaskRequest(objective: "Compare quiet reading spaces", deliverables: ["A short answer"],
+                                                        workerType: "research", title: "Quiet reading spaces")
+            let reference = try await harness.service.submit(origin: NativeTaskOrigin(conversationID: conversation.id, userMessageID: user.id,
+                                                             assistantMessageID: answer.id), request: request, profile: harness.profile)
+            let finished = try await harness.wait(seconds: 20) {
+                log.posts.contains { $0.message.delivery?.referenceID == reference.id.uuidString && $0.message.delivery?.isResult == true }
+            }
+            await harness.stop()
+            let stored = try repository.messages(conversationID: conversation.id).filter { $0.delivery != nil }
+            let lines = stored.filter { $0.contentType == .deliveredLine }.map(\.text)
+            let resultIsLast = stored.last?.contentType == .deliveredResult
+            let expected = spaced ? [planNote, readNote] : [planNote]
+            try require(finished && resultIsLast && lines == expected,
+                        "Research offers a line with its plan and another after reading, inside the spacing rule: \(spaced) \(lines)")
+        }
     }
 
     static func laterTurn() throws {
