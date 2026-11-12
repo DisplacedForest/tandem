@@ -661,6 +661,31 @@ struct IntegrationsManageSheet: View {
                 seconds.map { $0 == $0.rounded() ? String(Int($0)) : String($0) })
     }
 
+    static func row(_ existing: [String: Any], id: String, name: String, endpoint: String, reads: String, acts: String, scopes: Set<String>,
+                    seconds: Double, authentication: NativeMCPServerConfiguration.Authentication) -> [String: Any] {
+        var row = existing
+        row["id"] = id
+        row["name"] = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        row["url"] = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        var changed = Set<String>()
+        let changes = acts.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && changed.insert($0).inserted }
+        var seen = changed
+        let kept = reads.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        row["read_tools"] = kept
+        if changes.isEmpty { row.removeValue(forKey: "act_tools") } else { row["act_tools"] = changes }
+        let asks = (row["asks_tools"] as? [String] ?? []).filter(kept.contains)
+        if asks.isEmpty { row.removeValue(forKey: "asks_tools") } else { row["asks_tools"] = asks }
+        row["scopes"] = IntegrationsText.scopeKeys.filter { scopes.contains($0) }
+        row["timeout_seconds"] = seconds
+        if authentication == .none { row.removeValue(forKey: "authentication") } else { row["authentication"] = authentication.rawValue }
+        if authentication != .oauth { row.removeValue(forKey: "oauth") }
+        return row
+    }
+
     private func load() {
         guard !loaded else { return }
         loaded = true
@@ -680,27 +705,12 @@ struct IntegrationsManageSheet: View {
             error = "Enter the timeout as a number of seconds."
             return
         }
-        var row = target.existing ? (existingRow ?? [:]) : [:]
-        row["id"] = target.id
-        row["name"] = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        row["url"] = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        var changed = Set<String>()
-        let changes = acts.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && changed.insert($0).inserted }
-        var seen = changed
-        row["read_tools"] = reads.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
-        if changes.isEmpty { row.removeValue(forKey: "act_tools") } else { row["act_tools"] = changes }
-        row["scopes"] = IntegrationsText.scopeKeys.filter { scopes.contains($0) }
-        row["timeout_seconds"] = seconds
         if authentication == .oauth && !hasSignInDetails {
             error = IntegrationsText.accountSignInNote
             return
         }
-        if authentication == .none { row.removeValue(forKey: "authentication") } else { row["authentication"] = authentication.rawValue }
-        if authentication != .oauth { row.removeValue(forKey: "oauth") }
+        let row = Self.row(target.existing ? (existingRow ?? [:]) : [:], id: target.id, name: name, endpoint: endpoint, reads: reads, acts: acts,
+                           scopes: scopes, seconds: seconds, authentication: authentication)
         do {
             if target.existing { try config.updateNativeMCPServer(row) } else { try config.addNativeMCPServer(row) }
             onSaved(target.id)

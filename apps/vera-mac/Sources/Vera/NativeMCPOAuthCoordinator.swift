@@ -35,7 +35,7 @@ extension NativeMCPManager {
 
     func signIn(_ id: String, reviewID: UUID) async {
         guard !replacingConfiguration, let review = oauthReviews[id], review.id == reviewID, review.configurationGeneration == configurationGeneration,
-              oauthFlows[id] == nil, servers.first(where: { $0.id == id })?.configuration == review.configuration else { return }
+              oauthFlows[id] == nil, servers.first(where: { $0.id == id })?.configuration.sameService(review.configuration) == true else { return }
         guard let owner = try? NativeMCPOAuthConnectionLifetime(configuration: review.configuration, consent: review.consent) else { return }
         guard authority.access.setOAuthOwner(owner) else { owner.cancel(); return }
         let flow = NativeMCPOAuthFlow(owner: owner, browser: oauthBrowserFactory(), configurationGeneration: configurationGeneration)
@@ -180,7 +180,7 @@ extension NativeMCPManager {
     private func isCurrent(_ id: String, flow: NativeMCPOAuthFlow) -> Bool {
         oauthFlows[id] === flow && flow.owner.isActive && flow.configurationGeneration == configurationGeneration
             && authority.access.oauthOwner(id) === flow.owner
-            && authority.access.snapshot().contains(where: { $0.configuration == flow.owner.configuration })
+            && authority.access.snapshot().contains(where: { $0.configuration.sameService(flow.owner.configuration) })
     }
 
     private func requireCurrent(_ id: String, flow: NativeMCPOAuthFlow) throws {

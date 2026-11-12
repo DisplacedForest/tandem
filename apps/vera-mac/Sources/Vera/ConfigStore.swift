@@ -153,6 +153,7 @@ final class ConfigStore: ObservableObject {
         memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
         memoryCredentialReadFailed = memoryEndpointWanted && unavailable.contains(Self.memoryCredentialID)
         nativeMCPConfigurationError = nativeMCP.configurationError
+        nativeMCP.authority.access.keepMarked { [weak self] id, names in await self?.rememberNativeMCPAsks(id, names) ?? false }
     }
 
     var nativeMCPServerRows: [[String: Any]] { raw["native_mcp_servers"] as? [[String: Any]] ?? [] }
@@ -181,6 +182,17 @@ final class ConfigStore: ObservableObject {
         try commitNativeMCPServers(rows, pruning: before.subtracting(after))
     }
 
+    func rememberNativeMCPAsks(_ id: String, _ names: Set<String>) -> Bool {
+        var rows = nativeMCPServerRows
+        guard let index = rows.firstIndex(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() }) else { return false }
+        let reads = Set(rows[index]["read_tools"] as? [String] ?? [])
+        let asks = rows[index]["asks_tools"] as? [String] ?? []
+        let added = names.intersection(reads).subtracting(asks).sorted()
+        guard !added.isEmpty else { return true }
+        rows[index]["asks_tools"] = asks + added
+        do { try commitNativeMCPServers(rows, pruning: []); return true } catch { return false }
+    }
+
     func removeNativeMCPServer(id: String) throws {
         let id = id.lowercased()
         let rows = nativeMCPServerRows
@@ -190,6 +202,14 @@ final class ConfigStore: ObservableObject {
     }
 
     private func commitNativeMCPServers(_ rows: [[String: Any]], pruning stale: Set<String>) throws {
+        let rows = rows.map { row -> [String: Any] in
+            guard let asks = row["asks_tools"] as? [String] else { return row }
+            var row = row
+            let reads = Set(row["read_tools"] as? [String] ?? [])
+            let kept = asks.filter(reads.contains)
+            if kept.isEmpty { row.removeValue(forKey: "asks_tools") } else { row["asks_tools"] = kept }
+            return row
+        }
         guard rows.count <= Self.nativeMCPServerLimit else {
             throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
         }

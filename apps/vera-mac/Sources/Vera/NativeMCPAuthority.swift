@@ -7,6 +7,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let endpoint: URL
     let readTools: Set<String>
     let actTools: Set<String>
+    private(set) var asksTools: Set<String>
     let scopes: Set<String>
     let timeout: TimeInterval
     enum Authentication: String, Sendable { case none, bearer, oauth }
@@ -15,11 +16,12 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let allowsLoopbackFixture: Bool
     let publisher: String?
     let sourceURL: URL?
-    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
+    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], asksTools: Set<String> = [], scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, allowLoopbackFixture: Bool = false, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
         guard UUID(uuidString: id) != nil, !name.isEmpty, name.utf8.count <= 100,
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.host != nil, endpoint.scheme == "https" || (allowLoopbackFixture && endpoint.scheme == "http" && ["127.0.0.1", "::1"].contains(endpoint.host!)),
               !readTools.union(actTools).isEmpty, readTools.union(actTools).count <= 64, readTools.union(actTools).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
+              asksTools.count <= 64, asksTools.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
               !scopes.isEmpty, scopes.isSubset(of: ["focused", "assistant", "worker"]), timeout.isFinite, (0.1...20).contains(timeout) else { throw NativeToolError.failed("The connected service configuration is invalid.") }
         guard (authentication == .oauth) == (oauth != nil), oauth == nil || oauth?.resource == endpoint else { throw NativeToolError.failed("The sign-in configuration is invalid.") }
         guard publisher.map({ !$0.isEmpty && $0.utf8.count <= 100 }) ?? true,
@@ -27,7 +29,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         self.publisher = publisher; self.sourceURL = sourceURL
         self.oauth = oauth
         self.id = id.lowercased(); self.name = name; self.endpoint = endpoint
-        self.readTools = readTools; self.actTools = actTools; self.scopes = scopes; self.timeout = timeout; self.authentication = authentication; self.allowsLoopbackFixture = allowLoopbackFixture
+        self.readTools = readTools; self.actTools = actTools; self.asksTools = asksTools.intersection(readTools); self.scopes = scopes; self.timeout = timeout; self.authentication = authentication; self.allowsLoopbackFixture = allowLoopbackFixture
     }
     static func load(_ raw: [String: Any]) -> ([Self], String?) {
         guard let value = raw["native_mcp_servers"] else { return ([], nil) }
@@ -35,10 +37,11 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         do {
             var ids = Set<String>()
             let servers = try rows.map { row -> Self in
-                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
+                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "asks_tools", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
                       let id = row["id"] as? String, let name = row["name"] as? String,
                       let url = row["url"] as? String, let endpoint = URL(string: url),
                       row["read_tools"] == nil || row["read_tools"] is [String], row["act_tools"] == nil || row["act_tools"] is [String],
+                      row["asks_tools"] == nil || row["asks_tools"] is [String],
                       row["scopes"] == nil || row["scopes"] is [String],
                       row["timeout_seconds"] == nil || row["timeout_seconds"] is Double,
                       row["authentication"] == nil || row["authentication"] is String,
@@ -46,7 +49,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
                       row["publisher"] == nil || row["publisher"] is String,
                       row["source_url"] == nil || (row["source_url"] as? String).flatMap(URL.init(string:)) != nil else { throw NativeToolError.unavailable }
                 let oauth = row["oauth"] == nil ? nil : try NativeMCPOAuthConfiguration.load(row["oauth"])
-                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
+                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), asksTools: Set(row["asks_tools"] as? [String] ?? []), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
                 guard ids.insert(server.id).inserted else { throw NativeToolError.unavailable }
                 return server
             }
@@ -55,16 +58,30 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     }
     func toolID(_ name: String) -> String { "mcp_" + piHash(Data((id + "\n" + endpoint.absoluteString + "\n" + name).utf8)).prefix(40) }
     func state(of name: String, hints: NativeMCPToolHints) -> NativeMCPToolState {
-        NativeMCPToolState.classify(read: readTools.contains { $0.utf8.elementsEqual(name.utf8) }, act: actTools.contains { $0.utf8.elementsEqual(name.utf8) }, hints: hints)
+        NativeMCPToolState.classify(read: readTools.contains { $0.utf8.elementsEqual(name.utf8) }, act: actTools.contains { $0.utf8.elementsEqual(name.utf8) },
+                                    remembered: asksTools.contains { $0.utf8.elementsEqual(name.utf8) }, hints: hints)
     }
+    func sameService(_ other: Self) -> Bool { asking([]) == other.asking([]) }
+    func asking(_ names: Set<String>) -> Self {
+        var copy = self
+        copy.asksTools = names.intersection(readTools)
+        return copy
+    }
+    func newlyMarked(_ tools: [NativeMCPToolRecord]) -> Set<String> {
+        Set(tools.filter { tool in tool.hints.tightens && readTools.contains { $0.utf8.elementsEqual(tool.remoteName.utf8) } && !asksTools.contains { $0.utf8.elementsEqual(tool.remoteName.utf8) } }.map(\.remoteName))
+    }
+}
+
+extension NativeMCPToolHints {
+    var tightens: Bool { readOnly == false || destructive == true }
 }
 
 enum NativeMCPToolState: String, Sendable, Equatable {
     case unapproved, read, change
-    static func classify(read: Bool, act: Bool, hints: NativeMCPToolHints) -> NativeMCPToolState {
+    static func classify(read: Bool, act: Bool, remembered: Bool, hints: NativeMCPToolHints) -> NativeMCPToolState {
         if act { return .change }
         guard read else { return .unapproved }
-        return hints.readOnly == false || hints.destructive == true ? .change : .read
+        return remembered || hints.tightens ? .change : .read
     }
 }
 
@@ -81,6 +98,9 @@ struct NativeMCPToolRecord: Identifiable, Sendable {
     var callable: Bool { validator != nil && reason == nil && state != .unapproved }
     var state: NativeMCPToolState { server.state(of: remoteName, hints: hints) }
     var asksBecauseOfService: Bool { state == .change && !server.actTools.contains { $0.utf8.elementsEqual(remoteName.utf8) } }
+    func on(_ server: NativeMCPServerConfiguration) -> Self {
+        NativeMCPToolRecord(id: id, server: server, generation: generation, remoteName: remoteName, description: description, schema: schema, validator: validator, reason: reason, hints: hints)
+    }
 }
 struct NativeMCPServerState: Identifiable, Sendable {
     var configuration: NativeMCPServerConfiguration
@@ -100,9 +120,25 @@ final class NativeMCPAccess: @unchecked Sendable {
     private var observer: (@Sendable () -> Void)?
     private var authorizations: [String: NativeMCPAuthorization] = [:]
     private var oauthOwners: [String: NativeMCPOAuthConnectionLifetime] = [:]
+    private var keeper: (@Sendable (String, Set<String>) async -> Bool)?
     init(servers: [NativeMCPServerConfiguration], enabled: Set<String>) { states = servers.map { NativeMCPServerState(configuration: $0) }; self.enabled = enabled }
     func observe(_ observer: @escaping @Sendable () -> Void) { lock.withLock { self.observer = observer } }
     func snapshot() -> [NativeMCPServerState] { lock.withLock { states } }
+    func keepMarked(_ keeper: @escaping @Sendable (String, Set<String>) async -> Bool) { lock.withLock { self.keeper = keeper } }
+    func saveMarked(_ names: Set<String>, serverID: String) async -> Bool {
+        guard let keeper = lock.withLock({ keeper }) else { return false }
+        return await keeper(serverID, names)
+    }
+    func remember(_ names: Set<String>, serverID: String, generation: UUID) -> NativeMCPServerConfiguration? {
+        lock.withLock {
+            guard let index = states.firstIndex(where: { $0.id == serverID }), states[index].generation == generation else { return nil }
+            let configuration = states[index].configuration
+            let next = configuration.asking(configuration.asksTools.union(names))
+            states[index].configuration = next
+            states[index].tools = states[index].tools.map { $0.on(next) }
+            return next
+        }
+    }
     @discardableResult
     func update(_ state: NativeMCPServerState, expectedGeneration: UUID? = nil) -> Bool {
         let changed = lock.withLock { () -> (Bool, (@Sendable () -> Void)?) in
@@ -124,7 +160,7 @@ final class NativeMCPAccess: @unchecked Sendable {
     func setOAuthOwner(_ owner: NativeMCPOAuthConnectionLifetime) -> Bool {
         lock.withLock {
             guard owner.isActive, oauthOwners[owner.configuration.id] == nil,
-                  states.contains(where: { $0.configuration == owner.configuration && !$0.connected && !$0.connecting }) else { return false }
+                  states.contains(where: { $0.configuration.sameService(owner.configuration) && !$0.connected && !$0.connecting }) else { return false }
             oauthOwners[owner.configuration.id] = owner
             if let index = states.firstIndex(where: { $0.id == owner.configuration.id }) { states[index].generation = UUID() }
             return true
@@ -172,11 +208,12 @@ final class NativeMCPAccess: @unchecked Sendable {
                     next.append(NativeMCPServerState(configuration: server))
                     continue
                 }
+                let server = server.asking(server.asksTools.union(state.configuration.asksTools))
                 if state.configuration == server {
                     next.append(state)
-                } else if Self.keepsConnection(state, server) {
+                } else if state.configuration.sameService(server) || Self.keepsConnection(state, server) {
                     state.configuration = server
-                    state.tools = state.tools.map { NativeMCPToolRecord(id: $0.id, server: server, generation: $0.generation, remoteName: $0.remoteName, description: $0.description, schema: $0.schema, validator: $0.validator, reason: $0.reason, hints: $0.hints) }
+                    state.tools = state.tools.map { $0.on(server) }
                     next.append(state)
                 } else {
                     stale[state.id] = state.generation
@@ -237,6 +274,13 @@ final class NativeMCPAccess: @unchecked Sendable {
 }
 
 struct NativeMCPPermissionRevoked: Error {}
+struct NativeMCPOversizedReply: Error { let message: String }
+final class NativeMCPDispatchMark: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func mark() { lock.withLock { value = true } }
+    var sent: Bool { lock.withLock { value } }
+}
 
 actor NativeMCPAuthority: NativeRuntimeToolServing {
     typealias Factory = @Sendable (NativeMCPServerConfiguration) throws -> any NativeMCPConnection
@@ -265,7 +309,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
     func connect(_ id: String, authorization: NativeMCPAuthorization? = nil, oauth: NativeMCPOAuthConnectionLifetime? = nil) async {
         guard var state = access.snapshot().first(where: { $0.id == id }) else { authorization?.revoke(); return }
         if state.configuration.authentication == .oauth {
-            guard let oauth, oauth.isActive, oauth.session != nil, oauth.configuration == state.configuration, access.oauthOwner(id) === oauth else { authorization?.revoke(); return }
+            guard let oauth, oauth.isActive, oauth.session != nil, oauth.configuration.sameService(state.configuration), access.oauthOwner(id) === oauth else { authorization?.revoke(); return }
         } else if oauth != nil { authorization?.revoke(); return }
         guard !state.connecting, !state.connected else {
             if !handles.values.contains(where: { $0.serverID == id && $0.lease?.authorization === authorization }) { authorization?.revoke() }
@@ -323,9 +367,18 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 }
             }
             handles[generation]?.opening = operation
-            let tools = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+            var tools = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
             guard access.snapshot().first(where: { $0.id == id })?.generation == generation else { await teardown(generation); return }
             try Task.checkCancellation()
+            let marked = server.newlyMarked(tools)
+            let unsaved = marked.union(server.asksTools)
+            if !unsaved.isEmpty { _ = await access.saveMarked(unsaved, serverID: id) }
+            if !marked.isEmpty {
+                guard let kept = access.remember(marked, serverID: id, generation: generation) else { await teardown(generation); return }
+                state.configuration = kept
+                tools = tools.map { $0.on(kept) }
+                try Task.checkCancellation()
+            }
             guard server.authentication == .none || authorization?.isValid(serverID: server.id, endpoint: server.endpoint) == true else { throw NativeMCPTransportError.authenticationRequired }
             state.connecting = false; state.connected = true; state.status = server.authentication == .oauth ? "Signed in" : server.authentication == .bearer ? "Connected with a temporary token" : "Connected"; state.tools = tools
             handles[generation]?.opening = nil
@@ -408,10 +461,12 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
               case .object(let object) = arguments, (try arguments.piData()).count <= 16384 else { throw NativeToolError.unavailable }
         try validator.validate(arguments)
         let id = UUID()
+        let dispatched = NativeMCPDispatchMark()
         let operation = Task {
             try await NativeInferenceDeadline.run(seconds: record.server.timeout) {
                 try Task.checkCancellation()
                 guard self.access.allowed(record, scope: scope, revision: revision), expectedCatalog == nil || expectedCatalog == self.access.catalogRevision(scope: scope) else { throw NativeMCPPermissionRevoked() }
+                dispatched.mark()
                 return try await connection.call(name: record.remoteName, arguments: object)
             }
         }
@@ -423,11 +478,13 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             guard access.allowed(record, scope: scope, revision: revision) else { throw NativeMCPPermissionRevoked() }
             if result.pi("isError") == .bool(true) { throw NativeMCPTransportError.remoteFailure }
             let wrapped = NativeJSONValue.object(["source": .string(record.server.endpoint.absoluteString), "content": result])
-            guard (try wrapped.piData()).count <= 4096 else { throw NativeToolError.failed(record.state == .change ? "The service replied, but its reply is too large to show. The change may have been made, so check before trying it again." : "The service result is too large. Ask for a narrower read.") }
+            guard (try wrapped.piData()).count <= 4096 else { throw NativeMCPOversizedReply(message: record.state == .change ? "The service replied, but its reply is too large to show. The change may have been made, so check before trying it again." : "The service result is too large. Ask for a narrower read.") }
             return wrapped
         } catch {
+            if let oversized = error as? NativeMCPOversizedReply { throw NativeToolError.failed(oversized.message) }
             if invalidatedCalls.contains(id) || error is NativeMCPPermissionRevoked {
                 if error is CancellationError, Task.isCancelled { throw CancellationError() }
+                if record.state == .change, dispatched.sent { throw NativeToolError.failed("Access to this service ended after the change was sent. It may have been made, so check before trying it again.") }
                 throw NativeToolError.unavailable
             }
             if case NativeMCPTransportError.remoteFailure = error { throw NativeToolError.failed("The connected service reported a tool error.") }
