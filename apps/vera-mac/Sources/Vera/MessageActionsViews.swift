@@ -492,11 +492,11 @@ struct MessageActionsEventBridge: NSViewRepresentable {
                 guard event.keyCode == 53 else { return false }
                 let (context, _) = context(event)
                 guard MessageActionsEventPolicy.acts(.escape, context) else { return false }
-                model.close()
+                dismiss()
                 return MessageActionsEventPolicy.consumes(.escape, context)
             case .scrollWheel:
                 stopWatching()
-                if event.window === view?.window { model.close() }
+                if event.window === view?.window { dismiss() }
                 return false
             case .rightMouseDown:
                 return secondary(event)

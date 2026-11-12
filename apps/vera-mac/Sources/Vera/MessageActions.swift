@@ -163,8 +163,10 @@ enum MessageActionsEventPolicy {
         switch kind {
         case .escape:
             return context.overlayOpen
-        case .secondaryClick, .holdStart:
+        case .secondaryClick:
             return context.onBubble && !context.onOverlayControls
+        case .holdStart:
+            return context.onBubble && !context.overlayOpen
         }
     }
 
@@ -311,7 +313,7 @@ final class MessageActionsModel {
         guard let bubble = bubbles[id] else { return false }
         selecting = nil
         cancelHold()
-        controls = []
+        if open?.messageID != id { controls = [] }
         openedAt = bubble.frame
         open = MessageActionsTarget(messageID: id, conversationID: conversationID ?? bubble.conversationID)
         return true
@@ -320,6 +322,7 @@ final class MessageActionsModel {
     func close() {
         controls = []
         openedAt = nil
+        cancelHold()
         if open != nil { open = nil }
     }
 

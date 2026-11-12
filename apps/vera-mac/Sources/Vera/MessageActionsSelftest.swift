@@ -191,6 +191,15 @@ enum MessageActionsSelftest {
 
         model.register(first, conversationID: "c", frame: frame, visible: frame)
         try require(model.present(first, conversationID: "c") && model.open?.messageID == first, "A new open replaces one already open")
+        let kept = [CGRect(x: 1, y: 2, width: 3, height: 4)]
+        model.controls = kept
+        try require(model.present(first, conversationID: "c") && model.controls == kept, "Opening the open message again keeps its row and menu protected")
+        model.hold.down(at: .zero, time: 0)
+        model.holdTarget = first
+        model.close()
+        let holdEnded = model.holdTarget == nil && model.hold.abandoned
+        try require(holdEnded && model.open == nil, "Closing ends a pending hold")
+        try require(model.present(first, conversationID: "c"), "It opens again after closing")
 
         model.register(first, conversationID: "c", frame: frame.insetBy(dx: 0, dy: -20).offsetBy(dx: 0, dy: 20), visible: frame)
         try require(model.open?.messageID == first, "The open bubble growing below its top edge stays open")
@@ -253,10 +262,11 @@ enum MessageActionsSelftest {
         try require(MessageActionsEventPolicy.consumes(.escape, own), "Escape in the host window with it open is consumed")
         try require(MessageActionsEventPolicy.consumes(.secondaryClick, own), "A right click on a bubble in the host window is consumed")
         try require(!MessageActionsEventPolicy.consumes(.holdStart, own), "A press never consumes its event")
-        try require(MessageActionsEventPolicy.acts(.holdStart, own), "A press on a bubble may start a hold even with one open")
+        try require(!MessageActionsEventPolicy.acts(.holdStart, own), "A press never starts a hold while one is open")
 
         var closed = own
         closed.overlayOpen = false
+        try require(MessageActionsEventPolicy.acts(.holdStart, closed), "A press on a bubble starts a hold when nothing is open")
         try require(!MessageActionsEventPolicy.consumes(.escape, closed), "Escape passes through when nothing is open")
 
         for (label, change) in [("another window", { (c: inout MessageActionsEventContext) in c.hostWindow = false }),
