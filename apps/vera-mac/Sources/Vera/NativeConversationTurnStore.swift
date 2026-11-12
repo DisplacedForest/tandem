@@ -35,6 +35,8 @@ final class NativeTurnExecution {
     var pendingCheckpoint: (message: Message, ordinal: Int)?
     var checkpointFailingSince: Date?
     var completing: NativeConversationTurn.State?
+    var answers: [String: NativeCardAnswer] = [:]
+    var deferredChoices: [String: (decision: NativeCardChoiceKind, request: NativeToolConfirmationRequest)] = [:]
 
     init(_ record: NativeConversationTurn) { self.record = record }
 }
@@ -304,7 +306,7 @@ extension ChatStore {
             let saved = conversationTurns.first(where: { $0.id == id })
             if let completing = execution.completing, saved?.attempt == execution.record.attempt, saved?.state == completing { continue }
             if saved?.state != .running || saved?.attempt != execution.record.attempt {
-                resolveTurnConfirmation(execution.record.assistantMessageID, approved: false)
+                resolveTurnConfirmation(execution.record.assistantMessageID, approved: false, byPerson: false)
                 execution.task?.cancel()
                 execution.deadline?.cancel()
                 clearTurnDecisions(execution.record)
@@ -423,7 +425,7 @@ extension ChatStore {
         execution.deadline?.cancel()
         execution.task = nil
         offerToStopAsking(after: turn)
-        resolveTurnConfirmation(turn.assistantMessageID, approved: false)
+        resolveTurnConfirmation(turn.assistantMessageID, approved: false, byPerson: false)
         clearTurnDecisions(turn)
         if let location = turnLocation(turn) {
             var message = conversations[location.conversation].messages[location.reply]
@@ -471,7 +473,7 @@ extension ChatStore {
         if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && message.artifacts.isEmpty { revertPreferenceCapture(turn) }
         recordCanvasArtifacts(message.artifacts, conversationID: turn.conversationID, messageID: messageID.uuidString,
                               sources: message.sources, revising: artifactRevisionTarget(messageID: turn.userMessageID.uuidString))
-        resolveTurnConfirmation(messageID, approved: false)
+        resolveTurnConfirmation(messageID, approved: false, byPerson: false)
         clearTurnDecisions(turn)
         let execution = turnExecutions.removeValue(forKey: turn.id)
         execution?.task?.cancel()
@@ -555,7 +557,29 @@ extension ChatStore {
                                  fixed: definition.fixedDestination, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
     }
 
-    func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil) async -> Bool {
+    func awaitTurnAnswer(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject?, digest: String) async -> NativeCardAnswer {
+        let unanswered = NativeCardAnswer(kind: .decline, byPerson: false)
+        guard await turnCurrency(turn) == .current, turnExecutions[turn.id] != nil else { return unanswered }
+        if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) {
+            return NativeCardAnswer(kind: .decline, byPerson: true)
+        }
+        let approved = await awaitTurnConfirmation(activity, turn: turn, subject: subject, digest: digest)
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt,
+              let answer = execution.answers.removeValue(forKey: activity.id) else {
+            return NativeCardAnswer(kind: approved ? .allowOnce : .decline, byPerson: false)
+        }
+        return answer
+    }
+
+    func commitTurnAnswer(_ activity: NativeToolActivity, answer: NativeCardAnswer, turn: NativeConversationTurn) {
+        guard let execution = turnExecutions[turn.id], execution.record.attempt == turn.attempt,
+              let deferred = execution.deferredChoices.removeValue(forKey: activity.id),
+              deferred.decision == answer.kind, turnOwned(execution.record), let subject = deferred.request.subject else { return }
+        _ = saveCardChoice(deferred.decision, request: deferred.request, subject: subject, messageID: turn.assistantMessageID, turn: turn)
+    }
+
+    func awaitTurnConfirmation(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject? = nil,
+                               digest: String? = nil) async -> Bool {
         guard await turnCurrency(turn) == .current, let execution = turnExecutions[turn.id] else { return false }
         if turnDeclineSource.contains(NativeToolRequestKey.canonical(name: activity.name, request: activity.request), turn: turn.id) { return false }
         return await withTaskCancellationHandler {
@@ -567,6 +591,7 @@ extension ChatStore {
                 execution.continuation = continuation
                 turnConfirmationTokens[turn.assistantMessageID] = UUID()
                 var request = NativeToolConfirmationRequest(activity: activity)
+                request.digest = digest
                 if let subject {
                     request.subject = subject
                     request.choices = NativeCardChoices.offered(subject, place: .chat(conversationID: turn.conversationID))
@@ -579,16 +604,37 @@ extension ChatStore {
         } onCancel: {
             Task { @MainActor [weak self] in
                 guard self?.turnExecutions[turn.id]?.record.attempt == turn.attempt else { return }
-                self?.resolveTurnConfirmation(turn.assistantMessageID, approved: false)
+                self?.resolveTurnConfirmation(turn.assistantMessageID, approved: false, byPerson: false)
             }
         }
     }
 
-    func resolveTurnConfirmation(_ messageID: UUID, approved: Bool, requestID: String? = nil, token: UUID? = nil) {
-        resolveTurnConfirmation(messageID, decision: approved ? .allowOnce : .decline, requestID: requestID, token: token)
+    func resolveTurnConfirmation(_ messageID: UUID, approved: Bool, requestID: String? = nil, token: UUID? = nil, byPerson: Bool = true) {
+        resolveTurnConfirmation(messageID, decision: approved ? .allowOnce : .decline, requestID: requestID, token: token, byPerson: byPerson)
     }
 
-    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeCardChoiceKind, requestID: String? = nil, token: UUID? = nil) {
+    func saveCardChoice(_ choice: NativeCardChoiceKind, request: NativeToolConfirmationRequest, subject: NativeCardSubject,
+                        messageID: UUID, turn: NativeConversationTurn) -> NativeCardChoiceKind {
+        var decision = choice
+        let drafts = NativeCardChoices.records(decision, subject: subject, place: .chat(conversationID: turn.conversationID), originMessageID: nil)
+        var saved = 0
+        for (index, draft) in drafts.enumerated() {
+            var record = draft
+            record.originMessageID = messageID.uuidString.lowercased()
+            record.originToolCallID = drafts.count == 1 ? request.id : request.id + ":" + String(index)
+            if addRuleRecord(record) != nil { saved += 1 }
+        }
+        if saved == 0 {
+            rulesNotice = "That choice couldn't be saved, so it applied to this one action only."
+            if decision == .never { decision = .decline }
+        } else if decision == .never, subject.toolID == NativeCommandTools.toolID {
+            for approval in approvedCommandRecords(for: turn.conversationID) { revokeRuleRecord(id: approval.id) }
+        }
+        return decision
+    }
+
+    func resolveTurnConfirmation(_ messageID: UUID, decision: NativeCardChoiceKind, requestID: String? = nil, token: UUID? = nil,
+                                 byPerson: Bool = true) {
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               let execution = turnExecutions[turn.id],
               requestID == nil || turnConfirmations[messageID]?.id == requestID,
@@ -605,19 +651,10 @@ extension ChatStore {
             if !offered { decision = decision.approves ? .allowOnce : .decline }
         }
         if owned, decision.saves, let request, let subject = request.subject {
-            let drafts = NativeCardChoices.records(decision, subject: subject, place: .chat(conversationID: turn.conversationID), originMessageID: nil)
-            var saved = 0
-            for (index, draft) in drafts.enumerated() {
-                var record = draft
-                record.originMessageID = messageID.uuidString.lowercased()
-                record.originToolCallID = drafts.count == 1 ? request.id : request.id + ":" + String(index)
-                if addRuleRecord(record) != nil { saved += 1 }
-            }
-            if saved == 0 {
-                rulesNotice = "That choice couldn't be saved, so it applied to this one action only."
-                if decision == .never { decision = .decline }
-            } else if decision == .never, subject.toolID == NativeCommandTools.toolID {
-                for approval in approvedCommandRecords(for: turn.conversationID) { revokeRuleRecord(id: approval.id) }
+            if request.digest != nil, decision.approves {
+                execution.deferredChoices[request.id] = (decision, request)
+            } else {
+                decision = saveCardChoice(decision, request: request, subject: subject, messageID: messageID, turn: turn)
             }
         }
         if let request, request.toolID == NativeCommandTools.toolID, request.name == NativeCommandTools.runName,
@@ -633,6 +670,9 @@ extension ChatStore {
         recordRuleOfferDecision(decision, request: request, turn: turn, chosen: owned && requestID != nil)
         if let request, !decision.approves {
             turnDeclineSource.record(NativeToolRequestKey.canonical(name: request.name, request: request.request), turn: turn.id)
+        }
+        if let request {
+            execution.answers[request.id] = NativeCardAnswer(kind: decision.approves && !owned ? .decline : decision, byPerson: byPerson)
         }
         continuation.resume(returning: decision.approves && owned)
     }

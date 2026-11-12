@@ -71,6 +71,12 @@ enum NativeMCPTransportSelftest {
             await candidate.disconnect()
         }
         try require(!FileManager.default.fileExists(atPath: portFile.path + ".redirected"), "Redirect followed")
+        let hinted = try connection("hints")
+        try await hinted.connect()
+        let hintedPage = try await hinted.listTools(cursor: nil)
+        try require(hintedPage.tools.first?.hints == NativeMCPToolHints(), "A tool with nothing said about it carries no hints")
+        try require(hintedPage.tools.last?.hints == NativeMCPToolHints(readOnly: false, destructive: true, idempotent: false, openWorld: true), "What a service says about a tool is kept")
+        await hinted.disconnect()
         let dataSchema = try connection("data-schema")
         try await dataSchema.connect()
         do { _ = try await dataSchema.listTools(cursor: nil); throw Failure.assertion("Data URL schema was silently rewritten") }

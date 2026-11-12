@@ -51,13 +51,14 @@ enum NativeScheduleTools {
                     throw NativeToolError.failed(NativeTaskTools.searchUnavailable)
                 }
                 let schedule: NativeSchedule
+                NativeToolCallContext.effectStarts()
                 do { schedule = try await save(draft) } catch { throw NativeToolError.failed(error.localizedDescription) }
                 let destination = schedule.owner == .dot ? "the companion's conversation" : "its own chat"
                 return .object([
                     "message": .string("Saved. \(schedule.cadenceSummary). It appears in Scheduled, and results go to \(destination)."),
                     "saved": .bool(true),
                 ])
-            }, wants: wants)
+            }, wants: wants, marksEffect: true)
     }
 
     static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone) throws -> NativeScheduleDraft {

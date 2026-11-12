@@ -1,10 +1,10 @@
-# Contributing to Vera
+# Contributing to Tandem
 
 How to set up, test, and land a change.
 
 ## How this repo is maintained
 
-Vera was developed privately and published with a fresh history.
+Tandem was developed privately and published with a fresh history.
 
 - **PRs are welcome and they land.** A merged PR is credited in the next release's notes and ships in that release.
 - **Issues on this repo are the project's tracker** for bug reports and feature requests.
@@ -25,7 +25,7 @@ Enforced in review:
 2. **Degrade gracefully.** Every capability must behave sensibly when its endpoint or integration is unconfigured: report itself as off in the config report, refuse politely at runtime, and never affect the rest of the stack.
 3. **One capability = one router.** New server-side capabilities are a single `APIRouter` module in `services/vera-api/routers/` plus one entry in the `CAPABILITIES` table in `main.py`. No new containers, no sidecars.
 4. **Typed throughout.** Python is type-hinted, Swift is Swift 6 strict.
-5. **Text names the companion through the app's companion name value.** User-visible text never hardcodes a name, and `mise run name-ratchet` (part of `mise run check`) fails when a new string literal says Vera.
+5. **Text names the companion through the app's companion name value.** User-visible text never hardcodes a name, and `mise run name-ratchet` (part of `mise run check`) fails when a new string literal contains `Vera`.
 
 ## Project layout
 
@@ -108,13 +108,13 @@ Run all of the above before opening a PR. CI must be green to merge.
 
 **Bugs**: include the output of `GET /version`, the startup config report from the container log (`docker compose logs vera-api | head -60`, secrets are masked), and what you expected vs. what you saw.
 
-**Feature requests**: describe the problem before the solution. Vera stays one shared container with parameterized capabilities; proposals that fit that shape are straightforward to land.
+**Feature requests**: describe the problem before the solution. The Tandem server stays one shared container with parameterized capabilities; proposals that fit that shape are straightforward to land.
 
 ## License
 
 By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
 
-Session checks use injected model transports and isolated local databases. Run `VERA_SESSION_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for queue, context, confirmation, and retry regressions. `mise run native-task-test` also exercises real native HTTP responsiveness and process-kill recovery against loopback fixtures. It makes no paid provider calls. Native task tests also use actual loopback HTTP to verify upload callbacks, delayed headers, read inactivity, total deadlines, cancellation, and sanitized transport diagnostics. Pure offscreen answer previews use `--shot /tmp/session.png --view session-chat`; append `-narrow` and use `--appearance light` to inspect the smaller light layout. The `session-continuous` preview and synthetic legacy turn fixtures exercise compatibility with previously accepted work, not a selectable product mode. These previews never construct saved settings or open a visible window. Validate the ordinary native Vera destination and New chat navigation separately in the running application. Composer geometry previews use the actual field and attachment menu: `--shot /tmp/composer.png --view composer-single` or `--view composer-multiline`. Add `-narrow` for a smaller width and `--appearance light` for the light palette. Project context captures use `--view composer-project-empty` and `--view composer-project-multiline`; append `-narrow` to check their smaller layout. These fixtures use synthetic drafts and do not send messages or request microphone access.
+Session checks use injected model transports and isolated local databases. Run `VERA_SESSION_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for queue, context, confirmation, and retry regressions. `mise run native-task-test` also exercises real native HTTP responsiveness and process-kill recovery against loopback fixtures. It makes no paid provider calls. Native task tests also use actual loopback HTTP to verify upload callbacks, delayed headers, read inactivity, total deadlines, cancellation, and sanitized transport diagnostics. Pure offscreen answer previews use `--shot /tmp/session.png --view session-chat`; append `-narrow` and use `--appearance light` to inspect the smaller light layout. The `session-continuous` preview and synthetic legacy turn fixtures exercise compatibility with previously accepted work, not a selectable product mode. These previews never construct saved settings or open a visible window. Validate the destination for your companion and New chat navigation separately in the running application. Composer geometry previews use the actual field and attachment menu: `--shot /tmp/composer.png --view composer-single` or `--view composer-multiline`. Add `-narrow` for a smaller width and `--appearance light` for the light palette. Project context captures use `--view composer-project-empty` and `--view composer-project-multiline`; append `-narrow` to check their smaller layout. These fixtures use synthetic drafts and do not send messages or request microphone access.
 
 Credential lifecycle checks inject both Keychain operations and configuration I/O. Run `VERA_CREDENTIAL_SELFTEST=1 .build/debug/Vera --selftest` from `apps/vera-mac` for the focused mock suite. It covers unchanged saves, denied reads, explicit edits/removal, retry after failure, and guarded legacy migration without accessing real credentials or configuration.
 

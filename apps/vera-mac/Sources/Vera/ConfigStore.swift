@@ -53,6 +53,7 @@ final class ConfigStore: ObservableObject {
     @Published private(set) var capabilityTools: NativeCapabilityToolCatalog
     private let credentialStore: any NativeCredentialStore
     private let writeConfiguration: ([String: Any]) throws -> Void
+    private let readConfiguration: () -> [String: Any]
     private var savedCredentials: [String: String]
     private var piCommittedSettings: NativeChatSettings
     private var piCommittedCredentials: [String: String]
@@ -93,9 +94,10 @@ final class ConfigStore: ObservableObject {
     ]
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
-         readConfiguration: () -> [String: Any] = { ConfigFile.read() },
+         readConfiguration: @escaping () -> [String: Any] = { ConfigFile.read() },
          nativeMCP injectedMCP: NativeMCPManager? = nil,
          writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
+        self.readConfiguration = readConfiguration
         let loaded = readConfiguration()
         let settings = NativeChatSettings.load(from: loaded)
         var keys: [String: String] = [:]
@@ -153,6 +155,7 @@ final class ConfigStore: ObservableObject {
         memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
         memoryCredentialReadFailed = memoryEndpointWanted && unavailable.contains(Self.memoryCredentialID)
         nativeMCPConfigurationError = nativeMCP.configurationError
+        nativeMCP.authority.access.keepMarked { [weak self] id, names in await self?.rememberNativeMCPAsks(id, names) ?? false }
     }
 
     var nativeMCPServerRows: [[String: Any]] { raw["native_mcp_servers"] as? [[String: Any]] ?? [] }
@@ -176,9 +179,21 @@ final class ConfigStore: ObservableObject {
             throw NativeToolError.failed("That service is no longer connected.")
         }
         let before = nativeMCPToolIDs(serverID: id)
-        let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.map(server.toolID) })
+        let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.union(server.actTools).map(server.toolID) })
         rows[index] = row
         try commitNativeMCPServers(rows, pruning: before.subtracting(after))
+    }
+
+    func rememberNativeMCPAsks(_ id: String, _ names: Set<String>) -> Bool {
+        var rows = nativeMCPServerRows
+        guard let index = rows.firstIndex(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() }) else { return false }
+        let reads = Set(rows[index]["read_tools"] as? [String] ?? [])
+        let asks = rows[index]["asks_tools"] as? [String] ?? []
+        let added = names.intersection(reads).subtracting(asks).sorted()
+        guard !added.isEmpty else { return true }
+        guard NSDictionary(dictionary: readConfiguration()).isEqual(to: raw) else { return false }
+        rows[index]["asks_tools"] = asks + added
+        do { try commitNativeMCPServers(rows, pruning: []); return true } catch { return false }
     }
 
     func removeNativeMCPServer(id: String) throws {
@@ -190,6 +205,14 @@ final class ConfigStore: ObservableObject {
     }
 
     private func commitNativeMCPServers(_ rows: [[String: Any]], pruning stale: Set<String>) throws {
+        let rows = rows.map { row -> [String: Any] in
+            guard let asks = row["asks_tools"] as? [String] else { return row }
+            var row = row
+            let reads = Set(row["read_tools"] as? [String] ?? [])
+            let kept = asks.filter(reads.contains)
+            if kept.isEmpty { row.removeValue(forKey: "asks_tools") } else { row["asks_tools"] = kept }
+            return row
+        }
         guard rows.count <= Self.nativeMCPServerLimit else {
             throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
         }
@@ -227,7 +250,7 @@ final class ConfigStore: ObservableObject {
 
     private func nativeMCPToolIDs(serverID: String) -> Set<String> {
         let configured = NativeMCPServerConfiguration.load(raw).0.filter { $0.id == serverID }
-        let declared = configured.flatMap { server in server.readTools.map(server.toolID) }
+        let declared = configured.flatMap { server in server.readTools.union(server.actTools).map(server.toolID) }
         let discovered = nativeMCP.servers.filter { $0.id == serverID }.flatMap { $0.tools.map(\.id) }
         return Set(declared + discovered)
     }

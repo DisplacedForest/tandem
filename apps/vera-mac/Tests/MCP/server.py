@@ -103,6 +103,8 @@ class Handler(BaseHTTPRequestHandler):
             result['tools'][0]['description'] = synthetic_token
         if self.path.startswith('/bearer-echo') and method == 'tools/call':
             result['content'][0]['text'] = synthetic_token
+        if self.path == '/hints' and method == 'tools/list' and result.get('tools'):
+            result['tools'].append(dict(result['tools'][0], name='fixture_post', annotations={'readOnlyHint': False, 'destructiveHint': True, 'idempotentHint': False, 'openWorldHint': True}))
         if self.path == '/data-schema' and method == 'tools/list' and result.get('tools'):
             result['tools'][0]['inputSchema']['properties']['uri'] = {'const': 'data:,hello'}
         if self.path == '/data-result' and method == 'tools/call':
