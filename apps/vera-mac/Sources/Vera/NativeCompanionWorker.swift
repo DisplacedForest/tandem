@@ -795,15 +795,14 @@ private struct NativeCompanionRun {
                                                      argumentsJSON: record?.proposal.argumentsJSON ?? validated ?? call.arguments, title: title)
         var done = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title)
         var unsure = checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
-        var noted = Set(checkpoint.effects.map(\.title))
-        noted.insert(title)
-        for other in (try? environment.ledger.records(taskID: task.id)) ?? [] where other.digest != record?.digest {
-            guard other.state == .completed || other.state == .uncertain else { continue }
-            let known = context.tools.first { $0.name == other.proposal.function }
-            let arguments = known.flatMap { try? $0.validatedArguments(other.proposal.argumentsJSON) }
-            let name = known.map { NativeCompanionWorker.describe($0, arguments ?? [:]) } ?? other.proposal.function
-            guard noted.insert(name).inserted else { continue }
-            if other.state == .completed { done.append(name) } else { unsure.append(name) }
+        for other in checkpoint.outstandingCalls where other.id != call.id {
+            let key = NativeCompanionWorker.idempotencyKey(task: task.id, attempt: checkpoint.attempt, round: checkpoint.rounds, call: other.id)
+            guard let found = try? environment.ledger.record(taskID: task.id, idempotencyKey: key), found.digest != record?.digest,
+                  found.state == .completed || found.state == .uncertain else { continue }
+            let known = context.tools.first { $0.name == other.name }
+            let name = known.map { NativeCompanionWorker.describe($0, (try? $0.validatedArguments(found.proposal.argumentsJSON)) ?? [:]) }
+                ?? "an earlier step"
+            if found.state == .completed, !NativeCompanionWorker.ranWithFailure(found.receipt ?? .null) { done.append(name) } else { unsure.append(name) }
         }
         return NativeTaskStop(reason: reason, step: step, earlier: NativeCompanionWorker.earlierLine(done: done, unsure: unsure))
     }
@@ -1160,13 +1159,13 @@ private struct NativeCompanionRun {
                     let drafts = NativeCardChoices.records(.never, subject: shown, place: cardPlace(standing), originMessageID: nil)
                     if !drafts.isEmpty { _ = environment.saveRules(drafts) }
                 }
+                let stop = stopped(NativeTaskStop.declined, call: call, record: record, title: title, checkpoint)
                 checkpoint.note(title, "declined")
                 checkpoint.answer(call, NativeCompanionWorker.message("The person declined this. Do not try it again."))
                 for remaining in checkpoint.outstandingCalls {
                     checkpoint.answer(remaining, NativeCompanionWorker.message("Not run: the person declined an earlier step."))
                 }
                 let text = CompanionSavedText.sanitized("Stopped because you declined: \(title)." + NativeCompanionWorker.effectsLine(checkpoint))
-                let stop = stopped(NativeTaskStop.declined, call: call, record: record, title: title, checkpoint)
                 return try await conclude(&checkpoint, text: text, stop: stop)
             }
             guard let chosen, chosen.approves, honored, unchanged || !chosen.saves else {
