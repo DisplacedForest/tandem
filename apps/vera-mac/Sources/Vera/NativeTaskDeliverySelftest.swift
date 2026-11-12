@@ -51,9 +51,21 @@ enum NativeTaskDeliverySelftest {
         try codeIsLeftAlone()
         try checkInSpacing()
         try await documentCountsAsNew()
+        try await orderAcrossProcesses()
+        try engineFinishedBeforeUpgrade()
+        try await libraryRecoversDocument()
+        try commonMarkCode()
+        try memoryScanSkipsRuns()
         try laterTurn()
         try copySweep()
         print("  result delivery OK (one line then the result, once, no card while running, lines, failed, companion, documents, scheduled, old history, reader left alone, model context, copy)")
+    }
+
+    static let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-delivery-artifacts", isDirectory: true)
+
+    static func memoryRepository() throws -> LocalChatRepository {
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        return try LocalChatRepository(inMemory: true, artifactDirectory: scratch)
     }
 
     static func origin(_ repository: LocalChatRepository, request text: String = "Research how three public libraries provide quiet reading spaces.",
@@ -150,7 +162,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func referenceFlow() async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let store = await store(repository)
         store.select(work.conversationID)
@@ -188,7 +200,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func needsAnswer() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let asking = try snapshot(work.reference, remote: work.remote, state: "needs_decision",
                                   decision: ["id": "retry-1", "prompt": "The report didn't cite its sources correctly. Retry this step?", "choices": ["retry"]])
@@ -205,10 +217,10 @@ enum NativeTaskDeliverySelftest {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("chat.sqlite")
-        let first = try LocalChatRepository(url: url)
+        let first = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let work = try work(first)
         _ = try save(first, work, try research(work))
-        let relaunched = try LocalChatRepository(url: url)
+        let relaunched = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let posted = try relaunched.deliverTaskMessages(id: work.reference.id)
         let again = try relaunched.deliverTaskMessages(id: work.reference.id)
         let fromBefore = try first.deliverTaskMessages(id: work.reference.id)
@@ -224,10 +236,10 @@ enum NativeTaskDeliverySelftest {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("chat.sqlite")
-        let one = try LocalChatRepository(url: url)
+        let one = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let work = try work(one)
         _ = try save(one, work, try research(work))
-        let two = try LocalChatRepository(url: url)
+        let two = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let id = work.reference.id
         let counts = await withTaskGroup(of: Int.self) { group -> [Int] in
             for index in 0..<8 {
@@ -261,7 +273,7 @@ enum NativeTaskDeliverySelftest {
         let dropped = [empty, long, sameAsReply, sameAsEarlier, soon, fourth].allSatisfy { $0 == nil }
         try require(dropped && fine == good, "Short lines follow every rule: empty, length, repeats, spacing and count")
 
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let early = try snapshot(work.reference, remote: work.remote, state: "running",
                                  checkpoint: ["note": ["text": good, "at": base + spacing / 2]])
@@ -285,7 +297,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func failed() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let failure = try snapshot(work.reference, remote: work.remote, state: "failed",
             checkpoint: ["failure_reason": "request_limit", "sources": [sources[0], sources[1]]])
@@ -295,12 +307,12 @@ enum NativeTaskDeliverySelftest {
         let honest = text.hasPrefix("I couldn't finish looking into quiet reading spaces. Here's what I'd read so far:") && text.contains("[Boston Public Library](")
         let noLimit = !text.lowercased().contains("limit") && posted.first?.message.delivery?.finished == false
         try require(posted.count == 1 && honest && noLimit, "Failed research says it couldn't finish and lists what it read: \(text)")
-        let bare = try LocalChatRepository(inMemory: true)
+        let bare = try memoryRepository()
         let plain = try self.work(bare)
         _ = try save(bare, plain, try snapshot(plain.reference, remote: plain.remote, state: "failed"))
         try require(try bare.deliverTaskMessages(id: plain.reference.id).first?.message.text == "I couldn't finish looking into quiet reading spaces.",
                     "Failed research with nothing read says only that it couldn't finish")
-        let roomy = try LocalChatRepository(inMemory: true)
+        let roomy = try memoryRepository()
         let short = try self.work(roomy)
         let opening = "I ran out of room to keep reading before I finished. Here's what I found so far."
         _ = try save(roomy, short, try research(short, report: opening + "\n\n- Bates Hall is a quiet reading room. [1]"))
@@ -311,7 +323,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func companion() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let long = try work(repository, workerType: "companion")
         let headed = "## Bates Hall\n\nLong tables and green lamps.\n\n## Winter Garden\n\nNaturally lit and quiet."
         _ = try save(repository, long, try companionResult(long, report: headed, keep: false))
@@ -331,7 +343,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func document() async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository, workerType: "document", title: "Winter reading plan")
         let store = await store(repository)
         store.select(work.conversationID)
@@ -348,7 +360,7 @@ enum NativeTaskDeliverySelftest {
         try require(onlyTheRow && modelSeesTitle && attached?.isDocument == true && attached?.title == "Winter reading plan"
                     && attached?.openTitle == "Open document" && !hasCard(try replyMessage(repository, work)),
                     "A document with no summary arrives as just the document row, still drawn, and later turns get its title")
-        let legacy = try LocalChatRepository(inMemory: true)
+        let legacy = try memoryRepository()
         let earlier = try self.work(legacy, workerType: "document", title: "Old plan")
         try legacy.recordSettledBeforeDelivery(id: earlier.reference.id)
         let old = try snapshot(earlier.reference, remote: earlier.remote, state: "completed",
@@ -360,7 +372,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func stoppedAndDeleted() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         _ = try save(repository, work, try snapshot(work.reference, remote: work.remote, state: "canceled", canceled: true))
         try require((try repository.deliverTaskMessages(id: work.reference.id)).isEmpty && !hasCard(try replyMessage(repository, work)),
@@ -373,7 +385,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func scheduled() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository, scheduled: true)
         _ = try save(repository, work, try research(work, report: "Today's research: the reading rooms are open late this week. [1]"))
         let posted = try repository.deliverTaskMessages(id: work.reference.id)
@@ -398,7 +410,7 @@ enum NativeTaskDeliverySelftest {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("chat.sqlite")
-        let before = try LocalChatRepository(url: url)
+        let before = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let finished = try work(before)
         try before.recordSettledBeforeDelivery(id: finished.reference.id)
         _ = try save(before, finished, try research(finished))
@@ -407,7 +419,7 @@ enum NativeTaskDeliverySelftest {
             try db.execute(sql: "DROP TABLE native_task_deliveries")
             try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [NativeTaskDelivery.migration])
         }
-        let upgraded = try LocalChatRepository(url: url)
+        let upgraded = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let none = try upgraded.deliverTaskMessages(id: finished.reference.id)
         for _ in 0..<5 { _ = try upgraded.projectTask(id: finished.reference.id, snapshot: nil) }
         let oldReply = try replyMessage(upgraded, finished)
@@ -421,7 +433,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func streamingOrdinal() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let messages = try repository.messages(conversationID: work.conversationID)
         let asked = Message(role: .user, text: "And what about Denver?", createdAt: start.addingTimeInterval(50))
@@ -436,7 +448,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func arrivalLeavesTheReaderAlone() async throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository)
         let store = await store(repository)
         store.select(work.conversationID)
@@ -480,7 +492,7 @@ enum NativeTaskDeliverySelftest {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("chat.sqlite")
-        let repository = try LocalChatRepository(url: url)
+        let repository = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let first = try work(repository, title: readingSpaces.title)
         let second = try work(repository, title: lateHours.title, conversationID: first.conversationID)
         let pieces = [(first, readingSpaces), (second, lateHours)]
@@ -504,7 +516,7 @@ enum NativeTaskDeliverySelftest {
         _ = try save(repository, second, try report(lateHours, second))
         for _ in 0..<5 { posts += try repository.deliverTaskMessages(id: second.reference.id) }
         _ = try save(repository, first, try report(readingSpaces, first))
-        let relaunched = try LocalChatRepository(url: url)
+        let relaunched = try LocalChatRepository(url: url, artifactDirectory: scratch)
         posts += try relaunched.deliverTaskMessages(id: first.reference.id)
         posts += try repository.deliverTaskMessages(id: first.reference.id)
         posts += try relaunched.deliverTaskMessages(id: second.reference.id)
@@ -561,7 +573,7 @@ enum NativeTaskDeliverySelftest {
         let planNote = "I'm splitting the quiet reading spaces question into each library's own reading room."
         let readNote = "I've read all three libraries' pages about their quiet reading spaces and Chicago's is the least strict."
         for spaced in [true, false] {
-            let repository = try LocalChatRepository(inMemory: true)
+            let repository = try memoryRepository()
             let gate = NativeTaskEngineCounter()
             let log = NoteLog()
             let at = Date().addingTimeInterval(-NativeTaskLineRules.spacingSeconds * 10)
@@ -618,9 +630,9 @@ enum NativeTaskDeliverySelftest {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("chat.sqlite")
-        let first = try LocalChatRepository(url: url)
+        let first = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let work = try work(first)
-        let second = try LocalChatRepository(url: url)
+        let second = try LocalChatRepository(url: url, artifactDirectory: scratch)
         let storeA = await store(first)
         let storeB = await store(second)
         storeA.select(work.conversationID)
@@ -638,7 +650,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func scheduledBlockedCard() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository, scheduled: true)
         let blocked = try snapshot(work.reference, remote: work.remote, state: "blocked", checkpoint: ["native_unavailable": "saved-profile"])
         _ = try save(repository, work, blocked)
@@ -671,7 +683,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func checkInSpacing() throws {
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let work = try work(repository, scheduled: true)
         let base = start.timeIntervalSince1970
         let checkInAt = base + 100
@@ -696,7 +708,7 @@ enum NativeTaskDeliverySelftest {
         let suiteName = "tandem-delivery-selftest-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else { throw NativeTaskFixture.Failure.assertion("Defaults suite") }
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let repository = try LocalChatRepository(inMemory: true)
+        let repository = try memoryRepository()
         let store = await store(repository)
         store.companionDefaults = defaults
         store.ensureVeraThread()
@@ -711,6 +723,119 @@ enum NativeTaskDeliverySelftest {
         let arrived = store.conversations.first { $0.id == thread }?.messages.last
         try require(arrived?.text.isEmpty == true && hasDocument(arrived) && store.companionUnreadCount == 1,
                     "A document with no text still counts as one new message: \(store.companionUnreadCount)")
+    }
+
+    static func fileRepositories(_ count: Int) throws -> (directory: URL, repositories: [LocalChatRepository]) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("chat.sqlite")
+        return (directory, try (0..<count).map { _ in try LocalChatRepository(url: url, artifactDirectory: scratch) })
+    }
+
+    static func orderAcrossProcesses() async throws {
+        let files = try fileRepositories(2)
+        defer { try? FileManager.default.removeItem(at: files.directory) }
+        let first = files.repositories[0]
+        let second = files.repositories[1]
+        let lineWork = try work(first)
+        let storeA = await store(first)
+        let storeB = await store(second)
+        storeA.select(lineWork.conversationID)
+        storeB.select(lineWork.conversationID)
+        let noteAt = start.timeIntervalSince1970 + NativeTaskLineRules.spacingSeconds * 2
+        let running = try snapshot(lineWork.reference, remote: lineWork.remote, state: "running",
+            checkpoint: ["note": ["text": "I'm reading Boston's page about its quiet reading spaces.", "at": noteAt]])
+        if let update = try save(first, lineWork, running) { storeA.applyNativeTaskUpdates([update]) }
+        if let update = try save(second, lineWork, try research(lineWork)) { storeB.applyNativeTaskUpdates([update]) }
+        if let update = try first.projectTask(id: lineWork.reference.id, snapshot: nil) { storeA.applyNativeTaskUpdates([update]) }
+        let kinds = { (store: ChatStore) -> [MessageContentType] in
+            store.conversations.first { $0.id == lineWork.conversationID }?.messages.filter { $0.delivery != nil }.map(\.contentType) ?? []
+        }
+        let lineThenResult: [MessageContentType] = [.deliveredLine, .deliveredResult]
+        try require(kinds(storeA) == lineThenResult && kinds(storeB) == lineThenResult,
+                    "A line delivered elsewhere lands before a result this process claimed: \(kinds(storeA)) \(kinds(storeB))")
+        let one = try work(first, title: "Late library hours", conversationID: lineWork.conversationID)
+        let two = try work(first, title: "Quiet study rooms", conversationID: lineWork.conversationID)
+        storeA.select(lineWork.conversationID)
+        if let update = try save(first, one, try research(one)) { storeA.applyNativeTaskUpdates([update]) }
+        if let update = try save(second, two, try research(two)) { storeB.applyNativeTaskUpdates([update]) }
+        for (store, repository) in [(storeA, first), (storeB, second)] {
+            if let update = try repository.projectTask(id: two.reference.id, snapshot: nil) { store.applyNativeTaskUpdates([update]) }
+        }
+        let persisted = try first.messages(conversationID: lineWork.conversationID).filter { $0.delivery != nil }.map(\.id)
+        let shownA = storeA.conversations.first { $0.id == lineWork.conversationID }?.messages.filter { $0.delivery != nil }.map(\.id)
+        let shownB = storeB.conversations.first { $0.id == lineWork.conversationID }?.messages.filter { $0.delivery != nil }.map(\.id)
+        try require(persisted.count == 4 && shownA == persisted && shownB == persisted,
+                    "Results delivered by different processes end in saved order in both")
+    }
+
+    static func engineFinishedBeforeUpgrade() throws {
+        let files = try fileRepositories(1)
+        defer { try? FileManager.default.removeItem(at: files.directory) }
+        let before = files.repositories[0]
+        let finished = try work(before)
+        try before.database.write { db in
+            let now = Date().timeIntervalSince1970
+            try db.execute(sql: """
+                INSERT INTO native_engine_tasks(id, worker_type, payload, creation_key, state, created_at, updated_at)
+                VALUES (?, 'research', '{}', ?, 'completed', ?, ?)
+                """, arguments: [finished.remote, UUID().uuidString, now, now])
+            try db.execute(sql: "DROP TABLE native_task_deliveries")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [NativeTaskDelivery.migration])
+        }
+        let upgraded = try LocalChatRepository(url: files.directory.appendingPathComponent("chat.sqlite"), artifactDirectory: scratch)
+        let settled = try upgraded.taskResultDeliveries()[finished.reference.id] == .some(nil)
+        _ = try save(upgraded, finished, try research(finished))
+        for _ in 0..<3 { _ = try upgraded.projectTask(id: finished.reference.id, snapshot: nil) }
+        let reply = try replyMessage(upgraded, finished)
+        let none = try upgraded.deliverTaskMessages(id: finished.reference.id)
+        try require(settled && hasCard(reply) && hasDocument(reply) && none.isEmpty,
+                    "Work the engine finished before the upgrade is settled, keeps its card and report and gets no message")
+    }
+
+    static func libraryRecoversDocument() async throws {
+        let files = try fileRepositories(1)
+        defer { try? FileManager.default.removeItem(at: files.directory) }
+        let repository = files.repositories[0]
+        let work = try work(repository, workerType: "document", title: "Winter reading plan")
+        let other = try self.work(repository)
+        let finished = try snapshot(work.reference, remote: work.remote, state: "completed",
+            result: ["kind": "document_report", "query": work.reference.request.objective, "report": "# Winter reading plan", "sources": []])
+        _ = try save(repository, work, finished)
+        _ = try repository.deliverTaskMessages(id: work.reference.id)
+        let fresh = try LocalChatRepository(url: files.directory.appendingPathComponent("chat.sqlite"), artifactDirectory: scratch)
+        let store = await store(fresh)
+        store.select(other.conversationID)
+        let records = { store.artifactRecords.filter { $0.conversationID == work.conversationID }.count }
+        if let update = try fresh.projectTask(id: other.reference.id, snapshot: nil) { store.applyNativeTaskUpdates([update]) }
+        let once = records()
+        if let update = try fresh.projectTask(id: other.reference.id, snapshot: nil) { store.applyNativeTaskUpdates([update]) }
+        try require(once == 1 && records() == 1, "A delivered document missing from the Library is recovered once: \(once) \(records())")
+    }
+
+    static func commonMarkCode() throws {
+        let one = [PulseSource(n: 1, title: "Advisory notice", url: "https://example.org/a")]
+        let a = "[Advisory notice](https://example.org/a)"
+        let spanning = NativeTaskDelivery.linked("Use `items\n[1]` here. [1]", sources: one)
+        let longFence = NativeTaskDelivery.linked("````\n```\nitems[1]\n```\nitems[1]\n````\n\nDone. [1]", sources: one)
+        let tildes = NativeTaskDelivery.linked("~~~\nlet x = `items[1]`\nitems[1]\n~~~\n\nDone. [1]", sources: one)
+        let spanKept = spanning.hasPrefix("Use `items\n[1]` here.") && spanning.hasSuffix(a)
+        let fenceKept = longFence.components(separatedBy: "items[1]").count == 3 && longFence.hasSuffix("Done. \(a)")
+        let tildesKept = tildes.components(separatedBy: "items[1]").count == 3 && tildes.hasSuffix("Done. \(a)")
+        try require(spanKept && fenceKept && tildesKept, "Code spans and fences follow CommonMark: \(spanning) | \(longFence) | \(tildes)")
+    }
+
+    static func memoryScanSkipsRuns() throws {
+        let repository = try memoryRepository()
+        let work = try work(repository, scheduled: true)
+        _ = try save(repository, work, try research(work))
+        _ = try repository.deliverTaskMessages(id: work.reference.id)
+        let scanned = ChatStore.memoryScanMessages(try repository.messages(conversationID: work.conversationID))
+        let runRows = [work.reference.origin.userMessageID, work.reference.origin.assistantMessageID]
+        let noRunRows = !scanned.contains { runRows.contains($0.id) }
+        let noDelivered = !scanned.contains { $0.delivery != nil }
+        try require(noRunRows && noDelivered && scanned.isEmpty, "Past-chat memory scanning sees no turn from a scheduled run or its result")
     }
 
     static func laterTurn() throws {
@@ -734,7 +859,7 @@ enum NativeTaskDeliverySelftest {
     static func copySweep() throws {
         let banned: Set<String> = ["vera", "background", "worker", "agent", "task", "card", "she", "her", "he", "his"]
         let snapshotText = { (state: String, checkpoint: [String: Any]) -> String in
-            let repository = try LocalChatRepository(inMemory: true)
+            let repository = try memoryRepository()
             let work = try work(repository)
             return NativeTaskDelivery.failureText(snapshot: try snapshot(work.reference, remote: work.remote, state: state, checkpoint: checkpoint),
                                                   workerType: "research", subject: "Quiet reading spaces")

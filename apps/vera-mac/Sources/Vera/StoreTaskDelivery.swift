@@ -4,6 +4,7 @@ extension ChatStore {
     func refreshNativeTaskDeliveries() {
         guard let local = repository as? LocalChatRepository else { return }
         nativeTaskResultDeliveries = (try? local.taskResultDeliveries()) ?? nativeTaskResultDeliveries
+        recoverDeliveredDocuments()
     }
 
     @discardableResult
@@ -16,12 +17,29 @@ extension ChatStore {
                   !nativeTaskResultDeliveries.keys.contains(id),
                   let posts = try? local.deliverTaskMessages(id: id, now: now) else { continue }
             for post in posts {
-                receiveDeliveredMessage(post)
+                noteDeliveredConversation(post)
                 delivered = true
             }
         }
-        if delivered { refreshNativeTaskDeliveries() }
+        if delivered { refreshNativeTaskDeliveries() } else { recoverDeliveredDocuments() }
         return reconcileDeliveredMessages() || delivered
+    }
+
+    func noteDeliveredConversation(_ post: NativeTaskDeliveredPost) {
+        if let index = conversations.firstIndex(where: { $0.id == post.conversationID }) {
+            conversations[index].updatedAt = max(conversations[index].updatedAt, post.message.createdAt)
+            conversations[index].isPersisted = true
+        } else if let stored = try? repository?.listConversations().first(where: { $0.id == post.conversationID }) {
+            conversations.insert(stored, at: 0)
+        }
+    }
+
+    func recoverDeliveredDocuments() {
+        guard artifactRepository != nil, let local = repository as? LocalChatRepository,
+              let documents = try? local.deliveredDocuments() else { return }
+        for post in documents {
+            recordTaskArtifacts(post.message.displayBlocks, conversationID: post.conversationID, messageID: post.message.id.uuidString)
+        }
     }
 
     @discardableResult
@@ -29,32 +47,23 @@ extension ChatStore {
         guard let local = repository as? LocalChatRepository else { return false }
         let loaded = Set(conversations.filter { !$0.messages.isEmpty || $0.id == selectedID }.map(\.id))
         guard !loaded.isEmpty, let stored = try? local.deliveredMessages(conversationIDs: loaded) else { return false }
-        var appended = false
-        for post in stored {
-            guard let index = conversations.firstIndex(where: { $0.id == post.conversationID }),
-                  !conversations[index].messages.contains(where: { $0.id == post.message.id }) else { continue }
-            conversations[index].messages.append(post.message)
-            conversations[index].updatedAt = max(conversations[index].updatedAt, post.message.createdAt)
-            appended = true
-        }
-        return appended
-    }
-
-    func receiveDeliveredMessage(_ post: NativeTaskDeliveredPost) {
-        if let index = conversations.firstIndex(where: { $0.id == post.conversationID }) {
-            if (!conversations[index].messages.isEmpty || selectedID == post.conversationID),
-               !conversations[index].messages.contains(where: { $0.id == post.message.id }) {
-                conversations[index].messages.append(post.message)
+        var placed = false
+        var ordinals: [String: [UUID: Int]] = [:]
+        for entry in stored {
+            guard let index = conversations.firstIndex(where: { $0.id == entry.post.conversationID }),
+                  !conversations[index].messages.contains(where: { $0.id == entry.post.message.id }) else { continue }
+            let conversationID = entry.post.conversationID
+            if ordinals[conversationID] == nil {
+                ordinals[conversationID] = (try? local.messageOrdinals(conversationID: conversationID)) ?? [:]
             }
-            conversations[index].updatedAt = max(conversations[index].updatedAt, post.message.createdAt)
-            conversations[index].isPersisted = true
-        } else if let stored = try? repository?.listConversations().first(where: { $0.id == post.conversationID }) {
-            conversations.insert(stored, at: 0)
+            let known = ordinals[conversationID] ?? [:]
+            let messages = conversations[index].messages
+            let position = messages.firstIndex { message in (known[message.id] ?? Int.min) > entry.ordinal } ?? messages.endIndex
+            conversations[index].messages.insert(entry.post.message, at: position)
+            conversations[index].updatedAt = max(conversations[index].updatedAt, entry.post.message.createdAt)
+            placed = true
         }
-        if post.message.displayBlocks.contains(where: { if case .artifact = $0 { true } else { false } }) {
-            recordTaskArtifacts(post.message.displayBlocks, conversationID: post.conversationID,
-                                messageID: post.message.id.uuidString)
-        }
+        return placed
     }
 
     func deliveredMessageID(for referenceID: UUID) -> UUID? {

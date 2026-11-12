@@ -69,6 +69,10 @@ enum NativeTaskDelivery {
             )
             """)
         let now = Date().timeIntervalSince1970
+        let engineStates: [String: String] = try db.tableExists("native_engine_tasks")
+            ? Dictionary(try Row.fetchAll(db, sql: "SELECT id, state FROM native_engine_tasks").map { ($0["id"] as String, $0["state"] as String) },
+                         uniquingKeysWith: { first, _ in first })
+            : [:]
         let rows = try Row.fetchAll(db, sql: """
             SELECT o.id AS id, o.conversation_id AS conversation_id, o.reference_json AS reference_json, p.snapshot_json AS snapshot_json
             FROM native_task_outbox o LEFT JOIN native_task_projections p ON p.reference_id = o.id
@@ -79,8 +83,9 @@ enum NativeTaskDelivery {
             let snapshotBytes: Data? = row["snapshot_json"]
             let savedSnapshot = snapshotBytes.flatMap { try? JSONDecoder().decode(NativeTaskSnapshot.self, from: $0) }
             let reference = referenceBytes.flatMap { try? JSONDecoder().decode(NativeTaskReference.self, from: $0) }
+            let engineState = reference?.remoteTaskID.flatMap { engineStates[$0] }.flatMap(NativeTaskState.init(rawValue:))
             let terminal = savedSnapshot?.state.isTerminal == true || reference?.snapshot?.state.isTerminal == true
-                || referenceBytes == nil
+                || referenceBytes == nil || engineState?.isTerminal == true
             guard terminal else { continue }
             let conversationID: String? = row["conversation_id"]
             try db.execute(sql: """
@@ -233,26 +238,80 @@ enum NativeTaskDelivery {
 
     static func protectedRanges(_ text: NSString) -> [NSRange] {
         var ranges: [NSRange] = []
-        var fence: (marker: String, start: Int)?
+        var prose: [NSRange] = []
+        var fence: (character: Character, count: Int, start: Int)?
         var location = 0
+        var segmentStart = 0
         for line in (text as String).components(separatedBy: "\n") {
             let length = (line as NSString).length
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let marker = trimmed.hasPrefix("```") ? "```" : trimmed.hasPrefix("~~~") ? "~~~" : nil
+            let indent = line.prefix { $0 == " " }.count
+            let body = line.dropFirst(indent)
+            let first = body.first
+            let run = first == "`" || first == "~" ? body.prefix { $0 == first }.count : 0
             if let open = fence {
-                if marker == open.marker {
+                let rest = body.dropFirst(run)
+                if indent <= 3, first == open.character, run >= open.count, rest.allSatisfy({ $0 == " " || $0 == "\t" }) {
                     ranges.append(NSRange(location: open.start, length: location + length - open.start))
                     fence = nil
+                    segmentStart = min(location + length + 1, text.length)
                 }
-            } else if let marker {
-                fence = (marker, location)
+            } else if indent <= 3, run >= 3, let first, !(first == "`" && body.dropFirst(run).contains("`")) {
+                prose.append(NSRange(location: segmentStart, length: location - segmentStart))
+                fence = (first, run, location)
             }
             location += length + 1
         }
-        if let open = fence { ranges.append(NSRange(location: open.start, length: text.length - open.start)) }
-        for pattern in ["(`+)(?!`)[^\\n]*?(?<!`)\\1(?!`)", "!?\\[(?:[^\\[\\]\\n]|\\[[^\\[\\]\\n]*\\])*\\]\\([^)\\n]*\\)"] {
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
-            ranges += expression.matches(in: text as String, range: NSRange(location: 0, length: text.length)).map(\.range)
+        if let open = fence {
+            ranges.append(NSRange(location: open.start, length: text.length - open.start))
+        } else {
+            prose.append(NSRange(location: segmentStart, length: text.length - segmentStart))
+        }
+        for segment in prose { ranges += inlineCode(text, in: segment) }
+        if let links = try? NSRegularExpression(pattern: "!?\\[(?:[^\\[\\]\\n]|\\[[^\\[\\]\\n]*\\])*\\]\\([^)\\n]*\\)") {
+            ranges += links.matches(in: text as String, range: NSRange(location: 0, length: text.length)).map(\.range)
+        }
+        return ranges
+    }
+
+    static func inlineCode(_ text: NSString, in segment: NSRange) -> [NSRange] {
+        let tick: unichar = 96
+        let newline: unichar = 10
+        let end = segment.location + segment.length
+        func runLength(_ start: Int) -> Int {
+            var count = 0
+            while start + count < end, text.character(at: start + count) == tick { count += 1 }
+            return count
+        }
+        func blankLineFollows(_ index: Int) -> Bool {
+            var next = index + 1
+            while next < end, [32, 9].contains(text.character(at: next)) { next += 1 }
+            return next >= end || text.character(at: next) == newline
+        }
+        var ranges: [NSRange] = []
+        var index = segment.location
+        while index < end {
+            guard text.character(at: index) == tick else { index += 1; continue }
+            let opening = runLength(index)
+            var probe = index + opening
+            var closing: Int?
+            while probe < end {
+                let character = text.character(at: probe)
+                if character == tick {
+                    let length = runLength(probe)
+                    if length == opening { closing = probe; break }
+                    probe += length
+                } else if character == newline, blankLineFollows(probe) {
+                    break
+                } else {
+                    probe += 1
+                }
+            }
+            if let closing {
+                ranges.append(NSRange(location: index, length: closing + opening - index))
+                index = closing + opening
+            } else {
+                index += opening
+            }
         }
         return ranges
     }
@@ -365,7 +424,7 @@ extension LocalChatRepository {
         }
     }
 
-    func deliveredMessages(conversationIDs: Set<String>) throws -> [NativeTaskDeliveredPost] {
+    func deliveredMessages(conversationIDs: Set<String>) throws -> [(post: NativeTaskDeliveredPost, ordinal: Int)] {
         guard !conversationIDs.isEmpty else { return [] }
         return try database.read { db in
             let marks = Array(repeating: "?", count: conversationIDs.count).joined(separator: ", ")
@@ -375,7 +434,34 @@ extension LocalChatRepository {
                 ORDER BY m.conversation_id, m.ordinal
                 """, arguments: StatementArguments(Array(conversationIDs)))
             return rows.compactMap { row in
-                Self.decodeMessages([row]).first.map { NativeTaskDeliveredPost(conversationID: row["conversation_id"], message: $0) }
+                Self.decodeMessages([row]).first.map {
+                    (NativeTaskDeliveredPost(conversationID: row["conversation_id"], message: $0), row["ordinal"] as Int)
+                }
+            }
+        }
+    }
+
+    func messageOrdinals(conversationID: String) throws -> [UUID: Int] {
+        try database.read { db in
+            var map: [UUID: Int] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT id, ordinal FROM messages WHERE conversation_id = ?", arguments: [conversationID]) {
+                if let id = UUID(uuidString: row["id"]) { map[id] = row["ordinal"] }
+            }
+            return map
+        }
+    }
+
+    func deliveredDocuments() throws -> [NativeTaskDeliveredPost] {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT m.* FROM native_task_deliveries d JOIN messages m ON m.id = d.message_id
+                WHERE d.message_id IS NOT NULL AND m.content_type = ? AND m.metadata_json LIKE '%"document":true%'
+                ORDER BY m.created_at
+                """, arguments: [MessageContentType.deliveredResult.rawValue])
+            return rows.compactMap { row in
+                guard let message = Self.decodeMessages([row]).first, message.delivery?.document == true,
+                      message.displayBlocks.contains(where: { if case .artifact = $0 { true } else { false } }) else { return nil }
+                return NativeTaskDeliveredPost(conversationID: row["conversation_id"], message: message)
             }
         }
     }

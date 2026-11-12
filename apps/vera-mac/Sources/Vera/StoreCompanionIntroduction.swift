@@ -76,7 +76,7 @@ extension ChatStore {
         let previous = conversationTurns.filter { $0.conversationID == id && $0.companionEvent?.kind == .refinement }.max { $0.createdAt < $1.createdAt }
         if let previous {
             guard now.timeIntervalSince(previous.createdAt) >= Self.companionRefinementInterval,
-                  conversations[index].messages.contains(where: { $0.role == .user && $0.createdAt > previous.createdAt }) else { return }
+                  conversations[index].messages.contains(where: { $0.role == .user && $0.contentType != .runOrigin && $0.createdAt > previous.createdAt }) else { return }
         }
         let latest = nativeTaskReferences.filter {
             $0.origin.conversationID == id && $0.snapshot?.state == .completed

@@ -1069,6 +1069,10 @@ final class ChatStore: ObservableObject {
         nativeMemorySettings.enabled && nativeMemorySettings.searchPastChats
     }
 
+    nonisolated static func memoryScanMessages(_ messages: [Message]) -> [Message] {
+        messages.filter { $0.contentType != .runOrigin && $0.delivery == nil }
+    }
+
     func searchPastChatsForMemory() {
         guard nativeMemorySettings.enabled, nativeMemorySettings.searchPastChats,
               let service = nativeMemoryService,
@@ -1083,9 +1087,9 @@ final class ChatStore: ObservableObject {
                 var reviewedTurns = 0
                 var reviewedBytes = 0
                 search: for conversation in candidates where reviewedTurns < 12 {
-                    let messages = conversation.messages.isEmpty
+                    let messages = Self.memoryScanMessages(conversation.messages.isEmpty
                         ? try repository?.recentMessages(conversationID: conversation.id, limit: 48) ?? []
-                        : Array(conversation.messages.suffix(48))
+                        : Array(conversation.messages.suffix(48)))
                     for index in messages.indices where reviewedTurns < 12 {
                         guard pastChatScanAllowed else { break search }
                         let sensitiveHandling = nativeMemorySettings.sensitiveHandling
@@ -1651,7 +1655,7 @@ final class ChatStore: ObservableObject {
             guard let title,
                   let i = self.conversations.firstIndex(where: { $0.id == conversationID }),
                   self.conversations[i].titleSource == .fallback,
-                  self.conversations[i].messages.first(where: { $0.role == .user })?.id == userID else { return }
+                  self.conversations[i].messages.first(where: { $0.role == .user && $0.contentType != .runOrigin })?.id == userID else { return }
             self.conversations[i].title = title
             self.conversations[i].titleSource = .generated
             try? self.repository?.saveConversation(self.conversations[i])
