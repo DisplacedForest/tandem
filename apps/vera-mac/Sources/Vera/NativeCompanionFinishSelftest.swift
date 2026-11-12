@@ -138,6 +138,7 @@ extension SelfTest {
         try await companionFinishAutomaticRetry()
         try await companionFinishAtFirstCap()
         try await companionFinishTerminal()
+        try await companionFinishScalarLimit()
         try await companionFinishRelaunch()
         try await companionFinishStopped()
         try await companionFinishAnsweredOnce()
@@ -278,6 +279,77 @@ extension SelfTest {
                     && nothingReport == "The write-up could not be finished. No pages were read before it stopped.",
                     "With only other tool results the result says no pages were read: \(nothingReport)")
         try require(!nothingReport.lowercased().contains("nothing"), "The result never claims nothing was found")
+    }
+
+    private static func companionFinishScalarLimit() async throws {
+        let require = NativeTaskFixture.require
+        let lead = "The write-up could not be finished. This is what was saved before it stopped."
+        let title = "a" + String(repeating: "\u{0301}", count: 12000)
+        let definition = NativeCompanionFinishRig.libraryTools()[0]
+        let described = NativeCompanionWorker.describe(definition, ["title": .string(title)])
+        let source = NativeTaskSource(n: 12, title: "Reading room hours", url: "https://library.example.org/hours", read: true)
+        for variant in ["completed", "undone", "not run", "both"] {
+            let rig = try NativeCompanionFinishRig(model: .looping())
+            let assignment = "Check the reading room hours at the central library"
+            let id = try rig.create(assignment)
+            var checkpoint = NativeCompanionCheckpoint()
+            checkpoint.threadID = "companion-thread-1"
+            checkpoint.pending = NativeCompanionPending(kind: "cap")
+            checkpoint.sources = [source]
+            for _ in 0..<4 { checkpoint.note(described, "done") }
+            let longLine = "a" + String(repeating: "\u{0301}", count: variant == "both" ? 16000 : 30000)
+            if variant == "undone" || variant == "both" { checkpoint.note(longLine, NativeReadOnlyRun.outcome) }
+            if variant == "not run" || variant == "both" { checkpoint.note(longLine, "not done", reason: "The room was closed.") }
+            try require((NativeCompanionWorker.earlierLine(checkpoint) ?? "").unicodeScalars.count > NativeCompanionWorker.reportScalars,
+                        "The completed steps exceed the report limit in scalars")
+            guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+            let waiting = try rig.store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
+                state: .needsDecision, checkpoint: try checkpoint.encoded(), event: "progress",
+                decision: try NativeTaskStore.canonical(["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])))
+            rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
+            let mark = rig.model.calls.count
+            try rig.reply(waiting, "finish")
+            let ended = try await rig.settle()
+            let report = try rig.report(ended.record)["report"] as? String ?? ""
+            try require(ended.record.state == .completed && companionClosingOnly(rig, after: mark),
+                        "The \(variant) finish saves a completed result after the closing request fails")
+            let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
+            var reference = try rig.repository.prepareTaskReference(origin: NativeTaskFixture.origin(rig.repository),
+                engine: NativeTaskEngineIdentity(URL(string: "https://engine.example.org")!), request: request, profile: nil)
+            reference.remoteTaskID = id
+            let snapshot = try NativeTaskSnapshot(id: id, workerType: ended.record.workerType,
+                payload: JSONDecoder().decode(NativeResearchTaskPayload.self, from: ended.record.payload), state: ended.record.state,
+                checkpoint: JSONDecoder().decode(NativeTaskCheckpoint.self, from: ended.record.checkpoint),
+                result: JSONDecoder().decode(NativeResearchTaskResult.self, from: ended.record.result!), decision: nil,
+                cancelRequested: false, generation: ended.record.generation, updatedAt: ended.record.updatedAt)
+            let display = try NativeTaskProjection.display(reference: reference, snapshot: snapshot)
+            try require(display.card.status == .completed && (display.card.answer ?? display.artifact?.report) == report,
+                        "The completed projection accepts the \(variant) saved report")
+            try require(report.unicodeScalars.count <= NativeCompanionWorker.reportScalars && report.hasPrefix(lead),
+                        "The \(variant) report fits in scalars and keeps the opening statement")
+        }
+        let oversized = NativeCompanionWorker.appendingReport(String(repeating: title, count: 4), to: lead + "\n\nReading room hours [12]")
+        try require(oversized.hasPrefix(lead) && oversized.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
+                    "An appended line larger than the limit still keeps the opening statement")
+        var checkpoint = NativeCompanionCheckpoint()
+        checkpoint.sources = [source]
+        for tail in ["[12]", "[12, 13]"] {
+            let prefix = lead + "\n\n" + String(repeating: "a", count: NativeCompanionWorker.reportScalars - lead.unicodeScalars.count - 4)
+            let step = try NativeCompanionWorker.report(checkpoint, assignment: "Check the reading room hours", text: prefix + tail)
+            let result = try NativeTaskStore.object(step.result!)
+            let report = result["report"] as? String ?? ""
+            try require(report == prefix && (result["sources"] as? [[String: Any]])?.isEmpty == true,
+                        "Truncating a citation removes its entire marker")
+            let suffix = "The room was closed."
+            let shorter = String(String.UnicodeScalarView(prefix.unicodeScalars.dropLast(suffix.unicodeScalars.count + 2)))
+            let appended = NativeCompanionWorker.appendingReport(suffix, to: shorter + tail)
+            try require(appended == shorter + "\n\n" + suffix,
+                        "Reserving room for an appended line removes a cut citation marker")
+        }
+        let complete = try NativeCompanionWorker.report(checkpoint, assignment: "Check the reading room hours", text: lead + " [12]")
+        let cited = try NativeTaskStore.object(complete.result!)["sources"] as? [[String: Any]] ?? []
+        try require(cited.count == 1 && (cited.first?["n"] as? NSNumber)?.intValue == 12,
+                    "An intact citation keeps its matching saved source")
     }
 
     private static func companionFinishRelaunch() async throws {

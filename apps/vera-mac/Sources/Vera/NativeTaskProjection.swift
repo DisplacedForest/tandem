@@ -119,7 +119,7 @@ enum NativeTaskProjection {
         case .completed where dot:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   result.kind == "companion_report",
-                  result.report.unicodeScalars.count <= 40000,
+                  result.report.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
                   (result.summary ?? "").unicodeScalars.count <= 2000,
                   (result.title ?? "").unicodeScalars.count <= 200,
                   [nil, NativeCompanionShape.answer, NativeCompanionShape.document].contains(result.shape) else {
