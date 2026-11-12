@@ -60,7 +60,7 @@ enum NativeFolderTools {
                                                    approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
             try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
-            return {}
+            return { NativeToolCallContext.effectStarts() }
         }
         let checkGate: @Sendable (NativeActionClass, [String: NativeJSONValue], [String], NativeRuleDecision) throws -> () throws -> Void = { action, arguments, keys, planned in
             if NativeRuleAdmission.admitted { return {} }
@@ -69,7 +69,7 @@ enum NativeFolderTools {
                                                    approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
             }
             try NativeRuleResolver.gate(live: live(action) ?? planned, planned: planned, action: action, approved: NativeToolCallContext.confirmed ?? planned.requiresConfirmation)
-            return {}
+            return { NativeToolCallContext.effectStarts() }
         }
         let editGate: @Sendable ([String: NativeJSONValue], [String]) throws -> () throws -> Void = { arguments, keys in
             try checkGate(.fileEdits, arguments, keys, edits)

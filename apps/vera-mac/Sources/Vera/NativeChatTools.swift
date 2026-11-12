@@ -883,26 +883,32 @@ struct NativeToolLoop: Sendable {
                                     let approved = needsConfirmation
                                     let clearing = cleared
                                     let expectsHandOff = handsOff
+                                    let boundary = NativeEffectBoundary()
                                     do {
                                         value = try await NativeToolProgressReporter.$report.withValue(report) {
                                             try await NativeToolCallContext.$confirmed.withValue(approved) {
                                                 try await NativeToolCallContext.$reason.withValue(reasonSink) {
                                                     try await NativeInstructionCheck.$cleared.withValue(clearing) {
                                                         try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
-                                                            try await Self.execute(
-                                                                definition, arguments: arguments, activity: activity,
-                                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                            try await NativeToolCallContext.$boundary.withValue(boundary) {
+                                                                try await Self.execute(
+                                                                    definition, arguments: arguments, activity: activity,
+                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     } catch {
-                                        if let recording, let ticket { await recording.settle(ticket, NativeChatEffects.settlement(for: error)) }
+                                        if let recording, let ticket {
+                                            await recording.settle(ticket, NativeChatEffects.settlement(for: error, boundary: boundary,
+                                                                                                        marks: NativeChatEffects.marksBoundary(definition)))
+                                        }
                                         throw error
                                     }
                                     if let recording, let ticket {
-                                        await recording.settle(ticket, NativeCompanionWorker.interrupted(value) ? .uncertain("interrupted_run") : .completed(value))
+                                        await recording.settle(ticket, NativeChatEffects.settlement(for: value, toolName: call.name))
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
                                        !Self.resultFailed(value, toolName: call.name) {

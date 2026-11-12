@@ -242,6 +242,7 @@ enum NativeCommandTools {
                 let requestedTimeout = arguments.folderInt("timeout_seconds").map { Duration.seconds(max(1, $0)) } ?? NativeCommandLimits.defaultTimeout
                 let limit = min(requestedTimeout, NativeCommandLimits.maximumTimeout)
                 if !admitted, let confirm, !confirm() { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+                NativeToolCallContext.effectStarts()
                 let outcome = try await NativeCommandRunner.run(command: command, directory: directory, timeout: limit, environment: environment())
                 let run = NativeCommandRun(
                     id: activityID, command: command, directory: location.path,

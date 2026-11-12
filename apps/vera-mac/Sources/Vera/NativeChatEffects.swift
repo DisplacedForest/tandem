@@ -21,19 +21,36 @@ enum NativeChatEffects {
         return digest.map { String(format: "%02x", $0) }.joined().prefix(32).description
     }
 
-    static func settlement(for error: Error) -> NativeChatEffectOutcome {
+    static func marksBoundary(_ definition: NativeToolDefinition) -> Bool {
+        definition.governed || definition.id == NativeCompanionProfileTools.toolID
+    }
+
+    static func settlement(for error: Error, boundary: NativeEffectBoundary, marks: Bool) -> NativeChatEffectOutcome {
         if error is CancellationError { return .uncertain("stopped") }
-        if case .failed(let detail)? = error as? NativeToolError {
-            if detail == NativeToolLoop.timedOutMessage { return .uncertain("timeout") }
-            if detail == NativeRuleResolver.changedMessage || detail == NativeCommandTools.declinedAgainMessage { return .absent("refused") }
-        }
-        if NativeCompanionWorker.definite(error) || error is NativeRuleRefusal { return .absent("refused") }
+        if case .failed(let detail)? = error as? NativeToolError, detail == NativeToolLoop.timedOutMessage { return .uncertain("timeout") }
+        if boundary.reached { return .uncertain("no_receipt") }
+        if marks || NativeCompanionWorker.definite(error) || error is NativeRuleRefusal { return .absent("refused") }
         return .uncertain("no_receipt")
+    }
+
+    static func settlement(for value: NativeJSONValue, toolName: String) -> NativeChatEffectOutcome {
+        if NativeCompanionWorker.interrupted(value) { return .uncertain("interrupted_run") }
+        if NativeToolLoop.resultFailed(value, toolName: toolName) { return .uncertain("failed_result") }
+        return .completed(value)
     }
 
     static func reply(_ answer: NativeCardAnswer, digest: String) -> NativeJSONValue {
         .object(["action": .string(answer.kind.rawValue), "digest": .string(digest)])
     }
+}
+
+final class NativeEffectBoundary: @unchecked Sendable {
+    private let lock = NSLock()
+    private var marked = false
+
+    var reached: Bool { lock.withLock { marked } }
+
+    func mark() { lock.withLock { marked = true } }
 }
 
 struct NativeChatDecision: Sendable, Equatable {

@@ -19,6 +19,7 @@ extension SelfTest {
         try await runChatLedgerLoopKinds()
         try await runChatLedgerLoopAnswers()
         try await runChatLedgerStaleAnswers()
+        try await runChatLedgerBoundary()
         try await runChatLedgerStore()
         try await runChatLedgerRelaunch()
         print("  chat ledger OK (turn rows, migration, every write kind, answers, stale answers, store, relaunch)")
@@ -455,6 +456,65 @@ extension SelfTest {
                     "A timeout is left uncertain")
         try require(refused.count == 1 && refused[0].state == .uncertain && refused[0].receipt == .object(["observed": .string("absent")]),
                     "A validation failure is recorded as not having happened")
+    }
+
+    private static func runChatLedgerBoundary() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let ledger = NativeEffectLedgerStore(database: repository.database)
+        let (_, turn) = try chatLedgerTurn(repository)
+        let log = NativeChatLedgerLog()
+        let rules = chatLedgerRules([.fileEdits: .act, .otherChanges: .act])
+        let grants = NativeFolderGrantSource()
+        let hook = chatLedgerHook(ledger, turn: turn, rules: rules, grants: grants, log: log) { _ in NativeCardAnswer(kind: .allowOnce, byPerson: true) }
+        let conversationID = turn.conversationID
+        let ruled: (NativeToolDefinition) -> NativeToolDefinition = {
+            ChatStore.ruled($0, rules: rules, store: nil, conversationID: conversationID, requestText: "Look after the garden")
+        }
+        let absent: NativeJSONValue = .object(["observed": .string("absent")])
+
+        let failing = ruled(chatLedgerFixture(id: "capability-garden_token", name: "post_token", action: .otherChanges, log: log) {
+            .object(["ok": .bool(false), "error": .string("unknown or expired token")])
+        })
+        let tokenCall = [[NativeChatToolCall(id: "b-token", name: "post_token", arguments: "{}")]]
+        let withHook = try await chatLedgerLoop([failing], calls: tokenCall, hook: hook)
+        let withoutHook = try await chatLedgerLoop([failing], calls: tokenCall, hook: nil)
+        let tokenRows = try chatLedgerRows(ledger, turn, "post_token")
+        try require(tokenRows.count == 1 && tokenRows[0].state == .uncertain && tokenRows[0].receipt == .object(["reason": .string("failed_result")]),
+                    "A tool that returns a failed result leaves an uncertain row, never completed")
+        try require(withHook?.activities.first?.state == .failed && withHook?.activities.first?.state == withoutHook?.activities.first?.state
+                    && withHook?.activities.first?.result == withoutHook?.activities.first?.result,
+                    "A returned failure reads exactly as it does without the ledger")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chat-ledger-boundary-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let file = URL(fileURLWithPath: grant.path).appendingPathComponent("notes.txt")
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        let folder = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .act(.rule), trash: .act(.rule))
+        let edited = try await chatLedgerLoop(folder, calls: [[NativeChatToolCall(id: "b-edit", name: "edit_file",
+            arguments: "{\"path\":\"\(file.path)\",\"old_text\":\"missing\",\"new_text\":\"found\"}")]], hook: hook)
+        let editRows = try chatLedgerRows(ledger, turn, "edit_file")
+        try require(edited?.activities.first?.state == .failed && editRows.count == 1 && editRows[0].state == .uncertain
+                    && editRows[0].receipt == absent && (try String(contentsOf: file, encoding: .utf8)) == "hello",
+                    "An edit whose old text is missing never reached its write and is recorded as not having happened")
+
+        let started = ruled(chatLedgerFixture(id: "capability-garden_flood", name: "flood_bed", action: .otherChanges, log: log) {
+            NativeToolCallContext.effectStarts()
+            throw NativeToolError.failed("The bed flooded halfway")
+        })
+        _ = try await chatLedgerLoop([started], calls: [[NativeChatToolCall(id: "b-flood", name: "flood_bed", arguments: "{}")]], hook: hook)
+        let floodRows = try chatLedgerRows(ledger, turn, "flood_bed")
+        try require(floodRows.count == 1 && floodRows[0].state == .uncertain && floodRows[0].receipt == .object(["reason": .string("no_receipt")]),
+                    "A write that started and then failed is left uncertain")
+
+        var checked = chatLedgerFixture(id: "capability-garden_check", name: "check_bed", action: .otherChanges, log: log)
+        checked.preflight = { _ in throw NativeToolError.failed("The bed token is missing") }
+        _ = try await chatLedgerLoop([ruled(checked)], calls: [[NativeChatToolCall(id: "b-check", name: "check_bed", arguments: "{}")]], hook: hook)
+        let checkRows = try chatLedgerRows(ledger, turn, "check_bed")
+        try require(checkRows.count == 1 && checkRows[0].state == .uncertain && checkRows[0].receipt == absent && log.count("ran:check_bed") == 0,
+                    "A preflight failure in a ruled tool is recorded as not having happened")
     }
 
     private static func runChatLedgerStaleAnswers() async throws {

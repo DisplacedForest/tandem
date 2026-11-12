@@ -1125,10 +1125,11 @@ struct NativeRuleResolver: Sendable {
                      approved: Bool, why: NativeRuleWhy? = nil) throws -> () throws -> Void {
         let live = verdict?.decision ?? fallback ?? planned
         try gate(live: live, planned: planned, action: action, approved: approved, why: verdict?.why ?? why)
-        guard case .act = live, let confirm = verdict?.confirm else { return {} }
+        guard case .act = live, let confirm = verdict?.confirm else { return { NativeToolCallContext.effectStarts() } }
         return {
             if !confirm() { throw NativeToolError.failed(changedMessage) }
             if live == .act(.instruction) { NativeToolCallContext.reason?.note(.instruction) }
+            NativeToolCallContext.effectStarts()
         }
     }
 
