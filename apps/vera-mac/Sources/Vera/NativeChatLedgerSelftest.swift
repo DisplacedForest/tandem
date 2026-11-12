@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -62,7 +63,15 @@ extension SelfTest {
                                           target: "notes/plan.txt", action: .fileEdits, rulesRevision: 0, grantsRevision: 0,
                                           conversationID: "conversation-1", expiresAtMilliseconds: NativeEffectProposal.expiry(from: clock.now),
                                           idempotencyKey: "call-1")
-        try require(pinned.digest == "ade3c0380c4466e9158fd2300f7b4839de2f7eee9445a8d822f8b894a0db1efb",
+        let earlier = [pinned.taskID, "1", NativeFolderTools.toolID, "write_file", pinned.argumentsJSON, "notes/plan.txt", NativeActionClass.fileEdits.rawValue,
+                       "0", "0", "conversation-1", String(pinned.expiresAtMilliseconds), "call-1"]
+        var framed = Data()
+        for field in earlier {
+            let value = Data(field.utf8)
+            framed.append(Data("\(value.count):".utf8))
+            framed.append(value)
+        }
+        try require(pinned.digest == SHA256.hash(data: framed).map { String(format: "%02x", $0) }.joined(),
                     "A task proposal's digest is unchanged by turn identity")
         var turned = pinned
         turned.turnID = turnID
