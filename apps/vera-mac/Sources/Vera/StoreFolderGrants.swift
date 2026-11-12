@@ -274,7 +274,7 @@ extension ChatStore {
                 let (action, verdict) = decide(arguments)
                 let commit = try NativeRuleResolver.gate(verdict, fallback: nil, planned: .act(.rule), action: action,
                                                          approved: NativeToolCallContext.confirmed ?? false)
-                try commit()
+                try NativeToolCallContext.$boundary.withValue(original.marksEffect ? nil : NativeToolCallContext.boundary) { try commit() }
             }
             return try await original.execute(arguments)
         }

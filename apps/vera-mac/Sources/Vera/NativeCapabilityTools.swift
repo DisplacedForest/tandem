@@ -220,7 +220,7 @@ enum NativeCapabilityTools {
             },
             preflight: { arguments in
                 _ = try prepared(declaration, arguments: arguments, base: base())
-            })
+            }, marksEffect: true)
     }
 
     static func descriptors(
@@ -316,6 +316,7 @@ enum NativeCapabilityTools {
         let requestTimeout = max(declaration.timeoutSeconds - 1, 1)
         let data: Data
         let status: Int
+        NativeToolCallContext.effectStarts()
         do {
             (data, status) = try await client.send(
                 target, declaration.method.rawValue, body, requestTimeout)

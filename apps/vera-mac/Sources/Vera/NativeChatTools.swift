@@ -235,6 +235,7 @@ struct NativeToolDefinition: Sendable {
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
     var chatDecision: (@Sendable ([String: NativeJSONValue]) -> NativeChatDecision)? = nil
+    var marksEffect = false
 
     var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
 
@@ -413,6 +414,7 @@ enum NativeRemindersTools {
                     guard let resolvedList = try await resolveListName(list, service: service) else {
                         throw NativeToolError.failed("No reminders list named '\(list)'")
                     }
+                    NativeToolCallContext.effectStarts()
                     let reminder = try await service.nativeCreateReminder(
                         list: resolvedList, title: title, notes: arguments.string("notes"), due: arguments.string("due"))
                     return try encode(["reminder": reminder])
@@ -433,6 +435,7 @@ enum NativeRemindersTools {
                     guard let id = arguments.string("id") else {
                         throw NativeToolError.invalidArguments("A reminder identifier is required")
                     }
+                    NativeToolCallContext.effectStarts()
                     let reminder = try await service.nativeCompleteReminder(id: id)
                     return try encode(["reminder": reminder])
                 }, wants: "mark a reminder as done"),
@@ -440,6 +443,7 @@ enum NativeRemindersTools {
         return tools.map { tool in
             var tool = tool
             tool.access = access
+            tool.marksEffect = tool.effect == .write
             return tool
         }
     }

@@ -20,6 +20,7 @@ extension SelfTest {
         try await runChatLedgerLoopAnswers()
         try await runChatLedgerStaleAnswers()
         try await runChatLedgerBoundary()
+        try await runChatLedgerToolBoundaries()
         try await runChatLedgerStore()
         try await runChatLedgerRelaunch()
         print("  chat ledger OK (turn rows, migration, every write kind, answers, stale answers, store, relaunch)")
@@ -515,6 +516,105 @@ extension SelfTest {
         let checkRows = try chatLedgerRows(ledger, turn, "check_bed")
         try require(checkRows.count == 1 && checkRows[0].state == .uncertain && checkRows[0].receipt == absent && log.count("ran:check_bed") == 0,
                     "A preflight failure in a ruled tool is recorded as not having happened")
+    }
+
+    private static func runChatLedgerToolBoundaries() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_803_000_000))
+        let ledger = NativeEffectLedgerStore(database: repository.database, now: { clock.now })
+        let (_, turn) = try chatLedgerTurn(repository)
+        let log = NativeChatLedgerLog()
+        let rules = chatLedgerRules([.fileEdits: .act, .otherChanges: .act, .reminders: .act, .networkSends: .act])
+        let grants = NativeFolderGrantSource()
+        let conversationID = turn.conversationID
+        let ruled: (NativeToolDefinition) -> NativeToolDefinition = {
+            ChatStore.ruled($0, rules: rules, store: nil, conversationID: conversationID, requestText: "Look after the garden")
+        }
+        let absent: NativeJSONValue = .object(["observed": .string("absent")])
+        let unknown: NativeJSONValue = .object(["reason": .string("no_receipt")])
+        func row(_ call: String) throws -> NativeEffectRecord? {
+            try ledger.records(turnID: turn.id.uuidString).first { $0.decisionID == call || $0.proposal.idempotencyKey ==
+                NativeChatEffects.idempotencyKey(turnID: turn.id.uuidString, attempt: turn.attempt?.uuidString ?? "", round: 1, call: call) }
+        }
+        let utc = TimeZone(identifier: "UTC") ?? .current
+        let schedule = ruled(NativeScheduleTools.definition(searchAvailable: { true }, now: { clock.now }, timeZone: { utc }, save: { draft in
+            log.add("saved")
+            return try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title, instruction: draft.instruction,
+                                      cadence: draft.cadence, timeZone: utc)
+        }))
+        let lateCard = chatLedgerHook(ledger, turn: turn, rules: rules, grants: grants, log: log) { _ in
+            clock.advance(5 * 86_400)
+            return NativeCardAnswer(kind: .allowOnce, byPerson: true)
+        }
+        let late = try await chatLedgerLoop([schedule], calls: [[NativeChatToolCall(id: "tb-once", name: NativeScheduleTools.toolName,
+            arguments: "{\"title\":\"Garden brief\",\"worker_type\":\"document\",\"instruction\":\"Write the garden brief\",\"repeat\":\"once\",\"at\":\"2027-02-22T09:00\"}")]],
+            hook: lateCard)
+        try require(late?.activities.first?.state == .failed && log.count("saved") == 0 && (try row("tb-once"))?.state == .uncertain
+                    && (try row("tb-once"))?.receipt == absent,
+                    "A one-time schedule approved after its time passed is recorded as not having happened and nothing is saved")
+        let approving = chatLedgerHook(ledger, turn: turn, rules: rules, grants: grants, log: log) { _ in NativeCardAnswer(kind: .allowOnce, byPerson: true) }
+        let daily = try await chatLedgerLoop([schedule], calls: [[NativeChatToolCall(id: "tb-daily", name: NativeScheduleTools.toolName,
+            arguments: "{\"title\":\"Garden brief\",\"worker_type\":\"document\",\"instruction\":\"Write the garden brief\",\"repeat\":\"daily\",\"time\":\"09:00\"}")]],
+            hook: approving)
+        try require(daily?.activities.first?.state == .succeeded && log.count("saved") == 1 && (try row("tb-daily"))?.state == .completed,
+                    "A schedule that saves is completed")
+
+        let service = SelfTestRemindersService()
+        let reminders = NativeRemindersTools.definitions(service: service).map(ruled)
+        _ = try await chatLedgerLoop(reminders, calls: [[NativeChatToolCall(id: "tb-remind", name: "apple_reminders_create",
+            arguments: "{\"list\":\"Garden\",\"title\":\"Water the beds\"}")]], hook: approving)
+        try require(service.createCalls == 0 && (try row("tb-remind"))?.state == .uncertain && (try row("tb-remind"))?.receipt == absent,
+                    "A reminder refused before it is created is recorded as not having happened")
+        service.shouldFail = true
+        _ = try await chatLedgerLoop(reminders, calls: [[NativeChatToolCall(id: "tb-complete", name: "apple_reminders_complete",
+            arguments: "{\"id\":\"open\"}")]], hook: approving)
+        try require((try row("tb-complete"))?.state == .uncertain && (try row("tb-complete"))?.receipt == unknown,
+                    "A reminder change that fails after it was sent is left uncertain")
+
+        let declaration = try NativeCapabilityTools.parse(data: Data("""
+            {"name": "post_garden_note", "title": "Post a garden note", "description": "Post a note to the garden log",
+             "parameters": {"type": "object", "properties": {"note": {"type": "string"}, "extra_json": {"type": "string"}},
+                            "required": ["note"], "additionalProperties": false},
+             "json_fields": {"extra_json": "extra"}, "endpoint": "/garden/notes", "method": "POST", "confirmation": "none"}
+            """.utf8), source: "garden")
+        let sends = NativeChatLedgerLog()
+        let client = NativeHTTPToolClient { _, _, _, _ in
+            sends.add("sent")
+            throw URLError(.networkConnectionLost)
+        }
+        let capability = ruled(NativeCapabilityTools.definition(declaration, base: { URL(string: "https://tools.example") }, client: client))
+        _ = try await chatLedgerLoop([capability], calls: [[NativeChatToolCall(id: "tb-bad-note", name: "post_garden_note",
+            arguments: "{\"note\":\"Watered\",\"extra_json\":\"not an object\"}")]], hook: approving)
+        try require(sends.count("sent") == 0 && (try row("tb-bad-note"))?.state == .uncertain && (try row("tb-bad-note"))?.receipt == absent,
+                    "A tool-file call refused before its request is recorded as not having happened")
+        _ = try await chatLedgerLoop([capability], calls: [[NativeChatToolCall(id: "tb-note", name: "post_garden_note",
+            arguments: "{\"note\":\"Watered\"}")]], hook: approving)
+        try require(sends.count("sent") == 1 && (try row("tb-note"))?.state == .uncertain && (try row("tb-note"))?.receipt == unknown,
+                    "A tool-file call whose request was sent and then failed is left uncertain")
+
+        let attachmentDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("chat-ledger-images-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: attachmentDirectory) }
+        let attachments = NativeAttachmentStore(directory: attachmentDirectory)
+        let requests = NativeChatLedgerLog()
+        let transport = ComfyUITransport(request: { _, _, _, _ in
+            requests.add("request")
+            return (Data("{}".utf8), 500)
+        }, events: { _ in nil })
+        let broken = NativeImageTools.definitions(base: { URL(string: "http://images.example") }, attachments: attachments, transport: transport,
+                                                  graph: { throw NativeToolError.failed("The image workflow could not be read") },
+                                                  pollInterval: .milliseconds(10)).map(ruled)
+        _ = try await chatLedgerLoop(broken, calls: [[NativeChatToolCall(id: "tb-image-broken", name: NativeImageTools.toolName,
+            arguments: "{\"prompt\":\"A tidy vegetable bed\"}")]], hook: approving)
+        try require(requests.count("request") == 0 && (try row("tb-image-broken"))?.state == .uncertain
+                    && (try row("tb-image-broken"))?.receipt == absent,
+                    "An image refused before generation starts is recorded as not having happened")
+        let failing = NativeImageTools.definitions(base: { URL(string: "http://images.example") }, attachments: attachments, transport: transport,
+                                                   pollInterval: .milliseconds(10)).map(ruled)
+        _ = try await chatLedgerLoop(failing, calls: [[NativeChatToolCall(id: "tb-image", name: NativeImageTools.toolName,
+            arguments: "{\"prompt\":\"A tidy vegetable bed\"}")]], hook: approving)
+        try require(requests.count("request") >= 1 && (try row("tb-image"))?.state == .uncertain && (try row("tb-image"))?.receipt == unknown,
+                    "An image whose generation request was sent and then failed is left uncertain")
     }
 
     private static func runChatLedgerStaleAnswers() async throws {
