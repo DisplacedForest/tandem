@@ -19,6 +19,8 @@ struct ShotView: View {
     var dotHeader: Bool = false
     var companionPanel: CompanionOverviewModel? = nil
     var companionSelection: String? = nil
+    var companionProfileOpen = false
+    var companionNewSince = Date.distantFuture
     var height: CGFloat = 760
     var artifactSelection: String? = nil
     var artifactFilter: ArtifactKindFilter = .all
@@ -74,21 +76,13 @@ struct ShotView: View {
                         emptyChatShot
                     } else {
                         HStack(alignment: .top, spacing: 0) {
-                            VStack(spacing: 0) {
-                                if emptyChat && section == .vera {
-                                    CompanionOpeningView(error: needsConnection ? .literal(ChatStore.companionNeedsConnection) : store.chatConfigurationErrorLine,
-                                                         needsConnection: needsConnection, retry: {})
-                                    shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
-                                        .modifier(ShotComposerPill())
-                                        .padding(.horizontal, 28).padding(.bottom, 18)
-                                } else if emptyChat { emptyChatShot } else { chat }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .clipped()
                             if let companionPanel {
-                                CompanionThreadPanel(fixed: companionPanel, selectedID: companionSelection)
-                                    .frame(width: CompanionThreadPanelMetrics.width)
-                            } else if workColumn {
+                                CompanionProfileLayout(state: .constant(shotProfileState), fixed: companionPanel,
+                                                       selectedID: companionSelection) { conversationColumn }
+                            } else {
+                                conversationColumn
+                            }
+                            if workColumn {
                                 OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
                                     .frame(width: OngoingWorkMetrics.panelWidth)
                             }
@@ -98,6 +92,20 @@ struct ShotView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
         }
+    }
+
+    private var conversationColumn: some View {
+        VStack(spacing: 0) {
+            if emptyChat && section == .vera {
+                CompanionOpeningView(error: needsConnection ? .literal(ChatStore.companionNeedsConnection) : store.chatConfigurationErrorLine,
+                                     needsConnection: needsConnection, retry: {})
+                shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
+                    .modifier(ShotComposerPill())
+                    .padding(.horizontal, 28).padding(.bottom, 18)
+            } else if emptyChat { emptyChatShot } else { chat }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
     }
 
     private var veinsSheetShot: some View {
@@ -551,6 +559,12 @@ struct ShotView: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
+    private var shotProfileState: CompanionProfileState {
+        var state = CompanionProfileState(launchedAt: companionNewSince)
+        if companionProfileOpen { state.toggle(now: companionNewSince) }
+        return state
+    }
+
     private var chat: some View {
         VStack(spacing: 0) {
             if ConversationPresence.headerKind(companionThread: store.isVeraThread(store.selectedID)) == .conversation, companionPanel == nil {
@@ -567,7 +581,7 @@ struct ShotView: View {
                     }
                 }
             }
-            .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)
+            .padding(.horizontal, 28).padding(.top, companionPanel == nil ? 22 : CompanionProfileMetrics.transcriptTop).padding(.bottom, 26)
             .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()

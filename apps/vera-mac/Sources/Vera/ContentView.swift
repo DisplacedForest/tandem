@@ -7,6 +7,7 @@ struct ContentView: View {
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
     @State private var windowWidth: CGFloat = 0
+    @State private var companionProfile = CompanionProfileState(launchedAt: Date())
 
     private func select(_ item: AppSection) {
         switch item {
@@ -25,8 +26,9 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 Group {
                     switch store.section {
-                    case .vera: ChatPane(workCollapsed: companionPlacement == .header)
-                    case .chat: ChatPane(workCollapsed: false)
+                    case .vera:
+                        CompanionProfileLayout(state: $companionProfile, shown: companionThread) { ChatPane() }
+                    case .chat: ChatPane()
                     case .pulse: PulseView()
                     case .memory: MemoryView()
                     case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -40,10 +42,7 @@ struct ContentView: View {
                 if store.showCanvas, chatSection {
                     Divider()
                     CanvasPanel().frame(width: 480)
-                } else if companionPlacement == .beside {
-                    CompanionThreadPanel()
-                        .frame(width: CompanionThreadPanelMetrics.width)
-                } else if chatSection, ConversationPresence.showsWorkPanel(
+                } else if chatSection, !companionThread, ConversationPresence.showsWorkPanel(
                     references: store.nativeTaskReferences, conversationID: store.selectedID,
                     wide: wideEnoughForWork, canvasOpen: store.showCanvas) {
                     OngoingWorkPanel(conversationID: store.selectedID, onSelect: store.revealOngoingWork)
@@ -57,6 +56,15 @@ struct ContentView: View {
         .modifier(CompanionAttentionWindow())
         .modifier(MessageActionsHost())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
+        .onChange(of: companionThread) { _, showing in
+            if !showing { companionProfile.close(now: Date()) }
+        }
+        .onChange(of: store.showCanvas) { _, open in
+            if open { companionProfile.close(now: Date()) }
+        }
+        .onChange(of: companionProfile.isOpen) { _, open in
+            if open, store.showCanvas { store.closeCanvas() }
+        }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
         .sheet(isPresented: $config.showOnboarding) { OnboardingSheet() }
@@ -77,9 +85,8 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
-    private var companionPlacement: CompanionPanelPlacement {
-        CompanionPanelPlacement.decide(isCompanionThread: store.section == .vera && store.isVeraThread(store.selectedID),
-                                       windowWidth: windowWidth, canvasShowing: store.showCanvas)
+    private var companionThread: Bool {
+        CompanionProfileState.available(section: store.section, companionThread: store.isVeraThread(store.selectedID))
     }
     private var wideEnoughForWork: Bool { windowWidth >= OngoingWorkMetrics.minimumWindowWidth }
 
@@ -169,7 +176,6 @@ struct SidebarRow: View {
 
 struct ChatPane: View {
     @EnvironmentObject var store: ChatStore
-    var workCollapsed = false
     @EnvironmentObject var config: ConfigStore
     private var conversation: Conversation? {
         if store.section == .vera { return store.conversations.first { $0.id == store.veraThreadID } }
@@ -177,7 +183,6 @@ struct ChatPane: View {
     }
     @State private var highlightedMessageID: UUID?
     @State private var highlightVisible = false
-    @State private var showingWork = false
     @State private var openedWorkReport: NativeResearchArtifact?
     @State private var revealTask: Task<Void, Never>?
     @State private var revealConversationID: String?
@@ -342,7 +347,9 @@ struct ChatPane: View {
                             Color.clear.frame(height: 1).id("bottom")
                         }
                         .scrollTargetLayout()
-                        .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 26)
+                        .padding(.horizontal, 28)
+                        .padding(.top, store.isVeraThread(convo.id) ? CompanionProfileMetrics.transcriptTop : 22)
+                        .padding(.bottom, 26)
                         .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
@@ -470,38 +477,8 @@ struct ChatPane: View {
             if let revealConversationID, revealConversationID != store.selectedID { cancelTaskReveal() }
             refreshCompanionOpening()
         }
-        .overlay(alignment: .topTrailing) {
-            if workCollapsed, store.isVeraThread(conversation?.id) {
-                Button { showingWork = true } label: {
-                    HStack(spacing: 8) {
-                        CompanionAvatar(size: 18)
-                        Text("Details").font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.warmTextPrimary)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Capsule().fill(Theme.cardFill))
-                    .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("\(store.companion.leading)'s state, activity and results")
-                .accessibilityLabel("Details for \(store.companion.inline)")
-                .padding(.top, 44).padding(.trailing, 20)
-            }
-        }
-        .sheet(isPresented: $showingWork) {
-            if store.isVeraThread(conversation?.id) {
-                CompanionThreadPanel(onClose: { showingWork = false })
-                    .frame(width: 420, height: 640)
-                    .environmentObject(store)
-                    .environmentObject(config)
-            }
-        }
         .onAppear(perform: refreshCompanionOpening)
         .onChange(of: store.dotProfile) { refreshCompanionOpening() }
-        .onChange(of: workCollapsed) { _, collapsed in
-            if !collapsed, store.isVeraThread(conversation?.id) { showingWork = false }
-        }
         .onChange(of: store.dotProfileLoaded) { refreshCompanionOpening() }
     }
 }

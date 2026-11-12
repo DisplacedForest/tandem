@@ -17,7 +17,9 @@ struct CompanionActivityItem: Identifiable, Equatable, Sendable {
     let source: Source
     let canOpen: Bool
     let canStop: Bool
+    var cadence: String? = nil
 
+    var line: String { cadence ?? state }
     var needsDecision: Bool { status == .needsInput }
     var isOpen: Bool { ![.completed, .failed, .stopped].contains(status) }
     var canRetry: Bool { decision?.choices.contains("retry") == true && taskID != nil }
@@ -34,9 +36,16 @@ struct CompanionOverviewResult: Identifiable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+struct CompanionUpcoming: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let when: String
+    let enabled: Bool
+}
+
 struct CompanionOverviewModel: Equatable, Sendable {
     static let activityPreview = 5
-    static let outputPreview = 4
+    static let outputPreview = 3
 
     var name: String
     var mention: String { name == CompanionSubject(nil).leading ? CompanionSubject(nil).inline : name }
@@ -45,6 +54,10 @@ struct CompanionOverviewModel: Equatable, Sendable {
     var paused: Bool
     var activity: [CompanionActivityItem]
     var outputs: [CompanionOverviewResult]
+    var upcoming: [CompanionUpcoming] = []
+    var lastActive: Date? = nil
+
+    var isEmpty: Bool { activity.isEmpty && outputs.isEmpty && upcoming.isEmpty }
 
     static let noTaskRules = "No task rules yet."
     static let selectWorkHint = "Select a row in Recent activity to see which task these rules would cover."
@@ -88,7 +101,8 @@ struct CompanionOverviewModel: Equatable, Sendable {
         CompanionActivityItem(id: "run:" + run.id, title: schedule.title, state: run.outcome.title, status: runStatus(run.outcome),
                               isDocument: schedule.isDocument, hasArtifact: false, decision: nil,
                               date: run.finishedAt ?? run.startedAt ?? run.scheduledFor, source: .run(run.id),
-                              canOpen: run.conversationID != nil, canStop: run.outcome.isOpen && run.taskReferenceID != nil)
+                              canOpen: run.conversationID != nil, canStop: run.outcome.isOpen && run.taskReferenceID != nil,
+                              cadence: schedule.cadenceSummary)
     }
 
     static func activity(tasks: [CompanionActivityItem], runs: [NativeScheduleRun], schedules: [NativeSchedule]) -> [CompanionActivityItem] {
@@ -106,10 +120,30 @@ struct CompanionOverviewModel: Equatable, Sendable {
         CompanionOverviewResult(id: record.id, title: record.title, kind: record.kind, updatedAt: record.updatedAt)
     }
 
+    static func upcoming(_ schedules: [NativeSchedule]) -> [CompanionUpcoming] {
+        schedules.filter { $0.owner == .dot }
+            .sorted { ($0.nextRunAt ?? .distantFuture, $0.title) < ($1.nextRunAt ?? .distantFuture, $1.title) }
+            .map { CompanionUpcoming(id: $0.id, title: $0.title, when: $0.cadenceSummary, enabled: $0.enabled) }
+    }
+
+    static func lastActive(lastMessage: Date?, activity: [CompanionActivityItem]) -> Date? {
+        [lastMessage, activity.map(\.date).max()].compactMap { $0 }.max()
+    }
+
+    static func isNew(_ item: CompanionActivityItem, since: Date) -> Bool { item.date > since }
+
+    static func preview<Item>(_ items: [Item], limit: Int, expanded: Bool) -> [Item] {
+        expanded ? items : Array(items.prefix(limit))
+    }
+
+    static func hasMore(_ count: Int, limit: Int) -> Bool { count > limit }
+
     static func build(name: String, profile: NativeDotProfile, services: String, rules: String,
-                      activity: [CompanionActivityItem], results: [CompanionOverviewResult]) -> CompanionOverviewModel {
+                      activity: [CompanionActivityItem], results: [CompanionOverviewResult],
+                      schedules: [NativeSchedule] = [], lastMessage: Date? = nil) -> CompanionOverviewModel {
         CompanionOverviewModel(name: name, services: services, rules: rules, paused: profile.isPaused,
-                               activity: activity, outputs: results.sorted { $0.updatedAt > $1.updatedAt })
+                               activity: activity, outputs: results.sorted { $0.updatedAt > $1.updatedAt },
+                               upcoming: upcoming(schedules), lastActive: lastActive(lastMessage: lastMessage, activity: activity))
     }
 
     func selected(_ id: String?) -> CompanionActivityItem? {
@@ -131,5 +165,66 @@ struct CompanionActivityDetail: Equatable, Sendable {
         self.request = request.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.outcome = outcome.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.canOpen = canOpen
+    }
+}
+
+struct CompanionProfileState: Equatable, Sendable {
+    private(set) var isOpen = false
+    private(set) var lastClosed: Date
+
+    init(launchedAt: Date) {
+        lastClosed = launchedAt
+    }
+
+    mutating func toggle(now: Date) {
+        if isOpen { close(now: now) } else { open() }
+    }
+
+    mutating func open() {
+        isOpen = true
+    }
+
+    mutating func close(now: Date) {
+        guard isOpen else { return }
+        isOpen = false
+        lastClosed = now
+    }
+}
+
+enum CompanionProfileCopy {
+    static let empty = "Nothing here yet."
+    static let showMore = "Show more"
+    static let showLess = "Show less"
+    static let moreOptions = "More options"
+    static let openScheduled = "Open Scheduled"
+
+    static func toggleTitle(name: String, open: Bool) -> String { "\(open ? "Close" : "Open") \(name)'s profile" }
+
+    static func panelLabel(name: String) -> String { "\(name)'s profile" }
+
+    static func runLabel(_ title: String) -> String { "Run \(title)" }
+
+    static func activeLine(since: Date?, now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        guard let since else { return nil }
+        let seconds = max(0, now.timeIntervalSince(since))
+        if seconds < 60 { return "Active just now" }
+        if seconds < 3600 {
+            let minutes = Int(seconds / 60)
+            return minutes == 1 ? "Active 1 minute ago" : "Active \(minutes) minutes ago"
+        }
+        if seconds < 86400 {
+            let hours = Int(seconds / 3600)
+            return hours == 1 ? "Active 1 hour ago" : "Active \(hours) hours ago"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(since, inSameDayAs: yesterday) {
+            return "Active yesterday"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        let sameYear = calendar.component(.year, from: since) == calendar.component(.year, from: now)
+        formatter.setLocalizedDateFormatFromTemplate(sameYear ? "MMMd" : "MMMdyyyy")
+        return "Active on \(formatter.string(from: since))"
     }
 }

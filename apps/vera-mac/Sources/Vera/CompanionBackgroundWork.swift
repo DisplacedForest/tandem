@@ -144,20 +144,36 @@ struct CompanionWorkingLine: View {
     let work: CompanionCurrentWork?
     var size: CGFloat = 13
 
+    @Environment(\.companionProfileOpener) private var opener
+    @Environment(\.companionName) private var name
+
     var body: some View {
         if let work {
-            HStack(spacing: 8) {
-                CompanionAvatar(size: size + 9)
-                Text(work.words).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
-                    .lineLimit(1).truncationMode(.tail)
-                if let count = work.count {
-                    Text(count).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
-                        .lineLimit(1).fixedSize().layoutPriority(1).padding(.leading, -4)
-                }
-                Spacer(minLength: 0)
+            if let opener {
+                let title = CompanionProfileCopy.toggleTitle(name: CompanionSubject(name).inline, open: false)
+                Button { opener.open() } label: { line(work).contentShape(Rectangle()) }
+                    .buttonStyle(.plain)
+                    .help(title)
+                    .accessibilityLabel(work.line)
+                    .accessibilityHint(title)
+            } else {
+                line(work)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(work.line)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(work.line)
+        }
+    }
+
+    private func line(_ work: CompanionCurrentWork) -> some View {
+        HStack(spacing: 8) {
+            CompanionAvatar(size: size + 9)
+            Text(work.words).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
+                .lineLimit(1).truncationMode(.tail)
+            if let count = work.count {
+                Text(count).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
+                    .lineLimit(1).fixedSize().layoutPriority(1).padding(.leading, -4)
+            }
+            Spacer(minLength: 0)
         }
     }
 }
