@@ -15,6 +15,7 @@ struct CompanionMessageMarks: Equatable {
     var reactions: [UUID: [String]] = [:]
     var replies: [UUID: MessageReply] = [:]
     var pending: [String: PendingReply] = [:]
+    var unsavedReplies: [UUID: MessageReply] = [:]
 }
 
 enum MessageReplyQuote {
@@ -113,16 +114,6 @@ extension LocalChatRepository {
         }
     }
 
-    func addReaction(_ emoji: String, messageID: UUID, at date: Date = Date()) throws -> [String] {
-        try database.write { db in
-            try db.execute(sql: """
-                INSERT INTO message_reactions(message_id, emoji, created_at) VALUES (?, ?, ?)
-                ON CONFLICT(message_id, emoji) DO NOTHING
-                """, arguments: [messageID.uuidString, emoji, date.timeIntervalSince1970])
-            return try MessageReactionStore.reactions(db, messageID: messageID)
-        }
-    }
-
     func recordReply(_ reply: MessageReply, messageID: UUID) throws {
         try database.write { db in
             try db.execute(sql: """
@@ -136,10 +127,17 @@ extension LocalChatRepository {
 @MainActor
 extension ChatStore {
     func loadCompanionMarks() {
-        guard let veraThreadID, let local = repository as? LocalChatRepository,
-              let loaded = try? local.messageMarks(conversationID: veraThreadID) else { return }
+        guard let veraThreadID, let local = repository as? LocalChatRepository else { return }
+        saveUnsavedReplies(local)
+        guard let loaded = try? local.messageMarks(conversationID: veraThreadID) else { return }
         companionMarks.reactions = loaded.reactions
-        companionMarks.replies = loaded.replies
+        companionMarks.replies = loaded.replies.merging(companionMarks.unsavedReplies) { _, unsaved in unsaved }
+    }
+
+    private func saveUnsavedReplies(_ local: LocalChatRepository) {
+        for (messageID, reply) in companionMarks.unsavedReplies {
+            if (try? local.recordReply(reply, messageID: messageID)) != nil { companionMarks.unsavedReplies[messageID] = nil }
+        }
     }
 
     func reactions(on messageID: UUID) -> [String] {
@@ -152,26 +150,18 @@ extension ChatStore {
     }
 
     func toggleReaction(_ emoji: String, on messageID: UUID) {
-        changeReaction(emoji, on: messageID, adding: false)
-    }
-
-    func addReaction(_ emoji: String, on messageID: UUID) {
-        changeReaction(emoji, on: messageID, adding: true)
-    }
-
-    private func changeReaction(_ emoji: String, on messageID: UUID, adding: Bool) {
         guard companionMessage(messageID) != nil else { return }
         let current = reactions(on: messageID)
         let next: [String]
         if let local = repository as? LocalChatRepository {
             do {
-                next = adding ? try local.addReaction(emoji, messageID: messageID) : try local.toggleReaction(emoji, messageID: messageID)
+                next = try local.toggleReaction(emoji, messageID: messageID)
             } catch {
                 chatConfigurationError = MessageReplyCopy.reactionFailed
                 return
             }
         } else if current.contains(emoji) {
-            next = adding ? current : current.filter { $0 != emoji }
+            next = current.filter { $0 != emoji }
         } else {
             next = current + [emoji]
         }
@@ -196,20 +186,26 @@ extension ChatStore {
 
     var pendingReplyToSend: PendingReply? { shownPendingReply }
 
-    func recordReply(_ pending: PendingReply, messageID: UUID, conversationID: String) {
-        guard isVeraThread(conversationID) else { return }
+    @discardableResult
+    func recordReply(_ pending: PendingReply, messageID: UUID, conversationID: String) -> Bool {
+        guard isVeraThread(conversationID) else { return true }
         let reply = MessageReply(answeredID: pending.messageID, quote: pending.quote)
+        var saved = true
         if let local = repository as? LocalChatRepository {
-            do { try local.recordReply(reply, messageID: messageID) } catch { chatConfigurationError = MessageReplyCopy.replyFailed }
+            saved = (try? local.recordReply(reply, messageID: messageID)) != nil
         }
+        if !saved { companionMarks.unsavedReplies[messageID] = reply }
         companionMarks.replies[messageID] = reply
         if companionMarks.pending[conversationID] == pending { companionMarks.pending[conversationID] = nil }
+        return saved
     }
 
     func companionRequestMessages(_ messages: [Message], turn: NativeConversationTurn) -> [Message] {
-        guard isVeraThread(turn.conversationID), let local = repository as? LocalChatRepository,
-              let marks = try? local.messageMarks(conversationID: turn.conversationID) else { return messages }
-        return MessageRequestNotes.apply(messages, reactions: marks.reactions, replies: marks.replies)
+        guard isVeraThread(turn.conversationID), let local = repository as? LocalChatRepository else { return messages }
+        saveUnsavedReplies(local)
+        guard let marks = try? local.messageMarks(conversationID: turn.conversationID) else { return messages }
+        let replies = marks.replies.merging(companionMarks.unsavedReplies) { _, unsaved in unsaved }
+        return MessageRequestNotes.apply(messages, reactions: marks.reactions, replies: replies)
     }
 }
 

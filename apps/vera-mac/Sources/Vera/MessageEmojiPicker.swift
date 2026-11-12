@@ -6,7 +6,7 @@ struct MessageEmojiPickerHost: View {
     let model: MessageActionsModel
 
     var body: some View {
-        MessageEmojiReceiver(active: model.picking != nil, onEmoji: picked, onText: typed, onEnd: ended)
+        MessageEmojiReceiver(active: model.picking != nil, onEmoji: picked, onText: typed, onEnd: ended, onCancel: cancelled)
             .frame(width: 1, height: 1)
             .offset(x: model.pickingAt.x, y: model.pickingAt.y)
             .allowsHitTesting(false)
@@ -17,7 +17,7 @@ struct MessageEmojiPickerHost: View {
         let target = model.picking
         model.endPicking()
         if let target, target.current(in: store.conversations) != nil {
-            store.addReaction(emoji, on: target.messageID)
+            store.toggleReaction(emoji, on: target.messageID)
         }
         store.focusTick &+= 1
     }
@@ -31,6 +31,11 @@ struct MessageEmojiPickerHost: View {
     private func ended() {
         model.endPicking()
     }
+
+    private func cancelled() {
+        model.endPicking()
+        store.focusTick &+= 1
+    }
 }
 
 struct MessageEmojiReceiver: NSViewRepresentable {
@@ -38,11 +43,13 @@ struct MessageEmojiReceiver: NSViewRepresentable {
     let onEmoji: (String) -> Void
     let onText: (String) -> Void
     let onEnd: () -> Void
+    let onCancel: () -> Void
 
     final class ReceiverView: NSTextView {
         var onEmoji: (String) -> Void = { _ in }
         var onText: (String) -> Void = { _ in }
         var onEnd: () -> Void = {}
+        var onCancel: () -> Void = {}
         private(set) var armed = false
         var wanted = false
 
@@ -89,7 +96,7 @@ struct MessageEmojiReceiver: NSViewRepresentable {
         override func doCommand(by selector: Selector) {
             guard armed else { return }
             settle()
-            onEnd()
+            onCancel()
         }
 
         override func cancelOperation(_ sender: Any?) {
@@ -134,5 +141,6 @@ struct MessageEmojiReceiver: NSViewRepresentable {
         view.onEmoji = onEmoji
         view.onText = onText
         view.onEnd = onEnd
+        view.onCancel = onCancel
     }
 }

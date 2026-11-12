@@ -74,8 +74,9 @@ enum MessageReactionsSelftest {
         let base = Date(timeIntervalSince1970: 1_000)
         try require(try repository.toggleReaction(heart, messageID: answer.id, at: base) == [heart], "Toggle adds a reaction")
         try require(try repository.toggleReaction(up, messageID: answer.id, at: base) == [heart, up], "A second one is added after it")
-        try require(try repository.addReaction(fox, messageID: answer.id, at: base) == [heart, up, fox], "A picked emoji is added last")
-        try require(try repository.addReaction(fox, messageID: answer.id, at: base) == [heart, up, fox], "Adding one already on keeps it once")
+        try require(try repository.toggleReaction(fox, messageID: answer.id, at: base) == [heart, up, fox], "A picked emoji is added last")
+        try require(try repository.toggleReaction(fox, messageID: answer.id, at: base) == [heart, up], "Picking it again takes it off")
+        try require(try repository.toggleReaction(fox, messageID: answer.id, at: base) == [heart, up, fox], "It can be put back")
         try require(try repository.toggleReaction(heart, messageID: answer.id, at: base) == [up, fox], "Toggling the first again removes it and keeps the order")
         try repository.recordReply(MessageReply(answeredID: answer.id, quote: "Here"), messageID: ask.id)
         let reopened = try LocalChatRepository(url: url).messageMarks(conversationID: conversation.id)
@@ -218,11 +219,22 @@ enum MessageReactionsSelftest {
         let turns = store.conversationTurns.count
         let fox = "\u{1F98A}"
         store.toggleReaction(MessageReaction.heart.emoji, on: answer.id)
-        store.addReaction(fox, on: answer.id)
+        store.toggleReaction(fox, on: answer.id)
         try await Task.sleep(for: .milliseconds(150))
         try require(transport.histories.count == requests && store.conversationTurns.count == turns,
                     "A reaction starts no turn and sends nothing")
         try require(try repository.conversationTurns().count == turns, "A reaction saves no turn")
+
+        guard let asked = saved.last(where: { $0.role == .user }) else { throw NativeTaskFixture.Failure.assertion("The request exists") }
+        let unsaved = MessageReply(answeredID: answer.id, quote: "Kept")
+        store.companionMarks.unsavedReplies[asked.id] = unsaved
+        store.loadCompanionMarks()
+        let retried = try repository.messageMarks(conversationID: threadID).replies[asked.id]
+        let cleared = store.companionMarks.unsavedReplies.isEmpty
+        try require(retried == unsaved && cleared && store.companionMarks.replies[asked.id] == unsaved,
+                    "A reply that didn't save is written on the next load and keeps its chip")
+        try await repository.database.write { db in try db.execute(sql: "DELETE FROM message_replies WHERE message_id = ?", arguments: [asked.id.uuidString]) }
+        store.loadCompanionMarks()
 
         store.startReply(to: answer)
         store.draft = "Is it open late?"

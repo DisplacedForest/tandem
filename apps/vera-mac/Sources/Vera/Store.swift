@@ -2249,7 +2249,7 @@ final class ChatStore: ObservableObject {
         if fromComposer { turn.preferenceEligible = true }
         do {
             try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
-            if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id) }
+            let replySaved = pendingReply.map { recordReply($0, messageID: user.id, conversationID: id) } ?? true
             requestSystemAccess(enabledIDs: baseToolIDs)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
@@ -2261,7 +2261,7 @@ final class ChatStore: ObservableObject {
             }
             if fromComposer { composerSend = ComposerSend(conversationID: id, count: composerSend.count + 1) }
             generating = true
-            chatConfigurationError = nil
+            chatConfigurationError = replySaved ? nil : MessageReplyCopy.replyFailed
         } catch {
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
             return false
