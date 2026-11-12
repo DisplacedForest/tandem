@@ -77,8 +77,8 @@ enum NameStylingShot {
             let kept = store.artifactRecords.first { (record: ArtifactRecord) -> Bool in record.title == "Frost checklist" }?.id
             root = AnyView(ArtifactsView(initialSelection: kept, conversationFilter: store.veraThreadID))
         case "name-panel-after-reset":
-            size = NSSize(width: 340, height: 700)
-            root = AnyView(CompanionThreadPanel(fixed: store.companionOverviewModel()))
+            size = NSSize(width: CompanionProfileMetrics.width + 40, height: 700)
+            root = AnyView(CompanionThreadPanel(fixed: store.companionOverviewModel()).padding(20).frame(maxHeight: .infinity, alignment: .top))
         case "name-artifacts-filter":
             size = NSSize(width: 1000, height: 600)
             root = AnyView(ArtifactsView(conversationFilter: store.veraThreadID))

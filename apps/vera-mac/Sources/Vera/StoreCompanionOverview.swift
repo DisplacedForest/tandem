@@ -27,7 +27,8 @@ extension ChatStore {
         return CompanionOverviewModel.build(
             name: companion.leading, profile: dotProfile,
             services: CompanionOverviewModel.servicesLine(options: options, selected: dotSelectedServices(options)),
-            rules: companionRulesSummary, activity: activity, results: results)
+            rules: companionRulesSummary, activity: activity, results: results, schedules: schedules,
+            lastMessage: conversations.first { $0.id == threadID }?.messages.last?.createdAt)
     }
 
     func refreshCompanionOverview() {

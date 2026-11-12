@@ -47,6 +47,47 @@ enum CompanionOverviewFixture {
         ]
     }
 
+    static func profileSchedules() -> [NativeSchedule] {
+        [
+            try? NativeSchedule(id: "profile-morning", owner: .dot, workerType: "research", title: "Morning check-in",
+                                instruction: "Summarize what changed overnight.", cadence: .daily(minuteOfDay: 8 * 60), timeZone: zone,
+                                nextRunAt: Date().addingTimeInterval(14 * 3600)),
+            try? NativeSchedule(id: "profile-friday", owner: .dot, workerType: "document", title: "Friday greenhouse note",
+                                instruction: "Write the weekly greenhouse note.", cadence: .weekly(weekday: 6, minuteOfDay: 16 * 60),
+                                timeZone: zone, enabled: false),
+            try? NativeSchedule(id: "profile-other", owner: .conversation, workerType: "document", title: "Weekly digest",
+                                instruction: "Write the weekly digest.", cadence: .weekly(weekday: 2, minuteOfDay: 9 * 60), timeZone: zone),
+        ].compactMap { $0 }
+    }
+
+    static let newSinceMinutes: Double = 15
+
+    static func profileModel(name: String = "Ada") -> CompanionOverviewModel {
+        let now = Date()
+        let extra = [
+            task(UUID(), "Compare frost cloth options", status: .completed, minutesAgo: 1500),
+            task(UUID(), "Seed order for spring", status: .completed, document: true, hasArtifact: true, minutesAgo: 2900),
+        ]
+        let morning = profileSchedules()[0]
+        let run = NativeScheduleRun(id: "profile-run", scheduleID: morning.id, scheduledFor: now.addingTimeInterval(-7 * 3600),
+                                    startedAt: now.addingTimeInterval(-7 * 3600), finishedAt: now.addingTimeInterval(-7 * 3600 + 300),
+                                    outcome: .completed, conversationID: "thread")
+        return CompanionOverviewModel.build(
+            name: name,
+            profile: NativeDotProfile(goal: "Help keep the household organized.", state: .active, setupCompleted: true),
+            services: "Can reach Web search, Documents and 1 more.",
+            rules: "",
+            activity: CompanionOverviewModel.activity(tasks: tasks() + extra, runs: [run], schedules: profileSchedules()),
+            results: [
+                CompanionOverviewResult(id: "art-4", title: "Seed order for spring", kind: .document, updatedAt: now.addingTimeInterval(-170_000)),
+                CompanionOverviewResult(id: "art-3", title: "Frost cloth comparison", kind: .document, updatedAt: now.addingTimeInterval(-90_000)),
+                CompanionOverviewResult(id: "art-2", title: "Weekly meal plan", kind: .document, updatedAt: now.addingTimeInterval(-7200)),
+                CompanionOverviewResult(id: "art-1", title: "Room layout", kind: .document, updatedAt: now.addingTimeInterval(-3600)),
+            ],
+            schedules: profileSchedules(),
+            lastMessage: now.addingTimeInterval(-4 * 60))
+    }
+
     static func model(name: String = "Ada", paused: Bool = false) -> CompanionOverviewModel {
         let now = Date()
         return CompanionOverviewModel.build(
@@ -179,26 +220,120 @@ extension SelfTest {
         let blankDetail = CompanionActivityDetail(request: "  ", outcome: "", canOpen: false)
         try require(blankDetail.request == nil && blankDetail.outcome == nil, "Missing detail fields are omitted")
 
-        for width in [CGFloat(700), 1119, 1120, 1600] {
-            for canvas in [false, true] {
-                try require(CompanionPanelPlacement.decide(isCompanionThread: false, windowWidth: width, canvasShowing: canvas) == .none,
-                            "A focused chat never gets the companion panel or its Details button at \(Int(width)) points")
-            }
-        }
-        try require(CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1600, canvasShowing: false) == .beside
-                    && CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1119, canvasShowing: false) == .header
-                    && CompanionPanelPlacement.decide(isCompanionThread: true, windowWidth: 1600, canvasShowing: true) == .header,
-                    "The companion thread shows the panel beside it when wide and folds it into the header when narrow or the canvas is open")
         let focused = CompanionShotFixture.store()
         focused.newConversation()
         try require(!focused.isVeraThread(focused.selectedID) && focused.section == .chat
-                    && CompanionPanelPlacement.decide(isCompanionThread: focused.section == .vera && focused.isVeraThread(focused.selectedID),
-                                                      windowWidth: 1600, canvasShowing: false) == .none,
-                    "A new focused chat in the store resolves to no companion panel")
+                    && !CompanionProfileState.available(section: focused.section, companionThread: focused.isVeraThread(focused.selectedID)),
+                    "A focused chat never gets the companion profile")
         focused.openVeraThread()
-        try require(CompanionPanelPlacement.decide(isCompanionThread: focused.section == .vera && focused.isVeraThread(focused.selectedID),
-                                                   windowWidth: 1600, canvasShowing: false) == .beside,
-                    "Opening the companion thread resolves to the panel")
-        print("  companion overview OK (activity, runs, selection, rules title, pause and stop labels, services line, empty states, routing, placement)")
+        try require(CompanionProfileState.available(section: focused.section, companionThread: focused.isVeraThread(focused.selectedID))
+                    && !CompanionProfileState.available(section: .chat, companionThread: true),
+                    "Only the companion conversation offers the profile")
+        try runCompanionProfile()
+        print("  companion overview OK (activity, runs, selection, rules title, pause and stop labels, services line, empty states, routing, profile)")
+    }
+
+    static func runCompanionProfile() throws {
+        let require = NativeTaskFixture.require
+        let launch = Date(timeIntervalSince1970: 1_800_000_000)
+        var state = CompanionProfileState(launchedAt: launch)
+        try require(!state.isOpen && state.lastClosed == launch, "The profile starts closed and counts from launch")
+        state.close(now: launch.addingTimeInterval(30))
+        try require(!state.isOpen && state.lastClosed == launch, "Closing a closed profile does not move the last close")
+        state.toggle(now: launch.addingTimeInterval(60))
+        try require(state.isOpen && state.lastClosed == launch, "The toggle opens the profile")
+        state.toggle(now: launch.addingTimeInterval(120))
+        try require(!state.isOpen && state.lastClosed == launch.addingTimeInterval(120), "The toggle closes it and remembers when")
+
+        try require(CompanionProfileCopy.toggleTitle(name: "Ada", open: false) == "Open Ada's profile"
+                    && CompanionProfileCopy.toggleTitle(name: "Ada", open: true) == "Close Ada's profile",
+                    "The profile toggle names the companion")
+        let unnamed = CompanionOverviewModel.build(name: CompanionSubject(nil).leading, profile: NativeDotProfile(), services: "",
+                                                   rules: "", activity: [], results: [])
+        try require(CompanionProfileCopy.toggleTitle(name: unnamed.mention, open: false) == "Open your companion's profile"
+                    && CompanionProfileCopy.toggleTitle(name: unnamed.mention, open: true) == "Close your companion's profile",
+                    "An unnamed companion reads as your companion")
+        try require(CompanionProfileCopy.panelLabel(name: "Ada") == "Ada's profile"
+                    && CompanionProfileCopy.panelLabel(name: CompanionSubject(nil).leading) == "Your companion's profile"
+                    && CompanionProfileCopy.runLabel("Morning check-in") == "Run Morning check-in",
+                    "The panel and its switches have plain labels")
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let locale = Locale(identifier: "en_US_POSIX")
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 12, hour: 15))!
+        func active(_ seconds: TimeInterval) -> String? {
+            CompanionProfileCopy.activeLine(since: now.addingTimeInterval(-seconds), now: now, calendar: calendar, locale: locale)
+        }
+        try require(active(0) == "Active just now" && active(59) == "Active just now", "Under a minute reads as just now")
+        try require(active(60) == "Active 1 minute ago" && active(45 * 60) == "Active 45 minutes ago", "Minutes read as minutes")
+        try require(active(3600) == "Active 1 hour ago" && active(5 * 3600) == "Active 5 hours ago"
+                    && active(23 * 3600 + 3540) == "Active 23 hours ago", "Hours read as hours")
+        try require(active(26 * 3600) == "Active yesterday", "The day before reads as yesterday")
+        try require(active(3 * 86400) == "Active on Nov 9", "Older activity reads as a short date: \(active(3 * 86400) ?? "nil")")
+        try require(active(370 * 86400) == "Active on Nov 7, 2025", "Last year's activity names the year: \(active(370 * 86400) ?? "nil")")
+        try require(CompanionProfileCopy.activeLine(since: nil, now: now) == nil, "Nothing to report leaves the line out")
+        try require(active(-120) == "Active just now", "A clock that ran ahead still reads as just now")
+
+        let item = CompanionOverviewFixture.task(UUID(), "Water the beds", status: .working, minutesAgo: 30)
+        try require(CompanionOverviewModel.lastActive(lastMessage: item.date.addingTimeInterval(60), activity: [item]) == item.date.addingTimeInterval(60)
+                    && CompanionOverviewModel.lastActive(lastMessage: item.date.addingTimeInterval(-60), activity: [item]) == item.date
+                    && CompanionOverviewModel.lastActive(lastMessage: nil, activity: []) == nil,
+                    "Active time is the newest of the last message and the newest activity")
+        try require(CompanionOverviewModel.isNew(item, since: item.date.addingTimeInterval(-1))
+                    && !CompanionOverviewModel.isNew(item, since: item.date)
+                    && !CompanionOverviewModel.isNew(item, since: item.date.addingTimeInterval(1)),
+                    "A row is new only when it is later than the last close")
+
+        let profile = CompanionOverviewFixture.profileModel()
+        let since = Date().addingTimeInterval(-CompanionOverviewFixture.newSinceMinutes * 60)
+        try require(profile.activity.filter { CompanionOverviewModel.isNew($0, since: since) }.count == 1,
+                    "The profile fixture has exactly one new row")
+        try require(profile.activity.count == 6
+                    && CompanionOverviewModel.preview(profile.activity, limit: CompanionOverviewModel.activityPreview, expanded: false).count == 5
+                    && CompanionOverviewModel.preview(profile.activity, limit: CompanionOverviewModel.activityPreview, expanded: true).count == 6
+                    && CompanionOverviewModel.hasMore(profile.activity.count, limit: CompanionOverviewModel.activityPreview),
+                    "Recent activity shows five rows, then Show more expands the rest")
+        try require(CompanionOverviewModel.outputPreview == 3 && profile.outputs.count == 4
+                    && CompanionOverviewModel.preview(profile.outputs, limit: CompanionOverviewModel.outputPreview, expanded: false).map(\.id) == ["art-1", "art-2", "art-3"]
+                    && CompanionOverviewModel.hasMore(profile.outputs.count, limit: CompanionOverviewModel.outputPreview)
+                    && !CompanionOverviewModel.hasMore(3, limit: CompanionOverviewModel.outputPreview),
+                    "Outputs show the three newest, then Show more")
+        let runRow = profile.selected("run:profile-run")
+        try require(runRow?.line == CompanionOverviewFixture.profileSchedules()[0].cadenceSummary && runRow?.state == NativeScheduleOutcome.completed.title,
+                    "A scheduled row says how often it runs and keeps its state for the details: \(String(describing: runRow?.line)) \(String(describing: runRow?.state))")
+        try require(profile.selected(CompanionOverviewFixture.visitID.uuidString)?.line == "Researching",
+                    "Other rows keep their state line")
+        try require(profile.upcoming.map(\.id) == ["profile-morning", "profile-friday"]
+                    && profile.upcoming.map(\.enabled) == [true, false]
+                    && profile.upcoming[0].when == CompanionOverviewFixture.profileSchedules()[0].cadenceSummary,
+                    "Upcoming lists only the companion's schedules in the Scheduled screen's words")
+        try require(!profile.isEmpty && unnamed.isEmpty && unnamed.upcoming.isEmpty && unnamed.lastActive == nil,
+                    "An empty profile is recognised as empty")
+
+        let store = CompanionShotFixture.store()
+        if store.nativeScheduleStore == nil, let local = store.repository as? LocalChatRepository {
+            store.nativeScheduleStore = NativeScheduleStore(database: local.database)
+        }
+        guard let schedules = store.nativeScheduleStore else { throw NativeTaskFixture.Failure.assertion("The store has a schedule store") }
+        for var schedule in CompanionOverviewFixture.profileSchedules() {
+            if schedule.enabled { schedule.advance(after: Date(), from: nil) }
+            try schedules.save(schedule)
+        }
+        store.reloadSchedules()
+        try require(store.companionOverviewModel().upcoming.map(\.id) == ["profile-morning", "profile-friday"],
+                    "The live profile lists the companion's schedules")
+        store.setSchedule("profile-morning", enabled: false)
+        store.setSchedule("profile-friday", enabled: true)
+        let switched = store.companionOverviewModel().upcoming
+        try require(switched.first { $0.id == "profile-morning" }?.enabled == false
+                    && switched.first { $0.id == "profile-friday" }?.enabled == true
+                    && (try schedules.get("profile-morning"))?.enabled == false
+                    && (try schedules.get("profile-other"))?.enabled == true,
+                    "The profile switch changes the same schedule the Scheduled screen does and nothing else")
+        let lastMessage = store.conversations.first { $0.id == store.veraThreadID }?.messages.last?.createdAt
+        try require(lastMessage != nil && store.companionOverviewModel().lastActive == lastMessage,
+                    "The live profile is active as of the last message")
+        print("  companion profile OK (closed by default, toggle labels, active line, new dot, previews, upcoming switch)")
     }
 }
