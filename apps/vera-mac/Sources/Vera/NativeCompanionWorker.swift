@@ -265,7 +265,7 @@ enum NativeCompanionWorker {
         for key in ["path", "command", "title", "name", "text", "query", "url"] {
             if case .string(let value)? = arguments[key] {
                 let clean = value.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                if !clean.isEmpty { return "\(definition.title): \(clean.count > 120 ? String(clean.prefix(117)) + "..." : clean)" }
+                if !clean.isEmpty { return "\(definition.title): \(clean.unicodeScalars.count > 120 ? cut(clean, scalars: 117) + "..." : clean)" }
             }
         }
         return definition.title
@@ -489,7 +489,7 @@ enum NativeCompanionWorker {
         var parts: [String] = []
         if !done.isEmpty { parts.append("Earlier in this work: " + done.joined(separator: "; ") + ".") }
         if !unsure.isEmpty { parts.append("These may have changed something: " + unsure.joined(separator: "; ") + ".") }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        return parts.isEmpty ? nil : cut(parts.joined(separator: " "), scalars: NativeTaskStop.stepScalars / 4)
     }
 
     static func stepLiteral(toolID: String?, toolTitle: String?, argumentsJSON: String?, title: String) -> String {
@@ -529,21 +529,26 @@ enum NativeCompanionWorker {
 
     static func appendingReport(_ line: String, to text: String) -> String {
         let body = fittedReport(text)
-        let suffix = fittedReport(line, scalars: reportScalars / 2)
-        guard !suffix.isEmpty else { return body }
-        let room = reportScalars - suffix.unicodeScalars.count - 2
-        return fittedReport(body, scalars: room) + "\n\n" + suffix
+        return appendingReport(line, to: body, room: reportScalars)
+    }
+
+    static func appendingReport(_ line: String, to text: String, room: Int) -> String {
+        let suffix = fittedReport(line, scalars: room / 2)
+        guard !suffix.isEmpty else { return fittedReport(text, scalars: room) }
+        return fittedReport(text, scalars: room - suffix.unicodeScalars.count - 2) + "\n\n" + suffix
     }
 
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
-                       summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil) throws -> NativeTaskStepResult {
+                       summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil,
+                       notices: [String] = []) throws -> NativeTaskStepResult {
         let title = cut(assignment.split(whereSeparator: \.isNewline).first.map(String.init) ?? "", scalars: 200)
         var done = checkpoint
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": cut($0.title, scalars: noteScalars), "outcome": $0.outcome] }
         var room = reportScalars
         while true {
-            let body = fittedReport(text, scalars: room)
+            let body = notices.isEmpty ? fittedReport(text, scalars: room)
+                : appendingReport(notices.joined(separator: "\n\n"), to: text, room: room)
             let firstParagraph = shown.map(CompanionSavedText.sanitized)
                 ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
             let summary = cut(String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters)), scalars: summaryCharacters)
@@ -599,7 +604,7 @@ extension NativeCompanionWorker {
         if !searched.isEmpty { sections.append("Found in a search, not read:\n" + listed(searched)) }
         if !unknown.isEmpty { sections.append("Pages found:\n" + listed(unknown)) }
         if left > 0 {
-            sections.append(left == 1 ? "1 more page was saved but can't be listed." : "\(left) more pages were saved but can't be listed.")
+            sections.append(left == 1 ? "I saved 1 more page, but I can't list it here." : "I saved \(left) more pages, but I can't list them here.")
         }
         if let earlier = earlierLine(checkpoint) { sections.append(earlier) }
         return sections
@@ -858,14 +863,9 @@ private struct NativeCompanionRun {
         if checkpoint.keep == nil {
             checkpoint.keep = try await classify(checkpoint)
         }
-        var body = text
-        if let undone = NativeReadOnlyRun.undone(checkpoint.effects.filter { $0.outcome == NativeReadOnlyRun.outcome }.map(\.title)) {
-            body = NativeCompanionWorker.appendingReport(undone, to: body)
-        }
-        if let notRun = NativeCompanionWorker.notRunLine(checkpoint.effects) {
-            body = NativeCompanionWorker.appendingReport(notRun, to: body)
-        }
-        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: body, keep: checkpoint.keep, stop: stop)
+        let notices = [NativeReadOnlyRun.undone(checkpoint.effects.filter { $0.outcome == NativeReadOnlyRun.outcome }.map(\.title)),
+                       NativeCompanionWorker.notRunLine(checkpoint.effects)].compactMap { $0 }
+        return try NativeCompanionWorker.report(checkpoint, assignment: dot.assignment, text: text, keep: checkpoint.keep, stop: stop, notices: notices)
     }
 
     func classify(_ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
