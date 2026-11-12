@@ -372,6 +372,10 @@ enum SelfTest {
             }
             return
         }
+        if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "delivery" {
+            do { try await NativeTaskDeliverySelftest.run(); exit(0) }
+            catch { print("SELFTEST ERROR: result delivery \(error)"); exit(1) }
+        }
         if ProcessInfo.processInfo.environment["VERA_TASK_SELFTEST_CONFIG"] == "unit" {
             do {
                 try await NativeTaskFixture.run()
@@ -386,6 +390,8 @@ enum SelfTest {
         catch { print("NATIVE SESSION FIXTURE FAILED: \(error)"); exit(1) }
         do { try await NativeTaskDisplayFixture.run() }
         catch { print("NATIVE TASK DISPLAY FIXTURE FAILED: \(error)"); exit(1) }
+        do { try await NativeTaskDeliverySelftest.run() }
+        catch { print("SELFTEST ERROR: result delivery \(error)"); exit(1) }
         do { try await WorkflowSelectionTests.run() }
         catch { print("WORKFLOW SELECTION SELFTEST FAILED: \(error.localizedDescription)"); exit(1) }
         runPure()

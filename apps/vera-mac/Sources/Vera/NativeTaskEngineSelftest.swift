@@ -595,9 +595,12 @@ extension SelfTest {
             _ = await scheduler.tick()
             return try scheduleStore.runs(scheduleID: schedule.id).first?.outcome == .completed
         }, "The run settles as finished once the task completes")
+        let posted = try repository.deliverTaskMessages(id: referenceID)
         let messages = try repository.messages(conversationID: conversation.id)
-        try require(messages.count == 2 && messages[0].role == .user && messages[0].text == schedule.instruction, "The instruction is the user turn")
-        try require(messages[1].displayBlocks.contains { if case .artifact = $0 { return true }; return false }, "The reply holds the report artifact")
+        try require(messages.count == 3 && messages[0].role == .user && messages[0].text == schedule.instruction, "The instruction is the user turn")
+        try require(posted.count == 1 && messages[2].id == posted.first?.message.id && messages[2].delivery?.finished == true
+                    && !messages[1].displayBlocks.contains { if case .artifact = $0 { return true }; return false },
+                    "The scheduled result arrives as one message after the run, with no report on the reply")
         let saved = try scheduleStore.get(schedule.id)!
         try require(saved.lastOutcome == .completed && saved.nextRunAt! > Date().addingTimeInterval(6 * 3600), "The schedule shows the outcome and its next run")
         await harness.stop()
@@ -735,12 +738,14 @@ extension SelfTest {
             return nil
         }
         let storedCheckIn = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
-        try require(storedCheckIn.flatMap(cardStatus) == .completed, "The stored check-in card shows the finished task")
+        let arrivedResults = try repository.messages(conversationID: conversationID).filter { $0.delivery?.referenceID == reference.id.uuidString }
+        try require(storedCheckIn != nil && storedCheckIn.flatMap(cardStatus) == nil && arrivedResults.count == 1,
+                    "Once the task finishes the stored check-in drops its card and the result arrives once as a message")
         let liveCheckIn = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == checkIn.id }
-        try require(liveCheckIn.flatMap(cardStatus) == .completed, "The check-in card in memory shows the finished task")
+        try require(liveCheckIn != nil && liveCheckIn.flatMap(cardStatus) == nil, "The check-in in memory drops its card once the task finishes")
         let movedOn = try repository.postScheduleCheckIn(atomic, conversationID: conversationID, runID: atomicRun.id, key: "moved-on",
                                                          referenceID: reference.id, decisionID: decision.id)
-        try require(!movedOn && (try repository.messages(conversationID: conversationID)).count == before + 2,
+        try require(!movedOn && (try repository.messages(conversationID: conversationID)).count == before + 3,
                     "A post whose task completed between the read and the write is refused and adds nothing")
         let waitingBlocks = try nativeTaskEncoded(checkIn.displayBlocks)
         try await repository.database.write { db in
@@ -749,7 +754,7 @@ extension SelfTest {
         let unchanged = try repository.projectTask(id: reference.id, snapshot: nil, cursor: 0)
         try require(unchanged?.mirrors.contains(checkIn.id) == true, "An unchanged projection still names the check-in mirror")
         let refreshed = try repository.messages(conversationID: conversationID).first { $0.id == checkIn.id }
-        try require(refreshed.flatMap(cardStatus) == .completed, "An unchanged projection tick rewrites a stale mirror card")
+        try require(refreshed != nil && refreshed.flatMap(cardStatus) == nil, "An unchanged projection tick clears a stale mirror card for finished work")
 
         var answered = try NativeSchedule(owner: .conversation, workerType: "research", title: "Answered check",
                                           instruction: "What color is the fictional moon Luma?", cadence: .everyHours(6), timeZone: zone)
@@ -799,15 +804,19 @@ extension SelfTest {
         let drafts = await counter.count("generate:draft-0") + counter.count("generate:draft-1")
         let revisions = await counter.count("generate:revise-0") + counter.count("generate:revise-1")
         try require(outlines == 1 && drafts == 2 && revisions == 2, "One outline, a draft and a revision per section")
+        let posted = try repository.deliverTaskMessages(id: reference.id)
         let message = try repository.messages(conversationID: reference.origin.conversationID).last!
         var artifact: NativeResearchArtifact?
-        var card: NativeTaskCardPresentation?
         for block in message.displayBlocks {
             if case .artifact(let value) = block { artifact = value }
-            if case .taskCard(let value) = block { card = value }
         }
-        try require(artifact?.kind == "document" && artifact?.title == "Workshop plan" && artifact?.report == report, "The document lands as an artifact in the originating reply")
-        try require(card?.workerType == "document" && card?.status == .completed && card?.statusTitle == "Document ready" && card?.milestone == "The document is ready.", "The card speaks about writing, not research")
+        let reply = try repository.messages(conversationID: reference.origin.conversationID).first { $0.id == reference.origin.assistantMessageID }
+        let replyHasCard = reply?.displayBlocks.contains { if case .taskCard = $0 { true } else { false } } ?? true
+        try require(posted.count == 1 && message.id == posted.first?.message.id && !replyHasCard
+                    && artifact?.kind == "document" && artifact?.title == "Workshop plan" && artifact?.report == report,
+                    "The document arrives as the next message with the document attached, and the reply has no card")
+        let card = try NativeTaskProjection.display(reference: try repository.taskReference(id: reference.id)!, snapshot: projection.snapshot).card
+        try require(card.workerType == "document" && card.status == .completed && card.statusTitle == "Document ready" && card.milestone == "The document is ready.", "The card speaks about writing, not research")
         await harness.stop()
 
         let bulletRepository = try LocalChatRepository(inMemory: true)
@@ -862,7 +871,8 @@ extension SelfTest {
         let syntheses = await counter.count("generate:synthesize")
         let searches = await counter.count("search")
         try require(plans == 1 && syntheses == 1 && searches == 2, "One plan, two searches, one synthesis")
-        let message = try repository.messages(conversationID: reference.origin.conversationID).last!
+        let posted = try repository.deliverTaskMessages(id: reference.id)
+        let message = try repository.messages(conversationID: reference.origin.conversationID).first { $0.id == reference.origin.assistantMessageID }!
         let kinds = message.displayBlocks.map { block -> String in
             switch block {
             case .taskCard: return "card"
@@ -873,7 +883,9 @@ extension SelfTest {
             case .ruleOffer: return "offer"
             }
         }
-        try require(message.id == reference.origin.assistantMessageID && kinds == ["card", "artifact"], "The original reply carries the card and the report")
+        let arrived = try repository.messages(conversationID: reference.origin.conversationID).last
+        try require(kinds.isEmpty && posted.count == 1 && arrived?.id == posted.first?.message.id && arrived?.displayBlocks.isEmpty == true,
+                    "The original reply carries no card or report, and the result arrives once as the next message")
         let repeated = try await harness.service.submit(origin: reference.origin, request: reference.request, profile: harness.profile)
         try require(repeated.id == reference.id, "A repeated handoff reuses its task")
         await harness.stop()

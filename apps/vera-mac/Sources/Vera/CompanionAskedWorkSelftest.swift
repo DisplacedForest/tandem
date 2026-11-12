@@ -194,7 +194,7 @@ enum CompanionAskedWorkFixture {
             try require(reference.origin.conversationID == harness.threadID && reference.origin.assistantMessageID == answer.id
                         && reference.origin.index == nil, "The work is anchored to the reply")
             let result = results(answer).first ?? ""
-            try require(result.contains("Started.") && result.contains("\"started\":true"), "The tool result says it started: \(result)")
+            try require(result.contains("Saved.") && result.contains("\"started\":true"), "The tool result says it started: \(result)")
             try require(answer.text == reply, "The reply is the model's one line, never empty: \(answer.text)")
             let box = try NativeCompanionTaskPayload(assignment: written, mode: "manual", connectedToolIDs: ["notes", "calendar"].sorted())
             try require(reference.request.dot?.connectedToolIDs == box.connectedToolIDs && reference.request.dot?.said == ""
@@ -234,7 +234,7 @@ enum CompanionAskedWorkFixture {
         try require(saved.count == 2 && saved[0].origin.index == nil && saved[1].origin.index == 1
                     && saved[0].request.objective == library && saved[1].request.objective == seeds && saved[0].id != saved[1].id,
                     "One message starts two pieces of work, in order")
-        try require(results(answer).count == 2 && results(answer).allSatisfy { $0.contains("Started.") }, "Each call says it started")
+        try require(results(answer).count == 2 && results(answer).allSatisfy { $0.contains("Saved.") }, "Each call says it started")
         guard let service = harness.store.nativeTaskService else { throw NativeTaskFixture.Failure.assertion("The service exists") }
         let origin = NativeTaskOrigin(conversationID: harness.threadID, userMessageID: saved[0].origin.userMessageID,
                                       assistantMessageID: saved[0].origin.assistantMessageID)
@@ -314,7 +314,7 @@ enum CompanionAskedWorkFixture {
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
                     "Work asked for by a page in a later round is refused and nothing is saved: \(refused)")
         let researched = try await send(harness, research)
-        try require(results(researched).first?.contains("Research has started.") == true
+        try require(results(researched).first?.contains("Saved.") == true
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "Research asked for in the companion conversation still starts as before: \(researched.toolActivities.map { ($0.name, $0.result ?? "") })")
     }
@@ -361,7 +361,7 @@ enum CompanionAskedWorkFixture {
         try require((results(answer).first ?? "").contains("Web search is not set up")
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty, "Research is still refused without search")
         let started = try await send(harness, library)
-        try require(results(started).first?.contains("Started.") == true && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
+        try require(results(started).first?.contains("Saved.") == true && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "General work still starts with web research off")
     }
 
@@ -384,10 +384,10 @@ enum CompanionAskedWorkFixture {
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
                     "Work asked for after another tool ran in the same reply is refused and nothing is saved")
         let started = try await send(harness, generalFirst)
-        try require((results(started).first ?? "").contains("Started.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
+        try require((results(started).first ?? "").contains("Saved.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "Work asked for before any other tool runs starts")
         let both = try await send(harness, pair)
-        try require(results(both).count == 2 && results(both).allSatisfy { $0.contains("Started.") }
+        try require(results(both).count == 2 && results(both).allSatisfy { $0.contains("Saved.") }
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 3, "Two pieces of work in one reply both start")
     }
 
@@ -403,7 +403,7 @@ enum CompanionAskedWorkFixture {
         }
         defer { harness.store.conversationTurnLoop?.cancel() }
         let first = try await send(harness, ask)
-        try require(first.toolActivities.first?.state == .failed && (results(first).last ?? "").contains("Started.")
+        try require(first.toolActivities.first?.state == .failed && (results(first).last ?? "").contains("Saved.")
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 1, "The invalid call fails and the general work starts")
         guard let saved = try harness.repository.taskReferences(conversationID: nil).first,
               let service = harness.store.nativeTaskService else { throw NativeTaskFixture.Failure.assertion("The work is saved") }
@@ -421,7 +421,7 @@ enum CompanionAskedWorkFixture {
         try require(all.count == 2 && all.filter { $0.request.workerType == "research" }.count == 1
                     && all.filter { $0.request.workerType == "companion" }.count == 1 && all.contains { $0.id == saved.id },
                     "The replay keeps each call's place: one research and one general piece of work, no duplicate")
-        try require(messages.count == 2 && messages[0].contains("Research has started.") && messages[1].contains("Started.")
+        try require(messages.count == 2 && messages[0].contains("Saved.") && messages[1].contains("Saved.")
                     && !messages[1].contains("Research"), "Each reply describes the work that was actually returned: \(messages)")
     }
 
@@ -450,7 +450,7 @@ enum CompanionAskedWorkFixture {
         let paused = try await definition("Hello again.")
         harness.store.setDotState(.active)
         let resumedResult = try await call(paused)
-        try require(resumedResult.contains("Started.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
+        try require(resumedResult.contains("Saved.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "Resuming before the call lets the work start")
     }
 
@@ -531,7 +531,7 @@ enum CompanionAskedWorkFixture {
         await open.release()
         let free = try await tool("Hello again.", gate: open, entered: NativeChatRulesCounter())
         let value = try await asLoop(0) { try await free.execute(["worker_type": .string("general"), "objective": .string(seeds)]) }
-        try require(((try? NativeToolLoop.serializedResult(value)) ?? "").contains("Started.")
+        try require(((try? NativeToolLoop.serializedResult(value)) ?? "").contains("Saved.")
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 1 && harness.posts.count == 1,
                     "A hand-off that is not stopped still starts")
     }

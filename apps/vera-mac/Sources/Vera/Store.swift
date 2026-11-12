@@ -203,6 +203,8 @@ final class ChatStore: ObservableObject {
     var nativeTaskTracker: NativeTaskTracker?
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
+    static let researchReplyRule = "Start research only when this current request explicitly asks for research or an investigation. When you do, reply with one short first-person sentence that says what you'll do in the person's terms, without identifiers, implementation details, or saying where or how the result will arrive; it arrives in this conversation by itself. Report real blockers when relevant. Never wait for its report or claim it is complete."
+    var nativeTaskResultDeliveries: [UUID: UUID?] = [:]
     @Published var highlightedTaskID: String?
     @Published var pendingTaskReveal: String?
     @Published private(set) var composerSend = ComposerSend()
@@ -1067,6 +1069,10 @@ final class ChatStore: ObservableObject {
         nativeMemorySettings.enabled && nativeMemorySettings.searchPastChats
     }
 
+    nonisolated static func memoryScanMessages(_ messages: [Message]) -> [Message] {
+        messages.filter { $0.contentType != .runOrigin && $0.delivery == nil }
+    }
+
     func searchPastChatsForMemory() {
         guard nativeMemorySettings.enabled, nativeMemorySettings.searchPastChats,
               let service = nativeMemoryService,
@@ -1081,9 +1087,9 @@ final class ChatStore: ObservableObject {
                 var reviewedTurns = 0
                 var reviewedBytes = 0
                 search: for conversation in candidates where reviewedTurns < 12 {
-                    let messages = conversation.messages.isEmpty
+                    let messages = Self.memoryScanMessages(conversation.messages.isEmpty
                         ? try repository?.recentMessages(conversationID: conversation.id, limit: 48) ?? []
-                        : Array(conversation.messages.suffix(48))
+                        : Array(conversation.messages.suffix(48)))
                     for index in messages.indices where reviewedTurns < 12 {
                         guard pastChatScanAllowed else { break search }
                         let sensitiveHandling = nativeMemorySettings.sensitiveHandling
@@ -1636,8 +1642,8 @@ final class ChatStore: ObservableObject {
               let conversation = conversations.first(where: { $0.id == conversationID }),
               ConversationTitleGenerator.shouldGenerate(for: conversation, isAssistantThread: isVeraThread(conversationID)),
               let transport = nativeTransport, let model = nativeConfig?.model, !model.isEmpty,
-              let user = conversation.messages.first(where: { $0.role == .user }),
-              let reply = conversation.messages.first(where: { $0.role == .assistant }) else { return }
+              let user = conversation.messages.first(where: { $0.role == .user && $0.contentType != .runOrigin }),
+              let reply = conversation.messages.first(where: { $0.role == .assistant && $0.delivery == nil && $0.contentType != .runOrigin }) else { return }
         titleGenerationInFlight.insert(conversationID)
         titleGenerationAttempted.insert(conversationID)
         let userID = user.id
@@ -1649,7 +1655,7 @@ final class ChatStore: ObservableObject {
             guard let title,
                   let i = self.conversations.firstIndex(where: { $0.id == conversationID }),
                   self.conversations[i].titleSource == .fallback,
-                  self.conversations[i].messages.first(where: { $0.role == .user })?.id == userID else { return }
+                  self.conversations[i].messages.first(where: { $0.role == .user && $0.contentType != .runOrigin })?.id == userID else { return }
             self.conversations[i].title = title
             self.conversations[i].titleSource = .generated
             try? self.repository?.saveConversation(self.conversations[i])
@@ -1985,7 +1991,10 @@ final class ChatStore: ObservableObject {
 
     private var companionReplies: [Message] {
         guard let veraThreadID, let thread = conversations.first(where: { $0.id == veraThreadID }) else { return [] }
-        return thread.messages.filter { $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty }
+        return thread.messages.filter { message in
+            guard message.role == .assistant, message.state == .complete, message.contentType != .runOrigin else { return false }
+            return message.delivery != nil ? TranscriptVisibility.shows(message) : !message.text.isEmpty
+        }
     }
 
     var companionSeenReplyID: String? {
@@ -2678,7 +2687,7 @@ final class ChatStore: ObservableObject {
                     assistantProfile: turnDotContext(turn)))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
-                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. Start background research only when this current request explicitly asks for research or an investigation. Give a brief acknowledgment without task identifiers, implementation details, or promises about delivery format. Report real blockers when relevant. Never wait for its report or claim it is complete. Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories

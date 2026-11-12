@@ -38,7 +38,7 @@ extension ChatStore {
             profile: currentTurnProfile, enabledToolIDs: [], persona: scopes.persona,
             userScope: scopes.userScope, instructions: scopes.instructions, projectName: scopes.projectName,
             grounding: [], memorySettings: nativeMemorySettings, createdAt: now,
-            history: conversation.messages.filter { $0.state == .complete }.map(NativeTurnHistoryMessage.init))
+            history: conversation.messages.filter { $0.state == .complete && $0.contentType != .runOrigin }.map(NativeTurnHistoryMessage.init))
         turn.companionEvent = event
         turn.dotContext = dotContext(for: conversation.id, requestText: "")
         conversation.updatedAt = now
@@ -76,14 +76,14 @@ extension ChatStore {
         let previous = conversationTurns.filter { $0.conversationID == id && $0.companionEvent?.kind == .refinement }.max { $0.createdAt < $1.createdAt }
         if let previous {
             guard now.timeIntervalSince(previous.createdAt) >= Self.companionRefinementInterval,
-                  conversations[index].messages.contains(where: { $0.role == .user && $0.createdAt > previous.createdAt }) else { return }
+                  conversations[index].messages.contains(where: { $0.role == .user && $0.contentType != .runOrigin && $0.createdAt > previous.createdAt }) else { return }
         }
-        let completed = nativeTaskReferences.filter {
+        let latest = nativeTaskReferences.filter {
             $0.origin.conversationID == id && $0.snapshot?.state == .completed
                 && $0.snapshot?.result != nil
                 && ($0.snapshot?.updatedAt ?? 0) > max(previous?.createdAt.timeIntervalSince1970 ?? 0, now.timeIntervalSince1970 - Self.companionRefinementInterval)
         }.max { ($0.snapshot?.updatedAt ?? 0) < ($1.snapshot?.updatedAt ?? 0) }
-        guard let completed else { return }
+        guard let completed = latest.flatMap({ settledBeforeDelivery($0.id) ? $0 : nil }) else { return }
         let key = "work:" + completed.id.uuidString
         let observation = Self.refinementObservation(completed.snapshot)
         do { try enqueueCompanionEvent(NativeCompanionEvent(kind: .refinement, key: key, observation: observation), conversationIndex: index, now: now) }

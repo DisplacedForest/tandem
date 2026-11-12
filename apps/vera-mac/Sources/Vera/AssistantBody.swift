@@ -24,9 +24,11 @@ struct AssistantBody: View {
         case .extras:
             if message.pulse == nil { extras }
         case .actions:
-            if message.pulse == nil { actions }
+            if message.pulse == nil && Self.showsActionRow(companionThread: companionThread) { actions }
         }
     }
+
+    static func showsActionRow(companionThread: Bool) -> Bool { !companionThread }
 
     private var parsed: (clean: String, calls: [ToolCall]) { ToolCallParser.parse(message.text) }
 
@@ -36,6 +38,7 @@ struct AssistantBody: View {
     }
 
     private func replyCitations(_ clean: String) -> ReplyCitations? {
+        if message.delivery != nil { return nil }
         if !message.sources.isEmpty {
             return ReplyCitations(body: CitationResolver.withoutMatchingList(clean, sources: message.sources), sources: message.sources)
         }
@@ -45,6 +48,14 @@ struct AssistantBody: View {
     }
 
     @ViewBuilder private var bubble: some View {
+        if message.delivery != nil {
+            content.safeReportContent()
+        } else {
+            content
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         let clean = parsed.clean
         let cited = replyCitations(clean)
         let display = cited?.body ?? clean

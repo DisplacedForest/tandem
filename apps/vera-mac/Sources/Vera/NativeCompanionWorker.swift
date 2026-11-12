@@ -64,10 +64,11 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var sources: [NativeTaskSource]?
     var aliases: [String: Int]?
     var refused: [String]?
+    var note: NativeTaskNote?
     var finishing: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, finishing
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing
         case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
@@ -546,7 +547,7 @@ enum NativeCompanionWorker {
             let summary = cut(String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters)), scalars: summaryCharacters)
             var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
                                          "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
-            if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
+            if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body); result["keep"] = keep }
             if let why, !lean { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
             if let stop {
                 let kept = lean ? NativeTaskStop(reason: stop.reason, step: cut(stop.step, scalars: 2000), earlier: stop.earlier.map { cut($0, scalars: 2000) }) : stop
@@ -765,6 +766,7 @@ private struct NativeCompanionRun {
             lines.append("Stop using tools now. Answer the person directly, the way you would reply in a chat, and say plainly what you did. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
         } else {
             lines.append("Use tools when they help. When the assignment is done, reply without tool calls and answer the person directly, the way you would reply in a chat. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
+            lines.append("When you call tools, leave the text of that reply empty unless something useful happened or changed that the person would want to know now. If so, write one short first-person sentence in the person's terms that stands by itself by naming the thing it's about, for example: I'm looking up order 46114 in your email to see which store it's from and how to cancel it. Not: I'm looking it up now. If the sentence could be about anything, leave it empty. Never narrate routine steps and never repeat what you already told them.")
         }
         return lines.joined(separator: "\n\n")
     }
@@ -827,6 +829,7 @@ private struct NativeCompanionRun {
             if try !recordable(assistant) { return try ending(&checkpoint) }
         }
         checkpoint.transcript.append(assistant)
+        checkpoint.note = assistant.content.isEmpty ? checkpoint.note : NativeTaskNote(text: assistant.content, at: Date().timeIntervalSince1970)
         if let paused = try await answerOutstanding(&checkpoint) { return paused }
         return try progress(checkpoint)
     }

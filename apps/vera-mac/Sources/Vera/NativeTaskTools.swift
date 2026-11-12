@@ -3,9 +3,14 @@ import Foundation
 enum NativeTaskTools {
     static let toolID = "background-research"
     static let toolName = "create_background_task"
-    static let searchUnavailable = "Web search is not set up, so background research cannot run. Add a search URL in Settings, Search, and ask again. Background document writing still works."
+    static let searchUnavailable = "Web search is not set up, so research can't run. Add a search URL in Settings, Search, and ask again. Writing a document still works."
+
+    static let description = "Start one piece of longer work only when the current user message explicitly asks for research or for a written document. Earlier conversation requests do not authorize more. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for the result. Then reply with one short first-person sentence that says what you're going to do in the person's terms, for example: I'll compare quiet reading spaces at three public libraries using their official websites. End your turn there. The result arrives in this conversation by itself, so don't wait for it, don't say it's done, don't say where or how it will arrive, and don't describe it as started, queued or running somewhere else. Do not repeat its status on unrelated turns or expose internal identifiers."
+
+    static let acknowledged = "Saved. Reply with one short first-person sentence saying what you'll do, then end your turn."
 
     static let generalWorkerType = "general"
+    static let generalDescription = " In this conversation you may also use worker_type general, with the objective saying what to do, for anything the person asks to have done that takes more than a reply: one call per separate thing asked, never for something you can simply answer."
     static let generalLimit = 4000
     static let laterRound = "This can only be started from what the person asked, at the start of a reply."
     static let notStarted = "Nothing was started. Ask again in a moment."
@@ -28,16 +33,15 @@ enum NativeTaskTools {
                            general: (@Sendable (_ assignment: String) async throws -> NativeResearchTaskRequest)? = nil,
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         let kinds: [NativeJSONValue] = [.string("research"), .string("document")] + (general == nil ? [] : [.string(generalWorkerType)])
-        return NativeToolDefinition(id: toolID, name: toolName, title: "Start background work",
-            description: "Start one background task per separate request only when the current user message explicitly asks for research or for a written document to be produced in the background. Earlier conversation requests do not authorize another task. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for documents. Then acknowledge briefly. Progress and the result appear on the task card. Do not repeat task status on unrelated turns, expose internal identifiers, wait for the result, or claim completion."
-                + (general == nil ? "" : " In this conversation you may also use worker_type general, with the objective saying what to do, for anything the person asks to have done that takes more than a reply: one call per separate thing asked, never for something you can simply answer. Afterwards reply with one short first-person line saying what you will do, without the words background, task or card."),
+        return NativeToolDefinition(id: toolID, name: toolName, title: "Start work",
+            description: description + (general == nil ? "" : generalDescription),
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
                 "required": .array([.string("worker_type"), .string("objective")]),
                 "properties": .object([
                     "worker_type": .object(["type": .string("string"), "enum": .array(kinds)]),
                     "title": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(200),
-                                      "description": .string("One-line title for a document")]),
+                                      "description": .string("Short title for the result")]),
                     "objective": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(5000)]),
                     "deliverables": .object(["type": .string("array"), "minItems": .number(1), "maxItems": .number(5),
                         "items": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(500)])]),
@@ -86,8 +90,8 @@ enum NativeTaskTools {
                     }
                     guard allowedWorkerTypes().contains(workerType) else {
                         throw NativeToolError.failed(workerType == "document"
-                            ? "The current message did not ask for a document to be written, so no document task was started."
-                            : "The current message did not ask for research, so no research task was started.")
+                            ? "The current message did not ask for a document to be written, so nothing was started."
+                            : "The current message did not ask for research, so nothing was started.")
                     }
                     if workerType == "research", !searchAvailable() {
                         throw NativeToolError.failed(searchUnavailable)
@@ -99,24 +103,19 @@ enum NativeTaskTools {
                 try Task.checkCancellation()
                 let reference = try await service.submit(origin: placed, request: request, profile: profile)
                 await didSave(reference)
-                let kind = reference.request.workerType
-                let work = kind == "companion" ? "work" : kind == "document" ? "document" : "research"
                 let message: String
                 switch reference.deliveryState {
-                case .accepted:
-                    message = kind == "companion" ? "Started." : kind == "document" ? "Writing has started." : "Research has started."
-                case .pending:
-                    message = kind == "companion" ? "Saved, and it will start once the connection is back." : "The \(work) request is saved and waiting to connect."
-                case .rejected: message = reference.lastDeliveryError ?? "The task engine couldn't accept this request."
+                case .accepted, .pending: message = acknowledged
+                case .rejected: message = reference.lastDeliveryError ?? "This couldn't be started."
                 }
                 if reference.cancelRequested || reference.snapshot?.state == .canceled {
-                    return .object(["message": .string("This \(work) was canceled."), "started": .bool(false)])
+                    return .object(["message": .string("This message's request was stopped earlier. Say so in one short sentence."), "started": .bool(false)])
                 }
                 if reference.snapshot?.state == .completed {
-                    return .object(["message": .string("This \(work) is already finished. The result is on its card."), "started": .bool(false)])
+                    return .object(["message": .string("This message's result was already sent in this conversation. Say so in one short sentence."), "started": .bool(false)])
                 }
                 if let state = reference.snapshot?.state, [.blocked, .needsDecision, .failed].contains(state) {
-                    return .object(["message": .string("This \(work) could not continue. Its card has the next step."), "started": .bool(false)])
+                    return .object(["message": .string("This message's request is waiting on the person. Say so in one short sentence."), "started": .bool(false)])
                 }
                 if reference.deliveryState == .rejected {
                     return .object(["error": .string(message), "started": .bool(false)])

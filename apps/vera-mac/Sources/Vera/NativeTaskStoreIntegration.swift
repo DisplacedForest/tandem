@@ -3,6 +3,7 @@ import Foundation
 extension ChatStore {
     func reloadNativeTaskReferences() {
         nativeTaskReferences = (try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? []
+        refreshNativeTaskDeliveries()
         prepareCompanionRefinement()
     }
 
@@ -51,13 +52,16 @@ extension ChatStore {
     }
 
     func applyNativeTaskUpdates(_ updates: [NativeTaskMessageUpdate]) {
-        var changed = false
+        var changed = deliverNativeTaskMessages(updates)
         for update in updates {
             guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }) else { continue }
             for mirror in update.mirrors {
                 guard let index = conversations[conversation].messages.firstIndex(where: { $0.id == mirror }) else { continue }
                 let cards = update.blocks.filter { if case .taskCard = $0 { return true }; if case .artifact = $0 { return true }; return false }
                 var blocks = conversations[conversation].messages[index].displayBlocks
+                if let reference = update.referenceID, !cards.contains(where: { $0.id == "task:" + reference.uuidString }) {
+                    blocks.removeAll { $0.id == "task:" + reference.uuidString }
+                }
                 for card in cards {
                     if let existing = blocks.firstIndex(where: { $0.id == card.id }) { blocks[existing] = card } else { blocks.append(card) }
                 }

@@ -192,7 +192,7 @@ struct NativeDisplayBlocksView: View {
         saved.canCancel = false
         saved.canRetry = false
         saved.choices = []
-        saved.connectionNote = "Saved here. Background work is disconnected."
+        saved.connectionNote = "Saved here. This continues once it reconnects."
         return saved
     }
 }

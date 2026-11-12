@@ -119,7 +119,7 @@ struct NativeDomainRecordView: View {
                 guard let repository = store.repository as? LocalChatRepository else { throw NativeDomainError.sourceUnavailable }
                 for conversation in try repository.listConversations().prefix(50) where !conversation.memoryExcluded {
                     for message in try repository.recentMessages(conversationID: conversation.id, limit: 20)
-                        where message.role == .user && message.state == .complete && message.failure == nil {
+                        where message.role == .user && message.contentType != .runOrigin && message.state == .complete && message.failure == nil {
                         let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !NativeMemorySafety.containsSensitiveData(text), !text.lowercased().hasPrefix("private:"),
                               !text.lowercased().hasPrefix("do not remember"), text.utf8.count <= 8192 else { continue }
