@@ -510,6 +510,13 @@ extension SelfTest {
                     && report.contains("Pages found:\n- Opening hours [5]\n- seats.example.org [6]"),
                     "Read, search-only and older pages each get their own list with readable names: \(report)")
         try require(!report.contains("http") && !report.lowercased().contains("nothing"), "No address is used as a name and nothing is overstated: \(report)")
+        let named = (result["sources"] as? [[String: Any]] ?? []).reduce(into: [Int: String]()) { names, source in
+            if let n = (source["n"] as? NSNumber)?.intValue { names[n] = source["title"] as? String }
+        }
+        let linked = (result["sources"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
+        try require(named[3] == "example.org" && named[6] == "seats.example.org" && named[1] == "Central reading room"
+                    && !named.values.contains { $0.contains("http") } && linked.contains("https://www.example.org/hours"),
+                    "The saved result names each source readably and keeps where it goes: \(named)")
     }
 
     private static func companionFinishFallbackKeepsPages() async throws {

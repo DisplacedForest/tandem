@@ -178,7 +178,7 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     func cited(_ text: String) -> [[String: Any]] {
         let known = (sources ?? []).filter(Self.citable)
         let refs = Set(CitationResolver.scan(text, known: Set(known.map(\.n))).refs)
-        return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.title, "url": $0.url] }
+        return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.label, "url": $0.url] }
     }
 
     mutating func note(_ title: String, _ outcome: String, reason: String? = nil) {
