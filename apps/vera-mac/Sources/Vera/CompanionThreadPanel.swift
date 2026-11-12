@@ -88,7 +88,6 @@ struct CompanionThreadPanel: View {
                 activityDetail(item)
             } else {
                 identity
-                CompanionAssignmentField()
                 if !current.activity.isEmpty { activity }
                 if !current.outputs.isEmpty { outputs }
             }

@@ -988,7 +988,9 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
-                    try await definition.execute(arguments)
+                    try await NativeToolCallContext.$round.withValue(activity.round) {
+                        try await definition.execute(arguments)
+                    }
                 }
             }
         }

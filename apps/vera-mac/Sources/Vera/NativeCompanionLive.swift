@@ -61,8 +61,10 @@ enum NativeCompanionLive {
         await store.connect()
         store.skipDotSetup()
         print("companion-live: model \(native.model), assignment: \(assignment)")
-        if let failure = await store.startCompanionAssignment(assignment) {
-            print("companion-live: FAIL could not start: \(failure.plain(name: store.companionName))")
+        do {
+            _ = try await CompanionHandOffFixture.handOff(store, assignment: assignment)
+        } catch {
+            print("companion-live: FAIL could not start: \(error.localizedDescription)")
             return 1
         }
         guard let reference = store.companionWorkReferences().last else {

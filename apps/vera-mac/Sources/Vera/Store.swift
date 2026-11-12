@@ -2227,7 +2227,7 @@ final class ChatStore: ObservableObject {
         conversation.isPersisted = true
         let scopes = resolvePromptScopes(conversationID: id)
         let mentions = mentionedToolIDs(in: text)
-        let baseToolIDs = NativeTurnToolAuthority(text, mentions: mentions).filter(turnConsentedToolIDs(conversationID: id, mentions: mentions))
+        let baseToolIDs = NativeTurnToolAuthority(text, mentions: mentions, companion: isVeraThread(id)).filter(turnConsentedToolIDs(conversationID: id, mentions: mentions))
         var turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
             profile: turnProfile(for: user.routeNote), enabledToolIDs: baseToolIDs,
@@ -2331,7 +2331,7 @@ final class ChatStore: ObservableObject {
     func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         let mentions = mentionedToolIDs(in: text)
-        return (NativeTurnToolAuthority(text, mentions: mentions), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
+        return (NativeTurnToolAuthority(text, mentions: mentions, companion: isVeraThread(turn.conversationID)), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
     }
 
     var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
@@ -2425,6 +2425,7 @@ final class ChatStore: ObservableObject {
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
                         searchAvailable: nativeSearchAvailable, allowedWorkerTypes: { workerTypes },
+                        general: isVeraThread(id) ? companionHandOff(said: text) : nil,
                         didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }

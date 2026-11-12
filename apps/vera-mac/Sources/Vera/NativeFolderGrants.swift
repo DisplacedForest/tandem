@@ -198,6 +198,7 @@ enum NativeToolCallContext {
     @TaskLocal static var confirmed: Bool?
     @TaskLocal static var reason: NativeToolReasonSink?
     @TaskLocal static var boundary: NativeEffectBoundary?
+    @TaskLocal static var round: Int?
 
     static func effectStarts() {
         boundary?.mark()

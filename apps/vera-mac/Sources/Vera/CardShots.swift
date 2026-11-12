@@ -45,9 +45,13 @@ enum CardShot {
                     CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
                 }
             }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
-        case "card-task", "card-task-command", "card-task-asks":
+        case "card-task", "card-task-command", "card-task-asks", "card-asked-work":
             size = CGSize(width: 1180, height: 1040)
-            seedTask(command: variant == "card-task-command", asks: variant == "card-task-asks", store: store)
+            if variant == "card-asked-work" {
+                seedAskedWork(store)
+            } else {
+                seedTask(command: variant == "card-task-command", asks: variant == "card-task-asks", store: store)
+            }
             let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
@@ -281,6 +285,22 @@ enum CardShot {
             Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
             message,
         ]
+    }
+
+    static let askedWork = "Find three public libraries near the river with quiet reading spaces and compare them."
+    static let askedReply = "I'll compare quiet reading spaces at three public libraries using their official websites."
+
+    static func seedAskedWork(_ store: ChatStore) {
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
+        store.openVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }),
+              let reference = try? OngoingWorkFixture.reference(conversationID: threadID, title: askedWork, workerType: "companion", state: "running"),
+              let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
+        store.nativeTaskEngine.set(engineURL)
+        store.nativeTaskReferences = [reference]
+        var message = Message(role: .assistant, text: askedReply)
+        message.displayBlocks = [.taskCard(display.card)]
+        store.conversations[index].messages = [Message(role: .user, text: askedWork), message]
     }
 
     static func stopResult(_ variant: String, title: String) throws -> [String: Any] {
