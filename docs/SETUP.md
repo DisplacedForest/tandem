@@ -322,7 +322,7 @@ Tandem is the application name. The assistant inside uses the name you chose (th
 
 Quick ask is a small always-on-top panel for talking to the assistant without switching to Tandem. Press the global shortcut, Option Shift Space by default, and the panel opens over whatever app is in front. You can also open it from the menu bar item with **Quick ask**. The menu bar item exists once **Keep running in the menu bar** is on, which happens by itself when a schedule exists.
 
-The panel shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. **Open in Tandem** opens the main window at that thread. Escape or clicking elsewhere hides the panel. The draft is kept when the panel hides and shows again. When something is waiting for your approval, the panel says so and **Open in Tandem** takes you to the card. Background work that is running or has a question shows as its own line above the message box.
+The panel shows the last few turns of the assistant's ongoing thread (the pinned conversation at the top of the sidebar), a composer, and a count of replies you haven't seen yet. **Open in Tandem** opens the main window at that thread. Escape or clicking elsewhere hides the panel. The draft is kept when the panel hides and shows again. When something is waiting for your approval, the panel says so and **Open in Tandem** takes you to the card. While work runs, the same small line as in the main window shows above the message box.
 
 Sending from the panel is the same as sending in that thread. It uses the same model, tools, rules and memory, and the reply streams into the panel. Images and files can be pasted or dropped into the panel. Sharing a folder is not offered there.
 
@@ -342,10 +342,13 @@ The **Ongoing work** panel on the right lists the background work of the current
 
 The companion is the small figure that stands for the assistant. Its conversation and sidebar entry use its saved name. Ordinary chat composers say **Message Tandem**. Renaming the companion keeps your conversation titles and history intact. To change it, open Settings, Identity and press Change appearance. The sheet lets you rename the assistant, pick one of three shapes (Pebble, Fold or Mallow) and one of seven colors (Sage, Periwinkle, Apricot, Rose, Sky, Mint or Pearl). Any shape works with any color. The preview on the right updates as you choose. Save writes the change and every open view picks it up right away. Cancel closes the sheet and keeps the previous appearance. The sheet works from the keyboard: Tab moves between the name, the shapes and the colors, the arrow keys step through a row, and Space picks.
 
-The figure appears wherever the companion does: the sidebar and Settings. Its state follows the companion's own conversation only: a reply being written, or a question waiting in that conversation. Unrelated ordinary chats do not animate it, and neither does background work or a scheduled run. Background work has its own lines under the state in the panel and above the message box in the quick-ask panel, such as "1 thing running in the background" and "1 thing in the background needs your answer". The second one opens the card with the question. A waiting question takes precedence over thinking. Pausing rests the figure. Each state is shown through motion rather than text:
+The figure appears wherever the companion does: the sidebar and Settings. Its state follows the companion's own conversation and the work it's doing for you, including its scheduled runs. Unrelated ordinary chats do not animate it. While work runs the figure shows what kind it is (researching, writing, or making a change), and one small line just above the message box says what it's doing, such as "Researching new Indy restaurants". With several things going it names the newest and counts the rest ("and 2 more"). A waiting question takes precedence over working, and a reply being written shows thinking. Pausing rests the figure once current work has stopped. Each state is shown through motion rather than text:
 
 - Ready: a slow breath and an occasional blink.
 - Thinking: a side to side sway while an answer is being generated.
+- Researching: wide eyes looking from side to side.
+- Writing: head down with small quick movements.
+- Making a change: a lean and a push forward.
 - Resting: settled low with closed eyes while the app is inactive.
 - Needs you: only while a real question is waiting for your decision. It hops once and then holds the pose until the question is answered.
 
