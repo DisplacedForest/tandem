@@ -177,7 +177,11 @@ struct CompanionProfileState: Equatable, Sendable {
     }
 
     mutating func toggle(now: Date) {
-        if isOpen { close(now: now) } else { isOpen = true }
+        if isOpen { close(now: now) } else { open() }
+    }
+
+    mutating func open() {
+        isOpen = true
     }
 
     mutating func close(now: Date) {

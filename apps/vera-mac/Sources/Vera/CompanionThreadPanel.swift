@@ -20,6 +20,21 @@ enum CompanionProfileMetrics {
     }
 }
 
+struct CompanionProfileOpener {
+    let open: @MainActor () -> Void
+}
+
+private struct CompanionProfileOpenerKey: EnvironmentKey {
+    static let defaultValue: CompanionProfileOpener? = nil
+}
+
+extension EnvironmentValues {
+    var companionProfileOpener: CompanionProfileOpener? {
+        get { self[CompanionProfileOpenerKey.self] }
+        set { self[CompanionProfileOpenerKey.self] = newValue }
+    }
+}
+
 struct CompanionProfileLayout<Conversation: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var state: CompanionProfileState
@@ -41,10 +56,15 @@ struct CompanionProfileLayout<Conversation: View>: View {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.close(now: Date()) }
     }
 
+    private func open() {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.open() }
+    }
+
     var body: some View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
                 conversation
+                    .environment(\.companionProfileOpener, shown ? CompanionProfileOpener(open: open) : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if shown { CompanionProfileControls(state: $state, fixed: fixed) }

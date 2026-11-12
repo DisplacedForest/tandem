@@ -248,6 +248,10 @@ extension SelfTest {
         try require(state.isOpen && state.lastClosed == launch, "The toggle opens the profile")
         state.toggle(now: launch.addingTimeInterval(120))
         try require(!state.isOpen && state.lastClosed == launch.addingTimeInterval(120), "The toggle closes it and remembers when")
+        state.open()
+        state.open()
+        try require(state.isOpen && state.lastClosed == launch.addingTimeInterval(120), "Opening from the working line opens it and leaves it open when asked twice")
+        state.close(now: launch.addingTimeInterval(180))
 
         try require(CompanionProfileMetrics.panelWidth(available: 879) == CompanionProfileMetrics.width
                     && CompanionProfileMetrics.panelWidth(available: 2000) == CompanionProfileMetrics.width,
