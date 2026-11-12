@@ -59,6 +59,8 @@ enum ConversationTopBarModel {
 
     static func sidebarTitle(collapsed: Bool) -> String { collapsed ? "Show sidebar" : "Hide sidebar" }
 
+    static func sidebarIcon(collapsed: Bool) -> InterfaceIcon { collapsed ? .sidebar : .sidebarShown }
+
     static let moreTitle = "More options"
 
     static func pillTitle(name: String, profileOpen: Bool) -> String {
@@ -204,9 +206,9 @@ struct ConversationTopBar: View {
         if let sidebar {
             let title = ConversationTopBarModel.sidebarTitle(collapsed: sidebar.collapsed)
             if renderSafe {
-                staticRound(.sidebar).accessibilityLabel(title)
+                staticRound(ConversationTopBarModel.sidebarIcon(collapsed: sidebar.collapsed)).accessibilityLabel(title)
             } else {
-                Button { sidebar.toggle() } label: { roundIcon(.sidebar) }
+                Button { sidebar.toggle() } label: { roundIcon(ConversationTopBarModel.sidebarIcon(collapsed: sidebar.collapsed)) }
                     .buttonStyle(SidebarRoundButtonStyle())
                     .help(title).accessibilityLabel(title)
             }

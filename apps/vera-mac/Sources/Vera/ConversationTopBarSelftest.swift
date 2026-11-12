@@ -82,6 +82,10 @@ extension SelfTest {
         }
         try require(ConversationTopBarModel.sidebarTitle(collapsed: false) == "Hide sidebar"
                     && ConversationTopBarModel.sidebarTitle(collapsed: true) == "Show sidebar", "The sidebar button says what it will do")
+        try require(ConversationTopBarModel.sidebarIcon(collapsed: false) == .sidebarShown
+                    && ConversationTopBarModel.sidebarIcon(collapsed: true) == .sidebar
+                    && InterfaceIcon.sidebar.resource != InterfaceIcon.sidebarShown.resource,
+                    "The sidebar button is filled while the sidebar shows and outlined while it is hidden")
 
         let named = CompanionSubject("Ada").inline
         let unnamed = CompanionSubject(nil).inline

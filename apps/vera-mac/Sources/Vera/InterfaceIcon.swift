@@ -5,6 +5,7 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     case search
     case add
     case sidebar
+    case sidebarShown
     case more
 
     var resource: String {
@@ -12,6 +13,7 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
         case .search: "interface-search"
         case .add: "interface-add"
         case .sidebar: "interface-sidebar"
+        case .sidebarShown: "interface-sidebar-shown"
         case .more: "interface-more"
         }
     }
