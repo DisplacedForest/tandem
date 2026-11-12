@@ -6,17 +6,14 @@ enum NativeDotState: String, Codable, Sendable {
 }
 
 struct NativeDotProfile: Codable, Equatable, Sendable {
-    static let goalLimit = 2000
-
-    var goal: String = ""
     var connectedToolIDs: Set<String>? = nil
     var state: NativeDotState = .active
     var setupCompleted: Bool = false
     var needsIntroduction: Bool = false
     var updatedAt: Date = Date()
     var resumedAt: Date? = nil
+    private var savedGoal: String? = nil
 
-    var hasGoal: Bool { !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var isPaused: Bool { state == .paused }
 
     private enum CodingKeys: String, CodingKey {
@@ -29,9 +26,8 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         case resumedAt = "resumed_at"
     }
 
-    init(goal: String = "", connectedToolIDs: Set<String>? = nil, state: NativeDotState = .active,
+    init(connectedToolIDs: Set<String>? = nil, state: NativeDotState = .active,
          setupCompleted: Bool = false, updatedAt: Date = Date(), resumedAt: Date? = nil) {
-        self.goal = Self.clean(goal)
         self.connectedToolIDs = connectedToolIDs
         self.state = state
         self.setupCompleted = setupCompleted
@@ -41,7 +37,7 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        goal = Self.clean((try? container.decodeIfPresent(String.self, forKey: .goal)) ?? "")
+        savedGoal = (try? container.decodeIfPresent(String.self, forKey: .goal)) ?? nil
         if !container.contains(.connectedToolIDs) || ((try? container.decodeNil(forKey: .connectedToolIDs)) ?? false) {
             connectedToolIDs = nil
         } else {
@@ -60,18 +56,13 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(goal, forKey: .goal)
+        try container.encodeIfPresent(savedGoal, forKey: .goal)
         try container.encodeIfPresent(connectedToolIDs.map { $0.sorted() }, forKey: .connectedToolIDs)
         try container.encode(state.rawValue, forKey: .state)
         try container.encode(setupCompleted, forKey: .setupCompleted)
         try container.encode(needsIntroduction, forKey: .needsIntroduction)
         try container.encode(updatedAt.timeIntervalSince1970, forKey: .updatedAt)
         try container.encodeIfPresent(resumedAt?.timeIntervalSince1970, forKey: .resumedAt)
-    }
-
-    static func clean(_ goal: String) -> String {
-        String(goal.trimmingCharacters(in: .whitespacesAndNewlines).prefix(goalLimit))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func toolIDs(base: Set<String>) -> Set<String> {
@@ -135,7 +126,6 @@ struct NativeDotRemovalSummary: Equatable, Sendable {
     var proposals = 0
     var schedules = 0
     var artifacts = 0
-    var hasGoal = false
     var services = false
 
     private static func count(_ value: Int, _ one: String, _ many: String) -> String {
@@ -148,7 +138,6 @@ struct NativeDotRemovalSummary: Equatable, Sendable {
         if memories > 0 { parts.append(Self.count(memories, "memory", "memories")) }
         if proposals > 0 { parts.append(Self.count(proposals, "suggested memory", "suggested memories")) }
         if schedules > 0 { parts.append(Self.count(schedules, "schedule", "schedules")) }
-        if hasGoal { parts.append("the goal") }
         if services { parts.append("the service choices") }
         var text: String
         switch parts.count {
@@ -183,8 +172,7 @@ enum NativeDotContext {
         let sentence = list(held)
         return sentence.prefix(1).uppercased() + sentence.dropFirst() + " \(verb) always handed to the user. " + clickLine
     }
-    static let goalNote = "Keep this goal in mind when it is relevant; do not force it into unrelated conversations."
-    static let coordinatorNote = "You coordinate rather than grind: work on the goal is handed to separate background workers that report back to you, so keep your own replies short and conversational, summarize what workers reported instead of repeating their output, and never paste long transcripts into this thread."
+    static let coordinatorNote = "You coordinate rather than grind: longer work is handed to separate background workers that report back to you, so keep your own replies short and conversational, summarize what workers reported instead of repeating their output, and never paste long transcripts into this thread."
 
     static func wording(_ choice: NativeRuleChoice) -> String {
         switch choice {
@@ -228,22 +216,11 @@ enum NativeDotContext {
         return sentences.isEmpty ? "Acts without asking" : sentences.joined(separator: " ")
     }
 
-    static func render(name: String, goal: String, resolver: NativeRuleResolver) -> String {
+    static func render(name: String, resolver: NativeRuleResolver) -> String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let opening = trimmedName.isEmpty ? "You are the user's standing assistant." : "You are \(trimmedName), the user's standing assistant."
         let rules = NativeActionClass.configurable.map { "\($0.title): \(wording(resolver.choice(for: $0)))." }
         let floor = floorLine(resolver.global)
-        func compose(_ goalSentence: String) -> String {
-            ([opening, goalSentence, coordinatorNote, "What asks first here:"] + rules + [floor]).joined(separator: "\n")
-        }
-        let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
-        guard !trimmedGoal.isEmpty else { return compose("No standing goal has been set yet.") }
-        let room = max(0, limit - compose("Your standing goal: . \(goalNote)").count)
-        var shown = trimmedGoal
-        if shown.count > room {
-            shown = String(shown.prefix(max(0, room - 3))).trimmingCharacters(in: .whitespaces) + "..."
-        }
-        let ending = shown.hasSuffix(".") || shown.hasSuffix("!") || shown.hasSuffix("?") ? "" : "."
-        return compose("Your standing goal: \(shown)\(ending) \(goalNote)")
+        return ([opening, coordinatorNote, "What asks first here:"] + rules + [floor]).joined(separator: "\n")
     }
 }

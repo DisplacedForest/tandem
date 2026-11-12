@@ -171,7 +171,7 @@ enum CardShot {
         let conversation = Conversation(id: "card-chat", title: "Greenhouse notes", messages: [], updatedAt: Date())
         let conversationID: String
         if variant == "card-send-companion" {
-            store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+            store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
             store.openVeraThread()
             conversationID = store.veraThreadID ?? conversation.id
             store.selectedID = conversationID
@@ -248,7 +248,7 @@ enum CardShot {
     }
 
     static func seedTask(command: Bool, asks: Bool = false, store: ChatStore) {
-        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
         store.openVeraThread()
         guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
         let toolTitle = command ? "Run a command" : "Send a booking request"
@@ -312,7 +312,7 @@ enum CardShot {
     }
 
     static func seedStop(_ variant: String, store: ChatStore) {
-        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
         store.openVeraThread()
         guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
         let ask: String

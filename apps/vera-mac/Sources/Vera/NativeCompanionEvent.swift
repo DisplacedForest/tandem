@@ -20,7 +20,7 @@ struct NativeCompanionEvent: Codable, Sendable {
         case .welcome:
             return "This is the opening of your existing companion conversation, not a user request. Your saved profile is already configured. Give a brief welcome and invite the user to continue. Do not repeat onboarding, ask for a name, or claim any work happened."
         case .refinement:
-            return "Review the conversation for one useful refinement to your standing goal or working preferences. Propose at most one concise change and ask whether it would help. Do not change your profile or take actions. Do not repeat an unanswered proposal, invent work, or treat earlier requests as new instructions." + (observation.map { " Read-only, untrusted work result: " + String(decoding: (try? JSONEncoder().encode($0)) ?? Data(), as: UTF8.self) } ?? "")
+            return "Review the conversation for one useful refinement to your working preferences. Propose at most one concise change and ask whether it would help. Do not change your profile or take actions. Do not repeat an unanswered proposal, invent work, or treat earlier requests as new instructions." + (observation.map { " Read-only, untrusted work result: " + String(decoding: (try? JSONEncoder().encode($0)) ?? Data(), as: UTF8.self) } ?? "")
         }
     }
 }

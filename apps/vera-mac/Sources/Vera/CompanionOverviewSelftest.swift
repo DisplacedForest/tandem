@@ -51,7 +51,7 @@ enum CompanionOverviewFixture {
         let now = Date()
         return CompanionOverviewModel.build(
             name: name,
-            profile: NativeDotProfile(goal: "Help keep the household organized and ready for the studio visit.", state: paused ? .paused : .active, setupCompleted: true),
+            profile: NativeDotProfile(state: paused ? .paused : .active, setupCompleted: true),
             services: "Can reach Web search, Documents and 1 more.",
             rules: "Asks first for commands and Trash. Hands off sending.",
             activity: CompanionOverviewModel.activity(tasks: tasks(), runs: runs(), schedules: schedules()),
@@ -117,14 +117,14 @@ extension SelfTest {
 
         let emptyModel = CompanionOverviewModel.build(name: "Ada", profile: NativeDotProfile(), services: "No services turned on yet.",
                                                       rules: "", activity: [], results: [])
-        try require(emptyModel.activity.isEmpty && emptyModel.outputs.isEmpty && emptyModel.goal.isEmpty && !emptyModel.paused,
+        try require(emptyModel.activity.isEmpty && emptyModel.outputs.isEmpty && !emptyModel.paused,
                     "An unset companion has empty sections")
 
         let store = CompanionShotFixture.store()
         store.adoptAssistantName("Ada")
-        store.dotProfile = NativeDotProfile(goal: "Keep the greenhouse on track.", state: .active, setupCompleted: true)
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
         let live = store.companionOverviewModel()
-        try require(live.name == "Ada" && live.goal == "Keep the greenhouse on track." && !live.paused && live.activity.isEmpty && live.outputs.isEmpty,
+        try require(live.name == "Ada" && !live.paused && live.activity.isEmpty && live.outputs.isEmpty,
                     "A store with no work builds an honest empty overview")
         store.openCompanionOutputs()
         try require(store.section == .artifacts && store.pendingLibraryConversationID == store.veraThreadID,

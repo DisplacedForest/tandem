@@ -17,8 +17,8 @@ extension SelfTest {
             (NativeScheduleControls.title(.resumeAssistant), "Resume Ada", "Resume your companion"),
             (DotProfileCopy.startOver, "Removes the conversation, what Ada remembered from it and its schedules. Artifacts stay in Artifacts.",
              "Removes the conversation, what your companion remembered from it and its schedules. Artifacts stay in Artifacts."),
-            (DotProfileCopy.subtitle, "Give Ada a standing goal, choose what it can reach and set what asks first. You can change all of this later from the header.",
-             "Give your companion a standing goal, choose what it can reach and set what asks first. You can change all of this later from the header."),
+            (DotProfileCopy.subtitle, "Choose what Ada can reach and set what asks first. You can change all of this later from the header.",
+             "Choose what your companion can reach and set what asks first. You can change all of this later from the header."),
             (ArtifactLibrarySelection.companionFilterTitle, "From Ada", "From your companion"),
             ("Give {name} work", "Give Ada work", "Give your companion work"),
             ("{name} is paused.", "Ada is paused.", "Your companion is paused."),
@@ -27,8 +27,8 @@ extension SelfTest {
             (CompanionErrorCopy.clearLead + "disk full", "Ada's settings couldn't be cleared: disk full", "Your companion's settings couldn't be cleared: disk full"),
             (CompanionErrorCopy.threadLead + "disk full", "Ada's thread couldn't be created: disk full", "Your companion's thread couldn't be created: disk full"),
             (CompanionErrorCopy.loadLead + "disk full" + CompanionErrorCopy.loadTail,
-             "Ada's goal and settings couldn't load: disk full Scheduled work is paused and no services are connected until the settings are saved again.",
-             "Your companion's goal and settings couldn't load: disk full Scheduled work is paused and no services are connected until the settings are saved again."),
+             "Ada's settings couldn't load: disk full Scheduled work is paused and no services are connected until the settings are saved again.",
+             "Your companion's settings couldn't load: disk full Scheduled work is paused and no services are connected until the settings are saved again."),
         ]
         for (template, named, unnamed) in cases {
             try require(template.contains(placeholder), "The template names the companion: \(template)")
@@ -112,7 +112,7 @@ extension SelfTest {
             store.chatConfigurationError = nil
             try require(store.companionConfigurationError == nil && store.chatConfigurationErrorLine == nil, "Clearing the error clears the styled line")
             store.reportCompanionConfigurationError(CompanionErrorCopy.loadLead, description: "bad {name} value", tail: CompanionErrorCopy.loadTail)
-            try require(store.chatConfigurationError == "\(subject)'s goal and settings couldn't load: bad {name} value" + CompanionErrorCopy.loadTail,
+            try require(store.chatConfigurationError == "\(subject)'s settings couldn't load: bad {name} value" + CompanionErrorCopy.loadTail,
                         "A description holding the placeholder is kept word for word")
             try require(store.chatConfigurationErrorLine == .namedThenText(CompanionErrorCopy.loadLead, "bad {name} value" + CompanionErrorCopy.loadTail),
                         "That error still draws its own name styled")

@@ -2,7 +2,6 @@ import Foundation
 
 extension ChatStore {
     static let companionRefinementInterval: TimeInterval = 86400
-    static let companionGoalStaleInterval: TimeInterval = 30 * 86400
 
     func prepareCompanionOpening(askForName: Bool = true) {
         guard dotProfileLoaded, let id = veraThreadID, let repository,
@@ -19,7 +18,7 @@ extension ChatStore {
                 companionNameAsk = .firstOpen
                 return
             }
-            let configured = !dotProfile.needsIntroduction && (dotProfile.setupCompleted || dotProfile.hasGoal || dotProfile.connectedToolIDs != nil
+            let configured = !dotProfile.needsIntroduction && (dotProfile.setupCompleted || dotProfile.connectedToolIDs != nil
                 || companionHasSavedName)
             var event = NativeCompanionEvent(kind: configured ? .welcome : .introduction, key: "opening")
             if !configured, companionName == nil, asksForCompanionName, companionNamePromptDismissed { event.observation = NativeCompanionEvent.nameDeclined }
@@ -57,8 +56,8 @@ extension ChatStore {
         let introduction = !openings.isEmpty
         let nameDeclined = companionName == nil && openings.contains { $0.companionEvent?.observation == NativeCompanionEvent.nameDeclined }
         let questions = nameDeclined
-            ? "standing goal, then what may run without asking. The user chose not to name you yet, so do not ask for a name; if they offer one, save it"
-            : "name, standing goal, then what may run without asking"
+            ? "what may run without asking. The user chose not to name you yet, so do not ask for a name; if they offer one, save it"
+            : "name, then what may run without asking"
         let onboarding = introduction && !dotProfile.setupCompleted
             ? "During setup ask one question at a time: \(questions). Apply answers only through the profile tool. Respect a skipped question and continue normal conversation whenever asked. Finish setup with the profile tool when the user has answered or skipped these questions."
             : "Do not restart onboarding."
@@ -84,12 +83,9 @@ extension ChatStore {
                 && $0.snapshot?.result != nil
                 && ($0.snapshot?.updatedAt ?? 0) > max(previous?.createdAt.timeIntervalSince1970 ?? 0, now.timeIntervalSince1970 - Self.companionRefinementInterval)
         }.max { ($0.snapshot?.updatedAt ?? 0) < ($1.snapshot?.updatedAt ?? 0) }
-        let key: String
-        if let completed { key = "work:" + completed.id.uuidString }
-        else if dotProfile.hasGoal && now.timeIntervalSince(dotProfile.updatedAt) >= Self.companionGoalStaleInterval {
-            key = "goal:" + String(Int(dotProfile.updatedAt.timeIntervalSince1970))
-        } else { return }
-        let observation = Self.refinementObservation(completed?.snapshot)
+        guard let completed else { return }
+        let key = "work:" + completed.id.uuidString
+        let observation = Self.refinementObservation(completed.snapshot)
         do { try enqueueCompanionEvent(NativeCompanionEvent(kind: .refinement, key: key, observation: observation), conversationIndex: index, now: now) }
         catch { chatConfigurationError = "The conversation couldn't continue: \(error.localizedDescription)" }
     }
