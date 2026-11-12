@@ -66,12 +66,11 @@ final class CompanionPresence: ObservableObject {
         var snapshot = CompanionStateSnapshot()
         let threadID = store.veraThreadID
         let background = store.companionBackgroundWork
-        snapshot.backgroundRunning = background.running
-        snapshot.backgroundNeedsAnswer = background.needsAnswer
+        snapshot.working = background.current?.kind
         let foreground = threadID != nil && store.turnExecutions.values.contains { $0.record.conversationID == threadID }
         let legacyForeground = store.isVeraThread(store.selectedID) && TandemLogoPresence.selectedTurnRunning(store)
         snapshot.foregroundGenerating = foreground || legacyForeground
-        snapshot.decisionPending = store.companionAwaitingApproval
+        snapshot.decisionPending = background.needsAnswer > 0 || store.companionAwaitingApproval
             || (store.isVeraThread(store.selectedID) && TandemLogoPresence.selectedDecisionPending(store))
         snapshot.explicitlyResting = store.dotProfile.isPaused
         snapshot.appInactive = !appActive

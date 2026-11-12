@@ -471,7 +471,6 @@ struct ChatPane: View {
         }
         .overlay(alignment: .topTrailing) {
             if workCollapsed, store.isVeraThread(conversation?.id) {
-                VStack(alignment: .trailing, spacing: 6) {
                 Button { showingWork = true } label: {
                     HStack(spacing: 8) {
                         CompanionAvatar(size: 18)
@@ -486,8 +485,6 @@ struct ChatPane: View {
                 .buttonStyle(.plain)
                 .help("\(store.companion.leading)'s state, activity and results")
                 .accessibilityLabel("Details for \(store.companion.inline)")
-                CompanionBackgroundLines(work: store.companionBackgroundWork) { store.revealCompanionBackgroundWaiting() }
-                }
                 .padding(.top, 44).padding(.trailing, 20)
             }
         }
@@ -791,6 +788,7 @@ struct MessageRow: View {
             if message.role == .assistant {
                 if ConversationPresence.replyFigure(companionThread: companionThread) == .companion {
                     CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
+                        .environment(\.companionLiveState, .ready)
                         .padding(.top, 4)
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -1306,6 +1304,10 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.isVeraThread(store.selectedID) {
+                CompanionWorkingLine(work: store.companionBackgroundWork.current)
+                    .padding(.horizontal, 22).padding(.bottom, 8)
+            }
             composer
             if let project {
                 HStack(spacing: 18) {

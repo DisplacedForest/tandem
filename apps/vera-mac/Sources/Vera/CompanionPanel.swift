@@ -287,12 +287,6 @@ struct CompanionPanelView: View {
         withTransaction(transaction) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
     }
 
-    private var quickBackgroundWork: CompanionBackgroundWork {
-        var work = store.companionBackgroundWork
-        if store.companionApprovalWaiting { work.needsAnswer = 0 }
-        return work
-    }
-
     private var approvalBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.raised")
@@ -320,10 +314,7 @@ struct CompanionPanelView: View {
             if store.companionApprovalWaiting {
                 approvalBanner
             }
-            CompanionBackgroundLines(work: quickBackgroundWork) {
-                openInMain()
-                store.revealCompanionBackgroundWaiting()
-            }
+            CompanionWorkingLine(work: store.companionBackgroundWork.current, size: 12)
             if !store.companionAttachments.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(store.companionAttachments) { attachment in

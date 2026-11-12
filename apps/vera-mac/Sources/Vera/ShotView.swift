@@ -573,6 +573,11 @@ struct ShotView: View {
             .overlay(alignment: .bottom) {
                 if jumpToLatest { JumpToLatestButton(action: {}).padding(.bottom, 8) }
             }
+            if section == .vera {
+                CompanionWorkingLine(work: store.companionBackgroundWork.current)
+                    .padding(.horizontal, 38).padding(.top, 6)
+                    .frame(maxWidth: ConversationMetrics.columnWidth)
+            }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {
                     FolderGrantChips(grants: shotGrants, onRemove: { _ in })

@@ -75,10 +75,10 @@ enum Shot {
         } else if view == "companion-picker" {
             size = CGSize(width: 640, height: 560)
         } else if view == "companion-states" {
-            size = CGSize(width: 900, height: 520)
+            size = CGSize(width: 900, height: 760)
         } else if view == "companion-activity-detail" {
             size = CGSize(width: 340, height: 700)
-        } else if view == "companion-thread" || view == "companion-thread-background" {
+        } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) {
             size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             size = CompanionPanelController.size
@@ -467,12 +467,12 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-thread-background", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if ["companion-thread", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
             let populated = view != "companion-thread-empty" && view != "companion-thread-error"
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
-            if view == "companion-thread-background" { CompanionShotFixture.seedBackground(store) }
+            if CompanionShotFixture.workingViews.contains(view) { CompanionShotFixture.seedWorking(store, view: view) }
             if view == "companion-thread-error" { store.chatConfigurationError = "Messages couldn’t load. Try opening the conversation again." }
             if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
                 store.conversations[index].messages = []
@@ -490,6 +490,7 @@ enum Shot {
             content = AnyView(
                 ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
                          companionSelection: nil, height: size.height)
+                    .environment(\.companionLiveState, CompanionStateMapper.state(CompanionPresence.snapshot(store: store)))
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .environmentObject(config)
@@ -1534,7 +1535,7 @@ private struct ShotCompanionStates: View {
 
     var body: some View {
         Grid(horizontalSpacing: 48, verticalSpacing: 36) {
-            ForEach(0..<2, id: \.self) { row in
+            ForEach(0..<3, id: \.self) { row in
                 GridRow {
                     ForEach(0..<3, id: \.self) { column in
                         cell(CompanionState.allCases[row * 3 + column])

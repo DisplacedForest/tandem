@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 enum CompanionState: String, CaseIterable, Sendable {
-    case ready, thinking, listening, speaking, resting, needsYou
+    case ready, thinking, listening, speaking, resting, needsYou, researching, writing, changing
 
     var displayName: String {
         switch self {
@@ -12,8 +12,13 @@ enum CompanionState: String, CaseIterable, Sendable {
         case .speaking: return "Speaking"
         case .resting: return "Resting"
         case .needsYou: return "Needs you"
+        case .researching: return "Researching"
+        case .writing: return "Writing"
+        case .changing: return "Making a change"
         }
     }
+
+    var working: Bool { self == .researching || self == .writing || self == .changing }
 
     func accessibilityLabel(name: String?) -> String {
         let subject = CompanionSentence.savedName(name) ?? "Your companion"
@@ -198,6 +203,58 @@ struct CompanionMotion: Sendable {
                 ])),
                 face: CompanionChannel(),
                 eyes: CompanionChannel(p(sy: 0.18)))
+        case .researching:
+            let left = p(ty: -1, r: -5, sx: 0.98, sy: 1.03)
+            return CompanionMotion(
+                body: CompanionChannel(left, CompanionTrack(2.8, .easeInOut, [
+                    ([0, 100], left),
+                    ([22], p(ty: -3, r: -7, sx: 0.96, sy: 1.06)),
+                    ([50, 62], p(ty: -1, r: 5, sx: 0.98, sy: 1.03)),
+                    ([78], p(ty: -3, r: 7, sx: 0.96, sy: 1.06)),
+                ])),
+                face: CompanionChannel(p(tx: -7, ty: -2), CompanionTrack(2.8, .easeInOut, [
+                    ([0, 30, 100], p(tx: -7, ty: -2)),
+                    ([50, 80], p(tx: 7, ty: -2)),
+                ])),
+                eyes: CompanionChannel(p(sx: 1.08, sy: 1.22), CompanionTrack(2.8, .ease, [
+                    ([0, 36, 44, 100], p(sx: 1.08, sy: 1.22)),
+                    ([40], p(sx: 1.08, sy: 0.12)),
+                ])))
+        case .writing:
+            let down = p(ty: 3, r: 4, sx: 1.03, sy: 0.95)
+            return CompanionMotion(
+                body: CompanionChannel(down, CompanionTrack(1.2, .easeInOut, [
+                    ([0, 100], down),
+                    ([25], p(tx: -2, ty: 4, r: 2, sx: 1.05, sy: 0.93)),
+                    ([50], p(ty: 2, r: 5, sx: 1.02, sy: 0.97)),
+                    ([75], p(tx: 2, ty: 4, r: 6, sx: 1.05, sy: 0.93)),
+                ])),
+                face: CompanionChannel(p(tx: 2, ty: 6), CompanionTrack(2.4, .easeInOut, [
+                    ([0, 100], p(tx: -3, ty: 6)),
+                    ([50], p(tx: 5, ty: 6)),
+                ])),
+                eyes: CompanionChannel(p(sy: 0.55), CompanionTrack(4.6, .ease, [
+                    ([0, 46, 54, 100], p(sy: 0.55)),
+                    ([50], p(sy: 0.1)),
+                ])))
+        case .changing:
+            let set = p(tx: 2, ty: -1, r: 6)
+            return CompanionMotion(
+                body: CompanionChannel(set, CompanionTrack(1.8, .easeInOut, [
+                    ([0, 100], set),
+                    ([18], p(tx: -3, ty: 2, r: -4, sx: 1.08, sy: 0.9)),
+                    ([42], p(tx: 6, ty: -5, r: 10, sx: 0.94, sy: 1.1)),
+                    ([64], p(tx: 3, ty: 1, r: 5, sx: 1.05, sy: 0.95)),
+                ])),
+                face: CompanionChannel(p(tx: 5, ty: -1), CompanionTrack(1.8, .easeInOut, [
+                    ([0, 100], p(tx: 5, ty: -1)),
+                    ([18], p(tx: 1, ty: 1)),
+                    ([42], p(tx: 7, ty: -3)),
+                ])),
+                eyes: CompanionChannel(p(sx: 1.05, sy: 0.9), CompanionTrack(3.6, .ease, [
+                    ([0, 44, 52, 100], p(sx: 1.05, sy: 0.9)),
+                    ([48], p(sx: 1.05, sy: 0.1)),
+                ])))
         case .needsYou:
             let attentive = p(ty: -2, r: -10)
             return CompanionMotion(

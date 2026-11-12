@@ -123,7 +123,7 @@ extension SelfTest {
             return [motion.body.pose(at: nil), motion.face.pose(at: nil), motion.eyes.pose(at: nil)]
         }
         try require(Set(stills.map { "\($0)" }).count == CompanionState.allCases.count, "Every state has its own still pose")
-        for state in [CompanionState.thinking, .speaking] {
+        for state in [CompanionState.thinking, .speaking, .researching, .writing, .changing] {
             let motion = CompanionMotion.of(state)
             try require(motion.body.pose(at: nil) != .identity || motion.eyes.pose(at: nil) != .identity,
                         "\(state.displayName) is told apart from Ready when still")
