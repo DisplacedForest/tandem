@@ -21,16 +21,19 @@ struct NativeTaskCardView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
-            if !card.milestone.isEmpty {
+            if let stop = card.stoppedStep {
+                StoppedStepView(stop: stop, why: card.why)
+            }
+            if !card.milestone.isEmpty, card.stoppedStep == nil {
                 CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if card.needsYou, let why = card.why {
+            if card.needsYou, card.stoppedStep == nil, let why = card.why {
                 RefusalReasonLine(why: why)
             }
-            if let answer = card.answer, card.status == .completed {
+            if let answer = card.answer, card.status == .completed, card.stoppedStep == nil {
                 let resolved = CitationResolver.resolve(text: answer, sources: NativeResearchReportSafety.sources(card.sources),
                                                         allowRecovery: false)
                 CitedText(resolved: resolved, style: .chat)
@@ -68,7 +71,7 @@ struct NativeTaskCardView: View {
                [.stopped, .needsInput, .failed].contains(card.status) || (card.status == .completed && !card.isCompanion) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
-            if let onSaveAnswer, card.answer != nil, card.status == .completed {
+            if let onSaveAnswer, card.answer != nil, card.status == .completed, card.stoppedStep == nil {
                 Button("Save as document") { onSaveAnswer() }
                     .buttonStyle(.bordered)
                     .font(.system(size: 12))

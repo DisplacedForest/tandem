@@ -188,12 +188,17 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var neverTitle: String? = nil
     var answer: String? = nil
     var why: NativeRuleWhy? = nil
+    var stop: NativeTaskStop? = nil
+
+    static let workStopped = "Work stopped"
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }
-    var needsYou: Bool { isCompanion && status == .completed && why != nil }
+    var stoppedStep: NativeTaskStop? { isCompanion && status == .completed ? stop.flatMap { $0.drawable ? $0 : nil } : nil }
+    var stoppedHere: Bool { stoppedStep.map { $0.reason != NativeTaskStop.left } ?? false }
+    var needsYou: Bool { isCompanion && status == .completed && !stoppedHere && (why != nil || stoppedStep != nil) }
 
-    func listState(_ otherwise: String) -> String { needsYou ? statusTitle : otherwise }
+    func listState(_ otherwise: String) -> String { needsYou || stoppedHere ? statusTitle : otherwise }
     var statusTitle: String { isCompanion ? companionTitle : status.title(document: isDocument) }
     var offeredChoices: [String] {
         guard let choices else { return canRetry ? ["retry"] : [] }
@@ -217,12 +222,12 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .preparing: return "Starting the work"
         case .working: return "Working on it"
         case .stopping: return "Stopping the work"
-        case .stopped: return "Work stopped"
-        case .completed: return why == nil ? "Work done" : RefusalCopy.needsYou
+        case .stopped: return Self.workStopped
+        case .completed: return stoppedHere ? Self.workStopped : needsYou ? RefusalCopy.needsYou : "Work done"
         case .needsInput: return "Needs your answer"
         case .queued, .failed: return status.title(document: false)
         }
     }
-    var statusSymbol: String { needsYou ? "hand.raised" : status.symbol(document: isDocument) }
+    var statusSymbol: String { needsYou ? "hand.raised" : stoppedHere ? Status.stopped.symbol : status.symbol(document: isDocument) }
     var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }
