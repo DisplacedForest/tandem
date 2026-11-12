@@ -43,6 +43,37 @@ struct SidebarRowStyle: ButtonStyle {
     }
 }
 
+enum CompanionTileMetrics {
+    static let figure: CGFloat = 72
+    static let gap: CGFloat = 6
+    static let inset: CGFloat = 12
+    static let minWidth: CGFloat = 104
+    static let radius: CGFloat = 16
+}
+
+struct CompanionTileStyle: ButtonStyle {
+    var selected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        TileBody(configuration: configuration, selected: selected)
+    }
+
+    private struct TileBody: View {
+        let configuration: Configuration
+        let selected: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            let shape = RoundedRectangle(cornerRadius: CompanionTileMetrics.radius, style: .continuous)
+            configuration.label
+                .background(shape.fill(selected || configuration.isPressed ? Theme.surfaceSelected : hovering ? Theme.surfaceHover : Theme.cardFill))
+                .overlay(shape.stroke(selected ? Theme.accent.opacity(0.55) : Theme.hairline, lineWidth: selected ? 1.5 : 1))
+                .contentShape(shape)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
 struct SidebarRowLabel<Icon: View>: View {
     let icon: Icon
     let title: String
@@ -237,8 +268,8 @@ struct VeraSidebar: View {
                 .help("Search chats").accessibilityLabel("Search chats")
             }
             .padding(.horizontal, 8).padding(.bottom, 10)
-            actionRow(icon: "square.and.pencil", title: "New chat") { store.newConversation() }
             companionRow
+            actionRow(icon: "square.and.pencil", title: "New chat") { store.newConversation() }
             if showsSearch { searchField.padding(.top, 6) }
             if renderSafe {
                 navigationContents
@@ -333,10 +364,19 @@ struct VeraSidebar: View {
     private var companionRow: some View {
         let selected = store.section == .vera
         return Button { onSelect(.vera) } label: {
-            SidebarRowLabel(icon: CompanionAvatar(size: 20), title: store.companion.leading, selected: selected,
-                            tintsIcon: false, rowHeight: 34, titleTemplate: CompanionSentence.placeholder)
+            VStack(spacing: CompanionTileMetrics.gap) {
+                CompanionAvatar(size: CompanionTileMetrics.figure)
+                CompanionNamedText(template: CompanionSentence.placeholder)
+                    .font(.system(size: SidebarMetrics.labelSize, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+            }
+            .padding(.horizontal, CompanionTileMetrics.inset).padding(.top, CompanionTileMetrics.inset)
+            .padding(.bottom, CompanionTileMetrics.inset - 2)
+            .frame(minWidth: CompanionTileMetrics.minWidth)
         }
-        .buttonStyle(SidebarRowStyle(selected: selected))
+        .buttonStyle(CompanionTileStyle(selected: selected))
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2).padding(.bottom, 10)
         .help(store.companion.leading).accessibilityLabel(store.companion.leading)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .contextMenu {
