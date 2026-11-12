@@ -389,8 +389,10 @@ private struct IntegrationsDestination: View {
         let tryable = tool.state == .read
         let canTry = !renderSafe && NativeMCPReadTestController.scope(authority: manager.authority, record: tool) != nil
         return HStack(alignment: .top, spacing: 10) {
-            IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool.id, enabled: $0) }),
-                               label: tool.remoteName, disabled: !tool.callable)
+            if !described {
+                IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool.id, enabled: $0) }),
+                                   label: tool.remoteName, disabled: !tool.callable)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(tool.remoteName).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(tool.callable ? Theme.textPrimary : Theme.textSecondary)
@@ -400,7 +402,7 @@ private struct IntegrationsDestination: View {
                     Text(tool.description).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
                 if let warning {
-                    Text(warning).font(.system(size: 11)).foregroundStyle(Theme.accent)
+                    Text(warning).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
