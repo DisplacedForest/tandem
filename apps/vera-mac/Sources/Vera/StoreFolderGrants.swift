@@ -254,6 +254,10 @@ extension ChatStore {
             if decision == .handOff { return false }
             return decision.requiresConfirmation || ownConfirmation(arguments)
         }
+        wrapped.chatDecision = { arguments in
+            let (action, verdict) = decide(arguments)
+            return NativeChatDecision(action: action, decision: verdict.decision)
+        }
         wrapped.instructionFor = { arguments in
             guard original.proposesFor?(arguments) != true, !ownConfirmation(arguments) else { return nil }
             let action = original.actionClass(for: arguments) ?? .otherChanges

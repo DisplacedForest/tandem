@@ -929,6 +929,7 @@ final class NativeRuleSource: @unchecked Sendable {
 enum NativeRuleAdmission {
     @TaskLocal static var admitted = false
     @TaskLocal static var footprint: [String]?
+    @TaskLocal static var expectsHandOff = false
 }
 
 struct NativeRuleVerdict: Sendable {
@@ -1133,6 +1134,7 @@ struct NativeRuleResolver: Sendable {
 
     static func gate(live: NativeRuleDecision, planned: NativeRuleDecision, action: NativeActionClass, approved: Bool, why: NativeRuleWhy? = nil) throws {
         if live == .handOff { throw NativeRuleRefusal(why: why ?? NativeRuleWhy(kind: .unsaved, action: action, handsOff: true)) }
+        if NativeRuleAdmission.expectsHandOff { throw NativeToolError.failed(changedMessage) }
         if live == .ask, !approved { throw NativeToolError.failed(changedMessage) }
     }
 }

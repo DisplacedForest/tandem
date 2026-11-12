@@ -138,6 +138,7 @@ struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendabl
     var subject: NativeCardSubject? = nil
     var choices: [NativeCardChoice] = []
     var covers: String? = nil
+    var digest: String? = nil
 
     init(activity: NativeToolActivity) {
         id = activity.id
@@ -233,6 +234,7 @@ struct NativeToolDefinition: Sendable {
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
+    var chatDecision: (@Sendable ([String: NativeJSONValue]) -> NativeChatDecision)? = nil
 
     var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
 
@@ -616,6 +618,8 @@ struct NativeToolLoop: Sendable {
     static let maximumRounds = 4
     static let maximumCalls = 8
     static let defaultExecutionTimeout = Duration.seconds(20)
+    static let timedOutMessage = "The tool call timed out"
+    static let declinedMessage = "The user did not approve this call, so it was not run. Do not retry it unless the user asks again."
 
     enum LoopError: Error, LocalizedError, Equatable {
         case roundLimit
@@ -640,6 +644,7 @@ struct NativeToolLoop: Sendable {
     let instructionCheck: NativeInstructionAnswerer?
     let instructionTimeout: Duration
     let said: String
+    let effects: NativeChatEffectHook?
 
     init(
         transport: any NativeChatTransport,
@@ -652,7 +657,8 @@ struct NativeToolLoop: Sendable {
         confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false },
         instructionCheck: NativeInstructionAnswerer? = nil,
         instructionTimeout: Duration = NativeInstructionCheck.timeout,
-        said: String = ""
+        said: String = "",
+        effects: NativeChatEffectHook? = nil
     ) {
         self.transport = transport
         self.registry = registry
@@ -665,6 +671,7 @@ struct NativeToolLoop: Sendable {
         self.instructionCheck = instructionCheck
         self.instructionTimeout = instructionTimeout
         self.said = said
+        self.effects = effects
     }
 
     func stream(
@@ -790,6 +797,8 @@ struct NativeToolLoop: Sendable {
                                         stopped = true
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
+                                    let recording = effects.flatMap { NativeChatEffects.records(definition, arguments) ? $0 : nil }
+                                    let revisions = recording?.revisions()
                                     var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
                                     var cleared: String?
                                     if !needsConfirmation, let pending = definition.instructionFor?(arguments) {
@@ -807,14 +816,54 @@ struct NativeToolLoop: Sendable {
                                         activities[index].confirmationRequired = needsConfirmation
                                         continuation.yield(NativeToolTurnSnapshot(content: content, activities: activities))
                                     }
-                                    if needsConfirmation {
-                                        try await checkAuthorization()
-                                        guard let activity = activities.first(where: { $0.id == call.id }),
-                                              try await Self.awaitConfirmation({ await confirm(activity) }) else {
-                                            throw NativeToolError.failed("The user did not approve this call, so it was not run. Do not retry it unless the user asks again.")
+                                    var ticket: NativeChatEffectTicket?
+                                    var handsOff = false
+                                    var answer: NativeCardAnswer?
+                                    if let recording, let revisions {
+                                        let planned = definition.chatDecision?(arguments)
+                                        if !needsConfirmation, planned?.decision == .handOff {
+                                            handsOff = true
+                                        } else {
+                                            try await checkAuthorization()
+                                            guard let activity = activities.first(where: { $0.id == call.id }),
+                                                  let proposed = await recording.propose(Self.effectCall(definition, arguments, activity, planned, revisions)) else {
+                                                throw CancellationError()
+                                            }
+                                            ticket = proposed
                                         }
                                     }
-                                    try await checkAuthorization()
+                                    if needsConfirmation {
+                                        try await checkAuthorization()
+                                        if let recording, let current = ticket {
+                                            guard let activity = activities.first(where: { $0.id == call.id }) else {
+                                                throw NativeToolError.failed(Self.declinedMessage)
+                                            }
+                                            let picked = try await Self.awaitAnswer({ await recording.confirm(activity, current.digest) })
+                                            guard picked.kind.approves else {
+                                                if picked.byPerson { await recording.decline(current, picked) }
+                                                throw NativeToolError.failed(Self.declinedMessage)
+                                            }
+                                            answer = picked
+                                        } else {
+                                            guard let activity = activities.first(where: { $0.id == call.id }),
+                                                  try await Self.awaitConfirmation({ await confirm(activity) }) else {
+                                                throw NativeToolError.failed(Self.declinedMessage)
+                                            }
+                                        }
+                                    }
+                                    if let recording, let current = ticket, let activity = activities.first(where: { $0.id == call.id }) {
+                                        let admitted = try await Self.admit(current, recording: recording, definition: definition, arguments: arguments,
+                                                                            activity: activity, answer: answer, instructed: cleared != nil)
+                                        ticket = admitted
+                                        if admitted == nil { handsOff = true }
+                                        if let answer, admitted != nil { await recording.answered(activity, answer) }
+                                    } else if recording != nil, ticket != nil {
+                                        throw CancellationError()
+                                    }
+                                    do { try await checkAuthorization() } catch {
+                                        if let recording, let ticket { await recording.settle(ticket, .absent("stopped")) }
+                                        throw error
+                                    }
                                     if isSearch { webSearchCount += 1 }
                                     guard let activity = activities.first(where: { $0.id == call.id }) else {
                                         throw NativeToolError.failed("The tool call could not be matched to its request")
@@ -833,16 +882,27 @@ struct NativeToolLoop: Sendable {
                                     defer { gate.close() }
                                     let approved = needsConfirmation
                                     let clearing = cleared
-                                    value = try await NativeToolProgressReporter.$report.withValue(report) {
-                                        try await NativeToolCallContext.$confirmed.withValue(approved) {
-                                            try await NativeToolCallContext.$reason.withValue(reasonSink) {
-                                                try await NativeInstructionCheck.$cleared.withValue(clearing) {
-                                                    try await Self.execute(
-                                                        definition, arguments: arguments, activity: activity,
-                                                        timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                    let expectsHandOff = handsOff
+                                    do {
+                                        value = try await NativeToolProgressReporter.$report.withValue(report) {
+                                            try await NativeToolCallContext.$confirmed.withValue(approved) {
+                                                try await NativeToolCallContext.$reason.withValue(reasonSink) {
+                                                    try await NativeInstructionCheck.$cleared.withValue(clearing) {
+                                                        try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
+                                                            try await Self.execute(
+                                                                definition, arguments: arguments, activity: activity,
+                                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+                                    } catch {
+                                        if let recording, let ticket { await recording.settle(ticket, NativeChatEffects.settlement(for: error)) }
+                                        throw error
+                                    }
+                                    if let recording, let ticket {
+                                        await recording.settle(ticket, NativeCompanionWorker.interrupted(value) ? .uncertain("interrupted_run") : .completed(value))
                                     }
                                     if isSearch || (definition.id == NativeWebTools.fetchToolID && definition.name == NativeWebTools.fetchToolName),
                                        !Self.resultFailed(value, toolName: call.name) {
@@ -944,6 +1004,58 @@ struct NativeToolLoop: Sendable {
         try Task.checkCancellation()
     }
 
+    private static func effectCall(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ activity: NativeToolActivity,
+                                   _ planned: NativeChatDecision?, _ revisions: NativeChatEffectRevisions) -> NativeChatEffectCall {
+        NativeChatEffectCall(definition: definition, arguments: arguments, activity: activity,
+                             action: planned?.action ?? definition.actionClass(for: arguments) ?? .otherChanges, revisions: revisions)
+    }
+
+    private static func admit(_ ticket: NativeChatEffectTicket, recording: NativeChatEffectHook, definition: NativeToolDefinition,
+                              arguments: [String: NativeJSONValue], activity: NativeToolActivity, answer: NativeCardAnswer?,
+                              instructed: Bool) async throws -> NativeChatEffectTicket? {
+        var current = ticket
+        var attempts = 0
+        while true {
+            try Task.checkCancellation()
+            let decision: NativeRuleDecision = answer != nil ? .ask : (instructed ? .act(.instruction) : .act(.rule))
+            switch await recording.admit(current, decision, answer) {
+            case .admitted: return current
+            case .refused: throw CancellationError()
+            case .stale: break
+            }
+            attempts += 1
+            guard attempts < NativeChatEffects.admissionAttempts, answer == nil || recording.staleAnswers == .decideAgain else {
+                throw NativeToolError.failed(NativeRuleResolver.changedMessage)
+            }
+            let fresh = definition.chatDecision?(arguments)
+            if fresh?.decision == .handOff { return nil }
+            if answer == nil, fresh?.decision.requiresConfirmation == true { throw NativeToolError.failed(NativeRuleResolver.changedMessage) }
+            guard let again = await recording.propose(effectCall(definition, arguments, activity, fresh, recording.revisions())) else {
+                throw CancellationError()
+            }
+            current = again
+        }
+    }
+
+    private static func awaitAnswer(_ operation: @escaping @Sendable () async -> NativeCardAnswer) async throws -> NativeCardAnswer {
+        try Task.checkCancellation()
+        let answers = AsyncThrowingStream<NativeCardAnswer, Error> { continuation in
+            let work = Task {
+                guard !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
+                let answer = await operation()
+                guard !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
+                continuation.yield(answer)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in work.cancel() }
+        }
+        for try await answer in answers {
+            try Task.checkCancellation()
+            return answer
+        }
+        throw CancellationError()
+    }
+
     private static func awaitConfirmation(_ operation: @escaping @Sendable () async -> Bool) async throws -> Bool {
         try Task.checkCancellation()
         let answers = AsyncThrowingStream<Bool, Error> { continuation in
@@ -970,7 +1082,7 @@ struct NativeToolLoop: Sendable {
         do {
             return try await NativeInferenceDeadline.run(seconds: seconds, body: operation)
         } catch NativeInferenceAdmission.AdmissionError.deadline {
-            throw NativeToolError.failed("The tool call timed out")
+            throw NativeToolError.failed(timedOutMessage)
         }
     }
 

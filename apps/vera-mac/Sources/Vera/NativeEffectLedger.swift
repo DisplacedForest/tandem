@@ -54,6 +54,12 @@ struct NativeEffectProposal: Codable, Equatable, Sendable {
     let conversationID: String
     let expiresAtMilliseconds: Int64
     let idempotencyKey: String
+    var turnID: String? = nil
+    var turnAttempt: String? = nil
+
+    static func turnTaskID(_ turnID: String) -> String {
+        "turn:" + turnID
+    }
 
     static func canonicalArguments(_ value: NativeJSONValue) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes]) else { return "null" }
@@ -71,8 +77,9 @@ struct NativeEffectProposal: Codable, Equatable, Sendable {
     var expiresAt: Date { Date(timeIntervalSince1970: Double(expiresAtMilliseconds) / 1000) }
 
     var digest: String {
-        let fields = [taskID, String(generation), toolID, function, argumentsJSON, target ?? "", action.rawValue,
+        var fields = [taskID, String(generation), toolID, function, argumentsJSON, target ?? "", action.rawValue,
                       String(rulesRevision), String(grantsRevision), conversationID, String(expiresAtMilliseconds), idempotencyKey]
+        if let turnID { fields += ["turn", turnID, turnAttempt ?? ""] }
         var data = Data()
         for field in fields {
             let value = Data(field.utf8)
@@ -143,23 +150,34 @@ struct NativeEffectLedgerStore: Sendable {
         try db.execute(sql: "CREATE INDEX native_effect_ledger_task_state ON native_effect_ledger(task_id, state)")
     }
 
+    static let turnsMigration = "nativeEffectLedgerTurnsV39"
+
+    static func migrateTurns(_ db: Database) throws {
+        try db.execute(sql: "ALTER TABLE native_effect_ledger ADD COLUMN turn_id TEXT")
+        try db.execute(sql: "ALTER TABLE native_effect_ledger ADD COLUMN turn_attempt TEXT")
+        try db.execute(sql: "CREATE INDEX native_effect_ledger_turn_state ON native_effect_ledger(turn_id, state)")
+    }
+
     func propose(_ proposal: NativeEffectProposal) throws -> NativeEffectRecord {
         let digest = proposal.digest
         let stamp = now().timeIntervalSince1970
         return try database.write { db in
-            let call = NativeRunCall(toolID: proposal.toolID, function: proposal.function, effect: .write)
-            guard NativeReadOnlyRun.refusal(run: try Self.origin(db, taskID: proposal.taskID), call: call) == nil else {
-                throw NativeEffectLedgerError.readOnlyRun
+            if proposal.turnID == nil {
+                let call = NativeRunCall(toolID: proposal.toolID, function: proposal.function, effect: .write)
+                guard NativeReadOnlyRun.refusal(run: try Self.origin(db, taskID: proposal.taskID), call: call) == nil else {
+                    throw NativeEffectLedgerError.readOnlyRun
+                }
             }
             if let existing = try Self.record(db, digest: digest) { return existing }
             try db.execute(sql: """
                 INSERT INTO native_effect_ledger(id, task_id, generation, tool_id, function, arguments_json, target, action,
-                    rules_revision, grants_revision, conversation_id, expires_at, digest, state, idempotency_key, created_at, updated_at)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)
+                    rules_revision, grants_revision, conversation_id, expires_at, digest, state, idempotency_key, created_at, updated_at,
+                    turn_id, turn_attempt)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?)
                 """, arguments: [proposal.id, proposal.taskID, proposal.generation, proposal.toolID, proposal.function,
                                  proposal.argumentsJSON, proposal.target, proposal.action.rawValue, proposal.rulesRevision,
                                  proposal.grantsRevision, proposal.conversationID, Double(proposal.expiresAtMilliseconds) / 1000,
-                                 digest, proposal.idempotencyKey, stamp, stamp])
+                                 digest, proposal.idempotencyKey, stamp, stamp, proposal.turnID, proposal.turnAttempt])
             guard let inserted = try Self.record(db, digest: digest) else { throw NativeEffectLedgerError.notFound }
             return inserted
         }
@@ -192,19 +210,23 @@ struct NativeEffectLedgerStore: Sendable {
             case .expired: return .refused(.expired)
             case .admitted, .completed, .uncertain: return .refused(.alreadySettled)
             }
-            if current > record.proposal.expiresAt {
-                try Self.transition(db, digest: digest, to: .expired, at: current)
-                return .refused(.expired)
-            }
-            guard let task = try Row.fetchOne(db, sql: "SELECT state, generation, cancel_requested FROM native_engine_tasks WHERE id = ?",
-                                              arguments: [record.proposal.taskID]),
-                  (task["state"] as String) == NativeTaskState.running.rawValue, (task["cancel_requested"] as Int) == 0 else {
-                return .refused(.taskInactive)
-            }
-            if (task["generation"] as Int) != generation { return .refused(.staleGeneration) }
-            switch decision {
-            case .ask: if record.proposal.generation > generation { return .refused(.staleGeneration) }
-            default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
+            if let turnID = record.proposal.turnID {
+                guard try Self.turnRunning(db, turnID: turnID, attempt: record.proposal.turnAttempt) else { return .refused(.taskInactive) }
+            } else {
+                if current > record.proposal.expiresAt {
+                    try Self.transition(db, digest: digest, to: .expired, at: current)
+                    return .refused(.expired)
+                }
+                guard let task = try Row.fetchOne(db, sql: "SELECT state, generation, cancel_requested FROM native_engine_tasks WHERE id = ?",
+                                                  arguments: [record.proposal.taskID]),
+                      (task["state"] as String) == NativeTaskState.running.rawValue, (task["cancel_requested"] as Int) == 0 else {
+                    return .refused(.taskInactive)
+                }
+                if (task["generation"] as Int) != generation { return .refused(.staleGeneration) }
+                switch decision {
+                case .ask: if record.proposal.generation > generation { return .refused(.staleGeneration) }
+                default: if record.proposal.generation != generation { return .refused(.staleGeneration) }
+                }
             }
             if record.proposal.rulesRevision != rulesRevision || record.proposal.rulesRevision != revisions.rules { return .refused(.staleRules) }
             let failedRules = record.proposal.rulesRevision < 0
@@ -316,7 +338,7 @@ struct NativeEffectLedgerStore: Sendable {
     func expireStale() throws -> Int {
         let current = now().timeIntervalSince1970
         return try database.write { db in
-            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'expired', updated_at = ? WHERE state = 'proposed' AND expires_at < ?",
+            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'expired', updated_at = ? WHERE state = 'proposed' AND expires_at < ? AND turn_id IS NULL",
                            arguments: [current, current])
             return db.changesCount
         }
@@ -326,9 +348,9 @@ struct NativeEffectLedgerStore: Sendable {
         let stamp = now().timeIntervalSince1970
         return try database.write { db in
             guard try db.tableExists("native_effect_ledger") else { return [] }
-            let digests = try String.fetchAll(db, sql: "SELECT digest FROM native_effect_ledger WHERE state = 'admitted' ORDER BY created_at, id")
+            let digests = try String.fetchAll(db, sql: "SELECT digest FROM native_effect_ledger WHERE state = 'admitted' AND turn_id IS NULL ORDER BY created_at, id")
             guard !digests.isEmpty else { return [] }
-            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain', receipt_json = ?, updated_at = ? WHERE state = 'admitted'",
+            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain', receipt_json = ?, updated_at = ? WHERE state = 'admitted' AND turn_id IS NULL",
                            arguments: [Self.reasonJSON("interrupted"), stamp])
             return try digests.compactMap { try Self.record(db, digest: $0) }
         }
@@ -343,6 +365,44 @@ struct NativeEffectLedgerStore: Sendable {
 
     func record(digest: String) throws -> NativeEffectRecord? {
         try database.read { db in try Self.record(db, digest: digest) }
+    }
+
+    func records(turnID: String) throws -> [NativeEffectRecord] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM native_effect_ledger WHERE turn_id = ? ORDER BY created_at, id", arguments: [turnID])
+                .map(Self.record(row:))
+        }
+    }
+
+    func hasAdmitted(turnID: String) throws -> Bool {
+        try database.read { db in try Self.hasAdmitted(db, turnID: turnID) }
+    }
+
+    func interruptTurn(_ turnID: String) throws -> Int {
+        let stamp = now().timeIntervalSince1970
+        return try database.write { db in try Self.interruptTurn(db, turnID: turnID, at: stamp) }
+    }
+
+    static func hasAdmitted(_ db: Database, turnID: String) throws -> Bool {
+        guard try db.tableExists("native_effect_ledger") else { return false }
+        return try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM native_effect_ledger WHERE turn_id = ? AND state = 'admitted')",
+                                 arguments: [turnID]) ?? false
+    }
+
+    static func interruptTurn(_ db: Database, turnID: String, at stamp: TimeInterval) throws -> Int {
+        guard try db.tableExists("native_effect_ledger") else { return 0 }
+        try db.execute(sql: "UPDATE native_effect_ledger SET state = 'uncertain', receipt_json = ?, updated_at = ? WHERE turn_id = ? AND state = 'admitted'",
+                       arguments: [reasonJSON("interrupted"), stamp, turnID])
+        return db.changesCount
+    }
+
+    private static func turnRunning(_ db: Database, turnID: String, attempt: String?) throws -> Bool {
+        guard let attempt, let expected = UUID(uuidString: attempt),
+              let row = try Row.fetchOne(db, sql: "SELECT state, attempt FROM native_conversation_turns WHERE id = ?", arguments: [turnID]) else {
+            return false
+        }
+        let saved: String? = row["attempt"]
+        return (row["state"] as String) == NativeConversationTurn.State.running.rawValue && saved.flatMap(UUID.init(uuidString:)) == expected
     }
 
     private static func reasonJSON(_ reason: String) -> String {
@@ -371,7 +431,8 @@ struct NativeEffectLedgerStore: Sendable {
             id: row["id"], taskID: row["task_id"], generation: row["generation"], toolID: row["tool_id"], function: row["function"],
             argumentsJSON: row["arguments_json"], target: row["target"], action: action, rulesRevision: row["rules_revision"],
             grantsRevision: row["grants_revision"], conversationID: row["conversation_id"],
-            expiresAtMilliseconds: Int64((expires * 1000).rounded()), idempotencyKey: row["idempotency_key"])
+            expiresAtMilliseconds: Int64((expires * 1000).rounded()), idempotencyKey: row["idempotency_key"],
+            turnID: row["turn_id"], turnAttempt: row["turn_attempt"])
         return NativeEffectRecord(
             proposal: proposal, digest: row["digest"], state: state, decisionID: row["decision_id"],
             decisionReply: json(row["decision_reply_json"]), receipt: json(row["receipt_json"]), modelClaim: json(row["model_claim_json"]),

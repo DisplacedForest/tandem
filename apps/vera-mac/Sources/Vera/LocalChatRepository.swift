@@ -92,7 +92,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try recoverInterruptedMessages()
     }
 
-    private func migrate() throws {
+    static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("nativeChatV1") { db in
             try db.execute(sql: """
@@ -282,7 +282,12 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration("nativeRuleActionsV36") { db in try NativeRuleRecordStore.migrateActions(db) }
         migrator.registerMigration("nativeRuleCardsV37") { db in try NativeRuleRecordStore.migrateCards(db); try NativeRuleRecordStore.migratePrefixes(db) }
         migrator.registerMigration("nativeRuleOffersV38") { db in try RuleOfferStore.migrate(db) }
-        try migrator.migrate(database)
+        migrator.registerMigration(NativeEffectLedgerStore.turnsMigration) { db in try NativeEffectLedgerStore.migrateTurns(db) }
+        return migrator
+    }
+
+    private func migrate() throws {
+        try Self.migrator().migrate(database)
     }
 
     private func recoverInterruptedMessages() throws {

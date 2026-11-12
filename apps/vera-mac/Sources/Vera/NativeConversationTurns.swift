@@ -180,6 +180,7 @@ extension LocalChatRepository: NativeConversationTurnRepository {
                 if alive && (turn.ownerBirth == nil || currentBirth == nil || turn.ownerBirth == currentBirth) { continue }
             }
             turn.state = .interrupted
+            if try NativeEffectLedgerStore.interruptTurn(db, turnID: turn.id.uuidString, at: Date().timeIntervalSince1970) > 0 { turn.mayHaveEffect = true }
             let failure = turn.mayHaveEffect
                 ? "Tandem closed before this answer finished. An action already sent may have completed; check it before trying again."
                 : "Tandem closed before this answer finished. You can retry it."

@@ -143,6 +143,7 @@ enum NativeCommandTools {
     }
 
     static let verbs = ["run", "execute"]
+    static let declinedAgainMessage = "The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again."
 
     static func approvedThisTurn(_ reason: NativeRuleReason) -> Bool {
         switch reason {
@@ -191,7 +192,7 @@ enum NativeCommandTools {
                 try NativeCommandRunner.validate(command)
                 let activityID = NativeToolCallContext.activityID ?? UUID().uuidString.lowercased()
                 if let request = NativeToolCallContext.request, declined(NativeToolRequestKey.canonical(name: runName, request: request)) {
-                    throw NativeToolError.failed("The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again.")
+                    throw NativeToolError.failed(declinedAgainMessage)
                 }
                 let remembered = reason(activityID)
                 let approvedNow = remembered.flatMap { approvedThisTurn($0) ? $0 : nil }
@@ -281,6 +282,11 @@ enum NativeCommandTools {
         definition.confirmationFor = { arguments in
             guard case .string(let command)? = arguments["command"] else { return decision.requiresConfirmation }
             return planned(command, arguments.folderString("directory")).decision.requiresConfirmation
+        }
+        definition.chatDecision = { arguments in
+            guard case .string(let command)? = arguments["command"] else { return NativeChatDecision(action: .commands, decision: decision) }
+            let assessed = planned(command, arguments.folderString("directory"))
+            return NativeChatDecision(action: assessed.action, decision: assessed.decision)
         }
         if let instruction {
             let original = definition
