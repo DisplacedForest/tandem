@@ -27,7 +27,8 @@ extension ChatStore {
         return CompanionOverviewModel.build(
             name: companion.leading, profile: dotProfile,
             services: CompanionOverviewModel.servicesLine(options: options, selected: dotSelectedServices(options)),
-            rules: companionRulesSummary, activity: activity, results: results)
+            rules: companionRulesSummary, activity: activity, results: results, schedules: schedules,
+            lastMessage: conversations.first { $0.id == threadID }?.messages.last?.createdAt)
     }
 
     func refreshCompanionOverview() {
@@ -106,6 +107,17 @@ extension ChatStore {
         guard let record = artifactRecords.first(where: { $0.id == id }) else { return }
         requestedArtifactID = record.id
         section = .artifacts
+    }
+
+    @discardableResult
+    func switchCompanionSchedule(_ id: String, on: Bool) -> String? {
+        guard schedules.contains(where: { $0.id == id && $0.owner == .dot }) else { return nil }
+        setSchedule(id, enabled: on)
+        return schedules.first { $0.id == id }?.enabled == on ? nil : scheduleError
+    }
+
+    func openCompanionSchedules() {
+        section = .scheduled
     }
 
     func openCompanionOutputs() {

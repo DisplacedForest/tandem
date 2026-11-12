@@ -83,11 +83,15 @@ enum Shot {
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 760)
         } else if view == "companion-activity-detail" {
-            size = CGSize(width: 340, height: 700)
+            size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
         } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) || NativeTaskDeliveryShot.views.contains(view) {
             size = CGSize(width: 1180, height: 1040)
+        } else if view.hasPrefix("companion-profile-"), view.hasSuffix("-narrow") {
+            size = CGSize(width: 920, height: 900)
+        } else if view.hasPrefix("companion-profile-") {
+            size = CGSize(width: 1180, height: 900)
         } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             size = CompanionPanelController.size
         } else if view.hasPrefix("artifacts"), view.hasSuffix("-narrow") {
@@ -504,7 +508,30 @@ enum Shot {
             content = AnyView(
                 CompanionThreadPanel(fixed: model, selectedID: item.id)
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
-                    .frame(width: 340, height: 700).background(Theme.bg)
+                    .padding(20)
+                    .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
+            )
+        } else if ["companion-profile-closed", "companion-profile-open", "companion-profile-empty", "companion-profile-unnamed",
+                    "companion-profile-closed-narrow", "companion-profile-open-narrow"].contains(view) {
+            NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
+            if view == "companion-profile-unnamed" { store.adoptAssistantName(nil) }
+            let filled = ["companion-profile-open", "companion-profile-closed", "companion-profile-open-narrow",
+                          "companion-profile-closed-narrow"].contains(view)
+            let model = filled ? CompanionOverviewFixture.profileModel(name: store.companion.leading)
+                : CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile, services: "",
+                                               rules: "", activity: [], results: [],
+                                               lastMessage: store.conversations.first { $0.id == store.veraThreadID }?.messages.last?.createdAt)
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                ShotView(store: store, section: .vera, dotHeader: false, companionPanel: model, companionSelection: nil,
+                         companionProfileOpen: !view.hasPrefix("companion-profile-closed"),
+                         companionNewSince: Date().addingTimeInterval(-CompanionOverviewFixture.newSinceMinutes * 60),
+                         height: size.height, width: size.width)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .environmentObject(config)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
             )
         } else if ["companion-thread", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-working-attention", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
