@@ -649,8 +649,12 @@ extension SelfTest {
         let late = try await chatLedgerLoop([send], calls: [[NativeChatToolCall(id: "s-late", name: "garden_log", arguments: "{}")]],
                                             hook: card(unrelated))
         let lateRows = try chatLedgerRows(ledger, turn, "garden_log")
-        try require(late?.activities.first?.state == .succeeded && log.count("ran:garden_log") == 1 && lateRows.count == 2
-                    && lateRows.filter { $0.state == .completed }.count == 1 && lateRows.filter { $0.state == .proposed }.count == 1,
+        let lateRan: Bool = late?.activities.first?.state == .succeeded
+        let lateOnce: Bool = log.count("ran:garden_log") == 1
+        let lateCompleted: Int = lateRows.filter { $0.state == .completed }.count
+        let lateProposed: Int = lateRows.filter { $0.state == .proposed }.count
+        let lateSettled: Bool = lateRows.count == 2 && lateCompleted == 1 && lateProposed == 1
+        try require(lateRan && lateOnce && lateSettled,
                     "Under deciding again, a card approved long after it was shown runs after an unrelated change")
         let handOff: @Sendable () -> Void = {
             var changed = NativeRules.defaults
