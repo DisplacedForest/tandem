@@ -409,6 +409,7 @@ enum SelfTest {
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runTransientRetry() } catch { print("SELFTEST ERROR: transient retry \(error)"); exit(1) }
         do { try runConversationPresence() } catch { print("SELFTEST ERROR: conversation presence \(error)"); exit(1) }
+        do { try runComposerEditing() } catch { print("SELFTEST ERROR: composer editing \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
@@ -439,6 +440,8 @@ enum SelfTest {
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }
         do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeCompanionWorker() } catch { print("SELFTEST ERROR: companion worker \(error)"); exit(1) }
+        do { try await runNativeChatLedger() } catch { print("SELFTEST ERROR: chat ledger \(error)"); exit(1) }
+        do { try await runStoppedStep() } catch { print("SELFTEST ERROR: stopped step \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }

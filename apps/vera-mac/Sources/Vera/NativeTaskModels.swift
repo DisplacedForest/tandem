@@ -502,6 +502,23 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var summary: String? = nil
     var shape: String? = nil
     var why: NativeRuleWhy? = nil
+    var stop: NativeTaskStop? = nil
+}
+
+struct NativeTaskStop: Codable, Equatable, Hashable, Sendable {
+    static let left = "left"
+    static let declined = "declined"
+    static let unconfirmed = "unconfirmed"
+    static let reasons: Set<String> = [left, declined, unconfirmed]
+    static let stepScalars = 20000
+
+    let reason: String
+    let step: String
+    var earlier: String? = nil
+
+    var drawable: Bool {
+        Self.reasons.contains(reason) && !step.isEmpty && step.unicodeScalars.count <= Self.stepScalars
+    }
 }
 
 struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {

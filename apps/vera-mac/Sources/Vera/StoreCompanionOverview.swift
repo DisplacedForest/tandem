@@ -61,7 +61,11 @@ extension ChatStore {
             let request = conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
             let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
                                                            connectionNote: saved?.connectionNote)
-            let outcome = display?.artifact?.report ?? display?.card.answer
+            let stopped = display?.card.stoppedStep.map { stop -> String in
+                StoppedStepCopy.plain(stop, why: display?.card.why, places: rulePlaces(for: display?.card.why?.rule.map { [$0.record] } ?? []),
+                                      name: companionName)
+            }
+            let outcome = stopped ?? display?.artifact?.report ?? display?.card.answer
                 ?? display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) }
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
                                            canOpen: conversation != nil)

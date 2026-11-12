@@ -23,12 +23,12 @@ enum NativePiProduction {
             } catch ConfigStore.PiConnectionError.credentialFormat {
                 throw Failure(message: "The saved credential couldn't be used. It hasn't been changed. Check its format in Settings, then connect again.")
             } catch ConfigStore.PiConnectionError.credentialChanged {
-                throw Failure(message: "The saved credential changed outside Vera. Save the selected credential in Settings to confirm the change before connecting.")
+                throw Failure(message: "The saved credential changed outside Tandem. Save the selected credential in Settings to confirm the change before connecting.")
             } catch {
                 throw Failure(message: "The saved model configuration isn't ready. Save a supported OpenRouter model connection in Settings, then connect again.")
             }
             guard let admission = admission ?? NativeInferenceAdmission.configured() else {
-                throw Failure(message: "Connect Vera's engine in Settings before starting the assistant.")
+                throw Failure(message: "Connect Tandem's engine in Settings before starting the assistant.")
             }
             let provider = try await PiPreparedProvider.production(owner: config, binding: binding, policy: policy,
                 accountingRoot: root.appendingPathComponent("accounting"), admission: admission, http: http)

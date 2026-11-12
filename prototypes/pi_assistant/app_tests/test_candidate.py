@@ -23,7 +23,7 @@ def run(mode: str, args: list[str], timeout: int = 30) -> subprocess.CompletedPr
 def test_unknown_mode_refuses(flag: str) -> None:
     result = run(flag, [])
     assert result.returncode == 2
-    assert result.stderr == 'Unsupported isolated Vera mode\n'
+    assert result.stderr == 'Unsupported isolated mode\n'
 
 
 def test_nonregular_profile_refuses(tmp_path: Path) -> None:

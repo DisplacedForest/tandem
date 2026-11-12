@@ -52,6 +52,13 @@ enum CardShot {
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
+        case "card-stop-left", "card-stop-left-earlier", "card-stop-declined", "card-stop-unconfirmed", "card-stop-old":
+            size = CGSize(width: 1180, height: 1040)
+            seedStop(variant, store: store)
+            let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
+                                                     services: "Can reach every service that is turned on.",
+                                                     rules: store.companionRulesSummary, activity: [], results: [])
+            content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
         case "card-rules-popover":
             size = CGSize(width: 420, height: 760)
             let id = seedRules(store)
@@ -273,6 +280,63 @@ enum CardShot {
             Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
             message,
         ]
+    }
+
+    static func stopResult(_ variant: String, title: String) throws -> [String: Any] {
+        var checkpoint = NativeCompanionCheckpoint()
+        if variant == "card-stop-left-earlier" { checkpoint.note("Edit a file: plan.md", "done") }
+        let effects = NativeCompanionWorker.effectsLine(checkpoint)
+        let earlier = NativeCompanionWorker.earlierLine(checkpoint)
+        let step: NativeTaskStepResult
+        switch variant {
+        case "card-stop-declined":
+            let short = "Send a message: The vents are fixed."
+            step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: "Stopped because you declined: \(short)." + effects, keep: false,
+                                                    stop: NativeTaskStop(reason: NativeTaskStop.declined,
+                                                                         step: "Send a message\nMessage: The vents are fixed.\nTo: growers@example.com", earlier: earlier))
+        case "card-stop-unconfirmed":
+            let short = "Run a command: rsync -a notes/ /Volumes/Backup/notes"
+            step = try NativeCompanionWorker.report(checkpoint, assignment: title,
+                                                    text: "Stopped at your request. It could not be confirmed whether this happened: \(short).", keep: false,
+                                                    stop: NativeTaskStop(reason: NativeTaskStop.unconfirmed,
+                                                                         step: "rsync -a notes/ /Volumes/Backup/notes\nin /Volumes/Garden/notes", earlier: earlier))
+        default:
+            let short = "Run a command: sudo systemsetup -setremotelogin on"
+            let why = NativeRuleWhy(kind: .unsaved, action: .riskyCommands, handsOff: true, choice: .handOff, source: .settings)
+            let stop = variant == "card-stop-old" ? nil
+                : NativeTaskStop(reason: NativeTaskStop.left, step: "sudo systemsetup -setremotelogin on\nin /Volumes/Garden/notes", earlier: earlier)
+            step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: NativeCompanionWorker.handOffText(title: short, why: why) + effects,
+                                                    summary: NativeCompanionWorker.handOffLead(title: short) + effects, why: why, stop: stop)
+        }
+        return try NativeTaskStore.object(step.result ?? Data())
+    }
+
+    static func seedStop(_ variant: String, store: ChatStore) {
+        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
+        store.openVeraThread()
+        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }) else { return }
+        let ask: String
+        let title: String
+        switch variant {
+        case "card-stop-declined":
+            ask = "Tell the growers the vents are fixed."
+            title = "Tell the growers the vents are fixed"
+        case "card-stop-unconfirmed":
+            ask = "Back up the greenhouse notes."
+            title = "Back up the greenhouse notes"
+        default:
+            ask = "Turn on remote login on the greenhouse Mac."
+            title = "Turn on remote login on the greenhouse Mac"
+        }
+        guard let result = try? stopResult(variant, title: title),
+              let reference = try? OngoingWorkFixture.reference(conversationID: threadID, title: title, workerType: "companion",
+                                                                state: "completed", result: result),
+              let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
+        store.nativeTaskEngine.set(engineURL)
+        store.nativeTaskReferences = [reference]
+        var message = Message(role: .assistant, text: "I'll take care of it in the background.")
+        message.displayBlocks = [.taskCard(display.card)] + (display.artifact.map { [NativeDisplayBlock.artifact($0)] } ?? [])
+        store.conversations[index].messages = [Message(role: .user, text: ask), message]
     }
 
     static func seedRules(_ store: ChatStore) -> String {

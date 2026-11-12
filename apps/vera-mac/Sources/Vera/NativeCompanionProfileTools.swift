@@ -99,6 +99,7 @@ extension ChatStore {
         switch change.action {
         case "name":
             guard let companionNameWriter else { throw NativeToolError.failed("The name couldn't be saved.") }
+            NativeToolCallContext.effectStarts()
             try companionNameWriter(change.value)
             let effective = companionNameResolver.map { $0() } ?? change.value
             adoptAssistantName(effective)
@@ -119,6 +120,7 @@ extension ChatStore {
             }
             var conversation = conversations[index]
             conversation.rules.choices[category] = choice
+            NativeToolCallContext.effectStarts()
             try repository.saveConversation(conversation)
             conversations[index] = conversation
             syncRuleSource()
@@ -142,12 +144,14 @@ extension ChatStore {
                 group: .profile, category: .preference, bank: "personal", durability: .durable,
                 expiry: nil, targetIDs: [], sourceConversationID: turn.conversationID,
                 sourceMessageID: turn.userMessageID.uuidString, createdAt: Date(), status: .pending)
+            NativeToolCallContext.effectStarts()
             try memoryRepository.saveProposal(proposal)
             reloadNativeMemory()
             return .object(["result": .string("Preference saved as a memory suggestion for review.")])
         default: throw NativeToolError.invalidArguments("Unsupported profile change.")
         }
         profile.updatedAt = Date()
+        NativeToolCallContext.effectStarts()
         try profileStore.save(profile)
         dotProfile = profile
         return .object(["result": .string("Profile updated.")])

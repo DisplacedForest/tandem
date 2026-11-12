@@ -172,6 +172,8 @@ final class ChatStore: ObservableObject {
     @Published var rulesNotice: String?
     let turnCommandReasonSource = NativeCommandReasonSource()
     var turnInstructionUseSources: [UUID: NativeInstructionUses] = [:]
+    var chatStaleAnswers = NativeChatEffects.staleAnswers
+    var chatEffectClock: @Sendable () -> Date = { Date() }
     let nativeRuleSource = NativeRuleSource()
     let companionWorkerRelay: NativeCompanionWorkerRelay
     let turnDeclineSource = NativeDeclineSource()
@@ -2495,7 +2497,8 @@ final class ChatStore: ObservableObject {
                 await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             },
-            instructionCheck: answerer, instructionTimeout: checkTimeout, said: said)
+            instructionCheck: answerer, instructionTimeout: checkTimeout, said: said,
+            effects: chatEffectHook(for: turn, definitions: turnRegistry.definitions, typed: typed))
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let (authority, consented) = turnToolAuthority(for: turn)

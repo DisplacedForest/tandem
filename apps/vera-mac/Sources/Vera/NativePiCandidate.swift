@@ -127,7 +127,7 @@ final class NativePiCandidate {
                 throw PiBrokerError.invalid
             }
         } catch {
-            FileHandle.standardError.write(Data("The isolated Vera candidate could not complete: \(error.localizedDescription). Its saved work was preserved.\n".utf8))
+            FileHandle.standardError.write(Data("The isolated candidate could not complete: \(error.localizedDescription). Its saved work was preserved.\n".utf8))
             exit(1)
         }
     }

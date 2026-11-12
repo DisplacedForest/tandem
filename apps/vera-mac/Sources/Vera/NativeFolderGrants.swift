@@ -197,6 +197,11 @@ enum NativeToolCallContext {
     @TaskLocal static var request: String?
     @TaskLocal static var confirmed: Bool?
     @TaskLocal static var reason: NativeToolReasonSink?
+    @TaskLocal static var boundary: NativeEffectBoundary?
+
+    static func effectStarts() {
+        boundary?.mark()
+    }
 }
 
 final class NativeToolReasonSink: @unchecked Sendable {

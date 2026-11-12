@@ -255,7 +255,7 @@ struct DecisionRequest: Codable, Sendable {
 
 struct SavedState: Codable, Sendable {
     var assistantID = UUID()
-    var assistant = Conversation(id: UUID(), title: "Vera")
+    var assistant = Conversation(id: UUID(), title: "Assistant")
     var conversations: [Conversation] = []
     var pending: [MessageRequest] = []
     var abandonedReplies: [MessageRequest]?

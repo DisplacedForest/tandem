@@ -152,7 +152,9 @@ enum NativeImageTools {
                     let template = try graph()
                     var client = ComfyUIClient(base: base, transport: transport)
                     client.pollInterval = pollInterval
-                    let output = try await client.generate(graph: template.filled(prompt: prompt, size: size, seed: seed)) { completed, total in
+                    let filled = template.filled(prompt: prompt, size: size, seed: seed)
+                    NativeToolCallContext.effectStarts()
+                    let output = try await client.generate(graph: filled) { completed, total in
                         NativeToolProgressReporter.post(NativeToolProgress(
                             completed: completed, total: total, label: "Step \(completed) of \(total)"))
                     }
@@ -177,7 +179,7 @@ enum NativeImageTools {
                     _ = try NativeImageSize.parse(arguments.imageString("size"))
                     _ = try arguments.imageSeed("seed")
                     guard base() != nil else { throw NativeToolError.unavailable }
-                }),
+                }, marksEffect: true),
         ]
     }
 
