@@ -35,6 +35,31 @@ extension SelfTest {
         try require(store.companionWantsAttention, "The badge changes when the companion needs an answer")
         store.nativeTaskReferences = []
         try require(!store.companionWantsAttention, "The badge goes quiet again once nothing is waiting")
+        let suite = "tandem-presence-selftest-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { throw NativeTaskFixture.Failure.assertion("presence defaults suite") }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        store.companionDefaults = defaults
+        store.conversations[0].messages = [Message(role: .assistant, text: "The seedlings are in.")]
+        store.setCompanionSeenReplyForTesting("")
+        try require(store.companionUnreadCount == 1 && store.companionBackgroundWork.needsAnswer == 0 && !store.companionAwaitingApproval
+                    && store.companionWantsAttention, "The badge changes for an unread reply on its own")
+        store.markCompanionSeen()
+        try require(store.companionUnreadCount == 0 && !store.companionWantsAttention, "The badge goes quiet once the reply is seen")
+        store.conversations[0].messages = []
+        let asking = Message(role: .user, text: "Run the check")
+        let turn = NativeConversationTurn(id: UUID(), conversationID: thread.id, userMessageID: asking.id, assistantMessageID: UUID(),
+            mode: .chat, profile: "", enabledToolIDs: [], persona: "Persona", userScope: "", instructions: "", grounding: [],
+            memorySettings: store.nativeMemorySettings, createdAt: Date(), history: [NativeTurnHistoryMessage(asking)])
+        let activity = NativeToolActivity(id: "presence-confirm", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName,
+                                          title: "Run a command", round: 1, request: "{\"command\":\"make check\"}", result: nil,
+                                          state: .pending, confirmationRequired: true)
+        store.conversationTurns = [turn]
+        store.turnConfirmations[turn.assistantMessageID] = NativeToolConfirmationRequest(activity: activity)
+        try require(store.companionUnreadCount == 0 && store.companionBackgroundWork.needsAnswer == 0 && store.companionWantsAttention,
+                    "The badge changes for a waiting approval on its own")
+        store.turnConfirmations[turn.assistantMessageID] = nil
+        store.conversationTurns = []
+        try require(!store.companionWantsAttention, "The badge goes quiet once the approval is answered")
         store.generating = true
         store.nativeTaskReferences = [foreign]
         try require(state() == .ready && background().isEmpty && background().current == nil,
