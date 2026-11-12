@@ -10,6 +10,10 @@ enum Shot {
             CompanionAttentionShot.render(to: path)
             return
         }
+        if MessageActionsShot.views.contains(view) {
+            MessageActionsShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("message-layout-") {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return

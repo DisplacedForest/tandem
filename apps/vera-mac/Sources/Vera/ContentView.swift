@@ -55,6 +55,7 @@ struct ContentView: View {
         .ignoresSafeArea(.container, edges: .top)
         .task { await store.connect() }
         .modifier(CompanionAttentionWindow())
+        .modifier(MessageActionsHost())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }
@@ -858,6 +859,8 @@ struct MessageRow: View {
                             .padding(.vertical, ConversationMetrics.bubblePaddingV)
                             .background(Theme.userBubble)
                             .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+                            .modifier(MessageActionsBubble(message: message, companionThread: companionThread, fill: Theme.userBubble,
+                                                           trailing: true, selectableText: message.text))
                     }
                     if let note = message.routeNote {
                         AttachmentRouteBadge(
