@@ -438,8 +438,10 @@ enum SelfTest {
         do { try await runCompanionIntroduction() } catch { print("SELFTEST ERROR: companion introduction \(error)"); exit(1) }
         do { try await runToolSystemAccess() } catch { print("SELFTEST ERROR: tool system access \(error)"); exit(1) }
         do { try await runNativeDot() } catch { print("SELFTEST ERROR: dot \(error)"); exit(1) }
+        do { try await runCompanionRetiredSetting() } catch { print("SELFTEST ERROR: companion retired setting \(error)"); exit(1) }
         do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeCompanionWorker() } catch { print("SELFTEST ERROR: companion worker \(error)"); exit(1) }
+        do { try await runNativeCompanionFinish() } catch { print("SELFTEST ERROR: companion finish \(error)"); exit(1) }
         do { try await runNativeChatLedger() } catch { print("SELFTEST ERROR: chat ledger \(error)"); exit(1) }
         do { try await runStoppedStep() } catch { print("SELFTEST ERROR: stopped step \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
@@ -483,6 +485,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: mcp starter catalog \(error)"); exit(1) }
         do { try await NativeMCPInstallSelftest.run() }
         catch { print("SELFTEST ERROR: mcp install \(error)"); exit(1) }
+        do { try await NativeMCPChangesSelftest.run() }
+        catch { print("SELFTEST ERROR: mcp changes \(error)"); exit(1) }
         do { try runComposerMentions() }
         catch { print("SELFTEST ERROR: composer mentions \(error)"); exit(1) }
         do { try await runTaskEngine() }
@@ -1770,7 +1774,7 @@ enum SelfTest {
             let builtIn = "Ver" + "a"
             let unnamedPrompts = [unnamedContext.prompt, NativeResearchWorker.planPrompt(identity: unnamedWorker),
                                   NativeResearchWorker.synthesisPrompt(identity: unnamedWorker), PiCheckpointPricing.system,
-                                  NativeDotContext.render(name: named.companionName ?? "", goal: "", resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
+                                  NativeDotContext.render(name: named.companionName ?? "", resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
             guard unnamedPrompts.allSatisfy({ !$0.contains("Your name is") && !$0.contains(builtIn) && !$0.contains("our companion") }),
                   unnamedWorker.assistantName == nil, unnamedWorker.opening == "You are the user's assistant" else {
                 print("SELFTEST ERROR: a prompt for an unnamed companion claims a name"); exit(1)

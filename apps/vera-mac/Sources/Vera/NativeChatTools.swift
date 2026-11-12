@@ -546,7 +546,8 @@ enum NativeChatHistoryBuilder {
             }
             let rounds = Dictionary(grouping: message.toolActivities, by: \.round)
             for round in rounds.keys.sorted() {
-                let activities = rounds[round] ?? []
+                let activities = (rounds[round] ?? []).filter { !NativeCompanionProfileTools.retired($0) }
+                if activities.isEmpty { continue }
                 let calls = activities.map {
                     NativeChatToolCall(id: $0.id, name: $0.name, arguments: $0.request)
                 }

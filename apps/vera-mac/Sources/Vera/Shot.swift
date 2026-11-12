@@ -329,6 +329,19 @@ enum Shot {
                     .environment(\.colorScheme, .dark)
                     .foregroundStyle(Theme.textPrimary)
             )
+        } else if view == "integrations-manage", let seed = integrationsSeed {
+            content = AnyView(
+                IntegrationsManageSheet(target: IntegrationsManageTarget(id: IntegrationsShotFixture.codeID, existing: true),
+                                        filled: IntegrationsShotFixture.codeRow) { _ in }
+                    .background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(seed.store)
+                    .environmentObject(seed.config)
+            )
         } else if view == "settings-endpoints-empty" {
             EndpointsShot.render(to: path, appearance: appearance)
             return
@@ -467,7 +480,7 @@ enum Shot {
             let display = try! NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
             let item = CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: nil,
                                                        hasArtifact: true, date: Date())
-            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, goal: "", services: "", rules: "", paused: false,
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, services: "", rules: "", paused: false,
                                                activity: [item], outputs: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
@@ -543,7 +556,7 @@ enum Shot {
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up": section = .scheduled
-            case "integrations", "integrations-public", "integrations-empty": section = .integrations
+            case "integrations", "integrations-public", "integrations-empty", "integrations-changes": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
                 section = .vera

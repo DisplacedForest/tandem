@@ -15,17 +15,11 @@ extension SelfTest {
         await store.nativeSchedulerLoop?.value
         store.nativeSchedulerLoop = nil
 
-        try require(store.dotProfileLoaded && !store.dotProfile.setupCompleted && store.dotProfile.goal.isEmpty
+        try require(store.dotProfileLoaded && !store.dotProfile.setupCompleted
                     && store.dotProfile.state == .active && store.dotProfile.connectedToolIDs == nil, "A fresh install starts with an empty profile that still needs setup")
         try require(try NativeDotProfileStore(database: repository.database).load() == nil, "Nothing is stored until setup is answered")
         store.skipDotSetup()
         try require(store.dotProfile.setupCompleted, "Skipping setup marks it answered")
-        let goal = "Keep the greenhouse on track: watering, vent checks and a weekly note."
-        store.saveDotProfile { $0.goal = "  \(goal)\n" }
-        try require(store.dotProfile.goal == goal, "The goal is trimmed when saved")
-        store.saveDotProfile { $0.goal = String(repeating: "g", count: 2500) }
-        try require(store.dotProfile.goal.count == NativeDotProfile.goalLimit, "The goal is clamped to its limit")
-        store.saveDotProfile { $0.goal = goal }
         store.setDotState(.paused)
         let reopened = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try LocalChatRepository(url: url),
                                  nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
@@ -33,10 +27,10 @@ extension SelfTest {
         reopened.nativeSchedulerLoop?.cancel()
         await reopened.nativeSchedulerLoop?.value
         reopened.nativeSchedulerLoop = nil
-        try require(reopened.dotProfile.goal == goal && reopened.dotProfile.state == .paused && reopened.dotProfile.setupCompleted,
-                    "A second store over the same database loads the same goal and state")
+        try require(reopened.dotProfile.state == .paused && reopened.dotProfile.setupCompleted,
+                    "A second store over the same database loads the same state")
         let partial = try JSONDecoder().decode(NativeDotProfile.self, from: Data("{\"goal\":\"Plan the garden\"}".utf8))
-        try require(partial.goal == "Plan the garden" && partial.state == .active && !partial.setupCompleted && partial.connectedToolIDs == nil,
+        try require(partial.state == .active && !partial.setupCompleted && partial.connectedToolIDs == nil,
                     "Older or partial profile JSON still loads with defaults")
         store.setDotState(.active)
 
@@ -63,20 +57,19 @@ extension SelfTest {
         guard let dotContext = store.dotContext(for: veraID, requestText: "what's next?") else {
             throw NativeTaskFixture.Failure.assertion("The Vera thread gets the standing context")
         }
-        try require(dotContext.contains(goal) && dotContext.contains("You are Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
+        try require(!dotContext.lowercased().contains("goal") && dotContext.contains("You are Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
                     && dotContext.contains("always handed to the user") && dotContext.contains(NativeDotContext.coordinatorNote)
-                    && dotContext.count <= NativeDotContext.limit, "The standing context carries the name, goal, coordinator role and the rules in effect")
+                    && dotContext.count <= NativeDotContext.limit, "The standing context carries the name, coordinator role and the rules in effect")
         try require(store.dotContext(for: focused.id, requestText: "hi") == nil, "Focused chats never receive the standing context")
         let veraPrompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                             assistantProfile: dotContext)).prompt
         let focusedPrompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                                assistantProfile: store.dotContext(for: focused.id, requestText: "hi"))).prompt
-        try require(veraPrompt.contains("Your standing role") && veraPrompt.contains(goal) && !focusedPrompt.contains("Your standing role"),
+        try require(veraPrompt.contains("Your standing role") && !focusedPrompt.contains("Your standing role"),
                     "Only the Vera thread's prompt has the standing assistant section")
-        let long = NativeDotContext.render(name: "Ada", goal: String(repeating: "word ", count: 600), resolver: resolver)
-        try require(long.count <= NativeDotContext.limit && long.contains("...") && long.contains(NativeDotContext.coordinatorNote), "A long goal is shortened to keep the block small")
-        let goalless = NativeDotContext.render(name: "Ada", goal: "", resolver: resolver)
-        try require(goalless.contains("No standing goal has been set yet.") && goalless.contains(NativeDotContext.coordinatorNote), "A missing goal is said plainly and the coordinator role stays")
+        let unnamed = NativeDotContext.render(name: "", resolver: resolver)
+        try require(unnamed.hasPrefix("You are the user's standing assistant.") && unnamed.contains(NativeDotContext.coordinatorNote)
+                    && unnamed.count <= NativeDotContext.limit, "An unnamed companion keeps the coordinator role")
 
         store.saveDotProfile { $0.connectedToolIDs = ["a"] }
         try require(store.dotToolIDs(base: ["a", "b"]) == ["a"], "Connected services narrow the tools")
@@ -87,7 +80,7 @@ extension SelfTest {
         try require(store.dotConnectedToolIDs(selected: ["a", "service:s"], options: options) == nil
                     && store.dotConnectedToolIDs(selected: ["service:s"], options: options) == ["s1", "s2"], "Service choices map to tool sets")
 
-        try await checkTurnTools(store, veraID: veraID, focusedID: focused.id, goal: goal)
+        try await checkTurnTools(store, veraID: veraID, focusedID: focused.id)
         try checkRuleDrafts(store, veraID: veraID)
 
         var paused = NativeDotProfile(state: .paused)
@@ -181,17 +174,16 @@ extension SelfTest {
         let threadArtifact = try repository.recordArtifact(ArtifactDraft(
             kind: .document, title: "Greenhouse note", conversationID: veraID, originTitle: "Ada", messageID: nil,
             sourceKey: "dot:note", data: Data("# Note".utf8), mime: "text/markdown", fileExtension: "md"), revising: nil)
-        store.saveDotProfile { $0.goal = goal }
 
         let summary = store.dotRemovalSummary()
         try require(summary.messages == 3 && summary.memories == 1 && summary.proposals == 1 && summary.schedules == 1
-                    && summary.artifacts == 1 && summary.hasGoal && !summary.services, "The removal summary counts what start over removes: \(summary)")
-        try require(summary.sentence == "This removes 3 messages, 1 memory, 1 suggested memory, 1 schedule and the goal. Your 1 artifact stays in Artifacts.",
+                    && summary.artifacts == 1 && !summary.services, "The removal summary counts what start over removes: \(summary)")
+        try require(summary.sentence == "This removes 3 messages, 1 memory, 1 suggested memory and 1 schedule. Your 1 artifact stays in Artifacts.",
                     "The removal summary reads plainly: \(summary.sentence)")
         store.saveDotProfile { $0.connectedToolIDs = ["a"] }
         let withServices = store.dotRemovalSummary()
         try require(withServices.services && withServices.sentence
-                    == "This removes 3 messages, 1 memory, 1 suggested memory, 1 schedule, the goal and the service choices. Your 1 artifact stays in Artifacts.",
+                    == "This removes 3 messages, 1 memory, 1 suggested memory, 1 schedule and the service choices. Your 1 artifact stays in Artifacts.",
                     "The removal summary lists the service choices when some were made: \(withServices.sentence)")
         let servicesOnly = NativeDotRemovalSummary(services: true)
         try require(servicesOnly.sentence == "This removes the service choices.", "Service choices alone read plainly: \(servicesOnly.sentence)")
@@ -220,7 +212,7 @@ extension SelfTest {
         resetProfile.needsIntroduction = true
         let savedReset = try NativeDotProfileStore(database: repository.database).load()
         try require(store.dotProfile == resetProfile && !store.dotProfile.setupCompleted
-                    && savedReset?.needsIntroduction == true && savedReset?.goal == ""
+                    && savedReset?.needsIntroduction == true
                     && savedReset?.connectedToolIDs == nil && savedReset?.setupCompleted == false,
                     "Reset persists the introduction request with default profile choices")
         try require(store.conversationRules(for: freshID).isEmpty, "The fresh thread starts with the global rules")
@@ -241,7 +233,7 @@ extension SelfTest {
             memorySettings: store.nativeMemorySettings, createdAt: Date(), history: [NativeTurnHistoryMessage(user)])
     }
 
-    private static func checkTurnTools(_ store: ChatStore, veraID: String, focusedID: String, goal: String) async throws {
+    private static func checkTurnTools(_ store: ChatStore, veraID: String, focusedID: String) async throws {
         let require = NativeTaskFixture.require
         let search = NativeWebTools.searchToolID
         let mention = "@Search the web for greenhouse vents"
@@ -265,7 +257,7 @@ extension SelfTest {
         let replayed = store.turnDotContext(legacy)
         let prompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                         assistantProfile: replayed)).prompt
-        try require(prompt.contains("Your standing role") && prompt.contains(goal), "An older Vera turn without a stored block still assembles with it")
+        try require(prompt.contains("Your standing role"), "An older Vera turn without a stored block still assembles with it")
         try require(store.turnDotContext(turn(store, conversationID: focusedID, text: "hi")) == nil, "An older focused turn stays without the block")
         var stored = legacy
         stored.dotContext = "Stored block"
@@ -322,7 +314,7 @@ extension SelfTest {
             var each = NativeRules.defaults
             for action in NativeActionClass.configurable { each.set(choice, for: action) }
             let eachResolver = NativeRuleResolver(global: each, conversation: NativeConversationRules(), requestText: "")
-            for text in [NativeDotContext.render(name: "Ada", goal: "Plant tomatoes", resolver: eachResolver), NativeDotContext.headerSummary(resolver: eachResolver)] {
+            for text in [NativeDotContext.render(name: "Ada", resolver: eachResolver), NativeDotContext.headerSummary(resolver: eachResolver)] {
                 let lowered = text.lowercased()
                 try require(!lowered.contains("pre-approv") && !lowered.contains("preapprov") && !lowered.contains("go ahead") && !lowered.contains("go-ahead"),
                             "The rules text for the model never mentions a go ahead: \(text)")
@@ -377,8 +369,8 @@ extension SelfTest {
         try require(store.chatConfigurationError?.contains("Scheduled work is paused and no services are connected until the settings are saved again.") == true,
                     "The failure says what is held and how to fix it: \(store.chatConfigurationError ?? "")")
         try require(store.dotToolIDs(base: ["a", "b"]).isEmpty && !store.dotProfile.allowsScheduledRun(owner: .dot), "Nothing runs or connects while the profile is unreadable")
-        store.saveDotProfile { $0.goal = "Plan the garden" }
-        try require(try NativeDotProfileStore(database: repository.database).load()?.goal == "Plan the garden", "Saving the settings repairs the stored profile")
+        store.saveDotProfile { $0.connectedToolIDs = ["a"] }
+        try require(try NativeDotProfileStore(database: repository.database).load()?.connectedToolIDs == ["a"], "Saving the settings repairs the stored profile")
         store.stopNativeTaskRecovery()
     }
 

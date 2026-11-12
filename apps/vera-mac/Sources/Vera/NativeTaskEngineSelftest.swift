@@ -112,9 +112,9 @@ struct NativeTaskEngineHarness {
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
-    func submitDot(_ assignment: String, goal: String = "") async throws -> NativeTaskReference {
+    func submitDot(_ assignment: String) async throws -> NativeTaskReference {
         let origin = try NativeTaskFixture.origin(repository)
-        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: goal))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
@@ -1103,7 +1103,7 @@ extension SelfTest {
     }
 
     private static func dotPayload(_ assignment: String = "Find out what color the fictional moon Luma is.") throws -> Data {
-        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: "Know the moon"))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
         let binding = NativeTaskAdmissionBinding(id: "binding-1", admissionBase: URL(string: "https://provider.test/v1")!,
                                                  enrollmentDigest: String(repeating: "a", count: 64))
         return try nativeTaskEncoded(NativeResearchTaskPayload(request: request, nativeBinding: binding))
@@ -1120,7 +1120,7 @@ extension SelfTest {
                 return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "binding_missing")
             }
             do {
-                let base = [NativeTaskGenerationMessage(role: "system", content: "You work toward the goal with tools."),
+                let base = [NativeTaskGenerationMessage(role: "system", content: "You work on the assignment with tools."),
                             NativeTaskGenerationMessage(role: "user", content: payload.query)]
                 let first = try await exchange.completeTurn(task: task, binding: binding, phase: "work-1", attempt: "a", ordinal: 0,
                                                             messages: base, tools: [dotLookupTool], toolChoice: "auto")
@@ -1146,16 +1146,19 @@ extension SelfTest {
     private static func taskDotGeneration() async throws {
         let require = NativeTaskFixture.require
         let budget = NativeCompanionWorkerBudget.standard
-        try require(budget == NativeCompanionWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32, transcriptBytes: 131072,
-                                                    taskRounds: 32, taskCalls: 64), "The dot budget holds its standard values")
+        try require(budget == NativeCompanionWorkerBudget(transcriptBytes: 524288), "The dot budget holds its standard size")
         let enforced = NativeTaskGenerationBudget.forWorker("companion")
-        try require(enforced.maximumOrdinal == budget.calls && enforced.maximumMessages == budget.transcriptMessages
+        try require(enforced.maximumOrdinal == 3 && enforced.maximumMessages == nil
                      && enforced.maximumBytes == budget.transcriptBytes && enforced.allowsTools, "The exchange reads the dot budget")
         try require(NativeTaskGenerationBudget.forWorker("research") == .standard && NativeTaskGenerationBudget.forWorker("document") == .standard,
                     "Research and documents keep their budget")
-        try require(NativeTaskGenerationJob.validPhase("work-5") && NativeTaskGenerationJob.validPhase("work-63")
-                    && !NativeTaskGenerationJob.validPhase("work-64") && !NativeTaskGenerationJob.validPhase("work"),
-                    "Work phases are numbered below 64")
+        try require(NativeTaskGenerationJob.validPhase("work-5") && NativeTaskGenerationJob.validPhase("work-64")
+                    && NativeTaskGenerationJob.validPhase("work-100") && NativeTaskGenerationJob.validPhase("work-12345")
+                    && NativeTaskGenerationJob.validPhase("work-999999999") && !NativeTaskGenerationJob.validPhase("work-1234567890")
+                    && !NativeTaskGenerationJob.validPhase("work") && !NativeTaskGenerationJob.validPhase("work-x1"),
+                    "Work phases carry any step number")
+        try require(!NativeTaskGenerationJob.validPhase("draft-100") && !NativeTaskGenerationJob.validPhase("revise-\(NativeDocumentWorker.maximumSections)")
+                    && NativeTaskGenerationJob.validPhase("draft-0"), "Document phases keep their own numbering")
         try require(NativeTaskTransportTiming.Phase(jobPhase: "work-3") == .work, "Work phases have their own timing")
 
         let call = NativeTaskGenerationToolCall(id: "call-1", name: "lookup_moon", arguments: "{\"moon\":\"Luma\"}")
@@ -1198,26 +1201,25 @@ extension SelfTest {
                 return "other"
             }
         }
-        let accepted5 = await outcome(dotTask, ordinal: 5, base)
-        let rejected5 = await outcome(researchTask, ordinal: 5, base)
-        try require(accepted5 == "accepted" && rejected5 == "request_limit", "Ordinal 5 is accepted for dot and refused for research: \(accepted5) \(rejected5)")
-        let overRounds = await outcome(dotTask, ordinal: budget.calls + 1, base)
-        let atRounds = await outcome(dotTask, ordinal: budget.calls, base)
-        try require(atRounds == "accepted" && overRounds == "request_limit", "The dot round limit comes from the budget")
-        let filler = (0..<(budget.transcriptMessages - 1)).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
+        let accepted3 = await outcome(dotTask, ordinal: 3, base)
+        let rejected4 = await outcome(dotTask, ordinal: 4, base)
+        let research4 = await outcome(researchTask, ordinal: 4, base)
+        try require(accepted3 == "accepted" && rejected4 == "request_limit" && research4 == "request_limit",
+                    "Dot and research share the per-step request ordinal: \(accepted3) \(rejected4) \(research4)")
+        let filler = (0..<299).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
         let fullTranscript = [NativeTaskGenerationMessage(role: "system", content: "Work")] + filler
-        let atMessages = await outcome(dotTask, fullTranscript)
-        let overMessages = await outcome(dotTask, fullTranscript + [NativeTaskGenerationMessage(role: "user", content: "x")])
+        let manyMessages = await outcome(dotTask, fullTranscript)
+        let noMessages = await outcome(dotTask, [])
         let researchNine = await outcome(researchTask, Array(fullTranscript.prefix(9)))
-        try require(atMessages == "accepted" && overMessages == "provider_response" && researchNine == "provider_response",
-                    "The message limit is 32 for dot and 8 for research")
+        try require(manyMessages == "accepted" && noMessages == "provider_response" && researchNine == "provider_response",
+                    "Dot has no message count limit and research keeps 8")
         let large = [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: 100_000))]
         let oversized = [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: budget.transcriptBytes))]
         let dotLarge = await outcome(dotTask, large)
         let dotOversized = await outcome(dotTask, oversized)
         let researchLarge = await outcome(researchTask, [NativeTaskGenerationMessage(role: "user", content: String(repeating: "a", count: 70_000))])
         try require(dotLarge == "accepted" && dotOversized == "input_limit" && researchLarge == "input_limit",
-                    "The byte limit is 131072 for dot and 65536 for research")
+                    "The byte limit is 524288 for dot and 65536 for research")
         let dotTools = await outcome(dotTask, transcript, tools: [dotLookupTool])
         let researchTools = await outcome(researchTask, transcript)
         let researchOffered = await outcome(researchTask, base, tools: [dotLookupTool])
@@ -1243,7 +1245,7 @@ extension SelfTest {
         let firstRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
             workers: { ["companion": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
         try await firstRun.start()
-        let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.", goal: "Know the moon")
+        let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.")
         try require(reference.deliveryState == .accepted && reference.createRequest.workerType == "companion", "The dot handoff is accepted")
         try require(try await firstRun.waitAsync(seconds: 15) { await gate.count("blocked") >= 1 }, "The dot worker finishes both work phases")
         let jobs = await recorder.all()

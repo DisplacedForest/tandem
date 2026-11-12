@@ -187,9 +187,9 @@ extension SelfTest {
                 try require(line.plain(name: name) == subject(name) + tail, "A saved question reads \(text) unchanged for \(name ?? "no name")")
             }
         }
-        let finished = "Ada has used this run's working time and saved its progress. Keep going, or finish with what it has?"
+        let checked = "Ada can't tell whether this happened: Send the order. Please check, then say what you found."
         let literalSaved = [
-            finished,
+            checked,
             "The model said \(placeholder) could not find the file.",
             "Error: \(hostile.filter { (text: String) -> Bool in text != CompanionSavedText.marker }.joined(separator: " ")) is not a folder.",
             "\(placeholder) is paused.",

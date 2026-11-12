@@ -92,7 +92,7 @@ extension SelfTest {
         return (store, repository, folder)
     }
 
-    private static let keepGoal = "Keep the greenhouse on track this season."
+    private static let keepServices: Set<String> = ["keep-service"]
 
     private static func seedCompanionWork(_ store: ChatStore, _ repository: LocalChatRepository, thread: String, label: String) throws -> String {
         CompanionLibraryKeepFixture.save(store, title: "Frost checklist", conversationID: thread)
@@ -108,7 +108,7 @@ extension SelfTest {
         draft.instruction = "Write the weekly greenhouse note"
         draft.owner = .dot
         guard let schedule = store.createSchedule(draft) else { throw NativeTaskFixture.Failure.assertion("The companion schedule saves") }
-        store.saveDotProfile { $0.goal = keepGoal }
+        store.saveDotProfile { $0.connectedToolIDs = keepServices }
         store.reloadArtifacts()
         return schedule.id
     }
@@ -142,8 +142,8 @@ extension SelfTest {
         try require(frost.conversationID == thread && frost.originTitle == frostBefore.originTitle
                     && old.conversationID == thread && old.originTitle == oldBefore.originTitle && old.originTitle == label,
                     "A failed keep leaves both items' link and stored origin exactly as they were")
-        try require(store.schedules.contains { $0.id == scheduleID } && memoryAlive(repository) && store.dotProfile.goal == keepGoal,
-                    "A failed keep removes no schedule, memory or goal")
+        try require(store.schedules.contains { $0.id == scheduleID } && memoryAlive(repository) && store.dotProfile.connectedToolIDs == keepServices,
+                    "A failed keep removes no schedule, memory or service choice")
         try require(store.chatConfigurationError == "\(label) couldn't start over: The disk is full. Nothing was removed.",
                     "The failure reads plainly: \(store.chatConfigurationError ?? "nil")")
         try require(store.companionConfigurationError?.lead == CompanionErrorCopy.resetLead, "The failure is kept as the reset error")
@@ -163,7 +163,7 @@ extension SelfTest {
         try require(store.companionConfigurationError?.lead != CompanionErrorCopy.resetLead
                     && !(store.chatConfigurationError ?? "").contains("couldn't start over"),
                     "The retry clears the reset error: \(store.chatConfigurationError ?? "nil")")
-        try require(!store.schedules.contains { $0.id == scheduleID } && !memoryAlive(repository) && store.dotProfile.goal.isEmpty,
+        try require(!store.schedules.contains { $0.id == scheduleID } && !memoryAlive(repository) && store.dotProfile.connectedToolIDs == nil,
                     "The retry removes what start over removes")
     }
 
@@ -258,8 +258,8 @@ extension SelfTest {
         store.acknowledgeResetFailure()
         try require(store.resetFailure == nil && store.chatConfigurationError == nil && store.companionConfigurationError == nil,
                     "Closing the sheet after a failed start over puts the failure away")
-        store.saveDotProfile { $0.goal = "Tend the beds." }
-        try require(store.resetFailure == nil && store.dotProfile.goal == "Tend the beds.",
+        store.saveDotProfile { $0.connectedToolIDs = [] }
+        try require(store.resetFailure == nil && store.dotProfile.connectedToolIDs == [],
                     "Opening settings again later, and saving, shows no old start over failure")
         try require(!store.resetDot() && store.resetFailure != nil, "Trying again while it still can't save shows the failure again")
         store.companionArtifactKeeper = nil

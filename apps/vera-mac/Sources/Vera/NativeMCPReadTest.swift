@@ -38,7 +38,8 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
     deinit { operation?.cancel() }
 
     static func scope(authority: NativeMCPAuthority, record: NativeMCPToolRecord) -> String? {
-        ["focused", "assistant"].first { authority.access.allowed(record, scope: $0) }
+        guard record.state == .read else { return nil }
+        return ["focused", "assistant"].first { authority.access.allowed(record, scope: $0) }
     }
 
     static func pageURLSchema(_ schema: NativeJSONValue) -> Bool {
@@ -49,7 +50,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
         return true
     }
 
-    var current: Bool { !closed && authority.access.allowed(record, scope: scope, revision: revision) }
+    var current: Bool { !closed && record.state == .read && authority.access.allowed(record, scope: scope, revision: revision) }
     var result: NativeMCPReadTestResult? { current ? storedResult : nil }
     var canRun: Bool { current && !running && !inputRejected && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -76,7 +77,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
             self.error = usesPageURL ? "Enter a valid public page URL that matches this tool's requirements." : "Check the JSON object against the argument format."
             return
         }
-        guard let definition = authority.definitions(scope: scope).first(where: { $0.id == record.id }), definition.isAvailable(), current else { checkCurrent(); return }
+        guard let definition = authority.definitions(scope: scope).first(where: { $0.id == record.id }), definition.effect == .read, definition.isAvailable(), current else { checkCurrent(); return }
         cancelOperation()
         error = nil
         running = true

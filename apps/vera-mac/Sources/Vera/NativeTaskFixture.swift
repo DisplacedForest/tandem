@@ -139,8 +139,12 @@ enum NativeTaskFixture {
             try settled.finishTaskGeneration(referenceID: reference.id, job: job("initial-1"), response: "Late", failure: nil)
             throw Failure.assertion("A terminal failure cannot become a success")
         } catch is NativeTaskHTTPError {}
-        try require(try recovered.reserveTaskGeneration(referenceID: reference.id, job: job("retry-0"))
-            == .unavailable("request_limit"), "Retry cannot reset pinned budget")
+        try require(try recovered.reserveTaskGeneration(referenceID: reference.id, job: job("retry-0")) == .execute,
+                    "A retry is a new request, not a spent count")
+        for index in 1...20 {
+            try require(try recovered.reserveTaskGeneration(referenceID: reference.id, job: job("more-\(index)")) == .execute,
+                        "Research work takes more than 14 saved requests: \(index)")
+        }
         let completed = try JSONDecoder().decode(NativeTaskSnapshot.self,
             from: snapshot(reference, id: remote, state: "completed"))
         _ = try recovered.acknowledgeTaskReference(id: reference.id, snapshot: completed)
