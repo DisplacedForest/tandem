@@ -100,7 +100,7 @@ struct NativeTaskGenerationMessage: Codable, Equatable, Sendable {
 
 struct NativeTaskGenerationBudget: Equatable, Sendable {
     let maximumOrdinal: Int
-    let maximumMessages: Int
+    let maximumMessages: Int?
     let maximumBytes: Int
     let allowsTools: Bool
 
@@ -108,7 +108,7 @@ struct NativeTaskGenerationBudget: Equatable, Sendable {
 
     static var dot: NativeTaskGenerationBudget {
         let budget = NativeCompanionWorkerBudget.standard
-        return NativeTaskGenerationBudget(maximumOrdinal: budget.calls, maximumMessages: budget.transcriptMessages,
+        return NativeTaskGenerationBudget(maximumOrdinal: 3, maximumMessages: nil,
                                           maximumBytes: budget.transcriptBytes, allowsTools: true)
     }
 
@@ -139,7 +139,7 @@ struct NativeTaskGenerationCompletion: Codable, Equatable, Sendable {
         }
         let ids = toolCalls.map(\.id)
         guard ["stop", "tool_calls"].contains(finishReason), (finishReason == "tool_calls") != toolCalls.isEmpty,
-              toolCalls.count <= 64, Set(ids).count == ids.count,
+              Set(ids).count == ids.count,
               toolCalls.allSatisfy({ NativeTaskGenerationJob.validCall($0) }),
               !toolCalls.isEmpty || !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               content.utf8.count <= 262144 else {
@@ -277,10 +277,11 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
         guard let name = parts.first.map(String.init), NativeTaskTransportTiming.Phase(rawValue: name) != nil else { return false }
         if parts.count == 1 { return ["plan", "review", "synthesize", "outline"].contains(name) }
         let index = parts[1]
-        guard (1...2).contains(index.count), index.allSatisfy(\.isNumber), let number = Int(index) else { return false }
+        let digits = name == "work" ? 1...9 : 1...2
+        guard digits.contains(index.count), index.allSatisfy(\.isNumber), let number = Int(index) else { return false }
         switch name {
         case "draft", "revise": return number < NativeDocumentWorker.maximumSections
-        case "work": return number < 64
+        case "work": return true
         default: return false
         }
     }
@@ -292,7 +293,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
 
     static func validShape(_ messages: [NativeTaskGenerationMessage], tools: [NativeTaskGenerationTool]?,
                            toolChoice: String?, budget: NativeTaskGenerationBudget) -> Bool {
-        guard (1...budget.maximumMessages).contains(messages.count) else { return false }
+        guard messages.count >= 1, budget.maximumMessages.map({ messages.count <= $0 }) ?? true else { return false }
         guard budget.allowsTools else {
             return tools == nil && toolChoice == nil && messages.allSatisfy({
                 ["system", "user", "assistant"].contains($0.role) && $0.toolCalls == nil && $0.toolCallID == nil
@@ -315,7 +316,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
                 guard message.toolCallID == nil else { return false }
                 if let calls = message.toolCalls {
                     let ids = calls.map(\.id)
-                    guard !calls.isEmpty, calls.count <= 64, calls.allSatisfy(validCall),
+                    guard !calls.isEmpty, calls.allSatisfy(validCall),
                           Set(ids).count == ids.count, issued.isDisjoint(with: ids) else { return false }
                     issued.formUnion(ids)
                 }

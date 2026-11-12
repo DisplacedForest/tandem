@@ -5,7 +5,7 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
     func reserveTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob) throws -> NativeTaskGenerationReservation {
         try database.write { db in
             guard let reference = try Self.readTaskReference(db, id: referenceID),
-                  let profile = reference.profile else { throw NativeTaskError.persistenceUnavailable }
+                  reference.profile != nil else { throw NativeTaskError.persistenceUnavailable }
             try job.validate(reference: reference)
             if let row = try Row.fetchOne(db, sql: """
                 SELECT messages_digest, state, response, failure, reserved_until FROM native_task_generations
@@ -20,11 +20,6 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
                     && deadline <= Date().timeIntervalSince1970 + 180 { return .pending }
                 return .unavailable((row["failure"] as String?) ?? "previous_request_uncertain")
             }
-            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations WHERE request_id = ?",
-                                        arguments: [referenceID.uuidString]) ?? 0
-            let maximum = reference.createRequest.workerType == "companion"
-                ? NativeCompanionWorkerBudget.standard.taskCalls : profile.limits.maximumRequests
-            guard count < maximum else { return .unavailable("request_limit") }
             try db.execute(sql: """
                 INSERT INTO native_task_generations(request_id, generation_key, messages_digest, reserved_until, state)
                 VALUES (?, ?, ?, ?, 'reserved')

@@ -72,7 +72,7 @@ struct NativeMCPOAuthReviewEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sign in to \(review.configuration.name)").font(.title2)
-            Text("Review the service and access before continuing. Sign-in does not enable read tools; you choose those separately after connecting.")
+            Text("Review the service and access before continuing. Sign-in does not enable any tools; you choose those separately after connecting.")
                 .font(.callout)
             Text("Service").font(.headline)
             Text(review.consent.resource.absoluteString).textSelection(.enabled)

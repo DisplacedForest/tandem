@@ -89,7 +89,7 @@ actor NativeTaskGenerationExchange {
             throw NativeTaskLocalStatus(code: 422, detail: "Generation output exceeds its limit")
         }
         if let calls = body.toolCalls {
-            guard body.response != nil, calls.count <= 64, calls.allSatisfy(NativeTaskGenerationJob.validCall),
+            guard body.response != nil, calls.allSatisfy(NativeTaskGenerationJob.validCall),
                   Set(calls.map(\.id)).count == calls.count else {
                 throw NativeTaskLocalStatus(code: 422, detail: "Generation tool calls are not valid")
             }

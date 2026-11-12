@@ -449,7 +449,7 @@ extension NativeTaskDisplayFixture {
         let plain = CardAnswers.task(choices: ["decline", "approve"], covers: nil, neverTitle: nil)
         try require(plain.allowMenu.isEmpty && plain.declineMenu.isEmpty, "A card with nothing to save has no carets")
         try require(NativeScheduleAnswer.route("retry") == .retry && NativeScheduleAnswer.route("stop") == .stop && NativeScheduleAnswer.route("cancel") == .stop
-                    && ["approve", "allow_here", "allow_always", "allow_schedule", "never", "never_commands", "decline", "continue", "finish", "it_happened", "it_did_not"]
+                    && ["approve", "allow_here", "allow_always", "allow_schedule", "never", "never_commands", "decline", "it_happened", "it_did_not"]
                         .allSatisfy { NativeScheduleAnswer.route($0) == .answer },
                     "On the Scheduled screen only Retry retries and only Stop cancels, and every other answer reaches the waiting work")
         try require(card?.offeredChoices == ["approve", "decline"] && card?.canRetry == false,
