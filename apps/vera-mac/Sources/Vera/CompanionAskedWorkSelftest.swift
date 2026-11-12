@@ -168,7 +168,8 @@ enum CompanionAskedWorkFixture {
         try await livePause()
         try await retriedReply()
         try await stoppedDuringHandOff()
-        print("  companion asked work OK (asked, held, second, several, replay, focused, round, no tools, paused, search off, typed words, same response, reordered replay, live pause, retried reply, stopped hand-off, names)")
+        try await stoppedWhileQueued()
+        print("  companion asked work OK (asked, held, second, several, replay, focused, round, no tools, paused, search off, typed words, same response, reordered replay, live pause, retried reply, stopped hand-off, stopped while queued, names)")
     }
 
     static func askedInConversation() async throws {
@@ -534,9 +535,68 @@ enum CompanionAskedWorkFixture {
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 1 && harness.posts.count == 1,
                     "A hand-off that is not stopped still starts")
     }
+
+    static func stoppedWhileQueued() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let posts = NativeChatRulesCounter()
+        let client = NativeTaskClient { method, url, body, _ in
+            posts.hit()
+            guard method == "POST", url.lastPathComponent == "tasks", let body,
+                  let request = try JSONSerialization.jsonObject(with: body) as? [String: Any] else { throw NativeTaskHTTPError.invalidResponse }
+            return (try JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "worker_type": request["worker_type"] ?? "research",
+                "payload": request["payload"] ?? [:], "state": "running", "checkpoint": [:], "cancel_requested": false,
+                "generation": 1, "updated_at": 1.0]), 201)
+        }
+        let blocker = NativeTaskQueueBlocker()
+        let service = NativeTaskHandoffService(repository: repository, client: client) { blocker.base() }
+        let request = try ChatStore.companionRequest(seeds, connectedToolIDs: nil, said: "")
+        let holder = try NativeTaskFixture.origin(repository)
+        let queued = try NativeTaskFixture.origin(repository)
+        blocker.arm()
+        let holding = Task { try await service.submit(origin: holder, request: request) }
+        try await NativeSessionFixture.eventually("The service is busy") { blocker.entered }
+        let waiting = Task { try await service.submit(origin: queued, request: request) }
+        try await Task.sleep(for: .milliseconds(150))
+        waiting.cancel()
+        blocker.release()
+        _ = await holding.result
+        var canceled = false
+        if case .failure(let error) = await waiting.result { canceled = error is CancellationError }
+        try require(canceled && (try repository.taskReferences(conversationID: nil)).isEmpty && posts.count == 0,
+                    "Work cancelled while waiting for the service saves nothing and sends nothing")
+        let started = try await service.submit(origin: queued, request: request)
+        try require(started.deliveryState == .accepted && (try repository.taskReferences(conversationID: nil)).count == 1 && posts.count == 1,
+                    "Work that is not cancelled still starts")
+    }
 }
 
 actor NativeTaskFixtureCollected {
     private(set) var ids: [UUID] = []
     func append(_ id: UUID) { ids.append(id) }
+}
+
+final class NativeTaskQueueBlocker: @unchecked Sendable {
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var armed = false
+    private var inside = false
+
+    var entered: Bool { lock.withLock { inside } }
+
+    func arm() { lock.withLock { armed = true } }
+
+    func release() { gate.signal() }
+
+    func base() -> URL? {
+        let blocking = lock.withLock { () -> Bool in
+            guard armed else { return false }
+            armed = false
+            inside = true
+            return true
+        }
+        guard blocking else { return URL(string: "https://engine.test") }
+        gate.wait()
+        return nil
+    }
 }
