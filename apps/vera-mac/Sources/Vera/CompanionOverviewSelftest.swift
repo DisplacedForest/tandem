@@ -145,9 +145,13 @@ extension SelfTest {
                     "Finished companion work without a document reads as work done")
         navigation.newConversation()
         let unrelatedID = navigation.selectedID
+        let fresh = navigation.companionActivityDetail(item)
+        try require(fresh.request == reference.request.objective && fresh.outcome?.contains("The plan is ready") != true,
+                    "Activity details use the saved request and never repeat a result that arrives as a message")
+        navigation.nativeTaskResultDeliveries[reference.id] = .some(nil)
         let detail = navigation.companionActivityDetail(item)
         try require(detail.request == reference.request.objective && detail.outcome?.contains("The plan is ready") == true,
-                    "Activity details use the saved request and validated result")
+                    "Activity details for work finished before results arrived as messages still use the validated result")
         try require(navigation.selectedID == unrelatedID && navigation.pendingTaskReveal == nil,
                     "Reading details leaves the current conversation in place")
         navigation.openCompanionActivity(item)

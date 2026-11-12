@@ -28,6 +28,7 @@ enum NativeTaskDisplayFixture {
         let origin = try NativeTaskFixture.origin(repository)
         let request = try NativeResearchTaskRequest(objective: "Compare workshop insulation", deliverables: ["Cited comparison"])
         let reference = try repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil)
+        try repository.recordSettledBeforeDelivery(id: reference.id)
         let remote = UUID().uuidString
         let queued = try snapshot(reference, id: remote, state: "queued")
         _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
@@ -337,6 +338,7 @@ extension NativeTaskDisplayFixture {
                        "summary": answer, "title": reference.request.objective, "shape": "answer"],
         ]))
         _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: finished)
+        try repository.recordSettledBeforeDelivery(id: reference.id)
         _ = try repository.projectTask(id: reference.id, snapshot: finished)
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
                               attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)

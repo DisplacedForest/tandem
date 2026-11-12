@@ -21,7 +21,7 @@ struct NativeTurnHistoryMessage: Codable, Sendable {
     init(_ message: Message) {
         id = message.id
         role = message.role.rawValue
-        text = message.text
+        text = message.delivery == nil ? message.text : NativeTaskDelivery.modelText(message.text)
         attachments = message.attachments
         routeNote = message.routeNote
         activities = message.toolActivities
@@ -34,6 +34,7 @@ struct NativeTurnHistoryMessage: Codable, Sendable {
 
     static func snapshot(_ messages: [Message], current: Message, mode: NativeSessionMode = .chat) -> [Self] {
         var history: [Message] = []
+        let messages = messages.filter { $0.contentType != .runOrigin }
         for (index, message) in messages.enumerated() where message.state == .complete {
             if message.role == .user {
                 guard messages.indices.contains(index + 1),

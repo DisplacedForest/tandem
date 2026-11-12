@@ -402,8 +402,9 @@ extension SelfTest {
             try String.fetchOne(db, sql: "SELECT conversation_id FROM native_task_outbox WHERE id = ?", arguments: [reference.id.uuidString])
         }
         try require(delivered == deliveryID && stored == deliveryID, "\(label) still delivers to the conversation it started in")
-        let reply = try finisher.repository.messages(conversationID: deliveryID).first { $0.id == reference.origin.assistantMessageID }
-        try require(reply?.displayBlocks.contains { if case .artifact = $0 { return true }; return false } == true,
+        _ = try finisher.repository.deliverTaskMessages(id: reference.id)
+        let arrived = try finisher.repository.messages(conversationID: deliveryID).filter { $0.delivery?.referenceID == reference.id.uuidString }
+        try require(arrived.count == 1 && arrived.first?.delivery?.finished == true,
                     "\(label) puts its result in the conversation it started in")
     }
 

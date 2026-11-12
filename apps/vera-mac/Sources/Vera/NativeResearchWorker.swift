@@ -18,9 +18,10 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
     var nativeUnavailable: String?
     var failureReason: String?
     var automaticRetryStep: String?
+    var note: NativeTaskNote?
 
     private enum CodingKeys: String, CodingKey {
-        case phase, subquestions, sources, errors, retry, attempt
+        case phase, subquestions, sources, errors, retry, attempt, note
         case nextQuery = "next_query"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
@@ -41,6 +42,7 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
+        note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
     }
 
     func encoded() throws -> Data {
@@ -152,7 +154,7 @@ enum NativeResearchWorker {
     static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given.\n- At the step limit, give your final answer from what is established, never from guesses."
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
-        "\(identity.opening), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else."
+        "\(identity.opening), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else. " + NativeTaskDelivery.notePrompt
     }
 
     static func synthesisPrompt(identity: NativeWorkerIdentity) -> String {
@@ -293,6 +295,7 @@ enum NativeResearchWorker {
                 checkpoint.subquestions = [text(payload.query, 500)]
                 checkpoint.note(["plan: the planner did not return usable sub-questions"])
             }
+            checkpoint.note = NativeTaskDelivery.note(in: response)
             checkpoint.phase = "gather"
             return try progress(checkpoint)
         case "gather":

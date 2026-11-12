@@ -215,7 +215,7 @@ struct ChatPane: View {
         store.pendingTaskReveal = nil
         guard let owner = OngoingWork.owningMessageID(taskID: taskID, fallback: reference.origin.assistantMessageID,
                                                       in: convo.messages) else { return }
-        let artifact = OngoingWork.item(reference).artifact
+        let artifact = OngoingWork.item(reference, newFlow: store.nativeTaskNewFlowIDs).artifact
         let origin = convo.id
         let generation = store.taskRevealGeneration
         cancelTaskReveal()
@@ -312,7 +312,7 @@ struct ChatPane: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(convo.messages) { msg in
+                            ForEach(convo.messages.filter(TranscriptVisibility.shows)) { msg in
                                 let confirmation = store.turnConfirmations[msg.id]
                                 let confirmationToken = store.turnConfirmationTokens[msg.id]
                                 MessageRow(message: msg, nativeActions: true,

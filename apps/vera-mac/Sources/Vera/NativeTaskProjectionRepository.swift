@@ -20,6 +20,7 @@ struct NativeTaskMessageUpdate: Sendable {
     let messageID: UUID
     let blocks: [NativeDisplayBlock]
     var mirrors: [UUID] = []
+    var referenceID: UUID? = nil
 }
 
 protocol NativeTaskProjectionRepository: NativeTaskRepository {
@@ -207,17 +208,22 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             var envelope = NativeMessageEnvelope(spokenText: row["spoken_text"] ?? "",
                 displayBlocks: try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? [])
             let oldBlocks = envelope.displayBlocks
-            envelope.reconcile(card: display.card, artifact: display.artifact)
+            let settledBefore = try NativeTaskDelivery.isSettledBefore(db, id: id)
+            let shows = settledBefore || NativeTaskDelivery.showsCard(reference: reference, snapshot: canonical)
+            let artifact = settledBefore ? display.artifact : nil
+            envelope.reconcile(card: display.card, artifact: artifact)
+            if !shows { envelope.displayBlocks.removeAll { $0.id == "task:" + id.uuidString } }
             if let previous, previous.snapshot == canonical, previous.cursor >= cursor,
                previous.connectionNote == connectionNote, oldBlocks == envelope.displayBlocks,
                reference.snapshot == canonical {
                 return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
                     messageID: reference.origin.assistantMessageID, blocks: envelope.displayBlocks,
-                    mirrors: try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: display.artifact))
+                    mirrors: try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: artifact, shows: shows),
+                    referenceID: id)
             }
             try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
                 arguments: [try nativeTaskEncoded(envelope.displayBlocks), reference.origin.assistantMessageID.uuidString])
-            let mirrors = try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: display.artifact)
+            let mirrors = try Self.refreshTaskCardMirrors(db, referenceID: id, card: display.card, artifact: artifact, shows: shows)
             let snapshotBytes = try canonical.map { try nativeTaskEncoded($0) }
             try db.execute(sql: """
                 INSERT INTO native_task_projections(reference_id, message_id, snapshot_json, cursor, connection_note)
@@ -240,7 +246,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             }
             return NativeTaskMessageUpdate(conversationID: reference.origin.conversationID,
                                            messageID: reference.origin.assistantMessageID,
-                                           blocks: envelope.displayBlocks, mirrors: mirrors)
+                                           blocks: envelope.displayBlocks, mirrors: mirrors, referenceID: id)
         }
     }
 
@@ -280,7 +286,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
     }
 
     static func refreshTaskCardMirrors(_ db: Database, referenceID: UUID, card: NativeTaskCardPresentation,
-                                       artifact: NativeResearchArtifact?) throws -> [UUID] {
+                                       artifact: NativeResearchArtifact?, shows: Bool = true) throws -> [UUID] {
         let ids = try taskCardMirrorIDs(db, referenceID: referenceID)
         var refreshed: [UUID] = []
         for uuid in ids {
@@ -291,6 +297,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
                 displayBlocks: try bytes.map { try JSONDecoder().decode([NativeDisplayBlock].self, from: $0) } ?? [])
             let before = envelope.displayBlocks
             envelope.reconcile(card: card, artifact: artifact)
+            if !shows { envelope.displayBlocks.removeAll { $0.id == "task:" + card.id } }
             if before != envelope.displayBlocks {
                 try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
                                arguments: [try nativeTaskEncoded(envelope.displayBlocks), id])
