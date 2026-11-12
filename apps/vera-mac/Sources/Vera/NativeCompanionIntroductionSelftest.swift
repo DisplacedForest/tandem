@@ -189,6 +189,11 @@ extension SelfTest {
         try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement }, "Refinement does not interrupt a draft")
         store.draft = ""
         store.prepareCompanionRefinement()
+        try require(!store.conversationTurns.contains { $0.companionEvent?.kind == .refinement },
+                    "Work whose result arrives as its own message admits no refinement")
+        try repository.recordSettledBeforeDelivery(id: finished.id)
+        store.nativeTaskResultDeliveries[finished.id] = .some(nil)
+        store.prepareCompanionRefinement()
         try await NativeSessionFixture.eventually("Finished work refinement completes", settled)
         try require(store.conversationTurns.filter { $0.companionEvent?.kind == .refinement }.count == 1, "Finished work admits one refinement")
         try require(store.conversationTurns.first { $0.companionEvent?.kind == .refinement }?.companionEvent?.key == "work:" + finished.id.uuidString,
