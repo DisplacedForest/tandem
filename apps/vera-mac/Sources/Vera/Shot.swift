@@ -78,13 +78,15 @@ enum Shot {
             size = CGSize(width: 900, height: 320)
         } else if view == "companion-picker" {
             size = CGSize(width: 640, height: 560)
+        } else if view == "companion-states-small" {
+            size = CGSize(width: 520, height: 300)
         } else if view == "companion-states" {
-            size = CGSize(width: 900, height: 520)
+            size = CGSize(width: 900, height: 760)
         } else if view == "companion-activity-detail" {
             size = CGSize(width: 340, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
-        } else if view == "companion-thread" || NativeTaskDeliveryShot.views.contains(view) {
+        } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) || NativeTaskDeliveryShot.views.contains(view) {
             size = CGSize(width: 1180, height: 1040)
         } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
             size = CompanionPanelController.size
@@ -451,6 +453,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-states-small" {
+            content = AnyView(
+                ShotCompanionStates(figure: 20)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "companion-states" {
             content = AnyView(
                 ShotCompanionStates()
@@ -498,11 +506,13 @@ enum Shot {
                     .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
                     .frame(width: 340, height: 700).background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if ["companion-thread", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-working-attention", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
             let populated = view != "companion-thread-empty" && view != "companion-thread-error"
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
+            if CompanionShotFixture.workingViews.contains(view) { CompanionShotFixture.seedWorking(store, view: view) }
+            if view == "companion-thread-unnamed" { store.adoptAssistantName(nil) }
             if view == "companion-thread-error" { store.chatConfigurationError = "Messages couldn’t load. Try opening the conversation again." }
             if !populated, let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) {
                 store.conversations[index].messages = []
@@ -520,6 +530,7 @@ enum Shot {
             content = AnyView(
                 ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
                          companionSelection: nil, height: size.height)
+                    .environment(\.companionLiveState, CompanionStateMapper.state(CompanionPresence.snapshot(store: store)))
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .environmentObject(config)
@@ -1561,10 +1572,11 @@ private struct ShotBrandMarks: View {
 
 private struct ShotCompanionStates: View {
     private let appearance = CompanionAppearance(shape: .pebble, color: .sage)
+    var figure: CGFloat = 120
 
     var body: some View {
-        Grid(horizontalSpacing: 48, verticalSpacing: 36) {
-            ForEach(0..<2, id: \.self) { row in
+        Grid(horizontalSpacing: 48, verticalSpacing: figure < 60 ? 24 : 36) {
+            ForEach(0..<3, id: \.self) { row in
                 GridRow {
                     ForEach(0..<3, id: \.self) { column in
                         cell(CompanionState.allCases[row * 3 + column])
@@ -1576,7 +1588,7 @@ private struct ShotCompanionStates: View {
 
     private func cell(_ state: CompanionState) -> some View {
         VStack(spacing: 14) {
-            CompanionAvatarView(appearance: appearance, state: state, size: 120, renderSafe: true)
+            CompanionAvatarView(appearance: appearance, state: state, size: figure, renderSafe: true)
             Text(state.displayName)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)

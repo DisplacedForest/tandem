@@ -43,6 +43,88 @@ struct SidebarRowStyle: ButtonStyle {
     }
 }
 
+enum CompanionTileMetrics {
+    static let figure: CGFloat = 76
+    static let gap: CGFloat = 6
+    static let inset: CGFloat = 12
+    static let minWidth: CGFloat = 108
+    static let radius: CGFloat = 18
+    static let badge: CGFloat = 20
+    static let badgeRing: CGFloat = 3
+}
+
+struct CompanionTileStyle: ButtonStyle {
+    var selected = false
+
+    static func fill(selected: Bool, hovering: Bool, pressed: Bool) -> Color {
+        selected || pressed ? Theme.surfaceSelected : hovering ? Theme.surfaceHover : Theme.cardFill
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        TileBody(configuration: configuration, selected: selected)
+    }
+
+    private struct TileBody: View {
+        let configuration: Configuration
+        let selected: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            let shape = RoundedRectangle(cornerRadius: CompanionTileMetrics.radius, style: .continuous)
+            configuration.label
+                .background(shape.fill(CompanionTileStyle.fill(selected: selected, hovering: hovering, pressed: configuration.isPressed)))
+                .contentShape(shape)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+enum CompanionTileCopy {
+    static let attention = "Something new for you"
+}
+
+struct CompanionTileBadge: View {
+    let attention: Bool
+    let ring: Color
+
+    var body: some View {
+        ZStack {
+            Circle().fill(ring)
+            Circle().fill(attention ? Theme.attention : Theme.statusGreen).padding(CompanionTileMetrics.badgeRing)
+            if attention {
+                Image(systemName: "star.fill").font(.system(size: 7.5, weight: .bold)).foregroundStyle(.white)
+            }
+        }
+        .frame(width: CompanionTileMetrics.badge, height: CompanionTileMetrics.badge)
+        .accessibilityHidden(true)
+    }
+}
+
+struct SidebarRoundButtonStyle: ButtonStyle {
+    var selected = false
+    static let size: CGFloat = 32
+
+    func makeBody(configuration: Configuration) -> some View {
+        RoundBody(configuration: configuration, selected: selected)
+    }
+
+    private struct RoundBody: View {
+        let configuration: Configuration
+        let selected: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: SidebarRoundButtonStyle.size, height: SidebarRoundButtonStyle.size)
+                .background(Circle().fill(CompanionTileStyle.fill(selected: selected, hovering: hovering, pressed: configuration.isPressed)))
+                .contentShape(Circle())
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
 struct SidebarRowLabel<Icon: View>: View {
     let icon: Icon
     let title: String
@@ -227,17 +309,15 @@ struct VeraSidebar: View {
     private var contextColumn: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text("Tandem").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 0)
-                Button { toggleSearch() } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 15))
-                        .foregroundStyle(Theme.textSecondary).frame(width: 28, height: 28)
-                }
-                .buttonStyle(SidebarRowStyle(selected: showsSearch))
-                .help("Search chats").accessibilityLabel("Search chats")
+                Button { toggleSearch() } label: { Image(systemName: "magnifyingglass") }
+                    .buttonStyle(SidebarRoundButtonStyle(selected: showsSearch))
+                    .help("Search chats").accessibilityLabel("Search chats")
+                Button { store.newConversation() } label: { Image(systemName: "plus") }
+                    .buttonStyle(SidebarRoundButtonStyle())
+                    .help("New chat").accessibilityLabel("New chat")
             }
-            .padding(.horizontal, 8).padding(.bottom, 10)
-            actionRow(icon: "square.and.pencil", title: "New chat") { store.newConversation() }
+            .padding(.horizontal, 8).padding(.bottom, 8)
             companionRow
             if showsSearch { searchField.padding(.top, 6) }
             if renderSafe {
@@ -332,12 +412,27 @@ struct VeraSidebar: View {
 
     private var companionRow: some View {
         let selected = store.section == .vera
+        let attention = store.companionWantsAttention
         return Button { onSelect(.vera) } label: {
-            SidebarRowLabel(icon: CompanionAvatar(size: 20), title: store.companion.leading, selected: selected,
-                            tintsIcon: false, rowHeight: 34, titleTemplate: CompanionSentence.placeholder)
+            VStack(spacing: CompanionTileMetrics.gap) {
+                CompanionAvatar(size: CompanionTileMetrics.figure)
+                    .overlay(alignment: .bottomTrailing) {
+                        CompanionTileBadge(attention: attention, ring: CompanionTileStyle.fill(selected: selected, hovering: false, pressed: false))
+                            .offset(x: -4, y: -4)
+                    }
+                Text(store.companion.leading)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
+            }
+            .padding(.horizontal, CompanionTileMetrics.inset).padding(.top, CompanionTileMetrics.inset)
+            .padding(.bottom, CompanionTileMetrics.inset - 2)
+            .frame(minWidth: CompanionTileMetrics.minWidth)
         }
-        .buttonStyle(SidebarRowStyle(selected: selected))
+        .buttonStyle(CompanionTileStyle(selected: selected))
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2).padding(.bottom, 10)
         .help(store.companion.leading).accessibilityLabel(store.companion.leading)
+        .accessibilityValue(attention ? CompanionTileCopy.attention : "")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .contextMenu {
             Button(store.isDotPaused ? "Resume" : "Pause") { store.setDotState(store.isDotPaused ? .active : .paused) }
@@ -402,11 +497,6 @@ struct VeraSidebar: View {
         }
         .buttonStyle(SidebarRowStyle(selected: selected))
         .accessibilityLabel(conversation.title).accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
-    private func actionRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { SidebarRowLabel(icon: Image(systemName: icon), title: title, rowHeight: 34) }
-            .buttonStyle(SidebarRowStyle()).help(title).accessibilityLabel(title)
     }
 }
 

@@ -789,6 +789,7 @@ struct MessageRow: View {
             if message.role == .assistant {
                 if ConversationPresence.replyFigure(companionThread: companionThread) == .companion {
                     CompanionAvatar(size: ConversationMetrics.replyAvatarSize)
+                        .environment(\.companionLiveState, .ready)
                         .padding(.top, 4)
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -1307,6 +1308,10 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.isVeraThread(store.selectedID) {
+                CompanionWorkingLine(work: store.companionBackgroundWork.current)
+                    .padding(.horizontal, 22).padding(.bottom, 8)
+            }
             composer
             if let project {
                 HStack(spacing: 18) {
