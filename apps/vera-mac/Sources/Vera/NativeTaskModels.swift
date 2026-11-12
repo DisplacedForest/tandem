@@ -205,15 +205,9 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
 }
 
 struct NativeCompanionWorkerBudget: Equatable, Sendable {
-    let rounds: Int
-    let calls: Int
-    let transcriptMessages: Int
     let transcriptBytes: Int
-    let taskRounds: Int
-    let taskCalls: Int
 
-    static let standard = NativeCompanionWorkerBudget(rounds: 4, calls: 8, transcriptMessages: 32,
-                                                transcriptBytes: 131072, taskRounds: 32, taskCalls: 64)
+    static let standard = NativeCompanionWorkerBudget(transcriptBytes: 524288)
 }
 
 struct NativeTaskResearchOptions: Sendable {
@@ -436,6 +430,7 @@ struct NativeTaskSource: Codable, Equatable, Hashable, Sendable {
     let n: Int
     let title: String
     let url: String
+    var read: Bool? = nil
 }
 
 struct NativeTaskDecision: Codable, Equatable, Hashable, Sendable {

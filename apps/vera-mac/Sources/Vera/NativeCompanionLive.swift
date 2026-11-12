@@ -86,7 +86,6 @@ enum NativeCompanionLive {
                 answered.insert(decision.id)
                 let pick: String
                 if decision.choices.contains("approve") { pick = choice }
-                else if decision.choices.contains("continue") { pick = answered.count <= 1 ? "continue" : "finish" }
                 else if decision.choices.contains("stop") { pick = "stop" }
                 else { pick = decision.choices.first ?? "retry" }
                 print("companion-live: decision \"\(CompanionSavedText.plain(decision.prompt, name: nil, appWritten: true))\" choices \(decision.choices) answering \(pick)")

@@ -208,8 +208,6 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     static func choiceTitle(_ choice: String) -> String? {
         switch choice {
         case "retry": return "Retry"
-        case "continue": return "Keep going"
-        case "finish": return "Finish"
         case "it_happened": return "It happened"
         case "it_did_not": return "It didn't happen"
         case "stop": return "Stop here"

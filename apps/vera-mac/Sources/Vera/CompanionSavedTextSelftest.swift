@@ -8,7 +8,7 @@ enum CompanionSavedTextFixture {
     static var hostileJoined: String { hostile.joined(separator: " ") }
     static var tokensJoined: String { tokens.joined(separator: " ") }
     static let assignment = "Water the north bed"
-    static let capQuestion = CompanionSavedText.marker + " has used this run's actions and saved its progress. Keep going, or finish with what it has?"
+    static let checkQuestion = CompanionSavedText.marker + " can't tell whether this happened: Water the north bed. Please check, then say what you found."
     static let pausedNote = CompanionSavedText.marker + " is paused."
     static let missedNote = "Missed while " + CompanionSavedText.marker + " was paused."
     static let approvalQuestion = CompanionSavedText.marker + " wants to create a folder in Seeds."
@@ -298,20 +298,15 @@ extension SelfTest {
                     "The command details keep the exact command, marker scalars included")
 
         let permissive = Dictionary(uniqueKeysWithValues: NativeActionClass.allCases.map { ($0, NativeRuleChoice.act) })
-        let capped = try NativeCompanionHarness(rules: permissive) { messages in
+        var capped = try NativeCompanionHarness(rules: permissive) { messages in
             NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
         }
+        capped.environment.budget = NativeCompanionWorkerBudget(transcriptBytes: 16384 + 6000)
         _ = try capped.create()
-        let atCap = try await capped.runUntilSettled(40)
-        let capPrompt = try capped.decision(atCap)["prompt"] as? String ?? ""
-        try require(atCap.state == .needsDecision && (try capped.decision(atCap)["choices"] as? [String]) == ["continue", "finish"],
-                    "The limit fixture asks to keep going")
-        try requireQuestion(capPrompt, "limit", lead: "has used this run's ", shown: [])
-        try capped.reply(atCap, "finish")
-        let limited = try await capped.runUntilSettled(40)
+        let limited = try await capped.runUntilSettled(400)
         let limitReport = try capped.result(limited)
-        try require(limited.state == .completed && (limitReport["report"] as? String ?? "").hasPrefix("Reached the limit for this assignment before writing a full report."),
-                    "Finishing at the limit writes the name-free limit report: \(limitReport["report"] as? String ?? "")")
+        try require(limited.state == .completed && (limitReport["report"] as? String ?? "").hasPrefix(NativeCompanionWorker.outOfRoomFallback),
+                    "Running out of room writes the name-free report: \(limitReport["report"] as? String ?? "")")
         reports["limit"] = limitReport
 
         let blindScript: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion = { messages in
@@ -387,10 +382,10 @@ extension SelfTest {
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: try LocalChatRepository(inMemory: true),
                               nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
         let reference = try CompanionSavedTextFixture.reference(state: "needs_decision", decision: [
-            "id": "cap", "prompt": CompanionSavedTextFixture.capQuestion, "choices": ["continue", "finish"]])
+            "id": "check", "prompt": CompanionSavedTextFixture.checkQuestion, "choices": ["it_happened", "it_did_not", "stop"]])
         store.nativeTaskReferences = [reference]
         let card = try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card
-        try require(card.milestone == CompanionSavedTextFixture.capQuestion, "The card keeps the saved marker question")
+        try require(card.milestone == CompanionSavedTextFixture.checkQuestion, "The card keeps the saved marker question")
         let schedule = try NativeSchedule(id: "saved-text-rename", owner: .dot, workerType: "companion", title: "Bed check",
                                           instruction: "Check the beds.", cadence: .everyHours(6), timeZone: TimeZone(identifier: "UTC")!)
         let paused = NativeScheduleRun(id: "rename-paused", scheduleID: schedule.id, scheduledFor: Date(), outcome: .skipped,
@@ -401,9 +396,9 @@ extension SelfTest {
         store.scheduleRuns = [schedule.id: [paused, missed]]
         let taskItem = CompanionOverviewModel.taskItem(card: card, reference: reference, decision: nil, hasArtifact: false, date: Date())
         let expected: [(String?, String, String, String)] = [
-            ("Ada", "Ada has used this run's actions", "Ada is paused.", "Missed while Ada was paused."),
-            ("Moss", "Moss has used this run's actions", "Moss is paused.", "Missed while Moss was paused."),
-            (nil, "Your companion has used this run's actions", "Your companion is paused.", "Missed while your companion was paused."),
+            ("Ada", "Ada can't tell whether this happened", "Ada is paused.", "Missed while Ada was paused."),
+            ("Moss", "Moss can't tell whether this happened", "Moss is paused.", "Missed while Moss was paused."),
+            (nil, "Your companion can't tell whether this happened", "Your companion is paused.", "Missed while your companion was paused."),
         ]
         for (index, (name, question, pausedText, missedText)) in expected.enumerated() {
             if index > 0 { store.adoptAssistantName(name) }
@@ -591,7 +586,7 @@ extension SelfTest {
         var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: UUID().uuidString,
                                                                                         state: "needs_decision"))) as? [String: Any] ?? [:]
         object["worker_type"] = "companion"
-        object["decision"] = ["id": "check-in", "prompt": CompanionSavedTextFixture.capQuestion, "choices": ["continue", "finish"]]
+        object["decision"] = ["id": "check-in", "prompt": CompanionSavedTextFixture.checkQuestion, "choices": ["it_happened", "it_did_not", "stop"]]
         let waiting = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
         _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: waiting)
         _ = try repository.projectTask(id: reference.id, snapshot: waiting)
@@ -601,7 +596,7 @@ extension SelfTest {
         schedule.advance(after: Date(), from: nil)
         try scheduleStore.save(schedule)
         try scheduleStore.saveRun(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date(), startedAt: Date(), outcome: .waiting,
-                                                    detail: CompanionSavedTextFixture.capQuestion, conversationID: origin.conversationID,
+                                                    detail: CompanionSavedTextFixture.checkQuestion, conversationID: origin.conversationID,
                                                     messageID: origin.assistantMessageID.uuidString, taskReferenceID: reference.id.uuidString))
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: name,
                               artifactPersistenceEnabled: false)
@@ -648,7 +643,7 @@ extension SelfTest {
         for (name, rename, shown) in expected {
             let text = try waitingCheckIn(name: name, rename: rename) ?? ""
             try require(text == "The scheduled research \"Saved check\" stopped to ask: " + shown
-                            + " has used this run's actions and saved its progress. Keep going, or finish with what it has?"
+                            + " can't tell whether this happened: Water the north bed. Please check, then say what you found."
                         && !hasMarkerScalar(text) && !text.contains("{name}"),
                         "The posted check-in fills the current name and carries no marker: \(text)")
         }
