@@ -8,10 +8,8 @@ Five interface icons come from Apps SDK UI.
 
 - Project: Apps SDK UI
 - Source: https://github.com/openai/apps-sdk-ui
-- Commit: 0f00143c7a639906f1621fe58e1b6be7b5bea46d
-- Files: `src/components/Icon/svg/Search.tsx`, `src/components/Icon/svg/PlusLg.tsx`, `src/components/Icon/svg/SidebarFloatingLeft.tsx`, `src/components/Icon/svg/SidebarFloatingOpenLeft.tsx`, `src/components/Icon/svg/DotsHorizontal.tsx`
 
-In this repository they live as plain SVG files in `apps/vera-mac/Sources/Vera/Resources/InterfaceIcons/`, with the path data unchanged.
+The pinned commit and the list of source files are recorded in the notice that ships next to the icons, `interface-icons-NOTICE.txt` in `apps/vera-mac/Sources/Vera/Resources/InterfaceIcons/`. The icons live there as plain SVG files with the path data unchanged.
 
 License: MIT
 
