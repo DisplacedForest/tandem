@@ -49,13 +49,17 @@ final class NativeCompanionFinishModel: @unchecked Sendable {
 }
 
 struct NativeCompanionFinishRig {
+    static let tightRoom = 16384 + 8192
+
     let repository: LocalChatRepository
     let store: NativeTaskStore
     let ledger: NativeEffectLedgerStore
     let model: NativeCompanionFinishModel
+    let tools: [NativeToolDefinition]
     var environment: NativeCompanionWorkerEnvironment
 
-    init(url: URL? = nil, rounds: Int = 4, tools custom: [NativeToolDefinition]? = nil, model: NativeCompanionFinishModel) throws {
+    init(url: URL? = nil, room: Int = NativeCompanionWorkerBudget.standard.transcriptBytes, tools custom: [NativeToolDefinition]? = nil,
+         model: NativeCompanionFinishModel) throws {
         repository = try url.map { try LocalChatRepository(url: $0) } ?? LocalChatRepository(inMemory: true)
         store = NativeTaskStore(database: repository.database)
         let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_800_000_000))
@@ -65,20 +69,19 @@ struct NativeCompanionFinishRig {
         rules.setGlobal(NativeRules(choices: [:]))
         let grants = NativeFolderGrantSource()
         let tools = custom ?? Self.libraryTools()
+        self.tools = tools
         environment = NativeCompanionWorkerEnvironment(
             context: { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: tools) },
             authority: { conversation, request in
                 NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request), grantsRevision: grants.revision)
             },
             ledger: ledger, tasks: store, now: { clock.now }, pause: { _ in }, defaultToolSeconds: 2)
-        let standard = NativeCompanionWorkerBudget.standard
-        environment.budget = NativeCompanionWorkerBudget(rounds: rounds, calls: standard.calls, transcriptMessages: standard.transcriptMessages,
-                                                         transcriptBytes: standard.transcriptBytes, taskRounds: standard.taskRounds,
-                                                         taskCalls: standard.taskCalls)
+        environment.budget = NativeCompanionWorkerBudget(transcriptBytes: room)
     }
 
-    func create(_ assignment: String = "Check the reading room hours at the central library", mode: String = "manual") throws -> String {
-        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode)
+    func create(_ assignment: String = "Check the reading room hours at the central library", mode: String = "manual",
+                scheduleID: String? = nil) throws -> String {
+        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode, scheduleID: scheduleID)
         let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -99,7 +102,7 @@ struct NativeCompanionFinishRig {
         return try store.commitStep(claimed.id, generation: claimed.generation, step: try await run(claimed))
     }
 
-    func settle(_ limit: Int = 16) async throws -> (record: NativeTaskRecord, states: [NativeTaskState]) {
+    func settle(_ limit: Int = 400) async throws -> (record: NativeTaskRecord, states: [NativeTaskState]) {
         var states: [NativeTaskState] = []
         for _ in 0..<limit {
             let record = try await step()
@@ -107,6 +110,13 @@ struct NativeCompanionFinishRig {
             if record.state != .queued { return (record, states) }
         }
         throw NativeTaskFixture.Failure.assertion("The companion work settles")
+    }
+
+    func seed(_ id: String, checkpoint: Data, decision: [String: Any]? = nil) throws -> NativeTaskRecord {
+        guard let claimed = try store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+        return try store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
+            state: decision == nil ? .queued : .needsDecision, checkpoint: checkpoint, event: "progress",
+            decision: try decision.map { try NativeTaskStore.canonical($0) }))
     }
 
     @discardableResult
@@ -124,6 +134,26 @@ struct NativeCompanionFinishRig {
         return try NativeTaskStore.object(raw)
     }
 
+    func asked(_ id: String) throws -> Int {
+        try repository.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'needs_decision'", arguments: [id]) ?? 0
+        }
+    }
+
+    func display(_ record: NativeTaskRecord, assignment: String) throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
+        var reference = try repository.prepareTaskReference(origin: NativeTaskFixture.origin(repository),
+            engine: NativeTaskEngineIdentity(URL(string: "https://engine.example.org")!), request: request, profile: nil)
+        reference.remoteTaskID = record.id
+        let snapshot = try NativeTaskSnapshot(id: record.id, workerType: record.workerType,
+            payload: JSONDecoder().decode(NativeResearchTaskPayload.self, from: record.payload), state: record.state,
+            checkpoint: JSONDecoder().decode(NativeTaskCheckpoint.self, from: record.checkpoint),
+            result: try record.result.map { try JSONDecoder().decode(NativeResearchTaskResult.self, from: $0) },
+            decision: try record.decision.map { try JSONDecoder().decode(NativeTaskDecision.self, from: $0) },
+            cancelRequested: false, generation: record.generation, updatedAt: record.updatedAt)
+        return try NativeTaskProjection.display(reference: reference, snapshot: snapshot)
+    }
+
     static func answeredOnce(_ checkpoint: NativeCompanionCheckpoint) -> Bool {
         let issued = checkpoint.transcript.flatMap { $0.toolCalls ?? [] }.map(\.id)
         let answers = checkpoint.transcript.compactMap(\.toolCallID)
@@ -134,33 +164,21 @@ struct NativeCompanionFinishRig {
 @MainActor
 extension SelfTest {
     static func runNativeCompanionFinish() async throws {
-        try await companionFinishAfterContinueUnavailable()
+        try await companionLongWork()
+        try await companionFinishInterrupted()
         try await companionFinishAutomaticRetry()
-        try await companionFinishAtFirstCap()
+        try await companionFinishOutstanding()
         try await companionFinishTerminal()
         try await companionFinishScalarLimit()
         try await companionFinishRelaunch()
         try await companionFinishStopped()
-        try await companionFinishAnsweredOnce()
         try await companionFinishOldCheckpoint()
         try await companionSourcesRead()
         try await companionFinishSavedPages()
         try await companionFinishFallbackKeepsPages()
-        try await companionFinishThroughEngine()
-        print("  companion finish OK (finish survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, one answer per question, older saved work, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, a write-up that can't run keeps the pages, tracker and engine end to end)")
-    }
-
-    private static func companionCappedTwice(_ rig: NativeCompanionFinishRig) async throws -> NativeTaskRecord {
-        let require = NativeTaskFixture.require
-        _ = try rig.create()
-        let first = try await rig.settle()
-        try require(first.record.state == .needsDecision && (try rig.checkpoint(first.record)).pending?.kind == "cap",
-                    "The first cap asks to keep going or finish")
-        try rig.reply(first.record, "continue")
-        let second = try await rig.settle()
-        try require(second.record.state == .needsDecision && (try rig.checkpoint(second.record)).rounds == 8,
-                    "The second cap asks again after another four rounds")
-        return second.record
+        try await companionLongWorkThroughEngine()
+        try await companionOldQuestionCarriesOn()
+        print("  companion finish OK (long work never asks or ends early, running out of room survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, older saved work carries on, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, the closing write-up is used when it fits, a write-up that can't run keeps the pages, over a hundred steps through the engine, a saved old question carries on by itself)")
     }
 
     private static func companionClosingOnly(_ rig: NativeCompanionFinishRig, after mark: Int) -> Bool {
@@ -168,75 +186,102 @@ extension SelfTest {
         return !later.isEmpty && later.allSatisfy { $0.choice == "none" && $0.attempt.hasSuffix("-finish") }
     }
 
-    private static func companionFinishAfterContinueUnavailable() async throws {
+    private static func companionClosingOnlyAfterFirst(_ rig: NativeCompanionFinishRig) -> Bool {
+        guard let first = rig.model.calls.firstIndex(where: { $0.attempt.hasSuffix("-finish") }) else { return false }
+        return companionClosingOnly(rig, after: first)
+    }
+
+    private static func companionLongWork() async throws {
         let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(model: .looping())
-        let waiting = try await companionCappedTwice(rig)
+        for (mode, schedule) in [("manual", nil), ("scheduled", "garden-schedule")] as [(String, String?)] {
+            let model = NativeCompanionFinishModel { messages in
+                let rounds = messages.filter { $0.role == "assistant" && $0.toolCalls != nil }.count
+                if rounds >= 100 { return .text("All the hour checks are done.") }
+                let calls = (0..<3).map { NativeTaskGenerationToolCall(id: "call-\(rounds)-\($0)", name: NativeCompanionFinishRig.lookupName, arguments: "{}") }
+                return NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
+            }
+            let rig = try NativeCompanionFinishRig(model: model)
+            let id = try rig.create(mode: mode, scheduleID: schedule)
+            let settled = try await rig.settle()
+            let saved = try rig.checkpoint(settled.record)
+            let report = try rig.report(settled.record)["report"] as? String ?? ""
+            try require(settled.record.state == .completed && !settled.states.contains(.needsDecision) && settled.record.decision == nil
+                        && (try rig.asked(id)) == 0,
+                        "The \(mode) work runs to its answer without a question: \(settled.states.count) steps")
+            try require(saved.rounds == 101 && saved.calls == 300 && saved.finishing == nil,
+                        "The \(mode) work runs far past the old limits: rounds \(saved.rounds) calls \(saved.calls)")
+            try require(report == "All the hour checks are done." && !rig.model.calls.contains { $0.attempt.hasSuffix("-finish") },
+                        "The \(mode) work ends with its own answer, never a forced write-up: \(report)")
+            try require(NativeCompanionFinishRig.answeredOnce(saved), "Every call in the \(mode) work is answered once")
+        }
+    }
+
+    private static func companionFinishInterrupted() async throws {
+        let require = NativeTaskFixture.require
+        let rig = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
+        let id = try rig.create()
         rig.model.failClosing(NativeTaskExecutorUnavailable())
+        let blocked = try await rig.settle()
+        let saved = try rig.checkpoint(blocked.record)
+        try require(blocked.record.state == .blocked && saved.finishing == true && saved.rounds > 1 && !blocked.states.contains(.needsDecision),
+                    "Running out of room starts the closing write-up, which waits for the model: \(blocked.record.state) rounds \(saved.rounds)")
         let mark = rig.model.calls.count
-        try rig.reply(waiting, "finish")
-        let blocked = try await rig.step()
-        try require(blocked.state == .blocked, "A closing write-up without a model blocks the work: \(blocked.state)")
-        _ = try rig.store.resume(blocked.id)
+        _ = try rig.store.resume(id)
         let settled = try await rig.settle()
-        try require(!settled.states.contains(.needsDecision),
-                    "After Finish the question never comes back: \(settled.states) pending \(String(describing: (try? rig.checkpoint(settled.record))?.pending))")
-        try require(settled.record.state == .completed && (try rig.report(settled.record)["report"] as? String)?.isEmpty == false,
-                    "The resumed work completes with a report")
-        try require(companionClosingOnly(rig, after: mark), "After Finish the model is only asked for the closing write-up: \(rig.model.calls.dropFirst(mark))")
+        try require(settled.record.state == .completed && !settled.states.contains(.needsDecision), "The resumed work completes: \(settled.states)")
+        try require(companionClosingOnly(rig, after: mark), "After resuming only the closing write-up runs: \(rig.model.calls.dropFirst(mark))")
+        let report = try rig.report(settled.record)["report"] as? String ?? ""
+        try require(report == NativeCompanionWorker.outOfRoomLead + "\n\nThe central reading room has forty seats.",
+                    "The closing write-up says the work ran out of room: \(report)")
         try require(NativeCompanionFinishRig.answeredOnce(try rig.checkpoint(settled.record)), "Every call is answered exactly once")
+        try require(try rig.asked(id) == 0, "Running out of room never asks a question")
     }
 
     private static func companionFinishAutomaticRetry() async throws {
         let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(model: .looping())
-        let waiting = try await companionCappedTwice(rig)
+        let rig = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
+        _ = try rig.create()
         rig.model.failClosing(NativeTaskGenerationFailure(code: "request_timeout"))
-        let mark = rig.model.calls.count
-        try rig.reply(waiting, "finish")
         let settled = try await rig.settle()
         try require(!settled.states.contains(.needsDecision) && settled.record.state == .completed,
-                    "A closing write-up that retries on its own still finishes without asking again: \(settled.states)")
-        try require(companionClosingOnly(rig, after: mark), "The automatic retry asks only for the closing write-up: \(rig.model.calls.dropFirst(mark))")
+                    "A closing write-up that retries on its own still finishes without asking: \(settled.states)")
+        try require(companionClosingOnlyAfterFirst(rig) && rig.model.calls.filter { $0.attempt.hasSuffix("-finish") }.count == 2,
+                    "The automatic retry asks only for the closing write-up")
 
-        let unsafe = try NativeCompanionFinishRig(model: .looping())
-        let asked = try await companionCappedTwice(unsafe)
+        let unsafe = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
+        _ = try unsafe.create()
         unsafe.model.failClosing(NativeTaskGenerationFailure(code: "provider_auth"))
-        let unsafeMark = unsafe.model.calls.count
-        try unsafe.reply(asked, "finish")
         let retry = try await unsafe.settle()
-        try require(retry.record.state == .needsDecision && (try unsafe.decision(retry.record)) == ["retry"],
+        try require(retry.record.state == .needsDecision && (try unsafe.decision(retry.record)) == ["retry"]
+                    && (try unsafe.checkpoint(retry.record)).finishing == true,
                     "A closing write-up that is unsafe to repeat asks only to retry")
+        let mark = unsafe.model.calls.count
         try unsafe.reply(retry.record, "retry")
         let done = try await unsafe.settle()
         try require(done.record.state == .completed && !done.states.contains(.needsDecision),
                     "After Retry the work goes back to finishing: \(done.states)")
-        try require(companionClosingOnly(unsafe, after: unsafeMark), "Retrying asks only for the closing write-up: \(unsafe.model.calls.dropFirst(unsafeMark))")
+        try require(companionClosingOnly(unsafe, after: mark), "Retrying asks only for the closing write-up: \(unsafe.model.calls.dropFirst(mark))")
     }
 
-    private static func companionFinishAtFirstCap() async throws {
+    private static func companionFinishOutstanding() async throws {
         let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(model: .looping(callsPerRound: 3))
-        _ = try rig.create()
-        let capped = try await rig.settle()
-        let saved = try rig.checkpoint(capped.record)
-        try require(capped.record.state == .needsDecision && saved.pending?.kind == "cap" && !saved.outstandingCalls.isEmpty,
-                    "The action cap asks with calls still unanswered")
-        rig.model.failClosing(NativeTaskExecutorUnavailable())
-        let mark = rig.model.calls.count
-        try rig.reply(capped.record, "finish")
-        let blocked = try await rig.step()
-        try require(blocked.state == .blocked && (try rig.checkpoint(blocked)).outstandingCalls.isEmpty,
-                    "The blocked save keeps the not-run answers")
-        _ = try rig.store.resume(blocked.id)
+        let rig = try NativeCompanionFinishRig(model: .looping())
+        let id = try rig.create()
+        var checkpoint = NativeCompanionCheckpoint()
+        checkpoint.threadID = "companion-thread-1"
+        checkpoint.rounds = 5
+        checkpoint.calls = 13
+        checkpoint.finishing = true
+        let calls = (0..<3).map { NativeTaskGenerationToolCall(id: "left-\($0)", name: NativeCompanionFinishRig.lookupName, arguments: "{}") }
+        checkpoint.transcript = [NativeTaskGenerationMessage(role: "assistant", content: "", toolCalls: calls),
+                                 NativeTaskGenerationMessage(role: "tool", content: "{\"seats\":40}", toolCallID: "left-0")]
+        _ = try rig.seed(id, checkpoint: try checkpoint.encoded())
         let settled = try await rig.settle()
-        try require(settled.record.state == .completed && !settled.states.contains(.needsDecision),
-                    "Finishing at the first cap completes after the model returns: \(settled.states)")
-        try require(companionClosingOnly(rig, after: mark), "Only the closing write-up runs: \(rig.model.calls.dropFirst(mark))")
+        try require(settled.record.state == .completed && rig.model.calls.allSatisfy { $0.attempt.hasSuffix("-finish") },
+                    "Finishing work only asks for the closing write-up")
         let final = try rig.checkpoint(settled.record)
-        let notRun = final.transcript.filter { $0.role == "tool" && $0.content.contains("the person asked to finish") }
-        try require(NativeCompanionFinishRig.answeredOnce(final) && notRun.count == saved.outstandingCalls.count,
-                    "Unanswered calls are answered once as not run")
+        let notRun = final.transcript.filter { $0.role == "tool" && $0.content.contains("this work is finishing with what it has") }
+        try require(NativeCompanionFinishRig.answeredOnce(final) && notRun.count == 2, "Unanswered calls are answered once as not run")
     }
 }
 
@@ -245,20 +290,18 @@ extension SelfTest {
     private static func companionFinishTerminal() async throws {
         let require = NativeTaskFixture.require
         let web = companionWebTools().1
-        let searching = NativeCompanionFinishModel { _ in NativeCompanionScriptedModel.call("web_search", "{\"query\":\"reading rooms\"}") }
-        let rig = try NativeCompanionFinishRig(rounds: 1, tools: web, model: searching)
-        _ = try rig.create("Find the reading room hours at the public libraries")
-        let capped = try await rig.settle()
-        try require(capped.record.state == .needsDecision && (try rig.checkpoint(capped.record)).sources?.count == 3,
-                    "The search results are saved before the question")
+        let searching = NativeCompanionFinishModel { messages in
+            NativeCompanionScriptedModel.call("web_search", "{\"query\":\"reading rooms\"}", id: "search-\(messages.count)")
+        }
+        let rig = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, tools: web, model: searching)
+        let id = try rig.create("Find the reading room hours at the public libraries")
         rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
-        try rig.reply(capped.record, "finish")
         let ended = try await rig.settle()
         let result = try rig.report(ended.record)
         let report = result["report"] as? String ?? ""
         let sources = result["sources"] as? [[String: Any]] ?? []
-        try require(ended.record.state == .completed && !ended.states.contains(.needsDecision),
-                    "A closing write-up that cannot run ends the work without asking again: \(ended.states)")
+        try require(ended.record.state == .completed && !ended.states.contains(.needsDecision) && (try rig.asked(id)) == 0,
+                    "A closing write-up that cannot run ends the work without asking: \(ended.states)")
         try require(report.hasPrefix("The write-up could not be finished.") && report.contains("Rain totals [1]"),
                     "The result says the write-up could not be finished and lists what was saved: \(report)")
         try require(report.contains("Found in a search, not read:") && !report.contains("Pages read:") && !report.contains("Pages found:"),
@@ -268,11 +311,9 @@ extension SelfTest {
                     "Every saved source is kept: \(sources)")
         try require(!report.contains(CompanionSavedText.marker) && !report.contains("\u{2014}"), "The statement is plain")
 
-        let empty = try NativeCompanionFinishRig(rounds: 1, model: .looping())
+        let empty = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
         _ = try empty.create()
-        let asked = try await empty.settle()
         empty.model.failClosing(NativeTaskGenerationFailure(code: "input_limit"))
-        try empty.reply(asked.record, "finish")
         let nothing = try await empty.settle()
         let nothingReport = try empty.report(nothing.record)["report"] as? String ?? ""
         try require(nothing.record.state == .completed
@@ -294,7 +335,7 @@ extension SelfTest {
             let id = try rig.create(assignment)
             var checkpoint = NativeCompanionCheckpoint()
             checkpoint.threadID = "companion-thread-1"
-            checkpoint.pending = NativeCompanionPending(kind: "cap")
+            checkpoint.finishing = true
             checkpoint.sources = [source]
             for _ in 0..<4 { checkpoint.note(described, "done") }
             let longLine = "a" + String(repeating: "\u{0301}", count: variant == "both" ? 16000 : 30000)
@@ -302,27 +343,13 @@ extension SelfTest {
             if variant == "not run" || variant == "both" { checkpoint.note(longLine, "not done", reason: "The room was closed.") }
             try require((NativeCompanionWorker.earlierLine(checkpoint) ?? "").unicodeScalars.count > NativeCompanionWorker.reportScalars,
                         "The completed steps exceed the report limit in scalars")
-            guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
-            let waiting = try rig.store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
-                state: .needsDecision, checkpoint: try checkpoint.encoded(), event: "progress",
-                decision: try NativeTaskStore.canonical(["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])))
+            _ = try rig.seed(id, checkpoint: try checkpoint.encoded())
             rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
-            let mark = rig.model.calls.count
-            try rig.reply(waiting, "finish")
             let ended = try await rig.settle()
             let report = try rig.report(ended.record)["report"] as? String ?? ""
-            try require(ended.record.state == .completed && companionClosingOnly(rig, after: mark),
+            try require(ended.record.state == .completed && companionClosingOnly(rig, after: 0),
                         "The \(variant) finish saves a completed result after the closing request fails")
-            let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
-            var reference = try rig.repository.prepareTaskReference(origin: NativeTaskFixture.origin(rig.repository),
-                engine: NativeTaskEngineIdentity(URL(string: "https://engine.example.org")!), request: request, profile: nil)
-            reference.remoteTaskID = id
-            let snapshot = try NativeTaskSnapshot(id: id, workerType: ended.record.workerType,
-                payload: JSONDecoder().decode(NativeResearchTaskPayload.self, from: ended.record.payload), state: ended.record.state,
-                checkpoint: JSONDecoder().decode(NativeTaskCheckpoint.self, from: ended.record.checkpoint),
-                result: JSONDecoder().decode(NativeResearchTaskResult.self, from: ended.record.result!), decision: nil,
-                cancelRequested: false, generation: ended.record.generation, updatedAt: ended.record.updatedAt)
-            let display = try NativeTaskProjection.display(reference: reference, snapshot: snapshot)
+            let display = try rig.display(ended.record, assignment: assignment)
             try require(display.card.status == .completed && (display.card.answer ?? display.artifact?.report) == report,
                         "The completed projection accepts the \(variant) saved report")
             try require(report.unicodeScalars.count <= NativeCompanionWorker.reportScalars && report.hasPrefix(lead),
@@ -357,62 +384,52 @@ extension SelfTest {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        func completions(_ rig: NativeCompanionFinishRig, _ id: String) throws -> (completed: Int, asked: Int) {
+        func completions(_ rig: NativeCompanionFinishRig, _ id: String) throws -> Int {
             try rig.repository.database.read { db in
-                (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'completed'", arguments: [id]) ?? 0,
-                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'needs_decision'", arguments: [id]) ?? 0)
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'completed'", arguments: [id]) ?? 0
             }
         }
-        for variant in ["answered", "blocked", "interrupted"] {
+        for variant in ["blocked", "interrupted"] {
             let url = directory.appendingPathComponent("\(variant).sqlite")
-            let before = try NativeCompanionFinishRig(url: url, rounds: 1, model: .looping())
+            let before = try NativeCompanionFinishRig(url: url, room: NativeCompanionFinishRig.tightRoom, model: .looping())
             let id = try before.create()
-            let capped = try await before.settle()
-            try before.reply(capped.record, "finish")
-            switch variant {
-            case "blocked":
-                before.model.failClosing(NativeTaskExecutorUnavailable())
-                let blocked = try await before.step()
-                try require(blocked.state == .blocked && (try before.checkpoint(blocked)).finishing == true, "The blocked save keeps the finishing mark")
-            case "interrupted":
+            before.model.failClosing(NativeTaskExecutorUnavailable())
+            let blocked = try await before.settle()
+            try require(blocked.record.state == .blocked && (try before.checkpoint(blocked.record)).finishing == true,
+                        "The blocked save keeps the finishing mark")
+            if variant == "interrupted" {
+                _ = try before.store.resume(id)
                 _ = try before.store.claim(workerTypes: ["companion"])
-            default:
-                break
             }
-            let after = try NativeCompanionFinishRig(url: url, rounds: 1, model: .looping())
+            let after = try NativeCompanionFinishRig(url: url, room: NativeCompanionFinishRig.tightRoom, model: .looping())
             try after.store.recover()
             if try after.store.get(id).state == .blocked { _ = try after.store.resume(id) }
             let settled = try await after.settle()
             try require(settled.record.state == .completed && !settled.states.contains(.needsDecision),
-                        "After a relaunch the \(variant) work finishes without asking again: \(settled.states)")
+                        "After a relaunch the \(variant) work finishes without asking: \(settled.states)")
             try require(after.model.calls.allSatisfy { $0.choice == "none" }, "After a relaunch only the closing write-up runs")
             try require(try after.store.claim(workerTypes: ["companion"]) == nil, "Nothing is left to run")
-            let counts = try completions(after, id)
-            try require(counts.completed == 1 && counts.asked == 1, "One result and one question: \(counts)")
+            try require(try completions(after, id) == 1 && (try after.asked(id)) == 0, "One result and no question")
         }
     }
 
     private static func companionFinishStopped() async throws {
         let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(rounds: 1, model: .looping())
+        let rig = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
         let id = try rig.create()
-        let capped = try await rig.settle()
         rig.model.failClosing(NativeTaskExecutorUnavailable())
-        try rig.reply(capped.record, "finish")
-        let blocked = try await rig.step()
-        try require(blocked.state == .blocked, "Finishing waits for the model")
+        let blocked = try await rig.settle()
+        try require(blocked.record.state == .blocked, "Finishing waits for the model")
         let canceled = try rig.store.cancel(id)
         try require(canceled.state == .canceled && canceled.result == nil, "Stopping while finishing ends the work")
         try require(try rig.store.claim(workerTypes: ["companion"]) == nil && (try? rig.store.resume(id)) == nil,
                     "A stopped finish cannot run again")
         try require(try rig.store.get(id).result == nil, "A stopped finish publishes nothing")
 
-        let running = try NativeCompanionFinishRig(rounds: 1, model: .looping())
+        let running = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, model: .looping())
         let runningID = try running.create()
-        let waiting = try await running.settle()
         running.model.failClosing(NativeTaskExecutorUnavailable())
-        try running.reply(waiting.record, "finish")
-        _ = try await running.step()
+        _ = try await running.settle()
         _ = try running.store.resume(runningID)
         guard let claimed = try running.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
         _ = try running.store.cancel(runningID)
@@ -425,48 +442,34 @@ extension SelfTest {
         try require(stopped.state == .canceled && stopped.result == nil, "A stop during the closing write-up publishes nothing: \(stopped.state)")
     }
 
-    private static func companionFinishAnsweredOnce() async throws {
-        let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(rounds: 1, model: .looping())
-        let id = try rig.create()
-        let capped = try await rig.settle()
-        let key = UUID().uuidString
-        try rig.reply(capped.record, "finish", key: key)
-        let again = try rig.reply(capped.record, "finish", key: key)
-        try require(again.state == .queued, "The same answer sent twice is the same answer")
-        do {
-            try rig.reply(capped.record, "continue")
-            throw NativeTaskFixture.Failure.assertion("A second answer to the same question must be refused")
-        } catch NativeTaskStoreError.conflict {}
-        let done = try await rig.settle()
-        try require(done.record.state == .completed, "The first answer finishes the work")
-        do {
-            try rig.reply(capped.record, "finish")
-            throw NativeTaskFixture.Failure.assertion("An answer after the work ended must be refused")
-        } catch NativeTaskStoreError.conflict {}
-        try require(try rig.store.claim(workerTypes: ["companion"]) == nil && (try rig.store.get(id)).result == done.record.result,
-                    "A late answer cannot produce a second result")
-    }
-
     private static func companionFinishOldCheckpoint() async throws {
         let require = NativeTaskFixture.require
-        let rig = try NativeCompanionFinishRig(model: .looping())
-        let id = try rig.create()
+        let model = NativeCompanionFinishModel { messages in
+            NativeCompanionScriptedModel.toolResults(messages).count >= 3
+                ? .text("The central reading room has forty seats.")
+                : NativeCompanionScriptedModel.call(NativeCompanionFinishRig.lookupName, "{}", id: "new-\(messages.count)")
+        }
         let old = Data(#"{"attempt":"0ldattempt","calls":4,"effects":[],"pending":{"kind":"cap"},"rounds":4,"segment_calls":4,"segment_rounds":4,"sources":[{"n":1,"title":"Opening hours","url":"https://hours.example.org/rooms"}],"thread_id":"companion-thread-1","transcript":[{"content":"","role":"assistant","tool_calls":[{"arguments":"{}","id":"old-1","name":"room_hours"}]},{"content":"{\"seats\":40}","role":"tool","tool_call_id":"old-1"}]}"#.utf8)
         let decoded = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: old)
-        try require(decoded.finishing == nil && decoded.pending?.kind == "cap" && decoded.sources?.first?.read == nil,
+        try require(decoded.finishing == nil && decoded.pending?.kind == "cap" && decoded.rounds == 4 && decoded.sources?.first?.read == nil,
                     "Older saved work reads with no finishing mark and its sources unread")
-        try require(!String(decoding: try decoded.encoded(), as: UTF8.self).contains("finishing")
+        let encoded = String(decoding: try decoded.encoded(), as: UTF8.self)
+        try require(!encoded.contains("finishing") && !encoded.contains("segment")
                     && !String(decoding: try JSONEncoder().encode(decoded.sources ?? []), as: UTF8.self).contains("read"),
-                    "Older saved work encodes as before")
-        guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
-        let waiting = try rig.store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
-            state: .needsDecision, checkpoint: old, event: "progress",
-            decision: try NativeTaskStore.canonical(["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])))
-        try rig.reply(waiting, "finish")
-        let done = try await rig.settle()
-        try require(done.record.state == .completed && !done.states.contains(.needsDecision) && rig.model.calls.allSatisfy { $0.choice == "none" },
-                    "Finish completes older saved work that was waiting on the question")
+                    "Older saved work drops the old counters and encodes as before")
+        for answer in ["finish", "continue"] {
+            let rig = try NativeCompanionFinishRig(model: model)
+            let id = try rig.create()
+            let waiting = try rig.seed(id, checkpoint: old, decision: ["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])
+            try rig.reply(waiting, answer)
+            let done = try await rig.settle()
+            let report = try rig.report(done.record)["report"] as? String ?? ""
+            try require(done.record.state == .completed && !done.states.contains(.needsDecision) && (try rig.asked(id)) == 1,
+                        "Older saved work waiting on the old question completes after \(answer) without asking again")
+            try require(rig.model.calls.contains { $0.choice == "auto" } && !rig.model.calls.contains { $0.attempt.hasSuffix("-finish") }
+                        && report == "The central reading room has forty seats.",
+                        "Older saved work carries on with its tools after \(answer) and ends with its own answer: \(report)")
+        }
     }
 
     private static func companionSourcesRead() async throws {
@@ -513,10 +516,6 @@ extension SelfTest {
         try require(Int(landedNumber) == 1 && moved.sources == [NativeTaskSource(n: 1, title: "Moved page", url: "https://www.example.org/rooms-moved", read: true)]
                     && moved.aliases?["https://www.example.org/rooms-moved"] == 1 && moved.aliases?["https://hours.example.org/rooms"] == 1,
                     "A page that lands somewhere else keeps its number and saves the page that was read: \(moved.sources ?? [])")
-        let movedPause = PausedWorkCopy.pause(try JSONDecoder().decode(NativeTaskCheckpoint.self, from: try moved.encoded()), answer: nil)
-        try require(movedPause.heading == PausedWorkCopy.readHeading && movedPause.pages.map(\.url) == ["https://www.example.org/rooms-moved"]
-                    && movedPause.pages.map(\.title) == ["Moved page"],
-                    "The pause lists the page that was read under Read so far: \(movedPause.pages)")
         try require(!(moved.sources ?? []).contains { $0.url == "https://hours.example.org/rooms" },
                     "No saved page claims the address that was asked for was read")
         var untitled = NativeCompanionCheckpoint()
@@ -541,6 +540,16 @@ extension SelfTest {
                           definition: fetcher, requested: "https://hours.example.org/rooms")
         try require(same.sources == [NativeTaskSource(n: 1, title: "Reading room hours", url: "https://hours.example.org/rooms", read: true)],
                     "Fetching the same address marks the page found in a search as read: \(same.sources ?? [])")
+
+        try require(NativeTaskSource(n: 1, title: "", url: "notes.txt").label == "Saved page"
+                    && NativeTaskSource(n: 1, title: "Map room", url: "https://example.org/map").label == "Map room",
+                    "A page with no title and no site reads as a saved page, and a real title is kept")
+        let titled = NativeTaskSource(n: 1, title: "https://example.org/docs: A beginner guide", url: "https://guides.example.org/start")
+        try require(titled.label == "https://example.org/docs: A beginner guide",
+                    "A title that starts with an address but says more is kept: \(titled.label)")
+        try require(NativeTaskSource(n: 1, title: " https://www.example.org/docs ", url: "https://guides.example.org/start").label == "guides.example.org"
+                    && NativeTaskSource(n: 1, title: "https://www.example.org/docs", url: "notes.txt").label == "example.org",
+                    "A title that is only an address still reads as the site name")
     }
 
     private static func companionFinishSavedPages() async throws {
@@ -557,17 +566,13 @@ extension SelfTest {
         let rig = try NativeCompanionFinishRig(model: .looping())
         let id = try rig.create()
         let checkpoint: [String: Any] = [
-            "attempt": "savedpages", "calls": 4, "effects": [], "pending": ["kind": "cap"], "rounds": 4, "segment_calls": 4,
+            "attempt": "savedpages", "calls": 4, "effects": [], "finishing": true, "rounds": 4, "segment_calls": 4,
             "segment_rounds": 4, "sources": sources, "thread_id": "companion-thread-1",
             "transcript": [["content": "", "role": "assistant", "tool_calls": [["arguments": "{}", "id": "saved-1", "name": NativeCompanionFinishRig.lookupName]]],
                            ["content": "{\"seats\":40}", "role": "tool", "tool_call_id": "saved-1"]],
         ]
-        guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
-        let waiting = try rig.store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
-            state: .needsDecision, checkpoint: try NativeTaskStore.canonical(checkpoint), event: "progress",
-            decision: try NativeTaskStore.canonical(["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])))
+        _ = try rig.seed(id, checkpoint: try NativeTaskStore.canonical(checkpoint))
         rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
-        try rig.reply(waiting, "finish")
         let ended = try await rig.settle()
         let result = try rig.report(ended.record)
         let report = result["report"] as? String ?? ""
@@ -598,16 +603,15 @@ extension SelfTest {
     }
 
     private static func companionFinishFallbackKeepsPages() async throws {
-        let require = NativeTaskFixture.require
-        let lead = "Reached the limit for this assignment before writing a full report."
         let moved = "https://moved.example/rain-totals"
-        for variant in ["tight", "empty", "calls"] {
+        let require = NativeTaskFixture.require
+        for variant in ["tight", "empty", "calls", "closing"] {
             let (client, web) = companionWebTools()
             client.page("https://weather.example/rain", .init(body: "<html><head><title>Rain totals page</title></head><body><p>Two inches fell.</p></body></html>",
                                                               finalURL: moved))
             let closing: NativeTaskGenerationCompletion = variant == "calls"
                 ? NativeCompanionScriptedModel.call(NativeCompanionFinishRig.lookupName, "{}", id: "closing-call")
-                : .text(variant == "empty" ? "  " : "The rain report is ready.")
+                : .text(variant == "empty" ? "  " : "Two inches of rain fell [1].")
             let model = NativeCompanionFinishModel(closing: closing) { messages in
                 guard NativeCompanionScriptedModel.toolResults(messages).isEmpty else { return .text("Done.") }
                 let calls = [
@@ -618,31 +622,34 @@ extension SelfTest {
                 return NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
             }
             var rig = try NativeCompanionFinishRig(tools: web + NativeCompanionFinishRig.libraryTools(), model: model)
-            _ = try rig.create("Find out how much rain fell")
-            let capped = try await rig.settle()
-            let saved = try rig.checkpoint(capped.record)
-            try require(capped.record.state == .needsDecision && saved.pending?.kind == "cap" && !saved.outstandingCalls.isEmpty
+            let id = try rig.create("Find out how much rain fell")
+            let first = try await rig.step()
+            let saved = try rig.checkpoint(first)
+            try require(first.state == .queued && saved.outstandingCalls.isEmpty
                         && saved.sources?.filter { $0.read == true }.map(\.url) == [moved, "https://gauge.example/levels"],
-                        "The \(variant) run pauses at the call cap with both pages read: \(saved.sources ?? [])")
-            if variant == "tight" {
-                let standard = NativeCompanionWorkerBudget.standard
-                rig.environment.budget = NativeCompanionWorkerBudget(rounds: 4, calls: standard.calls, transcriptMessages: 2,
-                                                                     transcriptBytes: standard.transcriptBytes, taskRounds: standard.taskRounds,
-                                                                     taskCalls: standard.taskCalls)
-            }
+                        "The \(variant) run reads both pages in its first step: \(saved.sources ?? [])")
+            let used = try NativeTaskGenerationJob.wireBytes(saved.transcript, tools: rig.tools.map(\.schema))
+            rig.environment.budget = NativeCompanionWorkerBudget(transcriptBytes: variant == "tight" ? used : used + 16383)
             let mark = rig.model.calls.count
-            try rig.reply(capped.record, "finish")
             let ended = try await rig.settle()
             let result = try rig.report(ended.record)
             let report = result["report"] as? String ?? ""
             let sources = result["sources"] as? [[String: Any]] ?? []
-            try require(ended.record.state == .completed && !ended.states.contains(.needsDecision) && report.hasPrefix(lead),
-                        "The \(variant) finish ends with the limit report: \(report)")
-            try require(variant == "tight" ? rig.model.calls.count == mark : rig.model.calls.dropFirst(mark).contains { $0.attempt.hasSuffix("-finish") },
-                        "The \(variant) finish \(variant == "tight" ? "never asks for" : "asks for") the closing write-up")
+            try require(ended.record.state == .completed && !ended.states.contains(.needsDecision) && (try rig.asked(id)) == 0,
+                        "The \(variant) work ends once without asking: \(ended.states)")
+            try require(variant == "tight" ? rig.model.calls.count == mark : companionClosingOnly(rig, after: mark),
+                        "The \(variant) finish \(variant == "tight" ? "never asks for" : "asks only for") the closing write-up")
+            if variant == "closing" {
+                try require(report == NativeCompanionWorker.outOfRoomLead + "\n\nTwo inches of rain fell [1]."
+                            && sources.compactMap { $0["url"] as? String } == [moved],
+                            "A closing write-up that fits is used under the ran out of room line: \(report)")
+                continue
+            }
+            try require(report.hasPrefix(NativeCompanionWorker.outOfRoomFallback),
+                        "The \(variant) finish says the work ran out of room and the write-up could not be written: \(report)")
             try require(report.contains("Pages read:\n- Rain totals page [1]\n- River levels [2]")
                         && report.contains("Found in a search, not read:\n- Forecast [3]"),
-                        "The \(variant) limit report lists the pages that were read: \(report)")
+                        "The \(variant) report lists the pages that were read: \(report)")
             try require(sources.compactMap { ($0["n"] as? NSNumber)?.intValue } == [1, 2, 3]
                         && sources.compactMap { $0["url"] as? String } == [moved, "https://gauge.example/levels", "https://third.example/"],
                         "The \(variant) result keeps the fetched pages as sources: \(sources)")
@@ -651,80 +658,106 @@ extension SelfTest {
         }
     }
 
-    nonisolated static func companionEngineCompletion(_ job: NativeTaskGenerationJob) -> NativeTaskGenerationCompletion {
+    nonisolated static func companionEngineCompletion(_ job: NativeTaskGenerationJob, rounds limit: Int) -> NativeTaskGenerationCompletion {
         if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-        if job.tools == nil || job.toolChoice == "none" { return .text("The central reading room has forty seats.") }
+        let rounds = job.messages.filter { $0.role == "assistant" && $0.toolCalls != nil }.count
+        if job.tools == nil || job.toolChoice == "none" || rounds >= limit { return .text("The central reading room has forty seats.") }
         return NativeCompanionScriptedModel.call(NativeCompanionFinishRig.lookupName, "{}", id: "call-\(job.messages.count)")
     }
 
-    private static func companionFinishThroughEngine() async throws {
-        let require = NativeTaskFixture.require
-        let repository = try LocalChatRepository(inMemory: true)
-        let counter = NativeTaskEngineCounter()
-        let recorder = NativeTaskJobRecorder()
+    private static func companionEngineHarness(_ repository: LocalChatRepository, recorder: NativeTaskJobRecorder, rounds: Int,
+                                               first: NativeTaskStepResult? = nil) throws -> (NativeTaskEngineHarness, NativeTaskStore) {
         let tasks = NativeTaskStore(database: repository.database)
         let ledger = NativeEffectLedgerStore(database: repository.database)
         let rules = NativeRuleSource()
         rules.setGlobal(NativeRules(choices: [:]))
         let grants = NativeFolderGrantSource()
         let tools = NativeCompanionFinishRig.libraryTools()
-        var environment = NativeCompanionWorkerEnvironment(
+        let environment = NativeCompanionWorkerEnvironment(
             context: { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: tools) },
             authority: { conversation, request in
                 NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request), grantsRevision: grants.revision)
             },
             ledger: ledger, tasks: tasks, defaultToolSeconds: 2)
-        let standard = NativeCompanionWorkerBudget.standard
-        environment.budget = NativeCompanionWorkerBudget(rounds: 2, calls: standard.calls, transcriptMessages: standard.transcriptMessages,
-                                                         transcriptBytes: standard.transcriptBytes, taskRounds: standard.taskRounds,
-                                                         taskCalls: standard.taskCalls)
-        let worker = environment
-        let gate = NativeTaskEngineCounter()
-        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: counter,
-            workers: { ["companion": NativeCompanionWorker.make(exchange: $0, environment: worker)] },
-            available: { await gate.count("hold") == gate.count("release") }) { job in
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(),
+            workers: { exchange in
+                let real = NativeCompanionWorker.make(exchange: exchange, environment: environment)
+                guard let first else { return ["companion": real] }
+                return ["companion": NativeTaskWorker(timeoutSeconds: real.timeoutSeconds) { task in
+                    task.checkpoint == NativeTaskStore.emptyObject ? first : try await real.step(task)
+                }]
+            }) { job in
                 await recorder.record(job)
-                return companionEngineCompletion(job)
+                return companionEngineCompletion(job, rounds: rounds)
             }
+        return (harness, tasks)
+    }
+
+    private static func companionLongWorkThroughEngine() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let recorder = NativeTaskJobRecorder()
+        let (harness, tasks) = try companionEngineHarness(repository, recorder: recorder, rounds: 100)
         try await harness.start()
         let reference = try await harness.submitDot("Check the reading room hours at the central library")
-        func decision() throws -> NativeTaskDecision? {
-            guard let snapshot = try repository.taskProjection(id: reference.id)?.snapshot, snapshot.state == .needsDecision else { return nil }
-            return snapshot.decision
+        try require(try await harness.wait(seconds: 180) { try harness.state(reference)?.isTerminal == true },
+                    "Long work through the engine finishes: \(String(describing: try? harness.state(reference)))")
+        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
+            throw NativeTaskFixture.Failure.assertion("The handoff has an engine id")
         }
-        try require(try await harness.wait(seconds: 20) { try decision() != nil }, "The first cap reaches the tracker")
-        let first = try decision()
-        try require(first?.choices == ["continue", "finish"], "The cap offers Continue and Finish")
-        await harness.tracker.decide(reference.id, choice: "continue")
-        try require(try await harness.wait(seconds: 20) { try decision().map { $0.id != first?.id } ?? false }, "The second cap reaches the tracker")
-        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID,
-              let binding = NativeTaskGenerationExchange.binding(of: try tasks.get(remote)) else {
-            throw NativeTaskFixture.Failure.assertion("The handoff has an engine id and a model binding")
-        }
-        await gate.bump("hold")
-        try require(try await harness.waitAsync(seconds: 10) { await !harness.engine.exchange.hasPresence(remote, binding: binding) },
-                    "The app stops answering for the model while the question waits")
-        let mark = await recorder.all().count
-        await harness.tracker.decide(reference.id, choice: "finish")
-        try require(try await harness.wait(seconds: 15) { try tasks.get(remote).state == .blocked }, "Finish reaches the engine and blocks without a model")
-        try require(try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try tasks.get(remote).checkpoint).finishing == true,
-                    "The blocked work remembers it is finishing")
-        await gate.bump("release")
-        try require(try await harness.wait(seconds: 30) { try harness.state(reference) == .completed },
-                    "Finish through the tracker completes: \(String(describing: try? harness.state(reference)))")
-        let later = await recorder.all().dropFirst(mark)
-        try require(!later.isEmpty && later.allSatisfy { $0.toolChoice == "none" || $0.tools == nil },
-                    "After Finish the provider is asked only for the closing write-up: \(later.map { $0.toolChoice ?? "nil" })")
-        let counts = try await repository.database.read { db in
-            (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'completed'", arguments: [remote]) ?? 0,
-             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'needs_decision'", arguments: [remote]) ?? 0,
-             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'blocked'", arguments: [remote]) ?? 0)
-        }
-        try require(counts.0 == 1 && counts.1 == 2 && counts.2 >= 1, "Exactly one result and two questions after a blocked finish: \(counts)")
+        let jobs = await recorder.all()
         let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try tasks.get(remote).checkpoint)
-        try require(NativeCompanionFinishRig.answeredOnce(saved), "Every call is answered once through the engine")
-        let result = try repository.taskProjection(id: reference.id)?.snapshot?.result
-        try require(result?.report.isEmpty == false, "The tracker shows the report")
+        try require(try harness.state(reference) == .completed && saved.rounds == 101 && saved.finishing == nil,
+                    "The work runs a hundred and one steps and ends with its answer: \(saved.rounds)")
+        try require(jobs.contains { $0.phase == "work-100" } && jobs.contains { $0.phase == "work-64" },
+                    "Steps past the old numbering are accepted end to end: \(jobs.last?.phase ?? "")")
+        let (stored, asked) = try await repository.database.read { db in
+            (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations WHERE request_id = ?", arguments: [reference.id.uuidString]) ?? 0,
+             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'needs_decision'", arguments: [remote]) ?? 0)
+        }
+        try require(stored > 64 && asked == 0, "More than 64 saved model requests are accepted and nothing is asked: \(stored) \(asked)")
+        try require(repository.taskProjection(id: reference.id)?.snapshot?.result?.report == "The central reading room has forty seats.",
+                    "The tracker shows the work's own answer")
+        await harness.stop()
+    }
+
+    private static func companionOldQuestionCarriesOn() async throws {
+        let require = NativeTaskFixture.require
+        let old = Data(#"{"attempt":"0ldattempt","calls":4,"effects":[],"pending":{"kind":"cap"},"rounds":4,"segment_calls":4,"segment_rounds":4,"thread_id":"companion-thread-1","transcript":[{"content":"","role":"assistant","tool_calls":[{"arguments":"{}","id":"old-1","name":"room_hours"}]},{"content":"{\"seats\":40}","role":"tool","tool_call_id":"old-1"}]}"#.utf8)
+        let decision: [String: Any] = ["prompt": CompanionSavedText.marker + " has used this run's working time and saved its progress. Keep going, or finish with what it has?",
+                                       "choices": ["continue", "finish"]]
+        let rig = try NativeCompanionFinishRig(model: .looping())
+        let assignment = "Check the reading room hours at the central library"
+        let id = try rig.create(assignment)
+        let waiting = try rig.seed(id, checkpoint: old, decision: decision)
+        let shown = try rig.display(waiting, assignment: assignment)
+        try require(shown.card.status == .working && shown.card.milestone == "Working on your goal." && shown.card.offeredChoices.isEmpty
+                    && shown.card.statusTitle == "Working on it",
+                    "Work saved on the old question reads as ordinary work in progress: \(shown.card.status) \(shown.card.milestone)")
+
+        let repository = try LocalChatRepository(inMemory: true)
+        let recorder = NativeTaskJobRecorder()
+        let first = NativeTaskStepResult(state: .needsDecision, checkpoint: old, event: "progress",
+                                         data: try NativeTaskStore.canonical(["message": "saved"]), decision: try NativeTaskStore.canonical(decision))
+        let (harness, tasks) = try companionEngineHarness(repository, recorder: recorder, rounds: 3, first: first)
+        try await harness.start()
+        let reference = try await harness.submitDot(assignment)
+        try require(try await harness.wait(seconds: 180) { try harness.state(reference)?.isTerminal == true },
+                    "Work saved on the old question carries on by itself: \(String(describing: try? harness.state(reference)))")
+        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
+            throw NativeTaskFixture.Failure.assertion("The handoff has an engine id")
+        }
+        let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try tasks.get(remote).checkpoint)
+        let (answers, asked) = try await repository.database.read { db in
+            (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_retries WHERE reference_id = ?", arguments: [reference.id.uuidString]) ?? 0,
+             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state = 'needs_decision'", arguments: [remote]) ?? 0)
+        }
+        try require(try harness.state(reference) == .completed && saved.rounds == 7 && saved.finishing == nil,
+                    "The resumed work runs to its own answer: rounds \(saved.rounds)")
+        try require(answers == 1 && asked == 1, "The old question is answered once and never asked again: \(answers) \(asked)")
+        let jobs = await recorder.all()
+        try require(jobs.contains { $0.toolChoice == "auto" } && !jobs.contains { $0.attempt.contains("-finish") },
+                    "It carries on with its tools instead of finishing early")
         await harness.stop()
     }
 }

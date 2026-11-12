@@ -12,10 +12,8 @@ extension ChatStore {
         for reference in nativeTaskReferences where reference.origin.conversationID == threadID {
             let saved = try? projection?.taskProjection(id: reference.id)
             let snapshot = saved?.snapshot ?? reference.snapshot
-            let answered = pausedAnswer(reference.id, snapshot: snapshot)
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
-                                                                   connectionNote: saved?.connectionNote,
-                                                                   retryPending: answered != nil, answered: answered) else { continue }
+                                                                   connectionNote: saved?.connectionNote) else { continue }
             let date = snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) }
                 ?? conversations.first { $0.id == threadID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
                 ?? .distantPast
@@ -50,16 +48,6 @@ extension ChatStore {
         if case .task(let id) = item.source { retryNativeTask(id.uuidString) }
     }
 
-    func answerCompanionWork(_ item: CompanionActivityItem, choice: String, expecting decisionID: String? = nil) {
-        if case .task(let id) = item.source { answerNativeTask(id.uuidString, choice: choice, expecting: decisionID) }
-    }
-
-    func pausedAnswer(_ id: UUID, snapshot: NativeTaskSnapshot?) -> String? {
-        guard let snapshot, PausedWorkCopy.applies(snapshot), let decision = snapshot.decision,
-              let projection = repository as? any NativeTaskProjectionRepository else { return nil }
-        return (try? projection.pendingTaskRetries())?.first { $0.referenceID == id && $0.decisionID == decision.id }?.choice
-    }
-
     func companionActivityDetail(_ item: CompanionActivityItem) -> CompanionActivityDetail {
         switch item.source {
         case .task(let id):
@@ -71,19 +59,16 @@ extension ChatStore {
             let snapshot = saved?.snapshot ?? reference.snapshot
             let conversation = companionActivityConversation(reference.origin.conversationID)
             let request = conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
-            let answered = pausedAnswer(id, snapshot: snapshot)
             let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
-                                                           connectionNote: saved?.connectionNote,
-                                                           retryPending: answered != nil, answered: answered)
+                                                           connectionNote: saved?.connectionNote)
             let stopped = display?.card.stoppedStep.map { stop -> String in
                 StoppedStepCopy.plain(stop, why: display?.card.why, places: rulePlaces(for: display?.card.why?.rule.map { [$0.record] } ?? []),
                                       name: companionName)
             }
             let outcome = stopped ?? display?.artifact?.report ?? display?.card.answer
                 ?? display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) }
-            let pause = display?.card.pausedWork
-            return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: pause == nil ? outcome : nil,
-                                           canOpen: conversation != nil, pause: pause)
+            return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
+                                           canOpen: conversation != nil)
         case .run(let id):
             guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)

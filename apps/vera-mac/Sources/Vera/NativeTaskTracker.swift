@@ -20,6 +20,7 @@ actor NativeTaskTracker {
     private var ticks = 0
     private var nextStream: ContinuousClock.Instant?
     private var refreshAfter: [String: ContinuousClock.Instant] = [:]
+    private var carriedOn: Set<String> = []
 
     init(repository: any NativeTaskProjectionRepository, client: NativeTaskClient,
          service: NativeTaskHandoffService, transport: NativeTaskEventTransport = .live,
@@ -109,6 +110,7 @@ actor NativeTaskTracker {
                    let ticket = states[id]?.beginFetch() {
                     await refresh(reference, ticket: ticket, lease: lease)
                 }
+                await carryOn(reference)
                 if let batch, let target = progress.remaining(in: batch)[id] {
                     if let saved = try repository.taskProjection(id: reference.id),
                        saved.snapshot?.state.isTerminal == true, saved.cursor < target {
@@ -217,6 +219,15 @@ actor NativeTaskTracker {
         return session
     }
 
+    private func carryOn(_ reference: NativeTaskReference) async {
+        guard reference.createRequest.workerType == "companion", !reference.cancelRequested,
+              let saved = try? repository.taskProjection(id: reference.id)?.snapshot,
+              NativeTaskProjection.carriesOn(saved), let decision = saved.decision,
+              !carriedOn.contains(decision.id) else { return }
+        carriedOn.insert(decision.id)
+        await decide(reference.id, choice: "continue")
+    }
+
     func cancel(_ id: UUID) async {
         guard !actions.contains(id), let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference) else { return }
@@ -238,13 +249,12 @@ actor NativeTaskTracker {
         await decide(id, choice: "retry")
     }
 
-    func decide(_ id: UUID, choice: String, expecting expected: String? = nil) async {
+    func decide(_ id: UUID, choice: String) async {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
-              expected.map({ $0 == decision.id }) ?? true,
               decision.choices.contains(choice), !reference.cancelRequested else { return }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }

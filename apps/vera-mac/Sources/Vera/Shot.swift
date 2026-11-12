@@ -34,7 +34,7 @@ enum Shot {
             RefusalShot.render(view: view, to: path, appearance: appearance)
             return
         }
-        if view.hasPrefix("card-") || view.hasPrefix("detail-pause") {
+        if view.hasPrefix("card-") {
             CardShot.render(view: view, to: path, appearance: appearance)
             return
         }

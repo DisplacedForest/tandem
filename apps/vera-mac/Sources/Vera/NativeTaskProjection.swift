@@ -1,8 +1,15 @@
 import Foundation
 
 enum NativeTaskProjection {
+    static let carryOnChoices: Set<String> = ["continue", "finish"]
+
+    static func carriesOn(_ snapshot: NativeTaskSnapshot) -> Bool {
+        guard snapshot.state == .needsDecision, let choices = snapshot.decision?.choices else { return false }
+        return choices.count == carryOnChoices.count && Set(choices) == carryOnChoices
+    }
+
     static func display(reference: NativeTaskReference, snapshot: NativeTaskSnapshot?,
-                        connectionNote: String? = nil, retryPending: Bool = false, answered: String? = nil)
+                        connectionNote: String? = nil, retryPending: Bool = false)
         throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
         let id = reference.id.uuidString
         let dot = reference.createRequest.workerType == "companion"
@@ -48,7 +55,7 @@ enum NativeTaskProjection {
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
             if dot {
-                card.milestone = snapshot.checkpoint.finishing == true ? PausedWorkCopy.finishing : "Working on your goal."
+                card.milestone = "Working on your goal."
             } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint)
             } else {
@@ -70,19 +77,17 @@ enum NativeTaskProjection {
             } else {
                 card.milestone = "Waiting for \(work.lowercased()) to become available again."
             }
-            if dot, snapshot.checkpoint.finishing == true { card.milestone = PausedWorkCopy.finishing + " " + card.milestone }
         case .needsDecision:
             guard let decision = snapshot.decision, !decision.id.isEmpty,
                   decision.prompt.unicodeScalars.count <= 2000 else {
                 throw NativeTaskHTTPError.invalidResponse
             }
-            card.status = .needsInput
-            if dot, PausedWorkCopy.applies(snapshot) {
-                let pause = PausedWorkCopy.pause(snapshot.checkpoint, answer: retryPending ? answered : nil, decisionID: decision.id)
-                card.pause = pause
-                card.milestone = PausedWorkCopy.answered(pause.answer) ?? PausedWorkCopy.savedMilestone
+            if dot, carriesOn(snapshot) {
+                card.status = .working
+                card.milestone = "Working on your goal."
                 break
             }
+            card.status = .needsInput
             card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
                 : decision.prompt
             card.canRetry = decision.choices.contains("retry") && !retryPending

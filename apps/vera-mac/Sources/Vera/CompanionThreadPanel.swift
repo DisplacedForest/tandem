@@ -179,7 +179,7 @@ struct CompanionThreadPanel: View {
             .buttonStyle(.plain).accessibilityLabel("Back to overview")
             Text(item.title).font(.system(size: 18, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
-            if detail.showsRequest(title: item.title), let request = detail.request {
+            if let request = detail.request {
                 Text(request).font(.system(size: 13)).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -193,22 +193,9 @@ struct CompanionThreadPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if let pause = detail.pause {
-                PausedWorkView(pause: pause, secondary: Theme.warmTextSecondary)
-            }
-            let asking = detail.pause.map { $0.answer == nil } ?? false
-            if asking || item.canRetry || item.canStop {
+            if item.canRetry || item.canStop {
                 HStack {
-                    if asking {
-                        ForEach(["continue", "finish"], id: \.self) { choice in
-                            if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-                                Button(title) { store.answerCompanionWork(item, choice: choice, expecting: detail.pause?.decisionID) }
-                                    .accessibilityLabel("\(title), answer for \(item.title)")
-                            }
-                        }
-                    } else if item.canRetry, detail.pause == nil {
-                        Button("Retry") { store.retryCompanionWork(item) }
-                    }
+                    if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
                     if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
                 }.controlSize(.small)
             }

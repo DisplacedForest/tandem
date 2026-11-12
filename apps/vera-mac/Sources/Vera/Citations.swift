@@ -143,7 +143,7 @@ struct SourcesRow: View {
     }
 }
 
-struct SourceListRow: View {
+private struct SourceListRow: View {
     @Environment(\.inspectMemorySource) private var inspectMemory
     let source: PulseSource
     let numbered: Bool

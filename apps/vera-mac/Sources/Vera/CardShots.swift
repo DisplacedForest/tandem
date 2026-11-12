@@ -12,9 +12,8 @@ enum CardShot {
     static let engineURL = URL(string: "https://engine.test/api")!
 
     static func render(view: String, to path: String, appearance: String) {
-        let pausing = view.hasPrefix("card-pause") || view.hasPrefix("detail-pause")
-        let named = view.hasSuffix("-ada") || (pausing && !view.hasSuffix("-unnamed"))
-        let variant = view.hasSuffix("-ada") ? String(view.dropLast("-ada".count))
+        let named = view.hasSuffix("-ada")
+        let variant = named ? String(view.dropLast("-ada".count))
             : view.hasSuffix("-unnamed") ? String(view.dropLast("-unnamed".count)) : view
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
@@ -60,22 +59,6 @@ enum CardShot {
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
-        case "card-pause-read", "card-pause-empty", "card-pause-earlier", "card-pause-many", "card-pause-finishing", "card-pause-found":
-            size = CGSize(width: 1180, height: 1040)
-            _ = seedPause(variant, store: store)
-            let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
-                                                     services: "Can reach every service that is turned on.",
-                                                     rules: store.companionRulesSummary, activity: [], results: [])
-            content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
-        case "detail-pause-read", "detail-pause-finishing":
-            size = CGSize(width: 340, height: 700)
-            guard let item = seedPause(variant, store: store) else {
-                FileHandle.standardError.write(Data("Card render failed\n".utf8))
-                exit(1)
-            }
-            let model = CompanionOverviewModel(name: store.companion.leading, goal: "", services: "", rules: "", paused: false,
-                                               activity: [item], outputs: [])
-            content = AnyView(CompanionThreadPanel(fixed: model, selectedID: item.id).background(Theme.bg))
         case "card-rules-popover":
             size = CGSize(width: 420, height: 760)
             let id = seedRules(store)
@@ -354,33 +337,6 @@ enum CardShot {
         var message = Message(role: .assistant, text: "I'll take care of it in the background.")
         message.displayBlocks = [.taskCard(display.card)] + (display.artifact.map { [NativeDisplayBlock.artifact($0)] } ?? [])
         store.conversations[index].messages = [Message(role: .user, text: ask), message]
-    }
-
-    static func seedPause(_ variant: String, store: ChatStore) -> CompanionActivityItem? {
-        store.dotProfile = NativeDotProfile(goal: NativeDotShotFixture.goal, state: .active, setupCompleted: true)
-        store.openVeraThread()
-        guard let threadID = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == threadID }),
-              let repository = store.repository as? LocalChatRepository else { return nil }
-        let checkpoint: [String: Any]
-        switch variant {
-        case "card-pause-empty": checkpoint = PausedWorkFixture.checkpoint(read: 0, searchOnly: 3)
-        case "card-pause-earlier": checkpoint = PausedWorkFixture.checkpoint(read: 2, searchOnly: 1, earlier: true)
-        case "card-pause-many": checkpoint = PausedWorkFixture.checkpoint(read: 9, searchOnly: 2)
-        case "card-pause-found": checkpoint = PausedWorkFixture.checkpoint(read: 0, searchOnly: 1, unknown: 4)
-        default: checkpoint = PausedWorkFixture.checkpoint(read: 3, searchOnly: 2)
-        }
-        let long = variant == "card-pause-many" || variant == "detail-pause-read"
-        let assignment = long ? PausedWorkFixture.longAssignment : PausedWorkFixture.assignment
-        let answer = variant.hasSuffix("-finishing") ? "finish" : nil
-        guard let seeded = try? PausedWorkFixture.seed(repository, conversationID: threadID, assignment: assignment,
-                                                       checkpoint: checkpoint, answer: answer, engine: engineURL) else { return nil }
-        store.nativeTaskEngine.set(engineURL)
-        store.nativeTaskReferences = [seeded.reference]
-        var message = Message(role: .assistant, text: "I'll look into that in the background.")
-        message.displayBlocks = [.taskCard(seeded.card)]
-        store.conversations[index].messages = [Message(role: .user, text: assignment), message]
-        return CompanionOverviewModel.taskItem(card: seeded.card, reference: seeded.reference, decision: seeded.reference.snapshot?.decision,
-                                               hasArtifact: false, date: Date())
     }
 
     static func seedRules(_ store: ChatStore) -> String {

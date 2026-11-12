@@ -440,7 +440,6 @@ enum SelfTest {
         do { try await runNativeEffectLedger() } catch { print("SELFTEST ERROR: effect ledger \(error)"); exit(1) }
         do { try await runNativeCompanionWorker() } catch { print("SELFTEST ERROR: companion worker \(error)"); exit(1) }
         do { try await runNativeCompanionFinish() } catch { print("SELFTEST ERROR: companion finish \(error)"); exit(1) }
-        do { try await runPausedWork() } catch { print("SELFTEST ERROR: paused work \(error)"); exit(1) }
         do { try await runStoppedStep() } catch { print("SELFTEST ERROR: stopped step \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }

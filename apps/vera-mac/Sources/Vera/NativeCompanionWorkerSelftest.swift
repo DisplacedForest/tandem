@@ -282,7 +282,7 @@ extension SelfTest {
         try await companionStopAndOversize()
         try await companionRemoteSuccessThenTimeout()
         try await companionReadRetries()
-        try await companionCapsAndFences()
+        try await companionFences()
         try companionCommandRules()
         try await companionProductionCommands()
         try await companionFailedModeApproval()
@@ -291,7 +291,7 @@ extension SelfTest {
         try companionShape()
         try await companionClassification()
         try await companionWebSources()
-        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, typed recipients, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, typed recipients, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -498,16 +498,6 @@ extension SelfTest {
             guard let decisionID = waiting.decisionID() else { throw NativeTaskFixture.Failure.assertion("The saved question has an id") }
             _ = try harness.store.respond(taskID, decisionID: decisionID, replyKey: UUID().uuidString, reply: try NativeTaskStore.canonical([String: Any]()))
         }
-        let capped = try NativeCompanionHarness(rules: permissive) { messages in
-            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
-        }
-        let cappedID = try capped.create()
-        let atCap = try await capped.runUntilSettled(40)
-        try require(atCap.state == .needsDecision && (try capped.decision(atCap)["choices"] as? [String]) == ["continue", "finish"],
-                    "The saved limit fixture waits at the keep going question first")
-        try await reschedule(capped, cappedID, atCap)
-        try require(try await capped.runUntilSettled(40).state == .completed,
-                    "A limit question saved on a scheduled task finishes when it resumes without an answer")
         let unsure = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
         unsure.service.transportFailWrites = true
         let unsureID = try unsure.create()
@@ -1275,12 +1265,11 @@ extension SelfTest {
         _ = try big.create()
         var last = try await big.step()
         for _ in 0..<12 where last.state == .queued || last.state == .needsDecision {
-            if last.state == .needsDecision { try big.reply(last, "continue") }
             last = try await big.step()
         }
         let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: last.checkpoint)
         try require(last.state == .completed && NativeCompanionWorker.transcriptBytes(saved) <= NativeCompanionWorkerBudget.standard.transcriptBytes
-                    && last.checkpoint.count < NativeTaskStore.maximumJSONBytes,
+                    && last.checkpoint.count < NativeTaskStore.maximumCheckpointBytes,
                     "Large tool results are bounded so the transcript and checkpoint stay inside their limits")
     }
 
@@ -1588,26 +1577,8 @@ extension SelfTest {
                     "A retained forbid still hands the action off in failed mode, with no card to approve")
     }
 
-    private static func companionCapsAndFences() async throws {
+    private static func companionFences() async throws {
         let require = NativeTaskFixture.require
-        let looping = try NativeCompanionHarness(rules: [:]) { messages in
-            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(messages.count)")
-        }
-        _ = try looping.create()
-        let capped = try await looping.runUntilSettled()
-        let checkpoint = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: capped.checkpoint)
-        try require(capped.state == .needsDecision && checkpoint.segmentRounds == 4 && checkpoint.rounds == 4
-                    && (try looping.decision(capped)["choices"] as? [String]) == ["continue", "finish"],
-                    "Four rounds pause for an explicit decision with progress saved")
-        try looping.reply(capped, "continue")
-        let second = try await looping.runUntilSettled()
-        try require(second.state == .needsDecision && (try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: second.checkpoint)).rounds == 8,
-                    "Continuing allows another four rounds and keeps the task totals")
-        try looping.reply(second, "finish")
-        let finished = try await looping.runUntilSettled()
-        try require(finished.state == .completed && (try looping.result(finished)["report"] as? String)?.isEmpty == false,
-                    "Finishing writes a report without further tool use")
-
         let reset = try NativeCompanionHarness(rules: [.networkSends: .ask], script: waterThenReport)
         _ = try reset.create()
         let waiting = try await reset.runUntilSettled()

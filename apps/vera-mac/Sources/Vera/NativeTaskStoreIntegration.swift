@@ -129,9 +129,9 @@ extension ChatStore {
         }
     }
 
-    func answerNativeTask(_ value: String, choice: String, expecting decisionID: String? = nil) {
+    func answerNativeTask(_ value: String, choice: String) {
         guard let id = UUID(uuidString: value), let nativeTaskTracker else { return }
-        Task { await nativeTaskTracker.decide(id, choice: choice, expecting: decisionID) }
+        Task { await nativeTaskTracker.decide(id, choice: choice) }
     }
 
     func stopNativeTaskRecovery() {

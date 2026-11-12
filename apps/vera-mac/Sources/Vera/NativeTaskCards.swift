@@ -24,10 +24,7 @@ struct NativeTaskCardView: View {
             if let stop = card.stoppedStep {
                 StoppedStepView(stop: stop, why: card.why)
             }
-            if let pause = card.pausedWork {
-                PausedWorkView(pause: pause)
-            }
-            if !card.milestone.isEmpty, card.stoppedStep == nil, card.pausedWork == nil {
+            if !card.milestone.isEmpty, card.stoppedStep == nil {
                 CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
@@ -90,14 +87,14 @@ struct NativeTaskCardView: View {
                                                        stop: card.canCancel && onCancel != nil ? (stopTitle ?? card.stopTitle) : nil,
                                                        answerable: canAnswer) {
                 if let decline = question.decline {
-                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even || card.pausedWork != nil,
+                    CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,
                                   onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                 } else {
                     Button(question.answers.allowTitle) { answer(question.allow) }
                         .buttonStyle(.bordered).font(.system(size: 12))
                         .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
-            } else if card.canCancel, card.pausedWork?.answer == nil {
+            } else if card.canCancel {
                 Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).font(.system(size: 12))
             }
         }
@@ -133,7 +130,7 @@ struct NativeDisplayBlocksView: View {
     var connectedTaskIDs: Set<String>? = nil
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
-    var onDecide: ((String, String, String?) -> Void)? = nil
+    var onDecide: ((String, String) -> Void)? = nil
     var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
@@ -148,7 +145,7 @@ struct NativeDisplayBlocksView: View {
                         card: displayCard(card),
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
-                        onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0, card.pausedWork?.decisionID) } } : nil,
+                        onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
                         onSaveAnswer: saved(card) ? nil : onSaveAnswer.map { action in { action(card.id) } },
                         highlighted: highlightedTaskID == card.id)
                 case .link(let link):

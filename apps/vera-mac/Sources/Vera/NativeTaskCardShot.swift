@@ -130,12 +130,6 @@ struct NativeTaskCardShotSurface: View {
             result.answer = "Tomorrow in Chicago looks **sunny**, with a high of 61 and a low of 45. [1]\n\n- Light wind from the west\n- No rain expected"
             result.sources = [PulseSource(n: 1, title: "Chicago forecast", url: "https://example.org/chicago-forecast")]
             result.canCancel = false
-        case "task-card-keep-going":
-            result.title = "Plan the autumn planting"
-            result.workerType = "companion"
-            result.status = .needsInput
-            result.milestone = "Keep going, or finish with what it has?"
-            result.choices = ["continue", "finish"]
         case "task-card-check":
             result.title = "Order the seed potatoes"
             result.workerType = "companion"
@@ -206,7 +200,7 @@ struct NativeTaskCardShotSurface: View {
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",
-                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _, _ in }, onSaveAnswer: { _ in })
+                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in }, onSaveAnswer: { _ in })
             }
             HStack {
                 Spacer()
