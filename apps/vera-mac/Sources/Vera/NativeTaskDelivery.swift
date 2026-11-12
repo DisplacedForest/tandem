@@ -231,6 +231,32 @@ enum NativeTaskDelivery {
         return "[" + text + "](" + destination + ")"
     }
 
+    static func protectedRanges(_ text: NSString) -> [NSRange] {
+        var ranges: [NSRange] = []
+        var fence: (marker: String, start: Int)?
+        var location = 0
+        for line in (text as String).components(separatedBy: "\n") {
+            let length = (line as NSString).length
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let marker = trimmed.hasPrefix("```") ? "```" : trimmed.hasPrefix("~~~") ? "~~~" : nil
+            if let open = fence {
+                if marker == open.marker {
+                    ranges.append(NSRange(location: open.start, length: location + length - open.start))
+                    fence = nil
+                }
+            } else if let marker {
+                fence = (marker, location)
+            }
+            location += length + 1
+        }
+        if let open = fence { ranges.append(NSRange(location: open.start, length: text.length - open.start)) }
+        for pattern in ["(`+)(?!`)[^\\n]*?(?<!`)\\1(?!`)", "!?\\[(?:[^\\[\\]\\n]|\\[[^\\[\\]\\n]*\\])*\\]\\([^)\\n]*\\)"] {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            ranges += expression.matches(in: text as String, range: NSRange(location: 0, length: text.length)).map(\.range)
+        }
+        return ranges
+    }
+
     static func linked(_ report: String, sources: [PulseSource]) -> String {
         let safe = NativeResearchReportSafety.sources(sources)
         let body = safe.isEmpty ? report : CitationResolver.withoutMatchingList(report, sources: safe)
@@ -241,7 +267,9 @@ enum NativeTaskDelivery {
         var output = ""
         var cursor = 0
         var cited: Set<Int> = []
+        let protected = protectedRanges(text)
         for match in expression.matches(in: body, range: NSRange(location: 0, length: text.length)) {
+            guard !protected.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
             let run = text.substring(with: match.range)
             if match.range.location + match.range.length < text.length,
                text.substring(with: NSRange(location: match.range.location + match.range.length, length: 1)) == "(" { continue }
@@ -337,6 +365,21 @@ extension LocalChatRepository {
         }
     }
 
+    func deliveredMessages(conversationIDs: Set<String>) throws -> [NativeTaskDeliveredPost] {
+        guard !conversationIDs.isEmpty else { return [] }
+        return try database.read { db in
+            let marks = Array(repeating: "?", count: conversationIDs.count).joined(separator: ", ")
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT m.* FROM native_task_deliveries d JOIN messages m ON m.id = d.message_id
+                WHERE d.message_id IS NOT NULL AND m.conversation_id IN (\(marks))
+                ORDER BY m.conversation_id, m.ordinal
+                """, arguments: StatementArguments(Array(conversationIDs)))
+            return rows.compactMap { row in
+                Self.decodeMessages([row]).first.map { NativeTaskDeliveredPost(conversationID: row["conversation_id"], message: $0) }
+            }
+        }
+    }
+
     func recordSettledBeforeDelivery(id: UUID) throws {
         try database.write { db in
             try db.execute(sql: """
@@ -381,7 +424,12 @@ extension LocalChatRepository {
                 let origin = try Row.fetchOne(db, sql: "SELECT content, created_at FROM messages WHERE id = ?",
                                               arguments: [reference.origin.assistantMessageID.uuidString])
                 let reply: String = origin?["content"] ?? ""
-                let times = lines.map { $0["created_at"] as Double } + [origin?["created_at"] as Double? ?? 0]
+                let related = try Double.fetchAll(db, sql: """
+                    SELECT m.created_at FROM native_task_card_mirrors c JOIN messages m ON m.id = c.message_id WHERE c.reference_id = ?
+                    UNION ALL
+                    SELECT m.created_at FROM native_task_deliveries d JOIN messages m ON m.id = d.message_id WHERE d.reference_id = ?
+                    """, arguments: [id.uuidString, id.uuidString])
+                let times = lines.map { $0["created_at"] as Double } + related + [origin?["created_at"] as Double? ?? 0]
                 guard let text = NativeTaskDelivery.acceptedNote(snapshot.checkpoint.note, reply: reply,
                         earlier: lines.map { $0["content"] as String }, lastMessageAt: times.max() ?? 0,
                         count: claimed) else { return [] }

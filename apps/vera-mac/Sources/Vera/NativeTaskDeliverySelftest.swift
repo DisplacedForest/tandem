@@ -46,6 +46,11 @@ enum NativeTaskDeliverySelftest {
         try actionRow()
         try parentheses()
         try await researchNotes()
+        try await secondProcessShowsIt()
+        try scheduledBlockedCard()
+        try codeIsLeftAlone()
+        try checkInSpacing()
+        try await documentCountsAsNew()
         try laterTurn()
         try copySweep()
         print("  result delivery OK (one line then the result, once, no card while running, lines, failed, companion, documents, scheduled, old history, reader left alone, model context, copy)")
@@ -606,6 +611,106 @@ enum NativeTaskDeliverySelftest {
             try require(finished && resultIsLast && lines == expected,
                         "Research offers a line with its plan and another after reading, inside the spacing rule: \(spaced) \(lines)")
         }
+    }
+
+    static func secondProcessShowsIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("chat.sqlite")
+        let first = try LocalChatRepository(url: url)
+        let work = try work(first)
+        let second = try LocalChatRepository(url: url)
+        let storeA = await store(first)
+        let storeB = await store(second)
+        storeA.select(work.conversationID)
+        storeB.select(work.conversationID)
+        if let update = try save(first, work, try research(work)) { storeA.applyNativeTaskUpdates([update]) }
+        let count = { (store: ChatStore) -> Int in
+            store.conversations.first { $0.id == work.conversationID }?.messages.filter { $0.delivery != nil }.count ?? 0
+        }
+        if let update = try second.projectTask(id: work.reference.id, snapshot: nil) { storeB.applyNativeTaskUpdates([update]) }
+        let afterFirstTick = count(storeB)
+        if let update = try second.projectTask(id: work.reference.id, snapshot: nil) { storeB.applyNativeTaskUpdates([update]) }
+        let afterSecondTick = count(storeB)
+        try require(count(storeA) == 1 && afterFirstTick == 1 && afterSecondTick == 1,
+                    "A result the other process delivered shows once in this one too: \(afterFirstTick) \(afterSecondTick)")
+    }
+
+    static func scheduledBlockedCard() throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let work = try work(repository, scheduled: true)
+        let blocked = try snapshot(work.reference, remote: work.remote, state: "blocked", checkpoint: ["native_unavailable": "saved-profile"])
+        _ = try save(repository, work, blocked)
+        let rows = try repository.messages(conversationID: work.conversationID)
+        let request = rows.first { $0.id == work.reference.origin.userMessageID }
+        let reply = rows.first { $0.id == work.reference.origin.assistantMessageID }
+        let cardShown = reply.map(TranscriptVisibility.shows) == true && hasCard(reply)
+        let requestHidden = request.map(TranscriptVisibility.shows) == false
+        let history = NativeTurnHistoryMessage.snapshot(rows, current: Message(role: .user, text: "Anything new?"))
+        let modelSkipsRun = !history.contains { $0.id == request?.id || $0.id == reply?.id }
+        try require(cardShown && requestHidden && modelSkipsRun, "A blocked scheduled run shows its card, no request bubble, and stays out of model history")
+        _ = try save(repository, work, try research(work))
+        let posted = try repository.deliverTaskMessages(id: work.reference.id)
+        let after = try repository.messages(conversationID: work.conversationID).first { $0.id == work.reference.origin.assistantMessageID }
+        try require(posted.count == 1 && !hasCard(after) && after.map(TranscriptVisibility.shows) == false,
+                    "When the run finishes the card goes, the row hides again and the result arrives")
+    }
+
+    static func codeIsLeftAlone() throws {
+        let one = [PulseSource(n: 1, title: "Advisory notice", url: "https://example.org/a")]
+        let a = "[Advisory notice](https://example.org/a)"
+        let inline = NativeTaskDelivery.linked("Use `items[1]` for the second entry. [1]", sources: one)
+        let fenced = NativeTaskDelivery.linked("Here is the call:\n\n```\nlet value = items[1]\n```\n\nIt reads the second entry. [1]", sources: one)
+        let unknown = NativeTaskDelivery.linked("The table has a footnote [7] that I didn't follow. [1]", sources: one)
+        let existing = NativeTaskDelivery.linked("See [the notice [1]](https://example.org/n) for more. [1]", sources: one)
+        try require(inline == "Use `items[1]` for the second entry. \(a)", "Inline code keeps its brackets: \(inline)")
+        try require(fenced.contains("let value = items[1]\n```") && fenced.hasSuffix("second entry. \(a)"), "Fenced code keeps its brackets: \(fenced)")
+        try require(unknown.contains("footnote [7] that") && unknown.hasSuffix(a), "A number with no matching source stays as written: \(unknown)")
+        try require(existing.hasPrefix("See [the notice [1]](https://example.org/n)"), "An existing link is left alone: \(existing)")
+    }
+
+    static func checkInSpacing() throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let work = try work(repository, scheduled: true)
+        let base = start.timeIntervalSince1970
+        let checkInAt = base + 100
+        let checkIn = Message(role: .assistant, text: "The scheduled research stopped to ask a question.",
+                              createdAt: Date(timeIntervalSince1970: checkInAt), state: .complete)
+        try repository.saveMessage(checkIn, conversationID: work.conversationID, ordinal: 10)
+        try repository.database.write { db in
+            try db.execute(sql: "INSERT INTO native_task_card_mirrors(message_id, reference_id, conversation_id) VALUES(?, ?, ?)",
+                           arguments: [checkIn.id.uuidString, work.reference.id.uuidString, work.conversationID])
+        }
+        let text = "I'm reading the advisory pages for the daily advisory check."
+        let early = checkInAt + NativeTaskLineRules.spacingSeconds / 6
+        let late = checkInAt + NativeTaskLineRules.spacingSeconds + 1
+        _ = try save(repository, work, try snapshot(work.reference, remote: work.remote, state: "running", checkpoint: ["note": ["text": text, "at": early]]))
+        let dropped = try repository.deliverTaskMessages(id: work.reference.id, now: Date(timeIntervalSince1970: early))
+        _ = try save(repository, work, try snapshot(work.reference, remote: work.remote, state: "running", checkpoint: ["note": ["text": text, "at": late]]))
+        let sent = try repository.deliverTaskMessages(id: work.reference.id, now: Date(timeIntervalSince1970: late))
+        try require(dropped.isEmpty && sent.count == 1, "A line counts its spacing from the check-in too")
+    }
+
+    static func documentCountsAsNew() async throws {
+        let suiteName = "tandem-delivery-selftest-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else { throw NativeTaskFixture.Failure.assertion("Defaults suite") }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = await store(repository)
+        store.companionDefaults = defaults
+        store.ensureVeraThread()
+        guard let thread = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion's conversation exists") }
+        let work = try work(repository, workerType: "document", title: "Winter reading plan", conversationID: thread)
+        store.select(thread)
+        store.section = .chat
+        store.markCompanionSeen()
+        let finished = try snapshot(work.reference, remote: work.remote, state: "completed",
+            result: ["kind": "document_report", "query": work.reference.request.objective, "report": "# Winter reading plan", "sources": []])
+        if let update = try save(repository, work, finished) { store.applyNativeTaskUpdates([update]) }
+        let arrived = store.conversations.first { $0.id == thread }?.messages.last
+        try require(arrived?.text.isEmpty == true && hasDocument(arrived) && store.companionUnreadCount == 1,
+                    "A document with no text still counts as one new message: \(store.companionUnreadCount)")
     }
 
     static func laterTurn() throws {

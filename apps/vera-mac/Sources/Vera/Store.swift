@@ -1987,7 +1987,10 @@ final class ChatStore: ObservableObject {
 
     private var companionReplies: [Message] {
         guard let veraThreadID, let thread = conversations.first(where: { $0.id == veraThreadID }) else { return [] }
-        return thread.messages.filter { $0.role == .assistant && $0.state == .complete && !$0.text.isEmpty }
+        return thread.messages.filter { message in
+            guard message.role == .assistant, message.state == .complete, message.contentType != .runOrigin else { return false }
+            return message.delivery != nil ? TranscriptVisibility.shows(message) : !message.text.isEmpty
+        }
     }
 
     var companionSeenReplyID: String? {

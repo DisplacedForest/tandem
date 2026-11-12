@@ -21,7 +21,23 @@ extension ChatStore {
             }
         }
         if delivered { refreshNativeTaskDeliveries() }
-        return delivered
+        return reconcileDeliveredMessages() || delivered
+    }
+
+    @discardableResult
+    func reconcileDeliveredMessages() -> Bool {
+        guard let local = repository as? LocalChatRepository else { return false }
+        let loaded = Set(conversations.filter { !$0.messages.isEmpty || $0.id == selectedID }.map(\.id))
+        guard !loaded.isEmpty, let stored = try? local.deliveredMessages(conversationIDs: loaded) else { return false }
+        var appended = false
+        for post in stored {
+            guard let index = conversations.firstIndex(where: { $0.id == post.conversationID }),
+                  !conversations[index].messages.contains(where: { $0.id == post.message.id }) else { continue }
+            conversations[index].messages.append(post.message)
+            conversations[index].updatedAt = max(conversations[index].updatedAt, post.message.createdAt)
+            appended = true
+        }
+        return appended
     }
 
     func receiveDeliveredMessage(_ post: NativeTaskDeliveredPost) {
@@ -69,7 +85,7 @@ extension ChatStore {
 
 enum TranscriptVisibility {
     static func shows(_ message: Message) -> Bool {
-        if message.contentType == .runOrigin { return false }
+        if message.contentType == .runOrigin { return message.role == .assistant && !message.displayBlocks.isEmpty }
         guard message.role == .assistant, message.state == .complete else { return true }
         let empty = message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return !(empty && message.displayBlocks.isEmpty && message.toolActivities.isEmpty && message.artifacts.isEmpty
