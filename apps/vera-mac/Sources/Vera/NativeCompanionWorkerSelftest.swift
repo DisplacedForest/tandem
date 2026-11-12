@@ -196,9 +196,9 @@ struct NativeCompanionHarness {
         return [status, water, weeds]
     }
 
-    func create(_ assignment: String = "Water the north bed", mode: String = "manual", scheduleID: String? = nil) throws -> String {
+    func create(_ assignment: String = "Water the north bed", mode: String = "manual", scheduleID: String? = nil, said: String? = nil) throws -> String {
         try requireSavedAllows()
-        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode, scheduleID: scheduleID)
+        let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode, scheduleID: scheduleID, said: said)
         let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -737,6 +737,17 @@ extension SelfTest {
         let proactive = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "proactive")
         try require(manual.typedRequest == "Email orders@workshop.example" && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
                     "Only work the person started by hand counts its assignment as their own words")
+        let silent = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual", said: "")
+        try require(silent.typedRequest.isEmpty, "Work started from the conversation counts nothing as typed")
+        let oldBytes = try nativeTaskEncoded(manual)
+        let reread = try JSONDecoder().decode(NativeCompanionTaskPayload.self, from: oldBytes)
+        try require(reread.said == nil && reread.typedRequest == manual.typedRequest && (try nativeTaskEncoded(reread)) == oldBytes
+                        && !(String(data: oldBytes, encoding: .utf8) ?? "").contains("said"),
+                    "A saved request without the message decodes, counts as before and encodes back byte for byte")
+        do {
+            _ = try NativeCompanionTaskPayload(assignment: "Check", mode: "manual", said: String(repeating: "a", count: 5001))
+            throw NativeTaskFixture.Failure.assertion("An overlong message is refused")
+        } catch NativeTaskError.invalidRequest {}
     }
 
     private static func companionInstructedSends() async throws {
@@ -792,6 +803,37 @@ extension SelfTest {
         let scheduledDone = try await scheduled.runUntilSettled()
         try require(sent.count == 0 && (try scheduled.effects(scheduledID)).allSatisfy { $0.state != .completed },
                     "Scheduled work never sends on the words of its assignment: \(scheduledDone.state)")
+
+        let command = "Send the notes to ana@greenhouse.test"
+        for message in [command, "Could you look after the greenhouse notes this week?"] {
+            let started = try ChatStore.companionRequest(command, connectedToolIDs: nil, said: "")
+            try require(started.dot?.typedRequest == "" && started.dot?.said == "",
+                        "Work started from the conversation counts nothing as typed, whatever the message was: \(message)")
+            sent.reset()
+            let asked = try harness(repeats: false)
+            asked.model.checks { .text("{\"run\": true}") }
+            let askedID = try asked.create(command, said: started.dot?.said)
+            let askedDone = try await asked.runUntilSettled()
+            try require(askedDone.state == .needsDecision && sent.count == 0 && (try asked.effects(askedID)).allSatisfy { $0.state != .completed },
+                        "Work started from the conversation asks before an Ask first send, even when the message was the command: \(askedDone.state)")
+        }
+        sent.reset()
+        let pair = try harness(repeats: false)
+        pair.model.checks { .text("{\"run\": true}") }
+        let firstID = try pair.create(command, said: "")
+        let firstDone = try await pair.runUntilSettled()
+        let secondID = try pair.create(command, said: "")
+        let secondDone = try await pair.runUntilSettled()
+        try require(firstDone.state == .needsDecision && secondDone.state == .needsDecision && sent.count == 0
+                        && (try pair.effects(firstID) + pair.effects(secondID)).allSatisfy { $0.state != .completed },
+                    "Two pieces of work from one send instruction both ask, and nothing is sent without an answer")
+        sent.reset()
+        let box = try harness(repeats: false)
+        box.model.checks { .text("{\"run\": true}") }
+        let boxID = try box.create(command)
+        let boxDone = try await box.runUntilSettled()
+        try require(boxDone.state == .completed && sent.count == 1 && (try box.effects(boxID)).filter { $0.state == .completed }.count == 1,
+                    "Work saved before, with its assignment typed by hand, still sends once with no question")
 
         let authority = NativeCompanionWorkerAuthority(resolver: {
             var resolver = NativeRuleResolver(global: { var made = NativeRules.defaults; made.set(.ask, for: .networkSends); return made }(),
@@ -1438,19 +1480,19 @@ extension SelfTest {
         await store.connect()
         defer { store.stopNativeTaskRecovery() }
         store.skipDotSetup()
-        try require(await store.startCompanionAssignment("   ") != nil, "An empty assignment is refused")
-        store.setDotState(.paused)
-        try require(await store.startCompanionAssignment("Water the north bed")?.plain(name: store.companionName) == "Ada is paused. Resume to give it work.",
-                    "A paused companion takes no new work")
-        store.setDotState(.active)
+        do {
+            _ = try await CompanionHandOffFixture.handOff(store, assignment: "   ")
+            throw NativeTaskFixture.Failure.assertion("An empty assignment is refused")
+        } catch NativeTaskError.invalidRequest {}
         store.ensureVeraThread()
         guard let threadID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion thread exists") }
         let before = try repository.messages(conversationID: threadID).count
-        let failure = await store.startCompanionAssignment("Water the north bed")
-        try require(failure == nil, "A valid assignment starts: \(failure?.plain(name: store.companionName) ?? "")")
+        let started = try await CompanionHandOffFixture.handOff(store, assignment: "Water the north bed")
+        try require(started.deliveryState != .rejected, "A valid assignment starts")
         let saved = try repository.messages(conversationID: threadID)
         try require(saved.count == before + 2 && saved[before].role == .user && saved[before].text == "Water the north bed"
-                    && saved[before + 1].role == .assistant, "The assignment and its anchor reply land in the companion thread")
+                    && saved[before + 1].role == .assistant && saved[before + 1].text == CompanionHandOffFixture.reply,
+                    "The assignment and the reply that started it land in the companion thread")
         let references = store.companionWorkReferences()
         try require(references.count == 1 && references[0].origin.conversationID == threadID
                     && references[0].origin.assistantMessageID == saved[before + 1].id

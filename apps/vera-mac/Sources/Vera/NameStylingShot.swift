@@ -98,7 +98,6 @@ enum NameStylingShot {
             store.reportCompanionConfigurationError(CompanionErrorCopy.saveLead, description: "The disk is full.")
             root = AnyView(
                 VStack(alignment: .leading, spacing: 18) {
-                    CompanionAssignmentField()
                     PreferencesSettingsView()
                     CompanionOpeningView(error: store.companionOpeningErrorLine, retry: {}).frame(height: 90)
                     EmptyChatView().frame(height: 300)

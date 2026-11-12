@@ -211,7 +211,7 @@ extension SelfTest {
                     DotProfileCopy.noServices, DotProfileCopy.rulesNote,
                     CompanionErrorCopy.loadLead, CompanionErrorCopy.loadTail, CompanionErrorCopy.saveLead, CompanionErrorCopy.clearLead,
                     CompanionErrorCopy.threadLead, CompanionErrorCopy.resetLead, CompanionErrorCopy.resetTail,
-                    CompanionWorkCopy.describe, CompanionWorkCopy.paused, CompanionWorkCopy.conversation, CompanionWorkCopy.couldNotStart,
+                    NativeTaskTools.pausedReply, NativeTaskTools.laterRound,
                     CompanionOverviewModel.noTaskRules, CompanionOverviewModel.selectWorkHint, CompanionOverviewModel.noActivity,
                     CompanionOverviewModel.noOutputs, CompanionOverviewModel.thisMac, CompanionOverviewModel.stopTitle,
                     CompanionOverviewModel.pauseTitle(name: "Ada", paused: true), CompanionOverviewModel.pauseTitle(name: "Ada", paused: false),

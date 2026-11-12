@@ -10,8 +10,9 @@ enum NativeScheduleTools {
     static func turnEnabledIDs(snapshot: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority,
                                hasEngine: Bool, hasRepository: Bool, hasStore: Bool) -> Set<String> {
         let current = snapshot.intersection(consented)
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(current), hasEngine: hasEngine, hasRepository: hasRepository)
-        if !authority.allowsBackground { allowed.remove(NativeTaskTools.toolID) }
+        var allowed = NativeTaskTools.enabledIDs(authority.filter(current), hasEngine: hasEngine, hasRepository: hasRepository,
+                                                 general: authority.allowsGeneral)
+        if !authority.allowsBackground && !authority.allowsGeneral { allowed.remove(NativeTaskTools.toolID) }
         return enabledIDs(allowed, consented: current, authority: authority, hasStore: hasStore)
     }
 

@@ -5,17 +5,20 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
     let allowsResearch: Bool
     let allowsDocument: Bool
     let allowsSchedule: Bool
+    let companion: Bool
 
     var allowsBackground: Bool { allowsResearch || allowsDocument }
+    var allowsGeneral: Bool { companion && allowsTools }
 
     var allowedWorkerTypes: Set<String> {
         var types: Set<String> = []
         if allowsResearch { types.insert("research") }
         if allowsDocument { types.insert("document") }
+        if allowsGeneral { types.insert(NativeTaskTools.generalWorkerType) }
         return types
     }
 
-    init(_ request: String, mentions: Set<String> = []) {
+    init(_ request: String, mentions: Set<String> = [], companion: Bool = false) {
         let text = Self.instructions(request)
         let noTools = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:use|call|run|invoke)\s+(?:(?:any|external)\s+)?(?:tools?|functions?)\b|\b(?:no|without)\s+(?:(?:using|calling|invoking)\s+)?(?:(?:any|external)\s+)?(?:tools?|functions?)\b"#)
         let noResearch = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:(?:start|run|do|perform|conduct)\s+)?(?:(?:new|background|deep)\s+)*(?:research|investigat\w*)\b|\bno\s+(?:new\s+)?(?:(?:background|deep)\s+)?(?:research|investigation)\b"#)
@@ -31,6 +34,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         let noSchedule = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:set\s+up\s+|create\s+|make\s+)?(?:a\s+|any\s+)?(?:schedules?|recurring)\b|\bno\s+(?:new\s+)?schedules?\b"#)
         let scheduleExplicit = Self.schedulesWork(text)
         allowsTools = !noTools
+        self.companion = companion
         allowsSchedule = !noTools && !noSchedule && (scheduleExplicit || mentions.contains(NativeScheduleTools.toolID))
         allowsResearch = !noTools && !noResearch && (researchExplicit || mentions.contains(NativeWebTools.researchToolID))
         allowsDocument = !noTools && !noDocument && (documentExplicit || mentions.contains(NativeTaskTools.toolID))
@@ -40,7 +44,7 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
         guard allowsTools else { return [] }
         var kept = ids
         if !allowsBackground {
-            kept.remove(NativeTaskTools.toolID)
+            if !allowsGeneral { kept.remove(NativeTaskTools.toolID) }
             if !allowsSchedule { kept.remove(NativeWebTools.researchToolID) }
         }
         if !allowsSchedule { kept.remove(NativeScheduleTools.toolID) }
