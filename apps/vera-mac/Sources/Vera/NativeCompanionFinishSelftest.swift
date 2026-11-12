@@ -187,7 +187,10 @@ extension SelfTest {
         try companionNoticesSurviveShrinking()
         try companionStopDetailsFit()
         try companionUnlistedPagesCounted()
-        print("  companion finish OK (long work never asks or ends early, running out of room survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, older saved work carries on, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, the closing write-up is used when it fits, a write-up that can't run or comes back unusable keeps the pages, over a hundred steps through the engine, a saved old question carries on by itself, more than 64 calls in one reply, the ending is saved before the closing request, the saved result fits its limit, a failed answer save is tried again, an appended line survives a long paragraph, both notices survive a long answer and a shrinking result, stop details fit, unlisted pages are counted)")
+        try companionNoticesShareRoom()
+        try companionLeanResult()
+        try companionDecisionPromptFits()
+        print("  companion finish OK (long work never asks or ends early, running out of room survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, older saved work carries on, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, the closing write-up is used when it fits, a write-up that can't run or comes back unusable keeps the pages, over a hundred steps through the engine, a saved old question carries on by itself, more than 64 calls in one reply, the ending is saved before the closing request, the saved result fits its limit, a failed answer save is tried again, an appended line survives a long paragraph, both notices survive a long answer and a shrinking result, stop details fit, unlisted pages are counted, each notice keeps its opening, an oversized why is dropped, a long question is cut to fit)")
     }
 
     private static func companionClosingOnly(_ rig: NativeCompanionFinishRig, after mark: Int) -> Bool {
@@ -368,7 +371,7 @@ extension SelfTest {
             try require(report.unicodeScalars.count <= NativeCompanionWorker.reportScalars && report.hasPrefix(lead),
                         "The \(variant) report fits in scalars and keeps the opening statement")
         }
-        let oversized = NativeCompanionWorker.appendingReport(String(repeating: title, count: 4), to: lead + "\n\nReading room hours [12]")
+        let oversized = try companionNoticed(lead + "\n\nReading room hours [12]", notices: [String(repeating: title, count: 4)])
         try require(oversized.hasPrefix(lead) && oversized.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
                     "An appended line larger than the limit still keeps the opening statement")
         var checkpoint = NativeCompanionCheckpoint()
@@ -382,7 +385,7 @@ extension SelfTest {
                         "Truncating a citation removes its entire marker")
             let suffix = "The room was closed."
             let shorter = String(String.UnicodeScalarView(prefix.unicodeScalars.dropLast(suffix.unicodeScalars.count + 2)))
-            let appended = NativeCompanionWorker.appendingReport(suffix, to: shorter + tail)
+            let appended = try companionNoticed(shorter + tail, notices: [suffix], checkpoint: checkpoint)
             try require(appended == shorter + "\n\n" + suffix,
                         "Reserving room for an appended line removes a cut citation marker")
         }
@@ -1034,17 +1037,100 @@ extension SelfTest {
         try require(sections == ["I saved 2 more pages, but I can't list them here."], "Several unlisted pages are counted: \(sections)")
     }
 
+    private static func companionNoticesShareRoom() throws {
+        let require = NativeTaskFixture.require
+        var checkpoint = NativeCompanionCheckpoint()
+        for index in 0..<64 {
+            let head = "Post garden note \(index) "
+            checkpoint.note(head + String(repeating: "b", count: NativeCompanionWorker.noteScalars), NativeReadOnlyRun.outcome,
+                            reason: "This needs your approval first, so it was not done.")
+        }
+        guard let undone = NativeReadOnlyRun.undone(checkpoint.effects.map(\.title)),
+              let notRun = NativeCompanionWorker.notRunLine(checkpoint.effects) else {
+            throw NativeTaskFixture.Failure.assertion("Both notices are written")
+        }
+        try require(undone.unicodeScalars.count > 15000 && notRun.unicodeScalars.count > 19000,
+                    "Both notices are long: \(undone.unicodeScalars.count) \(notRun.unicodeScalars.count)")
+        let openings = [String(undone.prefix(80)), String(notRun.prefix(40))]
+        let wide = String(repeating: "\u{1D538}", count: NativeTaskStop.stepScalars)
+        for (name, text, stop) in [("plain", String(repeating: "c", count: NativeCompanionWorker.reportScalars), nil as NativeTaskStop?),
+                                   ("shrunk", String(repeating: "\u{1D538}", count: NativeCompanionWorker.reportScalars),
+                                    NativeTaskStop(reason: NativeTaskStop.left, step: wide, earlier: wide))] {
+            let step = try NativeCompanionWorker.report(checkpoint, assignment: "Check the garden beds", text: text, stop: stop, notices: [undone, notRun])
+            let data = step.result ?? Data()
+            let report = try NativeTaskStore.object(data)["report"] as? String ?? ""
+            try require(data.count <= NativeTaskStore.maximumJSONBytes && report.unicodeScalars.count <= (name == "plain" ? NativeCompanionWorker.reportScalars : NativeCompanionWorker.reportScalars / 2),
+                        "The \(name) report fits: \(data.count) \(report.unicodeScalars.count)")
+            try require(openings.allSatisfy { report.contains($0) }, "The \(name) report keeps the opening of each notice")
+        }
+    }
+
+    private static func companionLeanResult() throws {
+        let require = NativeTaskFixture.require
+        let assignment = "Check the reading room hours at the central library"
+        func why(_ statement: String) -> NativeRuleWhy {
+            NativeRuleWhy(kind: .rule, action: .commands, handsOff: true, rule: .init(NativeRuleRecord(
+                scope: .conversation("sample"), action: nil, toolID: NativeCommandTools.toolID, effect: .forbid, statement: statement)))
+        }
+        let stop = NativeTaskStop(reason: NativeTaskStop.left, step: String(repeating: "\u{1D538}", count: NativeTaskStop.stepScalars),
+                                  earlier: "Earlier in this work: " + String(repeating: "d", count: 4000) + ".")
+        for (name, given) in [("small", why("Never run commands in this chat")), ("huge", why("a" + String(repeating: "\u{0301}", count: 140000)))] {
+            let rig = try NativeCompanionFinishRig(model: .looping())
+            let id = try rig.create(assignment)
+            let step = try NativeCompanionWorker.report(NativeCompanionCheckpoint(), assignment: assignment, text: "I stopped before running the command.",
+                                                        why: given, stop: stop)
+            let data = step.result ?? Data()
+            let saved = try JSONDecoder().decode(NativeResearchTaskResult.self, from: data)
+            try require(data.count <= NativeTaskStore.maximumJSONBytes, "The \(name) result fits: \(data.count)")
+            if name == "small" {
+                try require(saved.why == given && saved.stop == stop, "A small why and the full stop are kept")
+            } else {
+                try require(saved.why == nil && (try NativeTaskStore.object(data))["why"] == nil && saved.stop?.drawable == true
+                            && saved.stop?.step.unicodeScalars.count == 2000 && saved.stop?.earlier?.unicodeScalars.count == 2000,
+                            "An oversized why is dropped and the stop is cut but still shown")
+            }
+            guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+            let record = try rig.store.commitStep(id, generation: claimed.generation, step: step)
+            let display = try rig.display(record, assignment: assignment)
+            try require(display.card.status == .completed && display.card.stop == saved.stop, "The completed projection shows the \(name) stop")
+        }
+    }
+
+    private static func companionDecisionPromptFits() throws {
+        let require = NativeTaskFixture.require
+        let assignment = "Check the reading room hours at the central library"
+        let rig = try NativeCompanionFinishRig(model: .looping())
+        let id = try rig.create(assignment)
+        var checkpoint = NativeCompanionCheckpoint()
+        checkpoint.threadID = "companion-thread-1"
+        let prompt = String(repeating: "Retry the reading room step? ", count: 73) + "Okay?"
+        try require(prompt.unicodeScalars.count == 2122, "The question is 2122 scalars: \(prompt.unicodeScalars.count)")
+        let step = try NativeCompanionWorker.decide(checkpoint, prompt, ["retry"])
+        let asked = try NativeTaskStore.object(step.decision ?? Data())["prompt"] as? String ?? ""
+        try require(asked.unicodeScalars.count == 2000 && prompt.hasPrefix(asked), "The question is cut to 2000 scalars")
+        guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+        let record = try rig.store.commitStep(id, generation: claimed.generation, step: step)
+        let display = try rig.display(record, assignment: assignment)
+        try require(record.state == .needsDecision && display.card.status == .needsInput && display.card.milestone == asked,
+                    "The projection shows the cut question")
+    }
+
+    private static func companionNoticed(_ text: String, notices: [String], checkpoint: NativeCompanionCheckpoint = NativeCompanionCheckpoint()) throws -> String {
+        let step = try NativeCompanionWorker.report(checkpoint, assignment: "Check the reading room hours", text: text, notices: notices)
+        return try NativeTaskStore.object(step.result ?? Data())["report"] as? String ?? ""
+    }
+
     private static func companionAppendKeepsSuffix() throws {
         let require = NativeTaskFixture.require
         let suffix = "The room was closed."
         let paragraph = "Reading room notes " + String(repeating: "b", count: NativeCompanionWorker.reportScalars)
         for body in [paragraph, NativeCompanionWorker.outOfRoomLead + "\n\n" + paragraph] {
-            let appended = NativeCompanionWorker.appendingReport(suffix, to: body)
+            let appended = try companionNoticed(body, notices: [suffix])
             try require(appended.hasSuffix("\n\n" + suffix) && appended.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
                         "A line appended to one long paragraph is kept within the limit: \(appended.unicodeScalars.count)")
             try require(appended.hasPrefix(String(body.prefix(2000))), "The start of the long paragraph is kept")
         }
-        let led = NativeCompanionWorker.appendingReport(suffix, to: NativeCompanionWorker.outOfRoomLead + "\n\n" + paragraph)
+        let led = try companionNoticed(NativeCompanionWorker.outOfRoomLead + "\n\n" + paragraph, notices: [suffix])
         try require(led.hasPrefix(NativeCompanionWorker.outOfRoomLead + "\n\nReading room notes"), "The ran out of room line survives")
     }
 }

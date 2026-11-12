@@ -254,7 +254,7 @@ enum NativeCompanionWorker {
     }
 
     static func decide(_ checkpoint: NativeCompanionCheckpoint, _ prompt: String, _ choices: [String], extra: [String: Any] = [:]) throws -> NativeTaskStepResult {
-        var decision: [String: Any] = ["prompt": prompt, "choices": choices]
+        var decision: [String: Any] = ["prompt": cut(prompt, scalars: 2000), "choices": choices]
         decision.merge(extra) { first, _ in first }
         return NativeTaskStepResult(state: .needsDecision, checkpoint: try checkpoint.encoded(), event: "progress",
                                     data: try NativeTaskStore.canonical(["message": prompt]),
@@ -527,17 +527,6 @@ enum NativeCompanionWorker {
         return body
     }
 
-    static func appendingReport(_ line: String, to text: String) -> String {
-        let body = fittedReport(text)
-        return appendingReport(line, to: body, room: reportScalars)
-    }
-
-    static func appendingReport(_ line: String, to text: String, room: Int) -> String {
-        let suffix = fittedReport(line, scalars: room / 2)
-        guard !suffix.isEmpty else { return fittedReport(text, scalars: room) }
-        return fittedReport(text, scalars: room - suffix.unicodeScalars.count - 2) + "\n\n" + suffix
-    }
-
     static func report(_ checkpoint: NativeCompanionCheckpoint, assignment: String, text: String, keep: Bool? = nil,
                        summary shown: String? = nil, why: NativeRuleWhy? = nil, stop: NativeTaskStop? = nil,
                        notices: [String] = []) throws -> NativeTaskStepResult {
@@ -546,21 +535,33 @@ enum NativeCompanionWorker {
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": cut($0.title, scalars: noteScalars), "outcome": $0.outcome] }
         var room = reportScalars
+        var lean = false
         while true {
-            let body = notices.isEmpty ? fittedReport(text, scalars: room)
-                : appendingReport(notices.joined(separator: "\n\n"), to: text, room: room)
+            let share = room / (2 * max(1, notices.count))
+            let tail = notices.map { fittedReport($0, scalars: share) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+            let body = tail.isEmpty ? fittedReport(text, scalars: room)
+                : fittedReport(text, scalars: room - tail.unicodeScalars.count - 2) + "\n\n" + tail
             let firstParagraph = shown.map(CompanionSavedText.sanitized)
                 ?? body.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") } ?? body
             let summary = cut(String(firstParagraph.replacingOccurrences(of: "\n", with: " ").prefix(summaryCharacters)), scalars: summaryCharacters)
             var result: [String: Any] = ["kind": "companion_report", "query": assignment, "title": title, "report": body,
                                          "summary": summary, "sources": checkpoint.cited(body), "effects": effects]
             if let keep { result["shape"] = NativeCompanionShape.decide(keep: keep, text: body) }
-            if let why { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
-            if let stop { result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(stop)) }
+            if let why, !lean { result["why"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(why)) }
+            if let stop {
+                let kept = lean ? NativeTaskStop(reason: stop.reason, step: cut(stop.step, scalars: 2000), earlier: stop.earlier.map { cut($0, scalars: 2000) }) : stop
+                result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(kept))
+            }
             let data = try JSONSerialization.data(withJSONObject: result)
-            if data.count > NativeTaskStore.maximumJSONBytes, room > 1000 {
-                room /= 2
-                continue
+            if data.count > NativeTaskStore.maximumJSONBytes {
+                if room > 1000 {
+                    room /= 2
+                    continue
+                }
+                if !lean {
+                    lean = true
+                    continue
+                }
             }
             return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
                 result: try NativeTaskStore.canonical(result), event: "completed")
