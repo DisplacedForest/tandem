@@ -55,7 +55,7 @@ enum NativeTaskProjection {
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
             if dot {
-                card.milestone = "Working on your goal."
+                card.milestone = "Working on it."
             } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint)
             } else {
@@ -84,7 +84,7 @@ enum NativeTaskProjection {
             }
             if dot, carriesOn(snapshot) {
                 card.status = .working
-                card.milestone = "Working on your goal."
+                card.milestone = "Working on it."
                 break
             }
             card.status = .needsInput
@@ -104,7 +104,7 @@ enum NativeTaskProjection {
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             default:
                 if dot {
-                    card.milestone = "The work on your goal couldn't finish."
+                    card.milestone = "I couldn't finish this."
                 } else if document {
                     card.milestone = saved.map { "Writing couldn't finish. \($0)" } ?? "Writing couldn't finish."
                 } else {

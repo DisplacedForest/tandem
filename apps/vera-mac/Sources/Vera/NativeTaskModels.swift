@@ -63,7 +63,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     init(objective: String, deliverables: [String], workerType: String = "research", title: String? = nil,
          scheduleID: String? = nil) throws {
         let dot = workerType == "companion"
-            ? try NativeCompanionTaskPayload(assignment: objective, mode: scheduleID == nil ? "manual" : "scheduled", goal: "", scheduleID: scheduleID)
+            ? try NativeCompanionTaskPayload(assignment: objective, mode: scheduleID == nil ? "manual" : "scheduled", scheduleID: scheduleID)
             : nil
         try self.init(validating: objective, deliverables: deliverables, workerType: workerType, title: title, dot: dot, scheduleID: scheduleID)
     }
@@ -82,7 +82,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
             throw NativeTaskError.invalidRequest("Background work must be research or a document.")
         }
         guard (workerType == "companion") == (dot != nil), dot.map({ $0.assignment == trimmed }) ?? true else {
-            throw NativeTaskError.invalidRequest("Background work for a goal needs its assignment.")
+            throw NativeTaskError.invalidRequest("This needs an assignment.")
         }
         let work = workerType == "document" ? "document brief" : workerType == "companion" ? "assignment" : "research objective"
         guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= 5000 else {
@@ -147,25 +147,21 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
 
     let assignment: String
     let mode: String
-    let goal: String
     let connectedToolIDs: [String]?
     let scheduleID: String?
+    private var savedGoal: NativeCarriedJSON? = nil
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
     var typedRequest: String { mode == "manual" ? assignment : "" }
 
-    init(assignment: String, mode: String, goal: String = "", connectedToolIDs: [String]? = nil, scheduleID: String? = nil) throws {
+    init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
             throw NativeTaskError.invalidRequest("The assignment must contain 1 to 5,000 characters.")
         }
         guard Self.modes.contains(mode) else {
-            throw NativeTaskError.invalidRequest("Background work for a goal must start manually, on a schedule or on its own.")
-        }
-        guard cleanGoal.unicodeScalars.count <= 2000 else {
-            throw NativeTaskError.invalidRequest("The goal must be at most 2,000 characters.")
+            throw NativeTaskError.invalidRequest("This must start manually, on a schedule or on its own.")
         }
         if let connectedToolIDs {
             guard connectedToolIDs.count <= 64, Set(connectedToolIDs).count == connectedToolIDs.count,
@@ -179,7 +175,6 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         }
         self.assignment = cleanAssignment
         self.mode = mode
-        self.goal = cleanGoal
         self.connectedToolIDs = connectedToolIDs
         self.scheduleID = scheduleID
     }
@@ -194,16 +189,16 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(assignment: container.decode(String.self, forKey: .assignment),
                       mode: container.decode(String.self, forKey: .mode),
-                      goal: container.decodeIfPresent(String.self, forKey: .goal) ?? "",
                       connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
                       scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID))
+        savedGoal = NativeCarriedJSON.carried(container, .goal)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(assignment, forKey: .assignment)
         try container.encode(mode, forKey: .mode)
-        try container.encode(goal, forKey: .goal)
+        try NativeCarriedJSON.carry(savedGoal, &container, .goal)
         try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
         try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
     }

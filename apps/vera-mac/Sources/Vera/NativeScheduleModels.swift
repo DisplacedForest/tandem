@@ -273,7 +273,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
 
     func taskRequest() throws -> NativeResearchTaskRequest {
         if workerType == "companion" {
-            return try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: instruction, mode: "scheduled", goal: "", scheduleID: id), title: title)
+            return try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: instruction, mode: "scheduled", scheduleID: id), title: title)
         }
         return try NativeResearchTaskRequest(objective: instruction, deliverables: deliverables(), workerType: workerType, title: title,
                                              scheduleID: id)

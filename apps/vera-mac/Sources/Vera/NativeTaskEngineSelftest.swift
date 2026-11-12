@@ -112,9 +112,9 @@ struct NativeTaskEngineHarness {
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
-    func submitDot(_ assignment: String, goal: String = "") async throws -> NativeTaskReference {
+    func submitDot(_ assignment: String) async throws -> NativeTaskReference {
         let origin = try NativeTaskFixture.origin(repository)
-        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: goal))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
         return try await service.submit(origin: origin, request: request, profile: profile)
     }
 
@@ -1103,7 +1103,7 @@ extension SelfTest {
     }
 
     private static func dotPayload(_ assignment: String = "Find out what color the fictional moon Luma is.") throws -> Data {
-        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", goal: "Know the moon"))
+        let request = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
         let binding = NativeTaskAdmissionBinding(id: "binding-1", admissionBase: URL(string: "https://provider.test/v1")!,
                                                  enrollmentDigest: String(repeating: "a", count: 64))
         return try nativeTaskEncoded(NativeResearchTaskPayload(request: request, nativeBinding: binding))
@@ -1120,7 +1120,7 @@ extension SelfTest {
                 return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "binding_missing")
             }
             do {
-                let base = [NativeTaskGenerationMessage(role: "system", content: "You work toward the goal with tools."),
+                let base = [NativeTaskGenerationMessage(role: "system", content: "You work on the assignment with tools."),
                             NativeTaskGenerationMessage(role: "user", content: payload.query)]
                 let first = try await exchange.completeTurn(task: task, binding: binding, phase: "work-1", attempt: "a", ordinal: 0,
                                                             messages: base, tools: [dotLookupTool], toolChoice: "auto")
@@ -1245,7 +1245,7 @@ extension SelfTest {
         let firstRun = try NativeTaskEngineHarness.makeTurns(repository: try LocalChatRepository(url: url), counter: counter,
             workers: { ["companion": dotWorker(exchange: $0, gate: gate)] }, complete: complete)
         try await firstRun.start()
-        let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.", goal: "Know the moon")
+        let reference = try await firstRun.submitDot("Find out what color the fictional moon Luma is.")
         try require(reference.deliveryState == .accepted && reference.createRequest.workerType == "companion", "The dot handoff is accepted")
         try require(try await firstRun.waitAsync(seconds: 15) { await gate.count("blocked") >= 1 }, "The dot worker finishes both work phases")
         let jobs = await recorder.all()

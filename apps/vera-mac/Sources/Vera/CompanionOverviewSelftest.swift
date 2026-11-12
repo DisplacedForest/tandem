@@ -74,7 +74,7 @@ enum CompanionOverviewFixture {
                                     outcome: .completed, conversationID: "thread")
         return CompanionOverviewModel.build(
             name: name,
-            profile: NativeDotProfile(goal: "Help keep the household organized.", state: .active, setupCompleted: true),
+            profile: NativeDotProfile(state: .active, setupCompleted: true),
             services: "Can reach Web search, Documents and 1 more.",
             rules: "",
             activity: CompanionOverviewModel.activity(tasks: tasks() + extra, runs: [run], schedules: profileSchedules()),
@@ -92,7 +92,7 @@ enum CompanionOverviewFixture {
         let now = Date()
         return CompanionOverviewModel.build(
             name: name,
-            profile: NativeDotProfile(goal: "Help keep the household organized and ready for the studio visit.", state: paused ? .paused : .active, setupCompleted: true),
+            profile: NativeDotProfile(state: paused ? .paused : .active, setupCompleted: true),
             services: "Can reach Web search, Documents and 1 more.",
             rules: "Asks first for commands and Trash. Hands off sending.",
             activity: CompanionOverviewModel.activity(tasks: tasks(), runs: runs(), schedules: schedules()),
@@ -158,14 +158,14 @@ extension SelfTest {
 
         let emptyModel = CompanionOverviewModel.build(name: "Ada", profile: NativeDotProfile(), services: "No services turned on yet.",
                                                       rules: "", activity: [], results: [])
-        try require(emptyModel.activity.isEmpty && emptyModel.outputs.isEmpty && emptyModel.goal.isEmpty && !emptyModel.paused,
+        try require(emptyModel.activity.isEmpty && emptyModel.outputs.isEmpty && !emptyModel.paused,
                     "An unset companion has empty sections")
 
         let store = CompanionShotFixture.store()
         store.adoptAssistantName("Ada")
-        store.dotProfile = NativeDotProfile(goal: "Keep the greenhouse on track.", state: .active, setupCompleted: true)
+        store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
         let live = store.companionOverviewModel()
-        try require(live.name == "Ada" && live.goal == "Keep the greenhouse on track." && !live.paused && live.activity.isEmpty && live.outputs.isEmpty,
+        try require(live.name == "Ada" && !live.paused && live.activity.isEmpty && live.outputs.isEmpty,
                     "A store with no work builds an honest empty overview")
         store.openCompanionOutputs()
         try require(store.section == .artifacts && store.pendingLibraryConversationID == store.veraThreadID,
@@ -333,14 +333,34 @@ extension SelfTest {
         store.reloadSchedules()
         try require(store.companionOverviewModel().upcoming.map(\.id) == ["profile-morning", "profile-friday"],
                     "The live profile lists the companion's schedules")
-        store.setSchedule("profile-morning", enabled: false)
-        store.setSchedule("profile-friday", enabled: true)
+        let rows = store.companionOverviewModel().upcoming
+        guard let morning = rows.first(where: { $0.title == "Morning check-in" }),
+              let friday = rows.first(where: { $0.title == "Friday greenhouse note" }) else {
+            throw NativeTaskFixture.Failure.assertion("The live profile has both rows")
+        }
+        let off = store.switchCompanionSchedule(morning.id, on: false)
+        let on = store.switchCompanionSchedule(friday.id, on: true)
         let switched = store.companionOverviewModel().upcoming
-        try require(switched.first { $0.id == "profile-morning" }?.enabled == false
+        try require(off == nil && on == nil
+                    && switched.first { $0.id == "profile-morning" }?.enabled == false
                     && switched.first { $0.id == "profile-friday" }?.enabled == true
                     && (try schedules.get("profile-morning"))?.enabled == false
+                    && (try schedules.get("profile-friday"))?.enabled == true
                     && (try schedules.get("profile-other"))?.enabled == true,
-                    "The profile switch changes the same schedule the Scheduled screen does and nothing else")
+                    "The profile switch changes the row's own schedule and nothing else")
+        try require(store.switchCompanionSchedule("profile-other", on: false) == nil
+                    && (try schedules.get("profile-other"))?.enabled == true,
+                    "The profile switch can't change a schedule that isn't the companion's")
+        try schedules.save(NativeSchedule(id: "profile-passed", owner: .dot, workerType: "research", title: "One-time check",
+                                          instruction: "Check once.", cadence: .once(Date().addingTimeInterval(-3600)),
+                                          timeZone: CompanionOverviewFixture.zone, enabled: false))
+        store.reloadSchedules()
+        let passed = store.switchCompanionSchedule("profile-passed", on: true)
+        try require(passed?.isEmpty == false && (try schedules.get("profile-passed"))?.enabled == false
+                    && store.companionOverviewModel().upcoming.first { $0.id == "profile-passed" }?.enabled == false,
+                    "Turning on a one-time schedule whose time has passed says why and leaves it off")
+        store.openCompanionSchedules()
+        try require(store.section == .scheduled, "The message under a schedule that can't turn on leads to Scheduled")
         let lastMessage = store.conversations.first { $0.id == store.veraThreadID }?.messages.last?.createdAt
         try require(lastMessage != nil && store.companionOverviewModel().lastActive == lastMessage,
                     "The live profile is active as of the last message")

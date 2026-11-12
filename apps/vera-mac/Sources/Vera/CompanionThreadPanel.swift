@@ -134,6 +134,7 @@ struct CompanionThreadPanel: View {
     @State private var editingProfile = false
     @State private var editingAppearance = false
     @State private var navigationError: String?
+    @State private var scheduleProblem: (id: String, text: String)?
 
     init(fixed: CompanionOverviewModel? = nil, selectedID: String? = nil, newSince: Date = .distantFuture,
          width: CGFloat = CompanionProfileMetrics.width, onClose: (() -> Void)? = nil) {
@@ -142,7 +143,7 @@ struct CompanionThreadPanel: View {
         self.width = width
         self.onClose = onClose
         _selectedID = State(initialValue: selectedID)
-        _model = State(initialValue: fixed ?? CompanionOverviewModel(name: "", goal: "", services: "", rules: "", paused: false, activity: [], outputs: []))
+        _model = State(initialValue: fixed ?? CompanionOverviewModel(name: "", services: "", rules: "", paused: false, activity: [], outputs: []))
     }
 
     private var current: CompanionOverviewModel { fixed ?? model }
@@ -388,6 +389,15 @@ struct CompanionThreadPanel: View {
                     scheduleSwitch(schedule)
                 }
                 .padding(.vertical, 4)
+                if let problem = scheduleProblem, problem.id == schedule.id {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(problem.text).font(.system(size: 12)).foregroundStyle(Theme.warmTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(CompanionProfileCopy.openScheduled) { store.openCompanionSchedules() }
+                            .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.sage)
+                    }
+                    .padding(.leading, OngoingWorkMetrics.glyphSize + 10).padding(.bottom, 4)
+                }
             }
         }
     }
@@ -404,7 +414,10 @@ struct CompanionThreadPanel: View {
         } else {
             Toggle(CompanionProfileCopy.runLabel(schedule.title), isOn: Binding(
                 get: { schedule.enabled },
-                set: { store.setSchedule(schedule.id, enabled: $0) }))
+                set: { on in
+                    let problem = store.switchCompanionSchedule(schedule.id, on: on)
+                    scheduleProblem = problem.map { (schedule.id, $0) }
+                }))
                 .toggleStyle(.switch).controlSize(.mini).labelsHidden()
                 .accessibilityLabel(CompanionProfileCopy.runLabel(schedule.title))
         }

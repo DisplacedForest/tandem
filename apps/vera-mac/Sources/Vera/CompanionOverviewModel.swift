@@ -49,7 +49,6 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     var name: String
     var mention: String { name == CompanionSubject(nil).leading ? CompanionSubject(nil).inline : name }
-    var goal: String
     var services: String
     var rules: String
     var paused: Bool
@@ -62,7 +61,6 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     static let noTaskRules = "No task rules yet."
     static let selectWorkHint = "Select a row in Recent activity to see which task these rules would cover."
-    static let noGoal = "No goal set yet."
     static let noActivity = "Nothing yet. Research, documents and scheduled work show up here as they happen."
     static let noOutputs = "Documents and other results collect here."
     static let thisMac = "This Mac"
@@ -143,7 +141,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static func build(name: String, profile: NativeDotProfile, services: String, rules: String,
                       activity: [CompanionActivityItem], results: [CompanionOverviewResult],
                       schedules: [NativeSchedule] = [], lastMessage: Date? = nil) -> CompanionOverviewModel {
-        CompanionOverviewModel(name: name, goal: profile.goal, services: services, rules: rules, paused: profile.isPaused,
+        CompanionOverviewModel(name: name, services: services, rules: rules, paused: profile.isPaused,
                                activity: activity, outputs: results.sorted { $0.updatedAt > $1.updatedAt },
                                upcoming: upcoming(schedules), lastActive: lastActive(lastMessage: lastMessage, activity: activity))
     }
@@ -194,6 +192,7 @@ enum CompanionProfileCopy {
     static let showMore = "Show more"
     static let showLess = "Show less"
     static let moreOptions = "More options"
+    static let openScheduled = "Open Scheduled"
 
     static func toggleTitle(name: String, open: Bool) -> String { "\(open ? "Close" : "Open") \(name)'s profile" }
 

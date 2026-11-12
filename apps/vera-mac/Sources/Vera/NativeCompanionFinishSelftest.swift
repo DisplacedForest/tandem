@@ -750,7 +750,7 @@ extension SelfTest {
         let id = try rig.create(assignment)
         let waiting = try rig.seed(id, checkpoint: old, decision: decision)
         let shown = try rig.display(waiting, assignment: assignment)
-        try require(shown.card.status == .working && shown.card.milestone == "Working on your goal." && shown.card.offeredChoices.isEmpty
+        try require(shown.card.status == .working && shown.card.milestone == "Working on it." && shown.card.offeredChoices.isEmpty
                     && shown.card.statusTitle == "Working on it",
                     "Work saved on the old question reads as ordinary work in progress: \(shown.card.status) \(shown.card.milestone)")
 

@@ -3,6 +3,13 @@ import Foundation
 enum NativeCompanionProfileTools {
     static let toolID = "companion.profile"
     static let name = "update_companion_profile"
+    static let valueLimit = 2000
+    static let retiredAction = "goal"
+
+    static func retired(_ activity: NativeToolActivity) -> Bool {
+        guard activity.name == name, let request = try? JSONSerialization.jsonObject(with: Data(activity.request.utf8)) as? [String: Any] else { return false }
+        return request["action"] as? String == retiredAction
+    }
 
     static func string(_ value: NativeJSONValue?) -> String? {
         if case .string(let text) = value { return text }
@@ -12,9 +19,9 @@ enum NativeCompanionProfileTools {
     static func change(_ arguments: [String: NativeJSONValue]) throws -> (action: String, value: String, category: String?) {
         guard Set(arguments.keys).isSubset(of: ["action", "value", "category"]),
               let action = string(arguments["action"]),
-              ["name", "goal", "rule", "connect", "disconnect", "note", "finish_setup"].contains(action),
-              let value = string(arguments["value"]), value.count <= NativeDotProfile.goalLimit,
-              action == "goal" || action == "finish_setup" || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              ["name", "rule", "connect", "disconnect", "note", "finish_setup"].contains(action),
+              let value = string(arguments["value"]), value.count <= valueLimit,
+              action == "finish_setup" || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeToolError.invalidArguments("Supply one supported profile change and a value of at most 2000 characters.")
         }
         if action == "name" && value.count > 80 { throw NativeToolError.invalidArguments("Use a name of at most 80 characters.") }
@@ -55,7 +62,7 @@ extension ChatStore {
         let serviceNames = services.map(\.name).joined(separator: ", ")
         var definition = NativeToolDefinition(id: NativeCompanionProfileTools.toolID, name: NativeCompanionProfileTools.name,
             title: "Update companion profile",
-            description: "Apply one profile change explicitly requested by the current user. Actions: name, goal, rule, connect, disconnect, note, finish_setup. value is the new text or service name. For rule only, category is file_edits, commands, trash, network_sends, risky_commands, reminders, service_changes or other_changes, and value is act, ask or hand_off. Global restrictions cannot be widened. Notes become memory suggestions for review and require memory enabled. finish_setup uses an empty value when setup was answered or skipped. Configured service names: " + serviceNames,
+            description: "Apply one profile change explicitly requested by the current user. Actions: name, rule, connect, disconnect, note, finish_setup. value is the new text or service name. For rule only, category is file_edits, commands, trash, network_sends, risky_commands, reminders, service_changes or other_changes, and value is act, ask or hand_off. Global restrictions cannot be widened. Notes become memory suggestions for review and require memory enabled. finish_setup uses an empty value when setup was answered or skipped. Configured service names: " + serviceNames,
             parameters: .object(["type": .string("object"), "properties": .object([
                 "action": .object(["type": .string("string")]),
                 "value": .object(["type": .string("string")]),
@@ -107,7 +114,6 @@ extension ChatStore {
                 return .object(["result": .string("The name was saved, but a setting outside Tandem fixes the name, so it stays \(CompanionSubject(effective).inline). Tell the user that plainly.")])
             }
             return .object(["result": .string("Name updated.")])
-        case "goal": profile.goal = change.value
         case "finish_setup":
             profile.setupCompleted = true
             profile.needsIntroduction = false

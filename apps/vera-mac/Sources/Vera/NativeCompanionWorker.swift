@@ -756,7 +756,6 @@ private struct NativeCompanionRun {
             NativeCompanionWorker.privacyRule,
         ]
         lines.append("When you used web results, cite them with the bracket numbers shown on the results, like [1], right after the sentence they support. Do not list web addresses at the end; the app adds the list of sources.")
-        if !dot.goal.isEmpty { lines.append("The companion's standing goal, for context: \(dot.goal)") }
         if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
         if origin.unattended {
             lines.append("This run was started by a schedule or by Tandem itself, so it is read-only. You can look things up but cannot change anything. If the assignment needs a change, do the rest and say plainly what you left undone.")

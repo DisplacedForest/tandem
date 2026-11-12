@@ -476,7 +476,7 @@ enum Shot {
             let display = try! NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
             let item = CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: nil,
                                                        hasArtifact: true, date: Date())
-            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, goal: "", services: "", rules: "", paused: false,
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, services: "", rules: "", paused: false,
                                                activity: [item], outputs: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(

@@ -5,7 +5,6 @@ struct DotSettingsView: View {
     @EnvironmentObject var config: ConfigStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var goal = ""
     @State private var selected: Set<String> = []
     @State private var rules: [NativeActionClass: NativeRuleChoice] = [:]
     @State private var revokedPrefixes: Set<String> = []
@@ -29,7 +28,7 @@ struct DotSettingsView: View {
                 .environment(\.companionName, displayName).padding(.bottom, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    DotProfileForm(name: $name, goal: $goal, selected: $selected, rules: $rules, revokedPrefixes: $revokedPrefixes, options: options)
+                    DotProfileForm(name: $name, selected: $selected, rules: $rules, revokedPrefixes: $revokedPrefixes, options: options)
                     stateSection
                     startOverSection
                 }
@@ -94,14 +93,13 @@ struct DotSettingsView: View {
                     removal = store.dotRemovalSummary()
                     confirmingReset = true
                 }
-                .help("Clear the conversation, its memories, its schedules and the goal")
+                .help("Clear the conversation, its memories and its schedules")
             }
         }
     }
 
     private func load() {
         name = config["assistant_name"]
-        goal = store.dotProfile.goal
         options = store.dotServiceOptions()
         selected = store.dotSelectedServices(options)
         rules = DotProfileCopy.draftRules(store)
@@ -114,9 +112,7 @@ struct DotSettingsView: View {
             return
         }
         let connected = store.dotConnectedToolIDs(selected: selected, options: options)
-        let cleanGoal = goal
         store.saveDotProfile {
-            $0.goal = cleanGoal
             $0.connectedToolIDs = connected
             $0.setupCompleted = true
         }

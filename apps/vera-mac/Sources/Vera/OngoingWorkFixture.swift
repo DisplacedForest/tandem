@@ -4,7 +4,7 @@ import Foundation
 enum OngoingWorkFixture {
     static func reference(conversationID: String, title: String, workerType: String = "research",
                           state: String?, result: [String: Any]? = nil, decision: [String: Any]? = nil,
-                          cancelRequested: Bool = false) throws -> NativeTaskReference {
+                          cancelRequested: Bool = false, updatedAt: Double = 1.0) throws -> NativeTaskReference {
         let request = try NativeResearchTaskRequest(objective: title, deliverables: ["A short summary"],
                                                     workerType: workerType, title: title)
         let create = NativeTaskCreateRequest(request: request, idempotencyKey: UUID())
@@ -22,7 +22,7 @@ enum OngoingWorkFixture {
         var object: [String: Any] = [
             "id": remote, "worker_type": workerType, "payload": envelope["payload"] ?? [:],
             "state": state, "checkpoint": [:], "cancel_requested": false,
-            "generation": 1, "updated_at": 1.0,
+            "generation": 1, "updated_at": updatedAt,
         ]
         object["result"] = result
         object["decision"] = decision
