@@ -17,7 +17,9 @@ struct CompanionCurrentWork: Equatable, Sendable {
     var words: String
     var more = 0
 
-    var line: String { more > 0 ? "\(words) and \(more) more" : words }
+    var count: String? { more > 0 ? "and \(more) more" : nil }
+
+    var line: String { count.map { "\(words) \($0)" } ?? words }
 
     static func words(workerType: String, phase: String?, title: String) -> String {
         let subject = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -71,11 +73,19 @@ extension ChatStore {
     private var companionBackgroundSurvey: (work: CompanionBackgroundWork, waiting: [CompanionBackgroundTarget]) {
         var work = CompanionBackgroundWork()
         var waiting: [CompanionBackgroundTarget] = []
-        var newest = -Double.infinity
+        var newest: (started: Date, order: Int)?
+        func take(_ started: Date, _ order: Int, _ current: @autoclosure () -> CompanionCurrentWork) {
+            if let newest, (newest.started, newest.order) > (started, order) { return }
+            newest = (started, order)
+            work.current = current()
+        }
         let threadID = veraThreadID
         let owned = Set(schedules.filter { $0.owner == .dot }.map(\.id))
         let runs = scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
         let linked = Set(runs.compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
+        let runStart = Dictionary(runs.compactMap { run in
+            run.taskReferenceID.flatMap(UUID.init(uuidString:)).map { ($0, run.startedAt ?? run.scheduledFor) }
+        }, uniquingKeysWith: max)
         let references = nativeTaskReferences.filter {
             (threadID != nil && $0.origin.conversationID == threadID) || linked.contains($0.id)
         }
@@ -88,30 +98,28 @@ extension ChatStore {
                 waiting.append(.task(reference))
             } else if display.card.status == .working {
                 work.running += 1
-                let started = messages.first { $0.id == reference.origin.userMessageID }?.createdAt.timeIntervalSince1970 ?? Double(index)
-                if started >= newest {
-                    newest = started
-                    let type = reference.createRequest.workerType
-                    let phase = reference.snapshot?.checkpoint.phase
-                    work.current = CompanionCurrentWork(kind: CompanionCurrentWork.kind(workerType: type, phase: phase),
-                                                        words: CompanionCurrentWork.words(workerType: type, phase: phase, title: display.card.title))
-                }
+                let started = messages.first { $0.id == reference.origin.userMessageID }?.createdAt
+                    ?? runStart[reference.id] ?? .distantPast
+                let type = reference.createRequest.workerType
+                let phase = reference.snapshot?.checkpoint.phase
+                take(started, index, CompanionCurrentWork(kind: CompanionCurrentWork.kind(workerType: type, phase: phase),
+                                                          words: CompanionCurrentWork.words(workerType: type, phase: phase, title: display.card.title)))
             }
         }
-        for run in runs {
+        for (index, run) in runs.enumerated() {
             if let id = run.taskReferenceID.flatMap(UUID.init(uuidString:)), known.contains(id) { continue }
             if run.outcome == .waiting {
                 work.needsAnswer += 1
                 waiting.append(.run(run))
             } else if run.outcome == .running {
                 work.running += 1
-                if work.current == nil {
-                    let title = schedules.first { $0.id == run.scheduleID }?.title ?? ""
-                    work.current = CompanionCurrentWork(kind: .changing, words: CompanionCurrentWork.words(workerType: "", phase: nil, title: title))
-                }
+                let title = schedules.first { $0.id == run.scheduleID }?.title ?? ""
+                take(run.startedAt ?? run.scheduledFor, references.count + index,
+                     CompanionCurrentWork(kind: .changing, words: CompanionCurrentWork.words(workerType: "", phase: nil, title: title)))
             }
         }
-        work.current?.more = max(0, work.running - 1)
+        let more = max(0, work.running - 1)
+        work.current?.more = more
         return (work, waiting)
     }
 
@@ -136,8 +144,12 @@ struct CompanionWorkingLine: View {
         if let work {
             HStack(spacing: 8) {
                 CompanionAvatar(size: size + 9)
-                Text(work.line).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
+                Text(work.words).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
                     .lineLimit(1).truncationMode(.tail)
+                if let count = work.count {
+                    Text(count).font(.system(size: size)).foregroundStyle(Theme.warmTextSecondary)
+                        .lineLimit(1).fixedSize().layoutPriority(1).padding(.leading, -4)
+                }
                 Spacer(minLength: 0)
             }
             .accessibilityElement(children: .ignore)

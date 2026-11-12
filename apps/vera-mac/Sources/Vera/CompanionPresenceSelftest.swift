@@ -50,6 +50,26 @@ extension SelfTest {
                     "When the newest finishes the line and the figure move to the next newest")
         store.nativeTaskReferences = [foreign, document]
         try require(background().current?.line == "Writing Workshop plan" && state() == .writing, "One piece of work is named with no count")
+        let asked = Date().addingTimeInterval(-600)
+        store.conversations[0].messages = [
+            Message(id: document.origin.userMessageID, role: .user, text: "Write the plan", createdAt: asked.addingTimeInterval(120)),
+            Message(id: general.origin.userMessageID, role: .user, text: "Sort the folders", createdAt: asked),
+            Message(id: running.origin.userMessageID, role: .user, text: "Read the report", createdAt: asked.addingTimeInterval(60)),
+        ]
+        store.nativeTaskReferences = [document, general, running]
+        try require(background().current?.line == "Writing Workshop plan and 2 more" && state() == .writing,
+                    "The newest is the one asked for last, whatever order the work is stored in")
+        store.schedules = CompanionOverviewFixture.schedules()
+        store.scheduleRuns = ["overview-morning": [NativeScheduleRun(id: "later", scheduleID: "overview-morning", scheduledFor: asked,
+                                                                     startedAt: asked.addingTimeInterval(300), outcome: .running)]]
+        try require(background().current?.words.hasPrefix("Working on") == true && background().current?.more == 3 && state() == .changing,
+                    "A scheduled run that started after the other work is the newest")
+        store.scheduleRuns["overview-morning"]![0].startedAt = asked.addingTimeInterval(-300)
+        try require(background().current?.line == "Writing Workshop plan and 3 more",
+                    "A scheduled run that started before the other work is counted, not named")
+        store.scheduleRuns = [:]
+        store.schedules = []
+        store.conversations[0].messages = []
         store.nativeTaskReferences = [foreign, running]
         store.selectedID = thread.id
         try require(state() == .thinking, "A reply being written shows thinking while work runs")
