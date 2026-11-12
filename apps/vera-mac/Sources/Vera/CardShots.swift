@@ -52,7 +52,8 @@ enum CardShot {
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
-        case "card-stop-left", "card-stop-left-earlier", "card-stop-declined", "card-stop-unconfirmed", "card-stop-old":
+        case "card-stop-left", "card-stop-left-earlier", "card-stop-declined", "card-stop-unconfirmed", "card-stop-old",
+             "card-room-found", "card-room-list", "card-room-unfinished":
             size = CGSize(width: 1180, height: 1040)
             seedStop(variant, store: store)
             let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
@@ -289,6 +290,20 @@ enum CardShot {
         let earlier = NativeCompanionWorker.earlierLine(checkpoint)
         let step: NativeTaskStepResult
         switch variant {
+        case "card-room-found", "card-room-list", "card-room-unfinished":
+            checkpoint.sources = [
+                NativeTaskSource(n: 1, title: "Quiet rooms and study spaces", url: "https://library.example.org/quiet-rooms", read: true),
+                NativeTaskSource(n: 2, title: "Reading room hours", url: "https://books.example.com/reading-room", read: true),
+                NativeTaskSource(n: 3, title: "", url: "https://branch.example.net/visit/silent-floor", read: false),
+            ]
+            let text: String
+            switch variant {
+            case "card-room-found":
+                text = NativeCompanionWorker.outOfRoomLead + "\n\nThe first library keeps a quiet room open all day with no booking [1]. The second has a reading room that closes an hour before the building does [2]. I didn't get to the third library's page."
+            case "card-room-list": text = NativeCompanionWorker.fallbackReport(checkpoint)
+            default: text = NativeCompanionWorker.unfinishedReport(checkpoint)
+            }
+            step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: text, keep: false)
         case "card-stop-declined":
             let short = "Send a message: The vents are fixed."
             step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: "Stopped because you declined: \(short)." + effects, keep: false,
@@ -324,6 +339,9 @@ enum CardShot {
         case "card-stop-unconfirmed":
             ask = "Back up the greenhouse notes."
             title = "Back up the greenhouse notes"
+        case "card-room-found", "card-room-list", "card-room-unfinished":
+            ask = "Compare quiet reading spaces at three public libraries."
+            title = "Compare quiet reading spaces at three public libraries"
         default:
             ask = "Turn on remote login on the greenhouse Mac."
             title = "Turn on remote login on the greenhouse Mac"

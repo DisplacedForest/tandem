@@ -1,6 +1,13 @@
 import Foundation
 
 enum NativeTaskProjection {
+    static let carryOnChoices: Set<String> = ["continue", "finish"]
+
+    static func carriesOn(_ snapshot: NativeTaskSnapshot) -> Bool {
+        guard snapshot.state == .needsDecision, let choices = snapshot.decision?.choices else { return false }
+        return choices.count == carryOnChoices.count && Set(choices) == carryOnChoices
+    }
+
     static func display(reference: NativeTaskReference, snapshot: NativeTaskSnapshot?,
                         connectionNote: String? = nil, retryPending: Bool = false)
         throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
@@ -75,6 +82,11 @@ enum NativeTaskProjection {
                   decision.prompt.unicodeScalars.count <= 2000 else {
                 throw NativeTaskHTTPError.invalidResponse
             }
+            if dot, carriesOn(snapshot) {
+                card.status = .working
+                card.milestone = "Working on your goal."
+                break
+            }
             card.status = .needsInput
             card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
                 : decision.prompt
@@ -112,7 +124,7 @@ enum NativeTaskProjection {
         case .completed where dot:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   result.kind == "companion_report",
-                  result.report.unicodeScalars.count <= 40000,
+                  result.report.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
                   (result.summary ?? "").unicodeScalars.count <= 2000,
                   (result.title ?? "").unicodeScalars.count <= 200,
                   [nil, NativeCompanionShape.answer, NativeCompanionShape.document].contains(result.shape) else {
@@ -204,7 +216,7 @@ enum NativeTaskProjection {
             throw NativeTaskHTTPError.invalidResponse
         }
         return try sources.map { source in
-            guard (1...14).contains(source.n), source.title.unicodeScalars.count <= 200,
+            guard (1...14).contains(source.n), source.title.unicodeScalars.count <= NativeTaskSource.labelScalars,
                   source.url.unicodeScalars.count <= 1024 else {
                 throw NativeTaskHTTPError.invalidResponse
             }

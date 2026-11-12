@@ -199,7 +199,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             if let canonical, canonical.state == .needsDecision, let decision = canonical.decision {
                 display.card.choices = pendingChoice == nil
                     ? decision.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil } : []
-                if let pendingChoice, pendingChoice != "retry" {
+                if let pendingChoice, pendingChoice != "retry", !NativeTaskProjection.carriesOn(canonical) {
                     display.card.milestone = "Your answer is saved. Waiting to continue."
                 }
             }

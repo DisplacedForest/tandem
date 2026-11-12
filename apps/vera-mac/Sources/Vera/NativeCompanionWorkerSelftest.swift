@@ -282,7 +282,7 @@ extension SelfTest {
         try await companionStopAndOversize()
         try await companionRemoteSuccessThenTimeout()
         try await companionReadRetries()
-        try await companionCapsAndFences()
+        try await companionFences()
         try companionCommandRules()
         try await companionProductionCommands()
         try await companionFailedModeApproval()
@@ -291,7 +291,7 @@ extension SelfTest {
         try companionShape()
         try await companionClassification()
         try await companionWebSources()
-        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, typed recipients, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, caps, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
+        print("  companion worker OK (answer or document shape, keep classification, fresh context, read loop, untrusted results, proactive read only, scheduled and proactive runs read only under permissive rules, schedule identity, saved allows through the record store and the production tools, act, typed recipients, ask approve and decline, hand off, changed rules, revoked grants, expiry, replayed approval, crash around reserve and settle, approved crash, recovered decline, stop interrupts, oversized replies, transport and timed out writes, bounded transcript, remote success then timeout, read retries, terminal failure, reset and cancel fences, command rules match chat, blocked work resumes, assignment entry, reset cancels work)")
     }
 
     nonisolated private static func waterThenReport(_ messages: [NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion {
@@ -462,14 +462,15 @@ extension SelfTest {
             let context = NativeCompanionWorker.authority(base, taskID: id, origin: origin).resolver.context
             try require(context?.taskID == id && context?.scheduleID == scheduleID, "Decisions in a \(mode) run see the schedule that started it")
         }
-        let insisting = try NativeCompanionHarness(rules: permissive) { messages in
+        var insisting = try NativeCompanionHarness(rules: permissive) { messages in
             NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
         }
+        insisting.environment.budget = NativeCompanionWorkerBudget(transcriptBytes: 16384 + 6000)
         let insistingID = try insisting.create(mode: "scheduled", scheduleID: schedule)
-        let gaveUp = try await insisting.runUntilSettled(40)
+        let gaveUp = try await insisting.runUntilSettled(400)
         let gaveUpReport = try insisting.result(gaveUp)["report"] as? String ?? ""
         try require(gaveUp.state == .completed && insisting.service.count("water_bed") == 0 && (try insisting.effects(insistingID)).isEmpty,
-                    "A scheduled run that keeps asking to write finishes at its limit and never waits to be told to keep going")
+                    "A scheduled run that keeps asking to write finishes when it runs out of room and never waits to be told to keep going")
         try require(gaveUpReport.components(separatedBy: "Left undone").count == 2, "Its report names the undone step once")
         for uncertain in [false, true] {
             let legacy = try NativeCompanionHarness(rules: [.networkSends: .ask], withReconcile: true, script: script)
@@ -498,16 +499,6 @@ extension SelfTest {
             guard let decisionID = waiting.decisionID() else { throw NativeTaskFixture.Failure.assertion("The saved question has an id") }
             _ = try harness.store.respond(taskID, decisionID: decisionID, replyKey: UUID().uuidString, reply: try NativeTaskStore.canonical([String: Any]()))
         }
-        let capped = try NativeCompanionHarness(rules: permissive) { messages in
-            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
-        }
-        let cappedID = try capped.create()
-        let atCap = try await capped.runUntilSettled(40)
-        try require(atCap.state == .needsDecision && (try capped.decision(atCap)["choices"] as? [String]) == ["continue", "finish"],
-                    "The saved limit fixture waits at the keep going question first")
-        try await reschedule(capped, cappedID, atCap)
-        try require(try await capped.runUntilSettled(40).state == .completed,
-                    "A limit question saved on a scheduled task finishes when it resumes without an answer")
         let unsure = try NativeCompanionHarness(rules: [.networkSends: .act], script: script)
         unsure.service.transportFailWrites = true
         let unsureID = try unsure.create()
@@ -1275,12 +1266,11 @@ extension SelfTest {
         _ = try big.create()
         var last = try await big.step()
         for _ in 0..<12 where last.state == .queued || last.state == .needsDecision {
-            if last.state == .needsDecision { try big.reply(last, "continue") }
             last = try await big.step()
         }
         let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: last.checkpoint)
         try require(last.state == .completed && NativeCompanionWorker.transcriptBytes(saved) <= NativeCompanionWorkerBudget.standard.transcriptBytes
-                    && last.checkpoint.count < NativeTaskStore.maximumJSONBytes,
+                    && last.checkpoint.count < NativeTaskStore.maximumCheckpointBytes,
                     "Large tool results are bounded so the transcript and checkpoint stay inside their limits")
     }
 
@@ -1337,22 +1327,22 @@ extension SelfTest {
                     "The stopped task keeps the action the person should check")
 
         var crowded = NativeCompanionCheckpoint()
-        crowded.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 32000),
+        crowded.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 96000),
                                                           toolCalls: [NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"),
                                                                       NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}")])]
-        let quotes = String(repeating: "\"", count: 90000)
+        let quotes = String(repeating: "\"", count: 270000)
         crowded.answer(NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"), quotes)
         crowded.answer(NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}"), quotes)
-        try require(try crowded.encoded().count < NativeTaskStore.maximumJSONBytes,
+        try require(try crowded.encoded().count < NativeTaskStore.maximumCheckpointBytes,
                     "Escaping-heavy results are cut to fit the saved checkpoint")
 
         var envelopes = NativeCompanionCheckpoint()
         let ids = (0..<64).map { index in String(repeating: "\u{1}", count: 120) + String(format: "%04d", index) }
-        envelopes.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 23000),
+        envelopes.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 69000),
                                                             toolCalls: ids.map { NativeTaskGenerationToolCall(id: $0, name: "garden_status", arguments: "{}") })]
-        envelopes.answer(NativeTaskGenerationToolCall(id: ids[0], name: "garden_status", arguments: "{}"), String(repeating: "\"", count: 32000))
+        envelopes.answer(NativeTaskGenerationToolCall(id: ids[0], name: "garden_status", arguments: "{}"), String(repeating: "\"", count: 96000))
         for id in ids.dropFirst() { envelopes.answer(NativeTaskGenerationToolCall(id: id, name: "unknown", arguments: "{}"), NativeCompanionWorker.message("Unknown tool.")) }
-        try require(try envelopes.encoded().count < NativeTaskStore.maximumJSONBytes && envelopes.outstandingCalls.isEmpty,
+        try require(try envelopes.encoded().count < NativeTaskStore.maximumCheckpointBytes && envelopes.outstandingCalls.isEmpty,
                     "Every call is answered and the checkpoint still fits, whatever the call ids look like")
 
         let blind = try NativeCompanionHarness(rules: [.networkSends: .act], toolSeconds: 0.2, script: waterThenReport)
@@ -1365,7 +1355,7 @@ extension SelfTest {
                     && (try JSONDecoder().decode(NativeTaskCheckpoint.self, from: canceled.checkpoint)).unconfirmedEffects == ["Water a bed"],
                     "Stopping while the person is asked whether it happened still names the action to check")
 
-        let huge = String(repeating: "word ", count: 50000)
+        let huge = String(repeating: "word ", count: 150000)
         let wordy = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty
                 ? NativeTaskGenerationCompletion(content: huge, toolCalls: [NativeTaskGenerationToolCall(id: "call-1", name: "water_bed", arguments: "{\"bed\":\"north\"}")],
@@ -1374,13 +1364,13 @@ extension SelfTest {
         }
         _ = try wordy.create()
         let kept = try await wordy.step()
-        try require(kept.state == .queued && wordy.service.count("water_bed") == 1 && kept.checkpoint.count < NativeTaskStore.maximumJSONBytes,
+        try require(kept.state == .queued && wordy.service.count("water_bed") == 1 && kept.checkpoint.count < NativeTaskStore.maximumCheckpointBytes && !String(decoding: kept.checkpoint, as: UTF8.self).contains("word word"),
                     "An oversized reply keeps its actions and drops its prose so the checkpoint still saves")
 
         let bulky = String(repeating: "x", count: 15000)
         let flooding = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty && !messages.contains(where: { $0.role == "assistant" })
-                ? NativeTaskGenerationCompletion(content: "", toolCalls: (0..<20).map {
+                ? NativeTaskGenerationCompletion(content: "", toolCalls: (0..<50).map {
                     NativeTaskGenerationToolCall(id: "call-\($0)", name: "water_bed", arguments: "{\"bed\":\"\(bulky)\"}") }, finishReason: "tool_calls")
                 : .text("Finished.")
         }
@@ -1588,26 +1578,8 @@ extension SelfTest {
                     "A retained forbid still hands the action off in failed mode, with no card to approve")
     }
 
-    private static func companionCapsAndFences() async throws {
+    private static func companionFences() async throws {
         let require = NativeTaskFixture.require
-        let looping = try NativeCompanionHarness(rules: [:]) { messages in
-            NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(messages.count)")
-        }
-        _ = try looping.create()
-        let capped = try await looping.runUntilSettled()
-        let checkpoint = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: capped.checkpoint)
-        try require(capped.state == .needsDecision && checkpoint.segmentRounds == 4 && checkpoint.rounds == 4
-                    && (try looping.decision(capped)["choices"] as? [String]) == ["continue", "finish"],
-                    "Four rounds pause for an explicit decision with progress saved")
-        try looping.reply(capped, "continue")
-        let second = try await looping.runUntilSettled()
-        try require(second.state == .needsDecision && (try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: second.checkpoint)).rounds == 8,
-                    "Continuing allows another four rounds and keeps the task totals")
-        try looping.reply(second, "finish")
-        let finished = try await looping.runUntilSettled()
-        try require(finished.state == .completed && (try looping.result(finished)["report"] as? String)?.isEmpty == false,
-                    "Finishing writes a report without further tool use")
-
         let reset = try NativeCompanionHarness(rules: [.networkSends: .ask], script: waterThenReport)
         _ = try reset.create()
         let waiting = try await reset.runUntilSettled()
