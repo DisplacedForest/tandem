@@ -12,8 +12,11 @@ final class NativeCompanionFinishModel: @unchecked Sendable {
     private var seen: [Seen] = []
     private var failures: [Error] = []
     let script: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion
+    let closing: NativeTaskGenerationCompletion
 
-    init(_ script: @escaping @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion) {
+    init(closing: NativeTaskGenerationCompletion = .text("The central reading room has forty seats."),
+         _ script: @escaping @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion) {
+        self.closing = closing
         self.script = script
     }
 
@@ -40,7 +43,7 @@ final class NativeCompanionFinishModel: @unchecked Sendable {
             return failures.removeFirst()
         }
         if let failure { throw failure }
-        if closing { return .text("The central reading room has forty seats.") }
+        if closing { return self.closing }
         return script(messages)
     }
 }
@@ -141,8 +144,9 @@ extension SelfTest {
         try await companionFinishOldCheckpoint()
         try await companionSourcesRead()
         try await companionFinishSavedPages()
+        try await companionFinishFallbackKeepsPages()
         try await companionFinishThroughEngine()
-        print("  companion finish OK (finish survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, one answer per question, older saved work, pages read or only found, redirects never marked read, unfinished write-ups cite only listed pages, tracker and engine end to end)")
+        print("  companion finish OK (finish survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, one answer per question, older saved work, pages read or only found, a redirect saves the page that was read, unfinished write-ups cite only listed pages, a write-up that can't run keeps the pages, tracker and engine end to end)")
     }
 
     private static func companionCappedTwice(_ rig: NativeCompanionFinishRig) async throws -> NativeTaskRecord {
@@ -434,15 +438,37 @@ extension SelfTest {
         guard case .object(let page) = landed, case .number(let landedNumber)? = page["n"] else {
             throw NativeTaskFixture.Failure.assertion("The moved page keeps a number")
         }
-        try require(Int(landedNumber) == 1 && moved.sources?.count == 1 && moved.sources?.first?.read == false
-                    && moved.sources?.first?.url == "https://hours.example.org/rooms" && moved.sources?.first?.title == "Reading room hours"
-                    && moved.aliases?["https://www.example.org/rooms-moved"] == 1,
-                    "A page that lands somewhere else keeps its number but is not marked read: \(moved.sources ?? [])")
-        _ = moved.numbered(.object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours"),
-                                    "text": .string("Open nine to five.")]),
-                           definition: fetcher, requested: "https://hours.example.org/rooms")
-        try require(moved.sources?.map(\.read) == [true] && moved.sources?.count == 1,
-                    "Fetching the same address marks the page found in a search as read: \(moved.sources ?? [])")
+        try require(Int(landedNumber) == 1 && moved.sources == [NativeTaskSource(n: 1, title: "Moved page", url: "https://www.example.org/rooms-moved", read: true)]
+                    && moved.aliases?["https://www.example.org/rooms-moved"] == 1 && moved.aliases?["https://hours.example.org/rooms"] == 1,
+                    "A page that lands somewhere else keeps its number and saves the page that was read: \(moved.sources ?? [])")
+        let movedPause = PausedWorkCopy.pause(try JSONDecoder().decode(NativeTaskCheckpoint.self, from: try moved.encoded()), answer: nil)
+        try require(movedPause.heading == PausedWorkCopy.readHeading && movedPause.pages.map(\.url) == ["https://www.example.org/rooms-moved"]
+                    && movedPause.pages.map(\.title) == ["Moved page"],
+                    "The pause lists the page that was read under Read so far: \(movedPause.pages)")
+        try require(!(moved.sources ?? []).contains { $0.url == "https://hours.example.org/rooms" },
+                    "No saved page claims the address that was asked for was read")
+        var untitled = NativeCompanionCheckpoint()
+        _ = untitled.numbered(.object(["results": .array([
+            .object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours")]),
+        ])]), definition: searcher)
+        _ = untitled.numbered(.object(["url": .string("https://www.example.org/rooms-moved"), "title": .string(""), "text": .string("Open.")]),
+                              definition: fetcher, requested: "https://hours.example.org/rooms")
+        try require(untitled.sources == [NativeTaskSource(n: 1, title: "Reading room hours", url: "https://www.example.org/rooms-moved", read: true)],
+                    "A landed page with no title keeps the saved title: \(untitled.sources ?? [])")
+        _ = moved.numbered(.object(["results": .array([
+            .object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours")]),
+        ])]), definition: searcher)
+        try require(moved.sources?.count == 1 && moved.sources?.first?.read == true,
+                    "The address that was asked for still means the same page in a later search: \(moved.sources ?? [])")
+        var same = NativeCompanionCheckpoint()
+        _ = same.numbered(.object(["results": .array([
+            .object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours")]),
+        ])]), definition: searcher)
+        _ = same.numbered(.object(["url": .string("https://hours.example.org/rooms"), "title": .string("Hours page"),
+                                   "text": .string("Open nine to five.")]),
+                          definition: fetcher, requested: "https://hours.example.org/rooms")
+        try require(same.sources == [NativeTaskSource(n: 1, title: "Reading room hours", url: "https://hours.example.org/rooms", read: true)],
+                    "Fetching the same address marks the page found in a search as read: \(same.sources ?? [])")
     }
 
     private static func companionFinishSavedPages() async throws {
@@ -484,6 +510,60 @@ extension SelfTest {
                     && report.contains("Pages found:\n- Opening hours [5]\n- seats.example.org [6]"),
                     "Read, search-only and older pages each get their own list with readable names: \(report)")
         try require(!report.contains("http") && !report.lowercased().contains("nothing"), "No address is used as a name and nothing is overstated: \(report)")
+    }
+
+    private static func companionFinishFallbackKeepsPages() async throws {
+        let require = NativeTaskFixture.require
+        let lead = "Reached the limit for this assignment before writing a full report."
+        let moved = "https://moved.example/rain-totals"
+        for variant in ["tight", "empty", "calls"] {
+            let (client, web) = companionWebTools()
+            client.page("https://weather.example/rain", .init(body: "<html><head><title>Rain totals page</title></head><body><p>Two inches fell.</p></body></html>",
+                                                              finalURL: moved))
+            let closing: NativeTaskGenerationCompletion = variant == "calls"
+                ? NativeCompanionScriptedModel.call(NativeCompanionFinishRig.lookupName, "{}", id: "closing-call")
+                : .text(variant == "empty" ? "  " : "The rain report is ready.")
+            let model = NativeCompanionFinishModel(closing: closing) { messages in
+                guard NativeCompanionScriptedModel.toolResults(messages).isEmpty else { return .text("Done.") }
+                let calls = [
+                    NativeTaskGenerationToolCall(id: "search", name: "web_search", arguments: "{\"query\":\"rain\"}"),
+                    NativeTaskGenerationToolCall(id: "read-rain", name: "fetch_page", arguments: "{\"url\":\"https://weather.example/rain\"}"),
+                    NativeTaskGenerationToolCall(id: "read-gauge", name: "fetch_page", arguments: "{\"url\":\"https://gauge.example/levels\"}"),
+                ] + (0..<7).map { NativeTaskGenerationToolCall(id: "hours-\($0)", name: NativeCompanionFinishRig.lookupName, arguments: "{}") }
+                return NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
+            }
+            var rig = try NativeCompanionFinishRig(tools: web + NativeCompanionFinishRig.libraryTools(), model: model)
+            _ = try rig.create("Find out how much rain fell")
+            let capped = try await rig.settle()
+            let saved = try rig.checkpoint(capped.record)
+            try require(capped.record.state == .needsDecision && saved.pending?.kind == "cap" && !saved.outstandingCalls.isEmpty
+                        && saved.sources?.filter { $0.read == true }.map(\.url) == [moved, "https://gauge.example/levels"],
+                        "The \(variant) run pauses at the call cap with both pages read: \(saved.sources ?? [])")
+            if variant == "tight" {
+                let standard = NativeCompanionWorkerBudget.standard
+                rig.environment.budget = NativeCompanionWorkerBudget(rounds: 4, calls: standard.calls, transcriptMessages: 2,
+                                                                     transcriptBytes: standard.transcriptBytes, taskRounds: standard.taskRounds,
+                                                                     taskCalls: standard.taskCalls)
+            }
+            let mark = rig.model.calls.count
+            try rig.reply(capped.record, "finish")
+            let ended = try await rig.settle()
+            let result = try rig.report(ended.record)
+            let report = result["report"] as? String ?? ""
+            let sources = result["sources"] as? [[String: Any]] ?? []
+            try require(ended.record.state == .completed && !ended.states.contains(.needsDecision) && report.hasPrefix(lead),
+                        "The \(variant) finish ends with the limit report: \(report)")
+            try require(variant == "tight" ? rig.model.calls.count == mark : rig.model.calls.dropFirst(mark).contains { $0.attempt.hasSuffix("-finish") },
+                        "The \(variant) finish \(variant == "tight" ? "never asks for" : "asks for") the closing write-up")
+            try require(report.contains("Pages read:\n- Rain totals page [1]\n- River levels [2]")
+                        && report.contains("Found in a search, not read:\n- Forecast [3]"),
+                        "The \(variant) limit report lists the pages that were read: \(report)")
+            try require(sources.compactMap { ($0["n"] as? NSNumber)?.intValue } == [1, 2, 3]
+                        && sources.compactMap { $0["url"] as? String } == [moved, "https://gauge.example/levels", "https://third.example/"],
+                        "The \(variant) result keeps the fetched pages as sources: \(sources)")
+            try require(!report.contains("weather.example") && !report.contains(": done") && !report.contains("http"),
+                        "The \(variant) report never lists the address that redirected or a raw step list: \(report)")
+        }
     }
 
     nonisolated static func companionEngineCompletion(_ job: NativeTaskGenerationJob) -> NativeTaskGenerationCompletion {

@@ -100,6 +100,46 @@ extension SelfTest {
         try require(NativeTaskSource(n: 1, title: "", url: "notes.txt").label == "Saved page"
                     && NativeTaskSource(n: 1, title: "Map room", url: "https://example.org/map").label == "Map room",
                     "A page with no title and no site reads as a saved page, and a real title is kept")
+        let titled = NativeTaskSource(n: 1, title: "https://example.org/docs: A beginner guide", url: "https://guides.example.org/start")
+        try require(titled.label == "https://example.org/docs: A beginner guide",
+                    "A title that starts with an address but says more is kept: \(titled.label)")
+        try require(NativeTaskSource(n: 1, title: " https://www.example.org/docs ", url: "https://guides.example.org/start").label == "guides.example.org"
+                    && NativeTaskSource(n: 1, title: "https://www.example.org/docs", url: "notes.txt").label == "example.org",
+                    "A title that is only an address still reads as the site name")
+
+        let long = "https://archive.example.org/" + String(repeating: "a", count: 1100)
+        func unlistedPause(_ sources: [[String: Any]], _ message: String) throws -> (seeded: (reference: NativeTaskReference, card: NativeTaskCardPresentation), pause: NativeTaskPause) {
+            let seeded = try PausedWorkFixture.seed(repository, checkpoint: ["pending": ["kind": "cap"], "sources": sources])
+            return (seeded, try pausedValue(seeded.card.pausedWork, message))
+        }
+        let hidden = try unlistedPause([["n": 1, "title": "Archive scan", "url": long, "read": true],
+                                        ["n": 2, "title": "Archive index", "url": long + "b", "read": true],
+                                        ["n": 3, "title": "Branch list", "url": "https://branches.example.org/", "read": false]],
+                                       "Read pages that can't be listed still draw")
+        let hiddenLines = PausedWorkCopy.lines(hidden.pause, name: nil)
+        try require(hidden.pause.pages.isEmpty && hiddenLines.contains("2 pages have been read so far.")
+                    && !hiddenLines.contains(PausedWorkCopy.nothingRead) && !hiddenLines.contains("Branch list"),
+                    "Pages read but not listable are counted, never reported as unread: \(hiddenLines)")
+        let one = try unlistedPause([["n": 1, "title": String(repeating: "t", count: 201), "url": "https://archive.example.org/scan", "read": true],
+                                     ["n": 2, "title": "Opening hours", "url": "https://hours.example.org/reading-rooms"]],
+                                    "One read page that can't be listed draws")
+        try require(PausedWorkCopy.lines(one.pause, name: nil) == [PausedWorkCopy.line.plain(name: nil), "1 page has been read so far."],
+                    "One unlistable read page is counted and older found pages stay out: \(PausedWorkCopy.lines(one.pause, name: nil))")
+        let partly = try unlistedPause([["n": 1, "title": "Central reading room", "url": "https://central.example.org/reading-room", "read": true],
+                                        ["n": 2, "title": "Archive scan", "url": long, "read": true],
+                                        ["n": 3, "title": "Archive index", "url": long + "b", "read": true]],
+                                       "A mix of listable and unlistable read pages draws")
+        try require(partly.pause.pages.map(\.n) == [1] && partly.pause.more == 2
+                    && PausedWorkCopy.lines(partly.pause, name: nil) == [PausedWorkCopy.line.plain(name: nil), PausedWorkCopy.readHeading,
+                                                                         "Central reading room", "and 2 more"],
+                    "Unlistable read pages join the count of the rest: \(PausedWorkCopy.lines(partly.pause, name: nil))")
+        let olderHidden = try unlistedPause([["n": 1, "title": "Archive scan", "url": long]], "Older unlistable pages draw")
+        try require(PausedWorkCopy.lines(olderHidden.pause, name: nil) == [PausedWorkCopy.line.plain(name: nil), "1 page has been found so far."],
+                    "Older work with only unlistable pages says they were found: \(PausedWorkCopy.lines(olderHidden.pause, name: nil))")
+        let olderTwo = try unlistedPause([["n": 1, "title": "Archive scan", "url": long], ["n": 2, "title": "Archive index", "url": long + "b"]],
+                                         "Older unlistable pages draw")
+        try require(PausedWorkCopy.lines(olderTwo.pause, name: nil).last == "2 pages have been found so far.", "Older pages are counted")
+        let unlistedPauses = [hidden.pause, one.pause, partly.pause, olderHidden.pause, olderTwo.pause]
 
         for (choice, line) in [("finish", PausedWorkCopy.finishing), ("continue", PausedWorkCopy.keepingGoing)] {
             let answered = try PausedWorkFixture.seed(repository, checkpoint: PausedWorkFixture.checkpoint(read: 2, searchOnly: 1), answer: choice)
@@ -111,7 +151,7 @@ extension SelfTest {
 
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: "Ada",
                               artifactPersistenceEnabled: false)
-        for seeded in [mixed, many, empty, earlier, unknown] {
+        for seeded in [mixed, many, empty, earlier, unknown, hidden.seeded, partly.seeded] {
             store.nativeTaskReferences = [seeded.reference]
             let item = CompanionOverviewModel.taskItem(card: seeded.card, reference: seeded.reference,
                                                        decision: seeded.reference.snapshot?.decision, hasArtifact: false, date: Date())
@@ -159,7 +199,7 @@ extension SelfTest {
                                    "artifacts", "worker", "workers", "task", "tasks", "checkpoint", "checkpoints", "budget", "budgets",
                                    "limit", "limits", "rounds", "round", "vera", "she", "her", "he", "his", "him", "hers"]
         let shown = [nil, "Ada"].flatMap { name in
-            PausedWorkCopy.strings(name: name) + [pause, emptyPause, manyPause, oldPause, unknownPause].flatMap { PausedWorkCopy.lines($0, name: name) }
+            PausedWorkCopy.strings(name: name) + ([pause, emptyPause, manyPause, oldPause, unknownPause] + unlistedPauses).flatMap { PausedWorkCopy.lines($0, name: name) }
         }
         for text in shown {
             let words = text.lowercased().split { !$0.isLetter }.map(String.init)

@@ -155,10 +155,16 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         let fetched = definition.id == NativeWebTools.fetchToolID
         for entry in entries {
             guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"] else { continue }
-            if fetched, let index = known.firstIndex(where: { $0.n == Int(n) && $0.url == url }) { known[index].read = true }
-            guard !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
             var title = ""
             if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
+            if fetched, let index = known.firstIndex(where: { $0.n == Int(n) }) {
+                let saved = known[index]
+                if saved.url != url {
+                    aliases = (aliases ?? [:]).merging([saved.url: saved.n]) { first, _ in first }
+                }
+                known[index] = NativeTaskSource(n: saved.n, title: title.isEmpty || saved.url == url ? saved.title : title, url: url, read: true)
+            }
+            guard !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
             known.append(NativeTaskSource(n: Int(n), title: title, url: url, read: fetched))
         }
         sources = known.isEmpty ? nil : known
@@ -846,35 +852,44 @@ private struct NativeCompanionRun {
     }
 
     func fallbackReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
-        var text = "Reached the limit for this assignment before writing a full report."
-        if !checkpoint.effects.isEmpty {
-            text += "\n\n" + checkpoint.effects.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n")
+        let covered = { (note: NativeCompanionEffectNote) in
+            note.outcome.hasPrefix("done") || note.outcome == "failed" || note.outcome == "unconfirmed"
         }
-        return CompanionSavedText.sanitized(text)
+        let others = checkpoint.effects.filter { !covered($0) }
+        var sections = ["Reached the limit for this assignment before writing a full report."]
+        if !others.isEmpty {
+            sections.append(others.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n"))
+        }
+        return CompanionSavedText.sanitized((sections + savedMaterial(checkpoint)).joined(separator: "\n\n"))
     }
 
     func unfinishedReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
+        let saved = savedMaterial(checkpoint)
+        let lead = saved.isEmpty
+            ? "The write-up could not be finished. No pages were read before it stopped."
+            : "The write-up could not be finished. This is what was saved before it stopped."
+        return CompanionSavedText.sanitized(([lead] + saved).joined(separator: "\n\n"))
+    }
+
+    private func savedMaterial(_ checkpoint: NativeCompanionCheckpoint) -> [String] {
         let saved = (checkpoint.sources ?? []).sorted { $0.n < $1.n }
         let found = saved.filter(NativeCompanionCheckpoint.citable)
         let left = saved.count - found.count
-        let earlier = NativeCompanionWorker.earlierLine(checkpoint)
-        var text = found.isEmpty && left == 0 && earlier == nil
-            ? "The write-up could not be finished. No pages were read before it stopped."
-            : "The write-up could not be finished. This is what was saved before it stopped."
         func listed(_ sources: [NativeTaskSource]) -> String {
             sources.map { "- " + $0.label + " [\($0.n)]" }.joined(separator: "\n")
         }
+        var sections: [String] = []
         let read = found.filter { $0.read == true }
         let searched = found.filter { $0.read == false }
         let unknown = found.filter { $0.read == nil }
-        if !read.isEmpty { text += "\n\nPages read:\n" + listed(read) }
-        if !searched.isEmpty { text += "\n\nFound in a search, not read:\n" + listed(searched) }
-        if !unknown.isEmpty { text += "\n\nPages found:\n" + listed(unknown) }
+        if !read.isEmpty { sections.append("Pages read:\n" + listed(read)) }
+        if !searched.isEmpty { sections.append("Found in a search, not read:\n" + listed(searched)) }
+        if !unknown.isEmpty { sections.append("Pages found:\n" + listed(unknown)) }
         if left > 0 {
-            text += left == 1 ? "\n\n1 more page was saved but can't be listed." : "\n\n\(left) more pages were saved but can't be listed."
+            sections.append(left == 1 ? "1 more page was saved but can't be listed." : "\(left) more pages were saved but can't be listed.")
         }
-        if let earlier { text += "\n\n" + earlier }
-        return CompanionSavedText.sanitized(text)
+        if let earlier = NativeCompanionWorker.earlierLine(checkpoint) { sections.append(earlier) }
+        return sections
     }
 
     func stopped(_ reason: String, call: NativeTaskGenerationToolCall, record: NativeEffectRecord?, title: String,

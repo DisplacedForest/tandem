@@ -3,6 +3,7 @@ import SwiftUI
 struct NativeTaskPause: Codable, Hashable, Sendable {
     var pages: [PulseSource] = []
     var more = 0
+    var unlisted: Int? = nil
     var earlier: String? = nil
     var answer: String? = nil
     var found: Bool? = nil
@@ -11,13 +12,20 @@ struct NativeTaskPause: Codable, Hashable, Sendable {
     var heading: String? {
         pages.isEmpty ? nil : found == true ? PausedWorkCopy.foundHeading : PausedWorkCopy.readHeading
     }
+
+    var summary: String? {
+        guard pages.isEmpty else { return nil }
+        let count = unlisted ?? 0
+        return count > 0 ? PausedWorkCopy.counted(count, found: found == true) : PausedWorkCopy.nothingRead
+    }
 }
 
 extension NativeTaskSource {
     var label: String {
         let shown = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let address = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard shown.isEmpty || shown == address || Self.webHost(shown) != nil else { return shown }
+        let bare = shown.rangeOfCharacter(from: .whitespacesAndNewlines) == nil && Self.webHost(shown) != nil
+        guard shown.isEmpty || shown == address || bare else { return shown }
         guard let host = Self.webHost(address) ?? Self.webHost(shown) else { return "Saved page" }
         return host
     }
@@ -44,6 +52,11 @@ enum PausedWorkCopy {
     static var savedMilestone: String { CompanionSavedText.marker + question }
 
     static func more(_ count: Int) -> String { "and \(count) more" }
+
+    static func counted(_ count: Int, found: Bool) -> String {
+        let verb = found ? "found" : "read"
+        return count == 1 ? "1 page has been \(verb) so far." : "\(count) pages have been \(verb) so far."
+    }
 
     static func applies(_ snapshot: NativeTaskSnapshot) -> Bool {
         guard snapshot.state == .needsDecision, snapshot.checkpoint.pending?.kind == "cap",
@@ -72,10 +85,13 @@ enum PausedWorkCopy {
             }
             return listed
         }
-        let read = listable(checkpoint.sources.filter { $0.read == true })
-        let unknown = read.isEmpty ? listable(checkpoint.sources.filter { $0.read == nil }) : []
-        let pages = read.isEmpty ? unknown : read
-        return NativeTaskPause(pages: Array(pages.prefix(shownLimit)), more: max(0, pages.count - shownLimit),
+        let read = checkpoint.sources.filter { $0.read == true }
+        let unknown = checkpoint.sources.filter { $0.read == nil }
+        let chosen = read.isEmpty ? unknown : read
+        let pages = listable(chosen)
+        let unlisted = max(0, Set(chosen.map(\.n)).count - pages.count)
+        return NativeTaskPause(pages: Array(pages.prefix(shownLimit)), more: max(0, pages.count - shownLimit) + (pages.isEmpty ? 0 : unlisted),
+                               unlisted: pages.isEmpty && unlisted > 0 ? unlisted : nil,
                                earlier: NativeCompanionWorker.earlierLine(effects: checkpoint.effects),
                                answer: answered(answer) == nil ? nil : answer,
                                found: read.isEmpty && !unknown.isEmpty ? true : nil, decisionID: decisionID)
@@ -88,15 +104,16 @@ enum PausedWorkCopy {
             result.append(heading)
             result += pause.pages.map(\.title)
             if pause.more > 0 { result.append(more(pause.more)) }
-        } else {
-            result.append(nothingRead)
+        } else if let summary = pause.summary {
+            result.append(summary)
         }
         if let earlier = pause.earlier, !earlier.isEmpty { result.append(earlier) }
         return result
     }
 
     static func strings(name: String?) -> [String] {
-        [line.plain(name: name), readHeading, foundHeading, nothingRead, finishing, keepingGoing, more(3)]
+        [line.plain(name: name), readHeading, foundHeading, nothingRead, finishing, keepingGoing, more(3),
+         counted(1, found: false), counted(3, found: false), counted(1, found: true), counted(3, found: true)]
             + ["continue", "finish"].compactMap(NativeTaskCardPresentation.choiceTitle)
     }
 }
@@ -135,8 +152,8 @@ struct PausedWorkView: View {
                                 .foregroundStyle(secondary)
                         }
                     }
-                } else {
-                    Text(PausedWorkCopy.nothingRead)
+                } else if let summary = pause.summary {
+                    Text(summary)
                         .font(.system(size: 12))
                         .foregroundStyle(secondary)
                 }
