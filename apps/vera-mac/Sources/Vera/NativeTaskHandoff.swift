@@ -32,6 +32,7 @@ actor NativeTaskHandoffService {
                 profile: NativeTaskProfileBinding? = nil) async throws -> NativeTaskReference {
         guard let base = configuredBase() else { throw NativeTaskError.invalidEngine }
         let engine = try NativeTaskEngineIdentity(base)
+        try Task.checkCancellation()
         let reference = try repository.prepareTaskReference(
             origin: origin, engine: engine, request: request, profile: profile, options: researchOptions)
         return try await deliver(reference.id)

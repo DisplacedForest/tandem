@@ -689,6 +689,8 @@ struct NativeToolLoop: Sendable {
                     var content = ""
                     var activities: [NativeToolActivity] = []
                     var callCount = 0
+                    var otherToolRan = false
+                    var toolOrdinals: [String: Int] = [:]
                     var webSearchCount = 0
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
@@ -767,6 +769,11 @@ struct NativeToolLoop: Sendable {
                         history.append(NativeChatMessage(role: "assistant", content: last.content, toolCalls: last.toolCalls))
                         var stopped = false
                         for call in last.toolCalls {
+                            let ranOther = otherToolRan
+                            if definitions[call.name]?.id != NativeTaskTools.toolID { otherToolRan = true }
+                            let toolKey = definitions[call.name]?.id ?? "\u{0}" + call.name
+                            let ordinal = toolOrdinals[toolKey, default: 0]
+                            toolOrdinals[toolKey] = ordinal + 1
                             try Task.checkCancellation()
                             let resultBudget = definitions[call.name]?.resultByteBudget ?? NativeToolResultBudget.defaultBytes
                             let result: String
@@ -896,9 +903,13 @@ struct NativeToolLoop: Sendable {
                                                     try await NativeInstructionCheck.$cleared.withValue(clearing) {
                                                         try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
-                                                                try await Self.execute(
-                                                                    definition, arguments: arguments, activity: activity,
-                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
+                                                                    try await NativeToolCallContext.$sameToolOrdinal.withValue(ordinal) {
+                                                                        try await Self.execute(
+                                                                            definition, arguments: arguments, activity: activity,
+                                                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -988,7 +999,9 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
-                    try await definition.execute(arguments)
+                    try await NativeToolCallContext.$round.withValue(activity.round) {
+                        try await definition.execute(arguments)
+                    }
                 }
             }
         }

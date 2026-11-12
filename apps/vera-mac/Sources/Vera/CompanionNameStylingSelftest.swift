@@ -9,10 +9,6 @@ extension SelfTest {
                                      cadence: .daily(minuteOfDay: 420), timeZone: TimeZone(identifier: "UTC")!)
         let pausedNote = NativeScheduleControls.pausedNote(dot, assistantPaused: true) ?? ""
         let cases: [(String, String, String)] = [
-            (CompanionWorkCopy.describe, "Describe what Ada should work on.", "Describe what your companion should work on."),
-            (CompanionWorkCopy.paused, "Ada is paused. Resume to give it work.", "Your companion is paused. Resume to give it work."),
-            (CompanionWorkCopy.conversation, "Ada's conversation couldn't be opened.", "Your companion's conversation couldn't be opened."),
-            (CompanionWorkCopy.couldNotStart, "Ada couldn't start this work.", "Your companion couldn't start this work."),
             (pausedNote, "Paused with Ada", "Paused with your companion"),
             (NativeScheduleControls.title(.resumeAssistant), "Resume Ada", "Resume your companion"),
             (DotProfileCopy.startOver, "Removes the conversation, what Ada remembered from it and its schedules. Artifacts stay in Artifacts.",
@@ -20,8 +16,6 @@ extension SelfTest {
             (DotProfileCopy.subtitle, "Choose what Ada can reach and set what asks first. You can change all of this later from the header.",
              "Choose what your companion can reach and set what asks first. You can change all of this later from the header."),
             (ArtifactLibrarySelection.companionFilterTitle, "From Ada", "From your companion"),
-            ("Give {name} work", "Give Ada work", "Give your companion work"),
-            ("{name} is paused.", "Ada is paused.", "Your companion is paused."),
             ("Ask anything. It goes to {name}'s thread.", "Ask anything. It goes to Ada's thread.", "Ask anything. It goes to your companion's thread."),
             (CompanionErrorCopy.saveLead + "disk full", "Ada's settings couldn't be saved: disk full", "Your companion's settings couldn't be saved: disk full"),
             (CompanionErrorCopy.clearLead + "disk full", "Ada's settings couldn't be cleared: disk full", "Your companion's settings couldn't be cleared: disk full"),

@@ -9,9 +9,20 @@ enum NativeTaskTools {
 
     static let acknowledged = "Saved. Reply with one short first-person sentence saying what you'll do, then end your turn."
 
-    static func enabledIDs(_ existing: Set<String>, hasEngine: Bool, hasRepository: Bool) -> Set<String> {
+    static let generalWorkerType = "general"
+    static let generalDescription = " In this conversation you may also use worker_type general, with the objective saying what to do, for anything the person asks to have done that takes more than a reply: one call per separate thing asked, never for something you can simply answer."
+    static let generalLimit = 4000
+    static let laterRound = "This can only be started from what the person asked, at the start of a reply."
+    static let notStarted = "Nothing was started. Ask again in a moment."
+    static let pausedReply = "I'm paused, so this wasn't started. Resume me and ask again."
+
+    struct NotStarted: Error, Sendable {
+        let message: String
+    }
+
+    static func enabledIDs(_ existing: Set<String>, hasEngine: Bool, hasRepository: Bool, general: Bool = false) -> Set<String> {
         let base = existing.subtracting([toolID])
-        guard base.contains(NativeWebTools.researchToolID), hasEngine, hasRepository else { return base }
+        guard general || base.contains(NativeWebTools.researchToolID), hasEngine, hasRepository else { return base }
         return base.union([toolID])
     }
 
@@ -19,14 +30,16 @@ enum NativeTaskTools {
                            profile: NativeTaskProfileBinding?,
                            searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
                            allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.chatWorkerTypes },
+                           general: (@Sendable (_ assignment: String) async throws -> NativeResearchTaskRequest)? = nil,
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
-        NativeToolDefinition(id: toolID, name: toolName, title: "Start work",
-            description: description,
+        let kinds: [NativeJSONValue] = [.string("research"), .string("document")] + (general == nil ? [] : [.string(generalWorkerType)])
+        return NativeToolDefinition(id: toolID, name: toolName, title: "Start work",
+            description: description + (general == nil ? "" : generalDescription),
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
-                "required": .array([.string("worker_type"), .string("objective"), .string("deliverables")]),
+                "required": .array([.string("worker_type"), .string("objective")]),
                 "properties": .object([
-                    "worker_type": .object(["type": .string("string"), "enum": .array([.string("research"), .string("document")])]),
+                    "worker_type": .object(["type": .string("string"), "enum": .array(kinds)]),
                     "title": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(200),
                                       "description": .string("Short title for the result")]),
                     "objective": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(5000)]),
@@ -34,34 +47,61 @@ enum NativeTaskTools {
                         "items": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(500)])]),
                 ]),
             ]), confirmation: .none, timeout: .seconds(10), effect: .read, isAvailable: { true }, execute: { arguments in
+                let position = NativeToolCallContext.sameToolOrdinal
+                if general != nil, position == nil { throw NativeToolError.failed(notStarted) }
                 guard Set(arguments.keys).isSubset(of: ["worker_type", "title", "objective", "deliverables"]),
                       case .string(let workerType) = arguments["worker_type"],
-                      NativeResearchTaskRequest.chatWorkerTypes.contains(workerType),
-                      case .string(let objective) = arguments["objective"],
-                      case .array(let values) = arguments["deliverables"] else {
+                      NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) || (general != nil && workerType == generalWorkerType),
+                      case .string(let objective) = arguments["objective"] else {
                     throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
                 }
-                var title: String?
-                if let raw = arguments["title"] {
-                    guard case .string(let text) = raw else { throw NativeToolError.invalidArguments("The title must be text.") }
-                    title = text
-                }
-                let deliverables = try values.map { value -> String in
-                    guard case .string(let text) = value else {
-                        throw NativeToolError.invalidArguments("Each deliverable must be text.")
+                let request: NativeResearchTaskRequest
+                if workerType == generalWorkerType, let general {
+                    guard NativeToolCallContext.round == 1, NativeToolCallContext.otherToolRan == false else {
+                        return .object(["message": .string(laterRound), "started": .bool(false)])
                     }
-                    return text
+                    guard allowedWorkerTypes().contains(workerType) else {
+                        throw NativeToolError.failed("Nothing was started, because this message did not allow it.")
+                    }
+                    let assignment = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard assignment.count <= generalLimit else {
+                        throw NativeToolError.invalidArguments("Keep the objective under \(generalLimit) characters.")
+                    }
+                    do {
+                        request = try await general(assignment)
+                        try Task.checkCancellation()
+                    } catch let refusal as NotStarted {
+                        return .object(["message": .string(refusal.message), "started": .bool(false)])
+                    }
+                } else {
+                    guard case .array(let values) = arguments["deliverables"] else {
+                        throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
+                    }
+                    var title: String?
+                    if let raw = arguments["title"] {
+                        guard case .string(let text) = raw else { throw NativeToolError.invalidArguments("The title must be text.") }
+                        title = text
+                    }
+                    let deliverables = try values.map { value -> String in
+                        guard case .string(let text) = value else {
+                            throw NativeToolError.invalidArguments("Each deliverable must be text.")
+                        }
+                        return text
+                    }
+                    guard allowedWorkerTypes().contains(workerType) else {
+                        throw NativeToolError.failed(workerType == "document"
+                            ? "The current message did not ask for a document to be written, so nothing was started."
+                            : "The current message did not ask for research, so nothing was started.")
+                    }
+                    if workerType == "research", !searchAvailable() {
+                        throw NativeToolError.failed(searchUnavailable)
+                    }
+                    request = try NativeResearchTaskRequest(objective: objective, deliverables: deliverables, workerType: workerType, title: title)
                 }
-                guard allowedWorkerTypes().contains(workerType) else {
-                    throw NativeToolError.failed(workerType == "document"
-                        ? "The current message did not ask for a document to be written, so nothing was started."
-                        : "The current message did not ask for research, so nothing was started.")
-                }
-                if workerType == "research", !searchAvailable() {
-                    throw NativeToolError.failed(searchUnavailable)
-                }
-                let request = try NativeResearchTaskRequest(objective: objective, deliverables: deliverables, workerType: workerType, title: title)
-                let reference = try await service.submit(origin: origin, request: request, profile: profile)
+                var placed = origin
+                if general != nil, let position, position > 0 { placed.index = position }
+                try Task.checkCancellation()
+                let reference = try await service.submit(origin: placed, request: request, profile: profile)
                 await didSave(reference)
                 let message: String
                 switch reference.deliveryState {
