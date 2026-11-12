@@ -245,6 +245,16 @@ extension SelfTest {
         state.toggle(now: launch.addingTimeInterval(120))
         try require(!state.isOpen && state.lastClosed == launch.addingTimeInterval(120), "The toggle closes it and remembers when")
 
+        try require(CompanionProfileMetrics.panelWidth(available: 879) == CompanionProfileMetrics.width
+                    && CompanionProfileMetrics.panelWidth(available: 2000) == CompanionProfileMetrics.width,
+                    "A roomy window gives the profile its full width")
+        try require(CompanionProfileMetrics.panelWidth(available: 701) == 340
+                    && CompanionProfileMetrics.panelWidth(available: 671) == 310,
+                    "A tighter window narrows the profile so the conversation keeps its minimum")
+        try require(CompanionProfileMetrics.panelWidth(available: 619) == CompanionProfileMetrics.minimumWidth
+                    && CompanionProfileMetrics.panelWidth(available: 0) == CompanionProfileMetrics.minimumWidth,
+                    "The profile never goes below its floor")
+
         try require(CompanionProfileCopy.toggleTitle(name: "Ada", open: false) == "Open Ada's profile"
                     && CompanionProfileCopy.toggleTitle(name: "Ada", open: true) == "Close Ada's profile",
                     "The profile toggle names the companion")

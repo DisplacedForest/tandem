@@ -27,9 +27,7 @@ struct ContentView: View {
                 Group {
                     switch store.section {
                     case .vera:
-                        ChatPane().overlay {
-                            if companionThread { CompanionProfileOverlay(state: $companionProfile) }
-                        }
+                        CompanionProfileLayout(state: $companionProfile, shown: companionThread) { ChatPane() }
                     case .chat: ChatPane()
                     case .pulse: PulseView()
                     case .memory: MemoryView()
@@ -59,6 +57,12 @@ struct ContentView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .onChange(of: companionThread) { _, showing in
             if !showing { companionProfile.close(now: Date()) }
+        }
+        .onChange(of: store.showCanvas) { _, open in
+            if open { companionProfile.close(now: Date()) }
+        }
+        .onChange(of: companionProfile.isOpen) { _, open in
+            if open, store.showCanvas { store.closeCanvas() }
         }
         .environment(\.inspectMemorySource, { store.inspectMemoryCitation($0) })
         .sheet(item: $store.inspectedMemory) { MemoryDetailView(memory: $0, citedRevision: store.inspectedMemoryRevision, trace: store.inspectedMemoryTrace) }

@@ -6,30 +6,77 @@ extension CompanionProfileState {
 }
 
 enum CompanionProfileMetrics {
-    static let width: CGFloat = 350
+    static let width: CGFloat = 340
+    static let minimumWidth: CGFloat = 280
+    static let minimumConversation: CGFloat = 360
+    static let divider: CGFloat = 1
     static let edge: CGFloat = 16
     static let top: CGFloat = 14
-    static let radius: CGFloat = 16
     static let toggleSize: CGFloat = 32
     static let transcriptTop: CGFloat = 66
+
+    static func panelWidth(available: CGFloat) -> CGFloat {
+        min(width, max(minimumWidth, available - minimumConversation - divider))
+    }
 }
 
-struct CompanionProfileOverlay: View {
+struct CompanionProfileLayout<Conversation: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var state: CompanionProfileState
+    var shown: Bool
+    var fixed: CompanionOverviewModel?
+    var selectedID: String?
+    let conversation: Conversation
+
+    init(state: Binding<CompanionProfileState>, shown: Bool = true, fixed: CompanionOverviewModel? = nil,
+         selectedID: String? = nil, @ViewBuilder conversation: () -> Conversation) {
+        _state = state
+        self.shown = shown
+        self.fixed = fixed
+        self.selectedID = selectedID
+        self.conversation = conversation()
+    }
+
+    private func close() {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.close(now: Date()) }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                conversation
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if shown { CompanionProfileControls(state: $state, fixed: fixed) }
+                    }
+                if shown, state.isOpen {
+                    HStack(spacing: 0) {
+                        Rectangle().fill(Theme.hairline).frame(width: CompanionProfileMetrics.divider)
+                        CompanionThreadPanel(fixed: fixed, selectedID: selectedID, newSince: state.lastClosed,
+                                             width: CompanionProfileMetrics.panelWidth(available: proxy.size.width),
+                                             onClose: close)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .transition(reduceMotion ? .identity : .move(edge: .trailing))
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+        }
+    }
+}
+
+struct CompanionProfileControls: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var state: CompanionProfileState
     var fixed: CompanionOverviewModel? = nil
-    var selectedID: String? = nil
 
     private var mention: String { fixed?.mention ?? store.companion.inline }
     private var toggleTitle: String { CompanionProfileCopy.toggleTitle(name: mention, open: state.isOpen) }
 
     private func toggle() {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.toggle(now: Date()) }
-    }
-
-    private func close() {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.close(now: Date()) }
     }
 
     var body: some View {
@@ -53,30 +100,23 @@ struct CompanionProfileOverlay: View {
             .padding(.top, CompanionProfileMetrics.top)
             .padding(.horizontal, CompanionProfileMetrics.toggleSize + CompanionProfileMetrics.edge * 2)
 
-            VStack(alignment: .trailing, spacing: 10) {
-                Button(action: toggle) {
-                    Image(systemName: "sidebar.right")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(state.isOpen ? Theme.warmTextPrimary : Theme.warmTextSecondary)
-                        .frame(width: CompanionProfileMetrics.toggleSize, height: CompanionProfileMetrics.toggleSize)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(state.isOpen ? Theme.cardFill : Color.clear))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(toggleTitle)
-                .accessibilityLabel(toggleTitle)
-                if state.isOpen {
-                    CompanionThreadPanel(fixed: fixed, selectedID: selectedID, newSince: state.lastClosed, onClose: close)
-                        .transition(reduceMotion ? .identity : .move(edge: .trailing).combined(with: .opacity))
-                }
+            Button(action: toggle) {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(state.isOpen ? Theme.warmTextPrimary : Theme.warmTextSecondary)
+                    .frame(width: CompanionProfileMetrics.toggleSize, height: CompanionProfileMetrics.toggleSize)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(state.isOpen ? Theme.cardFill : Color.clear))
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(toggleTitle)
+            .accessibilityLabel(toggleTitle)
             .padding(.top, CompanionProfileMetrics.top)
             .padding(.trailing, CompanionProfileMetrics.edge)
-            .padding(.bottom, CompanionProfileMetrics.edge)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .frame(maxWidth: .infinity, alignment: .topTrailing)
         }
-        .clipped()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -86,6 +126,7 @@ struct CompanionThreadPanel: View {
     @Environment(\.renderSafe) private var renderSafe
     var fixed: CompanionOverviewModel? = nil
     var newSince: Date
+    var width: CGFloat
     var onClose: (() -> Void)? = nil
     @State private var model: CompanionOverviewModel
     @State private var selectedID: String?
@@ -95,9 +136,10 @@ struct CompanionThreadPanel: View {
     @State private var navigationError: String?
 
     init(fixed: CompanionOverviewModel? = nil, selectedID: String? = nil, newSince: Date = .distantFuture,
-         onClose: (() -> Void)? = nil) {
+         width: CGFloat = CompanionProfileMetrics.width, onClose: (() -> Void)? = nil) {
         self.fixed = fixed
         self.newSince = newSince
+        self.width = width
         self.onClose = onClose
         _selectedID = State(initialValue: selectedID)
         _model = State(initialValue: fixed ?? CompanionOverviewModel(name: "", goal: "", services: "", rules: "", paused: false, activity: [], outputs: []))
@@ -116,11 +158,9 @@ struct CompanionThreadPanel: View {
                 }
             }
         }
-        .frame(width: CompanionProfileMetrics.width)
-        .clipShape(RoundedRectangle(cornerRadius: CompanionProfileMetrics.radius, style: .continuous))
-        .background(RoundedRectangle(cornerRadius: CompanionProfileMetrics.radius, style: .continuous).fill(Theme.cardFill)
-            .shadow(color: .black.opacity(0.14), radius: 18, y: 6))
-        .overlay(RoundedRectangle(cornerRadius: CompanionProfileMetrics.radius, style: .continuous).stroke(Theme.cardStroke, lineWidth: 1))
+        .frame(width: width)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.cardFill)
         .background {
             if let onClose {
                 Button("", action: onClose).keyboardShortcut(.cancelAction).opacity(0).accessibilityHidden(true)

@@ -80,6 +80,8 @@ enum Shot {
             size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "companion-thread" {
             size = CGSize(width: 1180, height: 1040)
+        } else if view.hasPrefix("companion-profile-"), view.hasSuffix("-narrow") {
+            size = CGSize(width: 920, height: 900)
         } else if view.hasPrefix("companion-profile-") {
             size = CGSize(width: 1180, height: 900)
         } else if view == "companion" || CompanionShotFixture.waitingViews.contains(view) {
@@ -483,10 +485,12 @@ enum Shot {
                     .padding(20)
                     .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
             )
-        } else if ["companion-profile-closed", "companion-profile-open", "companion-profile-empty", "companion-profile-unnamed"].contains(view) {
+        } else if ["companion-profile-closed", "companion-profile-open", "companion-profile-empty", "companion-profile-unnamed",
+                    "companion-profile-closed-narrow", "companion-profile-open-narrow"].contains(view) {
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
             if view == "companion-profile-unnamed" { store.adoptAssistantName(nil) }
-            let filled = view == "companion-profile-open" || view == "companion-profile-closed"
+            let filled = ["companion-profile-open", "companion-profile-closed", "companion-profile-open-narrow",
+                          "companion-profile-closed-narrow"].contains(view)
             let model = filled ? CompanionOverviewFixture.profileModel(name: store.companion.leading)
                 : CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile, services: "",
                                                rules: "", activity: [], results: [],
@@ -494,9 +498,9 @@ enum Shot {
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
                 ShotView(store: store, section: .vera, dotHeader: false, companionPanel: model, companionSelection: nil,
-                         companionProfileOpen: view != "companion-profile-closed",
+                         companionProfileOpen: !view.hasPrefix("companion-profile-closed"),
                          companionNewSince: Date().addingTimeInterval(-CompanionOverviewFixture.newSinceMinutes * 60),
-                         height: size.height)
+                         height: size.height, width: size.width)
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
                     .environmentObject(config)

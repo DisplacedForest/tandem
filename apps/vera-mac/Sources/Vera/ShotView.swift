@@ -75,22 +75,11 @@ struct ShotView: View {
                         emptyChatShot
                     } else {
                         HStack(alignment: .top, spacing: 0) {
-                            VStack(spacing: 0) {
-                                if emptyChat && section == .vera {
-                                    CompanionOpeningView(error: needsConnection ? .literal(ChatStore.companionNeedsConnection) : store.chatConfigurationErrorLine,
-                                                         needsConnection: needsConnection, retry: {})
-                                    shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
-                                        .modifier(ShotComposerPill())
-                                        .padding(.horizontal, 28).padding(.bottom, 18)
-                                } else if emptyChat { emptyChatShot } else { chat }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .clipped()
-                            .overlay {
-                                if let companionPanel {
-                                    CompanionProfileOverlay(state: .constant(shotProfileState), fixed: companionPanel,
-                                                            selectedID: companionSelection)
-                                }
+                            if let companionPanel {
+                                CompanionProfileLayout(state: .constant(shotProfileState), fixed: companionPanel,
+                                                       selectedID: companionSelection) { conversationColumn }
+                            } else {
+                                conversationColumn
                             }
                             if workColumn {
                                 OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
@@ -102,6 +91,20 @@ struct ShotView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
         }
+    }
+
+    private var conversationColumn: some View {
+        VStack(spacing: 0) {
+            if emptyChat && section == .vera {
+                CompanionOpeningView(error: needsConnection ? .literal(ChatStore.companionNeedsConnection) : store.chatConfigurationErrorLine,
+                                     needsConnection: needsConnection, retry: {})
+                shotComposerRow(text: shotComposerText, typed: false, active: false, stop: false)
+                    .modifier(ShotComposerPill())
+                    .padding(.horizontal, 28).padding(.bottom, 18)
+            } else if emptyChat { emptyChatShot } else { chat }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
     }
 
     private var veinsSheetShot: some View {
