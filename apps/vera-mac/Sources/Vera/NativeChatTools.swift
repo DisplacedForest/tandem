@@ -689,6 +689,7 @@ struct NativeToolLoop: Sendable {
                     var content = ""
                     var activities: [NativeToolActivity] = []
                     var callCount = 0
+                    var otherToolRan = false
                     var webSearchCount = 0
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
@@ -767,6 +768,8 @@ struct NativeToolLoop: Sendable {
                         history.append(NativeChatMessage(role: "assistant", content: last.content, toolCalls: last.toolCalls))
                         var stopped = false
                         for call in last.toolCalls {
+                            let ranOther = otherToolRan
+                            if definitions[call.name]?.id != NativeTaskTools.toolID { otherToolRan = true }
                             try Task.checkCancellation()
                             let resultBudget = definitions[call.name]?.resultByteBudget ?? NativeToolResultBudget.defaultBytes
                             let result: String
@@ -896,9 +899,11 @@ struct NativeToolLoop: Sendable {
                                                     try await NativeInstructionCheck.$cleared.withValue(clearing) {
                                                         try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
-                                                                try await Self.execute(
-                                                                    definition, arguments: arguments, activity: activity,
-                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
+                                                                    try await Self.execute(
+                                                                        definition, arguments: arguments, activity: activity,
+                                                                        timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                }
                                                             }
                                                         }
                                                     }

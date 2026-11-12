@@ -8,6 +8,7 @@ enum NativeTaskTools {
     static let generalWorkerType = "general"
     static let generalLimit = 4000
     static let laterRound = "This can only be started from what the person asked, at the start of a reply."
+    static let notStarted = "Nothing was started. Ask again in a moment."
     static let pausedReply = "I'm paused, so this wasn't started. Resume me and ask again."
 
     struct NotStarted: Error, Sendable {
@@ -36,7 +37,7 @@ enum NativeTaskTools {
                            profile: NativeTaskProfileBinding?,
                            searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
                            allowedWorkerTypes: @escaping @Sendable () -> Set<String> = { NativeResearchTaskRequest.chatWorkerTypes },
-                           general: (@Sendable (_ assignment: String) throws -> NativeResearchTaskRequest)? = nil,
+                           general: (@Sendable (_ assignment: String) async throws -> NativeResearchTaskRequest)? = nil,
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         let counter = CallCounter()
         let kinds: [NativeJSONValue] = [.string("research"), .string("document")] + (general == nil ? [] : [.string(generalWorkerType)])
@@ -55,6 +56,7 @@ enum NativeTaskTools {
                         "items": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(500)])]),
                 ]),
             ]), confirmation: .none, timeout: .seconds(10), effect: .read, isAvailable: { true }, execute: { arguments in
+                let position = general == nil ? nil : counter.next()
                 guard Set(arguments.keys).isSubset(of: ["worker_type", "title", "objective", "deliverables"]),
                       case .string(let workerType) = arguments["worker_type"],
                       NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) || (general != nil && workerType == generalWorkerType),
@@ -62,9 +64,8 @@ enum NativeTaskTools {
                     throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
                 }
                 let request: NativeResearchTaskRequest
-                let work: String
                 if workerType == generalWorkerType, let general {
-                    guard NativeToolCallContext.round == 1 else {
+                    guard NativeToolCallContext.round == 1, NativeToolCallContext.otherToolRan == false else {
                         return .object(["message": .string(laterRound), "started": .bool(false)])
                     }
                     guard allowedWorkerTypes().contains(workerType) else {
@@ -75,11 +76,10 @@ enum NativeTaskTools {
                         throw NativeToolError.invalidArguments("Keep the objective under \(generalLimit) characters.")
                     }
                     do {
-                        request = try general(assignment)
+                        request = try await general(assignment)
                     } catch let refusal as NotStarted {
                         return .object(["message": .string(refusal.message), "started": .bool(false)])
                     }
-                    work = "work"
                 } else {
                     guard case .array(let values) = arguments["deliverables"] else {
                         throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
@@ -104,21 +104,19 @@ enum NativeTaskTools {
                         throw NativeToolError.failed(searchUnavailable)
                     }
                     request = try NativeResearchTaskRequest(objective: objective, deliverables: deliverables, workerType: workerType, title: title)
-                    work = workerType == "document" ? "document" : "research"
                 }
                 var placed = origin
-                if general != nil {
-                    let index = counter.next()
-                    if index > 0 { placed.index = index }
-                }
+                if let position, position > 0 { placed.index = position }
                 let reference = try await service.submit(origin: placed, request: request, profile: profile)
                 await didSave(reference)
+                let kind = reference.request.workerType
+                let work = kind == "companion" ? "work" : kind == "document" ? "document" : "research"
                 let message: String
                 switch reference.deliveryState {
                 case .accepted:
-                    message = workerType == generalWorkerType ? "Started." : workerType == "document" ? "Writing has started." : "Research has started."
+                    message = kind == "companion" ? "Started." : kind == "document" ? "Writing has started." : "Research has started."
                 case .pending:
-                    message = workerType == generalWorkerType ? "Saved, and it will start once the connection is back." : "The \(work) request is saved and waiting to connect."
+                    message = kind == "companion" ? "Saved, and it will start once the connection is back." : "The \(work) request is saved and waiting to connect."
                 case .rejected: message = reference.lastDeliveryError ?? "The task engine couldn't accept this request."
                 }
                 if reference.cancelRequested || reference.snapshot?.state == .canceled {

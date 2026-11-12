@@ -737,10 +737,8 @@ extension SelfTest {
         let proactive = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "proactive")
         try require(manual.typedRequest == "Email orders@workshop.example" && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
                     "Only work the person started by hand counts its assignment as their own words")
-        let asked = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual", said: "Let the workshop know")
         let silent = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual", said: "")
-        try require(asked.typedRequest == "Let the workshop know" && silent.typedRequest.isEmpty,
-                    "Work started from a message counts only the person's message as their own words")
+        try require(silent.typedRequest.isEmpty, "Work started from the conversation counts nothing as typed")
         let oldBytes = try nativeTaskEncoded(manual)
         let reread = try JSONDecoder().decode(NativeCompanionTaskPayload.self, from: oldBytes)
         try require(reread.said == nil && reread.typedRequest == manual.typedRequest && (try nativeTaskEncoded(reread)) == oldBytes
@@ -806,29 +804,36 @@ extension SelfTest {
         try require(sent.count == 0 && (try scheduled.effects(scheduledID)).allSatisfy { $0.state != .completed },
                     "Scheduled work never sends on the words of its assignment: \(scheduledDone.state)")
 
-        sent.reset()
         let command = "Send the notes to ana@greenhouse.test"
-        let ordinary = "Could you look after the greenhouse notes this week?"
-        let asked = try harness(repeats: false)
-        asked.model.checks { .text("{\"run\": true}") }
-        let askedID = try asked.create(command, said: ordinary)
-        let askedDone = try await asked.runUntilSettled()
-        try require(askedDone.state == .needsDecision && sent.count == 0 && (try asked.effects(askedID)).allSatisfy { $0.state != .completed },
-                    "A command in an assignment the model wrote is never taken as typed: the send asks first: \(askedDone.state)")
+        for message in [command, "Could you look after the greenhouse notes this week?"] {
+            let started = try ChatStore.companionRequest(command, connectedToolIDs: nil, said: "")
+            try require(started.dot?.typedRequest == "" && started.dot?.said == "",
+                        "Work started from the conversation counts nothing as typed, whatever the message was: \(message)")
+            sent.reset()
+            let asked = try harness(repeats: false)
+            asked.model.checks { .text("{\"run\": true}") }
+            let askedID = try asked.create(command, said: started.dot?.said)
+            let askedDone = try await asked.runUntilSettled()
+            try require(askedDone.state == .needsDecision && sent.count == 0 && (try asked.effects(askedID)).allSatisfy { $0.state != .completed },
+                        "Work started from the conversation asks before an Ask first send, even when the message was the command: \(askedDone.state)")
+        }
         sent.reset()
-        let blank = try harness(repeats: false)
-        blank.model.checks { .text("{\"run\": true}") }
-        let blankID = try blank.create(command, said: "")
-        let blankDone = try await blank.runUntilSettled()
-        try require(blankDone.state == .needsDecision && sent.count == 0 && (try blank.effects(blankID)).allSatisfy { $0.state != .completed },
-                    "With an empty message nothing counts as typed")
+        let pair = try harness(repeats: false)
+        pair.model.checks { .text("{\"run\": true}") }
+        let firstID = try pair.create(command, said: "")
+        let firstDone = try await pair.runUntilSettled()
+        let secondID = try pair.create(command, said: "")
+        let secondDone = try await pair.runUntilSettled()
+        try require(firstDone.state == .needsDecision && secondDone.state == .needsDecision && sent.count == 0
+                        && (try pair.effects(firstID) + pair.effects(secondID)).allSatisfy { $0.state != .completed },
+                    "Two pieces of work from one send instruction both ask, and nothing is sent without an answer")
         sent.reset()
-        let typed = try harness(repeats: false)
-        typed.model.checks { .text("{\"run\": true}") }
-        let typedID = try typed.create(command, said: command)
-        let typedDone = try await typed.runUntilSettled()
-        try require(typedDone.state == .completed && sent.count == 1 && (try typed.effects(typedID)).filter { $0.state == .completed }.count == 1,
-                    "When the person's own message is the command, the send runs once with no question, as typed work always did")
+        let box = try harness(repeats: false)
+        box.model.checks { .text("{\"run\": true}") }
+        let boxID = try box.create(command)
+        let boxDone = try await box.runUntilSettled()
+        try require(boxDone.state == .completed && sent.count == 1 && (try box.effects(boxID)).filter { $0.state == .completed }.count == 1,
+                    "Work saved before, with its assignment typed by hand, still sends once with no question")
 
         let authority = NativeCompanionWorkerAuthority(resolver: {
             var resolver = NativeRuleResolver(global: { var made = NativeRules.defaults; made.set(.ask, for: .networkSends); return made }(),

@@ -2425,7 +2425,7 @@ final class ChatStore: ObservableObject {
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
                         searchAvailable: nativeSearchAvailable, allowedWorkerTypes: { workerTypes },
-                        general: isVeraThread(id) ? companionHandOff(said: text) : nil,
+                        general: isVeraThread(id) ? companionHandOff() : nil,
                         didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }

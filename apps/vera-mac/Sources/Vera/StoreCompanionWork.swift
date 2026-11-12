@@ -59,13 +59,14 @@ extension ChatStore {
         }
     }
 
-    func companionHandOff(said: String) -> @Sendable (String) throws -> NativeResearchTaskRequest {
-        let paused = dotProfile.isPaused
-        let connected = dotProfile.connectedToolIDs?.sorted()
-        let typed = String(String.UnicodeScalarView(said.unicodeScalars.prefix(5000)))
-        return { assignment in
-            guard !paused else { throw NativeTaskTools.NotStarted(message: NativeTaskTools.pausedReply) }
-            return try ChatStore.companionRequest(assignment, connectedToolIDs: connected, said: typed)
+    func companionHandOff() -> @Sendable (String) async throws -> NativeResearchTaskRequest {
+        { [weak self] assignment in
+            let live: (paused: Bool, connected: [String]?)? = await MainActor.run { [weak self] in
+                self.map { ($0.dotProfile.isPaused, $0.dotProfile.connectedToolIDs?.sorted()) }
+            }
+            guard let live else { throw NativeTaskTools.NotStarted(message: NativeTaskTools.notStarted) }
+            guard !live.paused else { throw NativeTaskTools.NotStarted(message: NativeTaskTools.pausedReply) }
+            return try ChatStore.companionRequest(assignment, connectedToolIDs: live.connected, said: "")
         }
     }
 

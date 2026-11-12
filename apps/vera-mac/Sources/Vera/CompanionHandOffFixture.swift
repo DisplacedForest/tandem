@@ -11,7 +11,7 @@ enum CompanionHandOffFixture {
         }
         let profile = store.nativeTaskEnrollment ?? (try? store.nativeTaskConfiguration?.enroll(config: nativeConfig))
         let trimmed = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
-        let request = try ChatStore.companionRequest(trimmed, connectedToolIDs: store.dotProfile.connectedToolIDs?.sorted(), said: trimmed)
+        let request = try ChatStore.companionRequest(trimmed, connectedToolIDs: store.dotProfile.connectedToolIDs?.sorted(), said: "")
         store.ensureVeraThread()
         guard let conversationID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion conversation exists") }
         let user = Message(role: .user, text: request.objective)
