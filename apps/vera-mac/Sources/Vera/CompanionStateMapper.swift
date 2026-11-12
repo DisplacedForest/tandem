@@ -7,6 +7,7 @@ struct CompanionStateSnapshot: Equatable, Sendable {
     var decisionPending = false
     var explicitlyResting = false
     var appInactive = false
+    var working: CompanionWorkKind?
 }
 
 enum CompanionStateMapper {
@@ -15,6 +16,7 @@ enum CompanionStateMapper {
         if snapshot.voiceCapturing { return .listening }
         if snapshot.decisionPending { return .needsYou }
         if snapshot.foregroundGenerating { return .thinking }
+        if let working = snapshot.working { return working.state }
         if snapshot.explicitlyResting || snapshot.appInactive { return .resting }
         return .ready
     }

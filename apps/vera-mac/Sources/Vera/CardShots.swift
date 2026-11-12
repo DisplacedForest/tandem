@@ -419,9 +419,36 @@ enum CardShot {
 }
 
 extension CompanionShotFixture {
-    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed"]
+    static let waitingViews: Set<String> = ["companion-work-waiting", "companion-work-waiting-unnamed", "companion-quick-working"]
+
+    static let workingViews: Set<String> = ["companion-working-one", "companion-working-three", "companion-working-two-left",
+                                           "companion-working-writing", "companion-working-changing", "companion-working-attention"]
+
+    static func seedWorking(_ store: ChatStore, view: String) {
+        guard let threadID = store.veraThreadID else { return }
+        if view == "companion-working-attention" {
+            let reference = try? CompanionSavedTextFixture.reference(state: "needs_decision", conversationID: threadID,
+                                                                     decision: CompanionSavedTextFixture.approvalDecision())
+            store.nativeTaskReferences = reference.map { [$0] } ?? []
+            return
+        }
+        let all: [(String, String)] = [("Lumber prices this month", "research"), ("Workshop plan", "document"),
+                                       ("new Indy restaurants", "research")]
+        let work: [(String, String)]
+        switch view {
+        case "companion-working-three": work = all
+        case "companion-working-two-left": work = Array(all.prefix(2))
+        case "companion-working-writing": work = [("Workshop plan", "document")]
+        case "companion-working-changing": work = [("the seed folders", "companion")]
+        default: work = Array(all.suffix(1))
+        }
+        store.nativeTaskReferences = work.compactMap {
+            try? OngoingWorkFixture.reference(conversationID: threadID, title: $0.0, workerType: $0.1, state: "running")
+        }
+    }
 
     static func seedWaiting(_ store: ChatStore, outer: ChatStore, view: String) {
+        if view == "companion-quick-working" { return seedWorking(store, view: "companion-working-three") }
         guard waitingViews.contains(view), let threadID = store.veraThreadID else { return }
         if view.hasSuffix("-unnamed") {
             store.adoptAssistantName(nil)

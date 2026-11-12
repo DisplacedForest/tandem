@@ -319,6 +319,7 @@ struct CompanionPanelView: View {
             if store.companionApprovalWaiting {
                 approvalBanner
             }
+            CompanionWorkingLine(work: store.companionBackgroundWork.current, size: 12)
             if !store.companionAttachments.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(store.companionAttachments) { attachment in
