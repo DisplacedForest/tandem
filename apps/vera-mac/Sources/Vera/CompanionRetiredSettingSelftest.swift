@@ -224,6 +224,7 @@ extension SelfTest {
         try requireRetiredFree(copy, "Companion copy")
         try await checkRetiredStoredContext()
         try checkCarriedValues()
+        try checkRetiredHistory()
         print("  companion retired setting OK (old profile and requests load, nothing shows or tells the model about it)")
     }
     private static func oldStoredContext(_ sentence: String) -> String {
@@ -320,5 +321,55 @@ extension SelfTest {
             let expected = #"{"assignment":"Check the seed tray","# + (carried.map { "\"\(retiredWord)\":\($0)," } ?? "") + #""mode":"manual"}"#
             try require(String(decoding: wire, as: UTF8.self) == expected, "A saved request round trips byte for byte: \(String(decoding: wire, as: UTF8.self))")
         }
+    }
+    private static func checkRetiredHistory() throws {
+        let require = NativeTaskFixture.require
+        let profile = NativeCompanionProfileTools.name
+        let distinct = "Raise heirloom peppers by the shed"
+        let retiredRequest = #"{"action":""# + retiredWord + #"","value":""# + distinct + #""}"#
+        func activity(_ id: String, _ name: String, round: Int, request: String, result: String) -> NativeToolActivity {
+            NativeToolActivity(id: id, toolID: name == profile ? NativeCompanionProfileTools.toolID : "garden", name: name, title: "Call",
+                               round: round, request: request, result: result, state: .succeeded, confirmationRequired: false)
+        }
+        let old1 = activity("old-1", profile, round: 1, request: retiredRequest, result: #"{"result":"Profile updated."}"#)
+        let old2 = activity("old-2", profile, round: 2, request: retiredRequest, result: #"{"result":"Profile updated."}"#)
+        let rename = activity("rename", profile, round: 2, request: #"{"action":"name","value":"Wren"}"#, result: #"{"result":"Name updated."}"#)
+        let garden = activity("garden", "garden_status", round: 2, request: #"{"bed":"north"}"#, result: #"{"beds":3}"#)
+        let user = Message(role: .user, text: "Set things up for the spring.")
+        var assistant = Message(role: .assistant, text: "Done. I'm Wren now and the north bed looks fine.")
+        assistant.toolActivities = [old1, old2, rename, garden]
+        let later = Message(role: .user, text: "Thanks.")
+        let history = NativeChatHistoryBuilder.build(messages: [user, assistant, later], systemPrompt: "")
+        for message in history {
+            let texts = [message.content] + message.toolCalls.map(\.arguments)
+            try require(texts.allSatisfy { !$0.contains(distinct) && !$0.lowercased().contains(retiredWord) },
+                        "Rebuilt history never carries the retired call: \(texts)")
+        }
+        let roles = history.map(\.role)
+        try require(roles == ["user", "assistant", "tool", "tool", "assistant", "user"], "Round one is dropped and round two keeps its two calls: \(roles)")
+        try require(history[0].content == user.text && history[5].content == later.text, "User messages are unchanged")
+        try require(history[1].toolCalls.map(\.id) == ["rename", "garden"] && history[1].content.isEmpty, "Round two keeps the unrelated calls in order")
+        try require(history[2].toolCallID == "rename" && history[2].content == rename.result
+                    && history[3].toolCallID == "garden" && history[3].content == garden.result, "Each kept call keeps its own result in order")
+        try require(history[4].content == assistant.text && history[4].toolCalls.isEmpty, "The assistant's text is unchanged")
+        var calls: Set<String> = []
+        var answered: Set<String> = []
+        for message in history {
+            if message.role == "assistant" {
+                try require(calls == answered, "Every call has a result before the next turn")
+                calls = Set(message.toolCalls.map(\.id))
+                answered = []
+            } else if message.role == "tool" {
+                try require(calls.contains(message.toolCallID ?? ""), "No tool result is orphaned: \(message.toolCallID ?? "nil")")
+                answered.insert(message.toolCallID ?? "")
+            }
+        }
+        try require(calls == answered, "The last calls all have results")
+        try require(NativeCompanionProfileTools.retired(old1), "An old profile call is recognised")
+        try require(!NativeCompanionProfileTools.retired(activity("bad", profile, round: 1, request: "{not json", result: "{}")),
+                    "A malformed request is not treated as retired")
+        try require(!NativeCompanionProfileTools.retired(activity("other", "garden_status", round: 1, request: retiredRequest, result: "{}")),
+                    "Another tool with the same arguments is kept")
+        try require(!NativeCompanionProfileTools.retired(rename), "A name change is kept")
     }
 }

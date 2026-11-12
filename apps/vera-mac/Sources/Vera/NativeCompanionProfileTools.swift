@@ -4,6 +4,12 @@ enum NativeCompanionProfileTools {
     static let toolID = "companion.profile"
     static let name = "update_companion_profile"
     static let valueLimit = 2000
+    static let retiredAction = "goal"
+
+    static func retired(_ activity: NativeToolActivity) -> Bool {
+        guard activity.name == name, let request = try? JSONSerialization.jsonObject(with: Data(activity.request.utf8)) as? [String: Any] else { return false }
+        return request["action"] as? String == retiredAction
+    }
 
     static func string(_ value: NativeJSONValue?) -> String? {
         if case .string(let text) = value { return text }
