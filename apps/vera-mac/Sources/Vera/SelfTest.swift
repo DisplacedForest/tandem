@@ -394,6 +394,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: result delivery \(error)"); exit(1) }
         do { try MessageActionsSelftest.run() }
         catch { print("SELFTEST ERROR: message actions \(error)"); exit(1) }
+        do { try await MessageReactionsSelftest.run() }
+        catch { print("SELFTEST ERROR: message reactions \(error)"); exit(1) }
         do { try await WorkflowSelectionTests.run() }
         catch { print("WORKFLOW SELECTION SELFTEST FAILED: \(error.localizedDescription)"); exit(1) }
         runPure()

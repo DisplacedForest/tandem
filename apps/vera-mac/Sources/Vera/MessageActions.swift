@@ -2,61 +2,82 @@ import SwiftUI
 import AppKit
 
 enum MessageReaction: String, CaseIterable, Identifiable {
+    case heart
     case thumbsUp
     case thumbsDown
+    case emphasis
+    case laugh
+    case check
 
     var id: String { rawValue }
 
-    static let offered: [MessageReaction] = [.thumbsUp, .thumbsDown]
+    static let offered: [MessageReaction] = [.heart, .thumbsUp, .thumbsDown, .emphasis, .laugh, .check]
+    static let addLabel = "Add reaction"
+    static let addSymbol = "face.smiling"
+    static let markLimit = 3
 
     var emoji: String {
         switch self {
+        case .heart: "\u{2764}\u{FE0F}"
         case .thumbsUp: "\u{1F44D}"
         case .thumbsDown: "\u{1F44E}"
+        case .emphasis: "\u{203C}\u{FE0F}"
+        case .laugh: "\u{1F602}"
+        case .check: "\u{2705}"
         }
     }
 
     var label: String {
         switch self {
+        case .heart: "Heart"
         case .thumbsUp: "Thumbs up"
         case .thumbsDown: "Thumbs down"
+        case .emphasis: "Emphasis"
+        case .laugh: "Laugh"
+        case .check: "Check"
         }
     }
 
-    var rating: String {
-        switch self {
-        case .thumbsUp: "up"
-        case .thumbsDown: "down"
-        }
+    static func label(for emoji: String) -> String {
+        offered.first { $0.emoji == emoji }?.label ?? emoji
     }
 
-    init?(rating: String?) {
-        guard let match = Self.allCases.first(where: { $0.rating == rating }) else { return nil }
-        self = match
+    static func onAnnouncement(_ marks: [String]) -> String {
+        let labels = marks.map(label(for:))
+        guard let last = labels.last else { return "No reaction" }
+        guard labels.count > 1 else { return last + " is on" }
+        return labels.dropLast().joined(separator: ", ") + " and " + last + " are on"
     }
 
-    static func marks(rating: String?) -> [MessageReaction] {
-        MessageReaction(rating: rating).map { [$0] } ?? []
+    static func shownMarks(_ marks: [String]) -> (shown: [String], more: Int) {
+        (Array(marks.prefix(markLimit)), max(0, marks.count - markLimit))
     }
 
-    static func onAnnouncement(_ marks: [MessageReaction]) -> String {
-        guard let first = marks.first else { return "No reaction" }
-        return first.label + " is on"
+    static func emoji(in text: String) -> String? {
+        guard let first = text.first else { return nil }
+        let scalars = first.unicodeScalars
+        guard let lead = scalars.first else { return nil }
+        let presented = lead.properties.isEmojiPresentation
+        let varied = lead.properties.isEmoji && scalars.count > 1
+        let picture = lead.value > 0x2000 && lead.properties.isEmoji
+        return presented || varied || picture ? String(first) : nil
     }
 }
 
 enum MessageMenuAction: String, CaseIterable, Identifiable {
     case copy
     case selectText
+    case reply
 
     var id: String { rawValue }
 
-    static let offered: [MessageMenuAction] = [.copy, .selectText]
+    static let offered: [MessageMenuAction] = [.copy, .selectText, .reply]
 
     var label: String {
         switch self {
         case .copy: "Copy"
         case .selectText: "Select text"
+        case .reply: "Reply"
         }
     }
 
@@ -64,6 +85,7 @@ enum MessageMenuAction: String, CaseIterable, Identifiable {
         switch self {
         case .copy: "doc.on.doc"
         case .selectText: "text.viewfinder"
+        case .reply: "arrowshape.turn.up.left"
         }
     }
 }
@@ -88,12 +110,15 @@ enum MessageActions {
     }
 
     static var accessibilityLabels: [String] {
-        MessageMenuAction.offered.map(\.label) + MessageReaction.offered.map(\.label)
+        MessageMenuAction.offered.map(\.label) + MessageReaction.offered.map(\.label) + [MessageReaction.addLabel]
     }
 
     static var addedStrings: [String] {
-        let announcements = [MessageReaction.onAnnouncement([])] + MessageReaction.offered.map { MessageReaction.onAnnouncement([$0]) }
-        return accessibilityLabels + announcements + [MessageActionsMetrics.rowLabel, MessageActionsMetrics.menuLabel]
+        let each = MessageReaction.offered.map { MessageReaction.onAnnouncement([$0.emoji]) }
+        let all = MessageReaction.onAnnouncement(MessageReaction.offered.map(\.emoji))
+        let announcements = [MessageReaction.onAnnouncement([])] + each + [all]
+        let fixed = [MessageActionsMetrics.rowLabel, MessageActionsMetrics.menuLabel, MessageReaction.addSymbol]
+        return accessibilityLabels + announcements + fixed + MessageReplyCopy.added
     }
 }
 
@@ -235,7 +260,7 @@ enum MessageActionsMetrics {
     static let menuLabel = "Message actions"
 
     static var rowSize: CGSize {
-        let count = CGFloat(MessageReaction.offered.count)
+        let count = CGFloat(MessageReaction.offered.count + 1)
         let width = rowPadding * 2 + count * itemSize + max(0, count - 1) * rowSpacing
         return CGSize(width: width, height: itemSize + rowPadding * 2)
     }
@@ -264,6 +289,8 @@ struct MessageActionsTarget: Equatable {
 final class MessageActionsModel {
     var open: MessageActionsTarget?
     var selecting: UUID?
+    var picking: MessageActionsTarget?
+    var pickingAt: CGPoint = .zero
 
     struct Bubble: Equatable {
         let messageID: UUID
@@ -344,6 +371,18 @@ final class MessageActionsModel {
     func beginSelecting(_ id: UUID) {
         close()
         selecting = id
+    }
+
+    func beginPicking(_ target: MessageActionsTarget) {
+        let frame = bubbles[target.messageID]?.frame
+        pickingAt = frame.map { CGPoint(x: $0.minX + 12, y: $0.maxY) } ?? .zero
+        close()
+        selecting = nil
+        picking = target
+    }
+
+    func endPicking() {
+        if picking != nil { picking = nil }
     }
 
     func endSelecting(_ id: UUID) {

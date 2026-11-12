@@ -34,13 +34,15 @@ struct MessageActionsHost: ViewModifier {
                 }
             }
             .background(MessageActionsEventBridge(model: model))
+            .background(alignment: .topLeading) { MessageEmojiPickerHost(model: model) }
             .onReceive(store.$conversations) { model.closeIfGone(in: $0) }
+            .onChange(of: store.veraThreadID, initial: true) { store.loadCompanionMarks() }
             .onChange(of: model.open) { _, target in
                 if let target { closeUnlessShown(target) }
             }
-            .onChange(of: store.selectedID) { model.dismissAll(); model.selecting = nil }
-            .onChange(of: store.section) { model.dismissAll(); model.selecting = nil }
-            .onDisappear { model.dismissAll() }
+            .onChange(of: store.selectedID) { model.dismissAll(); model.selecting = nil; model.endPicking() }
+            .onChange(of: store.section) { model.dismissAll(); model.selecting = nil; model.endPicking() }
+            .onDisappear { model.dismissAll(); model.endPicking() }
     }
 
     private func closeUnlessShown(_ target: MessageActionsTarget) {
@@ -75,7 +77,7 @@ struct MessageActionsOverlay: View {
                 .contentShape(Rectangle())
                 .onTapGesture { model.close() }
                 .accessibilityHidden(true)
-            MessageReactionRow(marks: MessageReaction.marks(rating: store.messageRatings[target.messageID])) { react($0) }
+            MessageReactionRow(marks: store.reactions(on: target.messageID), onPick: { react($0) }, onAdd: { model.beginPicking(target) })
                 .offset(x: placement.row.x, y: placement.row.y)
             MessageActionsMenu { perform($0) }
                 .offset(x: placement.menu.x, y: placement.menu.y)
@@ -93,9 +95,9 @@ struct MessageActionsOverlay: View {
         return found
     }
 
-    private func react(_ reaction: MessageReaction) {
+    private func react(_ emoji: String) {
         if let message = current() {
-            MessageActionsPerform.react(reaction, to: message, conversationID: target.conversationID, store: store)
+            MessageActionsPerform.react(emoji, to: message, store: store)
         }
         model.close()
     }
@@ -108,16 +110,21 @@ struct MessageActionsOverlay: View {
             model.close()
         case .selectText:
             model.beginSelecting(message.id)
+        case .reply:
+            model.close()
+            MessageActionsPerform.reply(to: message, store: store)
         }
     }
 }
 
 @MainActor
 enum MessageActionsPerform {
-    static func react(_ reaction: MessageReaction, to message: Message, conversationID: String?, store: ChatStore) {
-        let conversation = store.conversations.first { $0.id == conversationID } ?? store.selected
-        guard let conversation else { return }
-        store.rateMessage(message, in: conversation, reaction.rating)
+    static func react(_ emoji: String, to message: Message, store: ChatStore) {
+        store.toggleReaction(emoji, on: message.id)
+    }
+
+    static func reply(to message: Message, store: ChatStore) {
+        store.startReply(to: message)
     }
 }
 
@@ -133,14 +140,16 @@ struct MessageActionsDim: Shape {
 }
 
 struct MessageReactionRow: View {
-    let marks: [MessageReaction]
-    let onPick: (MessageReaction) -> Void
+    let marks: [String]
+    let onPick: (String) -> Void
+    let onAdd: () -> Void
 
     var body: some View {
         HStack(spacing: MessageActionsMetrics.rowSpacing) {
             ForEach(MessageReaction.offered) { reaction in
-                MessageReactionButton(reaction: reaction, on: marks.contains(reaction)) { onPick(reaction) }
+                MessageReactionButton(reaction: reaction, on: marks.contains(reaction.emoji)) { onPick(reaction.emoji) }
             }
+            MessageReactionAddButton(go: onAdd)
         }
         .padding(MessageActionsMetrics.rowPadding)
         .frame(width: MessageActionsMetrics.rowSize.width, height: MessageActionsMetrics.rowSize.height)
@@ -194,6 +203,34 @@ struct MessageActionsMenu: View {
     }
 }
 
+private struct MessageReactionAddButton: View {
+    let go: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: go) {
+            Image(systemName: MessageReaction.addSymbol)
+                .font(.system(size: 19))
+                .foregroundStyle(Theme.textSecondary)
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(1.5)
+                        .background(Circle().fill(Theme.surface))
+                        .offset(x: 4, y: -4)
+                }
+                .frame(width: MessageActionsMetrics.itemSize, height: MessageActionsMetrics.itemSize)
+                .background(Circle().fill(hovering ? Theme.surfaceHover : Color.clear))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(MessageReaction.addLabel)
+        .help(MessageReaction.addLabel)
+    }
+}
+
 private struct MessageActionsMenuRow: View {
     let action: MessageMenuAction
     let go: () -> Void
@@ -222,17 +259,23 @@ private struct MessageActionsMenuRow: View {
 }
 
 struct MessageReactionMark: View {
-    let marks: [MessageReaction]
+    let marks: [String]
 
     var body: some View {
+        let shown = MessageReaction.shownMarks(marks)
         HStack(spacing: 2) {
-            ForEach(marks) { Text($0.emoji).font(.system(size: 12)) }
+            ForEach(Array(shown.shown.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 12)) }
+            if shown.more > 0 {
+                Text("+\(shown.more)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
         .background(Capsule().fill(Theme.surface))
         .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(marks.map(\.label).joined(separator: ", "))
+        .accessibilityLabel(marks.map(MessageReaction.label(for:)).joined(separator: ", "))
     }
 }
 
@@ -260,7 +303,7 @@ struct MessageActionsBubble: ViewModifier {
 
     private func decorated(_ content: Content, model: MessageActionsModel) -> some View {
         let isOpen = model.open?.messageID == message.id
-        let marks = MessageReaction.marks(rating: store.messageRatings[message.id])
+        let marks = store.reactions(on: message.id)
         let conversationID = store.veraThreadID
         let id = message.id
         return Group {
@@ -301,8 +344,11 @@ struct MessageActionsBubble: ViewModifier {
             }
             ForEach(MessageReaction.offered) { reaction in
                 Button(reaction.label) {
-                    MessageActionsPerform.react(reaction, to: message, conversationID: conversationID, store: store)
+                    MessageActionsPerform.react(reaction.emoji, to: message, store: store)
                 }
+            }
+            Button(MessageReaction.addLabel) {
+                model.beginPicking(MessageActionsTarget(messageID: id, conversationID: conversationID))
             }
         }
         .focusable(interactions: .activate)
@@ -316,6 +362,7 @@ struct MessageActionsBubble: ViewModifier {
         switch action {
         case .copy: MessageActions.copy(message)
         case .selectText: model.beginSelecting(message.id)
+        case .reply: MessageActionsPerform.reply(to: message, store: store)
         }
     }
 }
