@@ -9,7 +9,7 @@ enum PausedWorkFixture {
     static let branches = ["Central Library", "Riverside Branch", "Hillcrest Branch", "Market Street Branch", "Harbor Branch",
                            "Northgate Branch", "Elm Park Branch", "Westfield Branch", "Old Town Branch", "Lakeside Branch",
                            "Southpoint Branch", "Maple Grove Branch", "Union Square Branch", "Cedar Hill Branch", "Brookside Branch",
-                           "Station Road Branch", "Garden Row Branch", "Mill Lane Branch", "Ferry Point Branch", "Orchard Branch"]
+                           "Station Road Branch", "Linden Row Branch", "Mill Lane Branch", "Ferry Point Branch", "Orchard Branch"]
 
     static func source(_ n: Int, read: Bool?) -> [String: Any] {
         let name = branches[(n - 1) % branches.count]
@@ -19,14 +19,18 @@ enum PausedWorkFixture {
         return entry
     }
 
-    static func checkpoint(read: Int, searchOnly: Int, earlier: Bool = false, interleave: Bool = true) -> [String: Any] {
+    static func checkpoint(read: Int, searchOnly: Int, unknown: Int = 0, earlier: Bool = false, interleave: Bool = true) -> [String: Any] {
         var sources: [[String: Any]] = []
         var next = 1
         var readLeft = read
         var searchLeft = searchOnly
         while readLeft > 0 || searchLeft > 0 {
             if readLeft > 0 { sources.append(source(next, read: true)); next += 1; readLeft -= 1 }
-            if searchLeft > 0, interleave || readLeft == 0 { sources.append(source(next, read: nil)); next += 1; searchLeft -= 1 }
+            if searchLeft > 0, interleave || readLeft == 0 { sources.append(source(next, read: false)); next += 1; searchLeft -= 1 }
+        }
+        for _ in 0..<unknown {
+            sources.append(source(next, read: nil))
+            next += 1
         }
         var object: [String: Any] = ["pending": ["kind": "cap"], "sources": sources, "rounds": 8, "calls": 8]
         if earlier { object["effects"] = [["title": "Save a note: reading-rooms.md", "outcome": "done"]] }
@@ -39,8 +43,9 @@ enum PausedWorkFixture {
         }
         let user = Message(role: .user, text: assignment)
         let assistant = Message(role: .assistant, text: "I'll look into that in the background.")
-        try repository.saveMessage(user, conversationID: conversationID, ordinal: 0)
-        try repository.saveMessage(assistant, conversationID: conversationID, ordinal: 1)
+        let ordinal = try repository.messages(conversationID: conversationID).count
+        try repository.saveMessage(user, conversationID: conversationID, ordinal: ordinal)
+        try repository.saveMessage(assistant, conversationID: conversationID, ordinal: ordinal + 1)
         return NativeTaskOrigin(conversationID: conversationID, userMessageID: user.id, assistantMessageID: assistant.id)
     }
 

@@ -822,7 +822,7 @@ struct MessageRow: View {
                         NativeDisplayBlocksView(blocks: message.displayBlocks,
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
-                            onDecide: store.answerNativeTask,
+                            onDecide: { store.answerNativeTask($0, choice: $1, expecting: $2) },
                             onSaveAnswer: store.saveNativeTaskAnswer,
                             highlightedTaskID: store.highlightedTaskID,
                             onRuleOffer: onRuleOffer)

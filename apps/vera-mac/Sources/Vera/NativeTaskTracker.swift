@@ -238,12 +238,13 @@ actor NativeTaskTracker {
         await decide(id, choice: "retry")
     }
 
-    func decide(_ id: UUID, choice: String) async {
+    func decide(_ id: UUID, choice: String, expecting expected: String? = nil) async {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
+              expected.map({ $0 == decision.id }) ?? true,
               decision.choices.contains(choice), !reference.cancelRequested else { return }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }

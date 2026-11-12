@@ -202,7 +202,7 @@ struct CompanionThreadPanel: View {
                     if asking {
                         ForEach(["continue", "finish"], id: \.self) { choice in
                             if let title = NativeTaskCardPresentation.choiceTitle(choice) {
-                                Button(title) { store.answerCompanionWork(item, choice: choice) }
+                                Button(title) { store.answerCompanionWork(item, choice: choice, expecting: detail.pause?.decisionID) }
                                     .accessibilityLabel("\(title), answer for \(item.title)")
                             }
                         }

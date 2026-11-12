@@ -60,7 +60,7 @@ enum CardShot {
                                                      services: "Can reach every service that is turned on.",
                                                      rules: store.companionRulesSummary, activity: [], results: [])
             content = AnyView(ShotView(store: store, section: .vera, companionPanel: model, height: size.height))
-        case "card-pause-read", "card-pause-empty", "card-pause-earlier", "card-pause-many", "card-pause-finishing":
+        case "card-pause-read", "card-pause-empty", "card-pause-earlier", "card-pause-many", "card-pause-finishing", "card-pause-found":
             size = CGSize(width: 1180, height: 1040)
             _ = seedPause(variant, store: store)
             let model = CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile,
@@ -366,6 +366,7 @@ enum CardShot {
         case "card-pause-empty": checkpoint = PausedWorkFixture.checkpoint(read: 0, searchOnly: 3)
         case "card-pause-earlier": checkpoint = PausedWorkFixture.checkpoint(read: 2, searchOnly: 1, earlier: true)
         case "card-pause-many": checkpoint = PausedWorkFixture.checkpoint(read: 9, searchOnly: 2)
+        case "card-pause-found": checkpoint = PausedWorkFixture.checkpoint(read: 0, searchOnly: 1, unknown: 4)
         default: checkpoint = PausedWorkFixture.checkpoint(read: 3, searchOnly: 2)
         }
         let long = variant == "card-pause-many" || variant == "detail-pause-read"

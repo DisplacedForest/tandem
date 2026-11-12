@@ -139,7 +139,7 @@ struct CompanionActivityDetail: Equatable, Sendable {
     }
 
     func showsRequest(title: String) -> Bool {
-        guard pause == nil, let request else { return false }
+        guard let request else { return false }
         return request.trimmingCharacters(in: .whitespacesAndNewlines) != title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

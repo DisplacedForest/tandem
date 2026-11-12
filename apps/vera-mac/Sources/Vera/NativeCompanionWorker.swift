@@ -155,18 +155,22 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         let fetched = definition.id == NativeWebTools.fetchToolID
         for entry in entries {
             guard case .string(let url)? = entry["url"], case .number(let n)? = entry["n"] else { continue }
-            if fetched, let index = known.firstIndex(where: { $0.n == Int(n) }) { known[index].read = true }
+            if fetched, let index = known.firstIndex(where: { $0.n == Int(n) && $0.url == url }) { known[index].read = true }
             guard !known.contains(where: { $0.url == url || $0.n == Int(n) }) else { continue }
             var title = ""
             if case .string(let text)? = entry["title"] { title = String(String.UnicodeScalarView(text.unicodeScalars.prefix(200))) }
-            known.append(NativeTaskSource(n: Int(n), title: title, url: url, read: fetched ? true : nil))
+            known.append(NativeTaskSource(n: Int(n), title: title, url: url, read: fetched))
         }
         sources = known.isEmpty ? nil : known
         return result
     }
 
+    static func citable(_ source: NativeTaskSource) -> Bool {
+        source.url.unicodeScalars.count <= 1024
+    }
+
     func cited(_ text: String) -> [[String: Any]] {
-        let known = (sources ?? []).filter { $0.url.unicodeScalars.count <= 1024 }
+        let known = (sources ?? []).filter(Self.citable)
         let refs = Set(CitationResolver.scan(text, known: Set(known.map(\.n))).refs)
         return known.filter { refs.contains($0.n) }.sorted { $0.n < $1.n }.map { ["n": $0.n, "title": $0.title, "url": $0.url] }
     }
@@ -850,18 +854,25 @@ private struct NativeCompanionRun {
     }
 
     func unfinishedReport(_ checkpoint: NativeCompanionCheckpoint) -> String {
-        let found = (checkpoint.sources ?? []).sorted { $0.n < $1.n }
+        let saved = (checkpoint.sources ?? []).sorted { $0.n < $1.n }
+        let found = saved.filter(NativeCompanionCheckpoint.citable)
+        let left = saved.count - found.count
         let earlier = NativeCompanionWorker.earlierLine(checkpoint)
-        var text = found.isEmpty && earlier == nil
-            ? "The write-up could not be finished, and nothing was found before it stopped."
+        var text = found.isEmpty && left == 0 && earlier == nil
+            ? "The write-up could not be finished. No pages were read before it stopped."
             : "The write-up could not be finished. This is what was saved before it stopped."
         func listed(_ sources: [NativeTaskSource]) -> String {
-            sources.map { "- " + ($0.title.isEmpty ? $0.url : $0.title) + " [\($0.n)]" }.joined(separator: "\n")
+            sources.map { "- " + $0.label + " [\($0.n)]" }.joined(separator: "\n")
         }
         let read = found.filter { $0.read == true }
-        let unread = found.filter { $0.read != true }
+        let searched = found.filter { $0.read == false }
+        let unknown = found.filter { $0.read == nil }
         if !read.isEmpty { text += "\n\nPages read:\n" + listed(read) }
-        if !unread.isEmpty { text += "\n\nFound in a search, not read:\n" + listed(unread) }
+        if !searched.isEmpty { text += "\n\nFound in a search, not read:\n" + listed(searched) }
+        if !unknown.isEmpty { text += "\n\nPages found:\n" + listed(unknown) }
+        if left > 0 {
+            text += left == 1 ? "\n\n1 more page was saved but can't be listed." : "\n\n\(left) more pages were saved but can't be listed."
+        }
         if let earlier { text += "\n\n" + earlier }
         return CompanionSavedText.sanitized(text)
     }

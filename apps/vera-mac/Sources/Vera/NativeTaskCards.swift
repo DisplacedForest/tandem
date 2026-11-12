@@ -133,7 +133,7 @@ struct NativeDisplayBlocksView: View {
     var connectedTaskIDs: Set<String>? = nil
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
-    var onDecide: ((String, String) -> Void)? = nil
+    var onDecide: ((String, String, String?) -> Void)? = nil
     var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
@@ -148,7 +148,7 @@ struct NativeDisplayBlocksView: View {
                         card: displayCard(card),
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
-                        onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
+                        onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0, card.pausedWork?.decisionID) } } : nil,
                         onSaveAnswer: saved(card) ? nil : onSaveAnswer.map { action in { action(card.id) } },
                         highlighted: highlightedTaskID == card.id)
                 case .link(let link):

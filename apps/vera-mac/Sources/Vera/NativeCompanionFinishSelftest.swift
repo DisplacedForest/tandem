@@ -20,7 +20,7 @@ final class NativeCompanionFinishModel: @unchecked Sendable {
     static func looping(callsPerRound: Int = 1) -> NativeCompanionFinishModel {
         NativeCompanionFinishModel { messages in
             let calls = (0..<callsPerRound).map {
-                NativeTaskGenerationToolCall(id: "call-\(messages.count)-\($0)", name: "garden_status", arguments: "{}")
+                NativeTaskGenerationToolCall(id: "call-\(messages.count)-\($0)", name: NativeCompanionFinishRig.lookupName, arguments: "{}")
             }
             return NativeTaskGenerationCompletion(content: "", toolCalls: calls, finishReason: "tool_calls")
         }
@@ -40,7 +40,7 @@ final class NativeCompanionFinishModel: @unchecked Sendable {
             return failures.removeFirst()
         }
         if let failure { throw failure }
-        if closing { return .text("The garden has three beds.") }
+        if closing { return .text("The central reading room has forty seats.") }
         return script(messages)
     }
 }
@@ -61,7 +61,7 @@ struct NativeCompanionFinishRig {
         let rules = NativeRuleSource()
         rules.setGlobal(NativeRules(choices: [:]))
         let grants = NativeFolderGrantSource()
-        let tools = custom ?? NativeCompanionHarness.tools(NativeCompanionFakeService(), reconcile: false)
+        let tools = custom ?? Self.libraryTools()
         environment = NativeCompanionWorkerEnvironment(
             context: { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: tools) },
             authority: { conversation, request in
@@ -74,7 +74,7 @@ struct NativeCompanionFinishRig {
                                                          taskCalls: standard.taskCalls)
     }
 
-    func create(_ assignment: String = "Check the garden", mode: String = "manual") throws -> String {
+    func create(_ assignment: String = "Check the reading room hours at the central library", mode: String = "manual") throws -> String {
         let dot = try NativeCompanionTaskPayload(assignment: assignment, mode: mode)
         let payload = NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))
         let encoder = JSONEncoder()
@@ -140,8 +140,9 @@ extension SelfTest {
         try await companionFinishAnsweredOnce()
         try await companionFinishOldCheckpoint()
         try await companionSourcesRead()
+        try await companionFinishSavedPages()
         try await companionFinishThroughEngine()
-        print("  companion finish OK (finish survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, one answer per question, older saved work, pages read or only found, tracker and engine end to end)")
+        print("  companion finish OK (finish survives a missing model, automatic and explicit retries, a relaunch and a stop, closing write-up only, unanswered calls answered once, terminal failure keeps saved sources, one answer per question, older saved work, pages read or only found, redirects never marked read, unfinished write-ups cite only listed pages, tracker and engine end to end)")
     }
 
     private static func companionCappedTwice(_ rig: NativeCompanionFinishRig) async throws -> NativeTaskRecord {
@@ -239,9 +240,9 @@ extension SelfTest {
     private static func companionFinishTerminal() async throws {
         let require = NativeTaskFixture.require
         let web = companionWebTools().1
-        let searching = NativeCompanionFinishModel { _ in NativeCompanionScriptedModel.call("web_search", "{\"query\":\"rain\"}") }
+        let searching = NativeCompanionFinishModel { _ in NativeCompanionScriptedModel.call("web_search", "{\"query\":\"reading rooms\"}") }
         let rig = try NativeCompanionFinishRig(rounds: 1, tools: web, model: searching)
-        _ = try rig.create("Find out how much rain fell")
+        _ = try rig.create("Find the reading room hours at the public libraries")
         let capped = try await rig.settle()
         try require(capped.record.state == .needsDecision && (try rig.checkpoint(capped.record)).sources?.count == 3,
                     "The search results are saved before the question")
@@ -255,7 +256,7 @@ extension SelfTest {
                     "A closing write-up that cannot run ends the work without asking again: \(ended.states)")
         try require(report.hasPrefix("The write-up could not be finished.") && report.contains("Rain totals [1]"),
                     "The result says the write-up could not be finished and lists what was saved: \(report)")
-        try require(report.contains("Found in a search, not read:") && !report.contains("Pages read:"),
+        try require(report.contains("Found in a search, not read:") && !report.contains("Pages read:") && !report.contains("Pages found:"),
                     "Pages that only turned up in a search are never listed as read: \(report)")
         try require(sources.compactMap { ($0["n"] as? NSNumber)?.intValue } == [1, 2, 3]
                     && sources.compactMap { $0["url"] as? String } == ["https://weather.example/rain", "https://gauge.example/levels", "https://third.example/"],
@@ -268,9 +269,11 @@ extension SelfTest {
         empty.model.failClosing(NativeTaskGenerationFailure(code: "input_limit"))
         try empty.reply(asked.record, "finish")
         let nothing = try await empty.settle()
+        let nothingReport = try empty.report(nothing.record)["report"] as? String ?? ""
         try require(nothing.record.state == .completed
-                    && (try empty.report(nothing.record)["report"] as? String) == "The write-up could not be finished, and nothing was found before it stopped.",
-                    "With nothing saved the result says so honestly")
+                    && nothingReport == "The write-up could not be finished. No pages were read before it stopped.",
+                    "With only other tool results the result says no pages were read: \(nothingReport)")
+        try require(!nothingReport.lowercased().contains("nothing"), "The result never claims nothing was found")
     }
 
     private static func companionFinishRelaunch() async throws {
@@ -373,7 +376,7 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let rig = try NativeCompanionFinishRig(model: .looping())
         let id = try rig.create()
-        let old = Data(#"{"attempt":"0ldattempt","calls":4,"effects":[],"pending":{"kind":"cap"},"rounds":4,"segment_calls":4,"segment_rounds":4,"sources":[{"n":1,"title":"Rain totals","url":"https://weather.example/rain"}],"thread_id":"companion-thread-1","transcript":[{"content":"","role":"assistant","tool_calls":[{"arguments":"{}","id":"old-1","name":"garden_status"}]},{"content":"{\"beds\":3}","role":"tool","tool_call_id":"old-1"}]}"#.utf8)
+        let old = Data(#"{"attempt":"0ldattempt","calls":4,"effects":[],"pending":{"kind":"cap"},"rounds":4,"segment_calls":4,"segment_rounds":4,"sources":[{"n":1,"title":"Opening hours","url":"https://hours.example.org/rooms"}],"thread_id":"companion-thread-1","transcript":[{"content":"","role":"assistant","tool_calls":[{"arguments":"{}","id":"old-1","name":"room_hours"}]},{"content":"{\"seats\":40}","role":"tool","tool_call_id":"old-1"}]}"#.utf8)
         let decoded = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: old)
         try require(decoded.finishing == nil && decoded.pending?.kind == "cap" && decoded.sources?.first?.read == nil,
                     "Older saved work reads with no finishing mark and its sources unread")
@@ -392,9 +395,9 @@ extension SelfTest {
 
     private static func companionSourcesRead() async throws {
         let require = NativeTaskFixture.require
-        let run = try await companionWebRun("Two inches fell [1]. The river rose two feet [2].")
+        let run = try await companionWebRun("The central room opens at nine [1]. The branch closes at five [2].")
         let saved = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: run.record.checkpoint)
-        try require(saved.sources?.map(\.n) == [1, 2, 3] && saved.sources?.map(\.read) == [nil, true, nil],
+        try require(saved.sources?.map(\.n) == [1, 2, 3] && saved.sources?.map(\.read) == [false, true, false],
                     "A page fetched after search is read and the others were only found: \(saved.sources ?? [])")
         let shown = run.result["sources"] as? [[String: Any]] ?? []
         try require(shown.allSatisfy { Set($0.keys) == ["n", "title", "url"] }, "The result's sources are unchanged")
@@ -404,26 +407,89 @@ extension SelfTest {
             throw NativeTaskFixture.Failure.assertion("The fake web tools include search and a page reader")
         }
         var direct = NativeCompanionCheckpoint()
-        _ = direct.numbered(.object(["url": .string("https://gauge.example/levels"), "title": .string("Gauge page"), "text": .string("Rose.")]),
-                            definition: fetcher, requested: "https://gauge.example/levels")
+        _ = direct.numbered(.object(["url": .string("https://central.example.org/reading-room"), "title": .string("Central reading room"),
+                                     "text": .string("Open nine to five.")]),
+                            definition: fetcher, requested: "https://central.example.org/reading-room")
         let found: NativeJSONValue = .object(["results": .array([
-            .object(["url": .string("https://gauge.example/levels"), "title": .string("River levels")]),
-            .object(["url": .string("https://weather.example/rain"), "title": .string("Rain totals")]),
+            .object(["url": .string("https://central.example.org/reading-room"), "title": .string("Reading rooms")]),
+            .object(["url": .string("https://hours.example.org/reading-rooms"), "title": .string("Opening hours")]),
         ])])
         _ = direct.numbered(found, definition: searcher)
-        try require(direct.sources?.map(\.n) == [1, 2] && direct.sources?.map(\.read) == [true, nil],
+        try require(direct.sources?.map(\.n) == [1, 2] && direct.sources?.map(\.read) == [true, false],
                     "A page fetched first stays read when it shows up in search, and search alone leaves a page unread")
         let reloaded = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: try direct.encoded())
         try require(reloaded.sources == direct.sources, "Whether a page was read survives a reload")
-        let searchRun = try await companionWebRun("Two inches fell [1].", tools: [searcher])
+        let searchRun = try await companionWebRun("The central room opens at nine [1].", tools: [searcher])
         let searchOnly = try JSONDecoder().decode(NativeCompanionCheckpoint.self, from: searchRun.record.checkpoint)
-        try require(searchOnly.sources?.allSatisfy { $0.read == nil } == true, "Search alone marks nothing read")
+        try require(searchOnly.sources?.isEmpty == false && searchOnly.sources?.allSatisfy { $0.read == false } == true,
+                    "Search alone marks every page as found and not read")
+
+        var moved = NativeCompanionCheckpoint()
+        _ = moved.numbered(.object(["results": .array([
+            .object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours")]),
+        ])]), definition: searcher)
+        let landed = moved.numbered(.object(["url": .string("https://www.example.org/rooms-moved"), "title": .string("Moved page"),
+                                             "text": .string("Open nine to five.")]),
+                                    definition: fetcher, requested: "https://hours.example.org/rooms")
+        guard case .object(let page) = landed, case .number(let landedNumber)? = page["n"] else {
+            throw NativeTaskFixture.Failure.assertion("The moved page keeps a number")
+        }
+        try require(Int(landedNumber) == 1 && moved.sources?.count == 1 && moved.sources?.first?.read == false
+                    && moved.sources?.first?.url == "https://hours.example.org/rooms" && moved.sources?.first?.title == "Reading room hours"
+                    && moved.aliases?["https://www.example.org/rooms-moved"] == 1,
+                    "A page that lands somewhere else keeps its number but is not marked read: \(moved.sources ?? [])")
+        _ = moved.numbered(.object(["url": .string("https://hours.example.org/rooms"), "title": .string("Reading room hours"),
+                                    "text": .string("Open nine to five.")]),
+                           definition: fetcher, requested: "https://hours.example.org/rooms")
+        try require(moved.sources?.map(\.read) == [true] && moved.sources?.count == 1,
+                    "Fetching the same address marks the page found in a search as read: \(moved.sources ?? [])")
+    }
+
+    private static func companionFinishSavedPages() async throws {
+        let require = NativeTaskFixture.require
+        let long = "https://archive.example.org/" + String(repeating: "a", count: 1100)
+        let sources: [[String: Any]] = [
+            ["n": 1, "title": "Central reading room", "url": "https://central.example.org/reading-room", "read": true],
+            ["n": 2, "title": "Archive scan", "url": long, "read": true],
+            ["n": 3, "title": "https://www.example.org/hours", "url": "https://www.example.org/hours", "read": true],
+            ["n": 4, "title": "Branch list", "url": "https://branches.example.org/", "read": false],
+            ["n": 5, "title": "Opening hours", "url": "https://hours.example.org/reading-rooms"],
+            ["n": 6, "title": "", "url": "https://seats.example.org/count"],
+        ]
+        let rig = try NativeCompanionFinishRig(model: .looping())
+        let id = try rig.create()
+        let checkpoint: [String: Any] = [
+            "attempt": "savedpages", "calls": 4, "effects": [], "pending": ["kind": "cap"], "rounds": 4, "segment_calls": 4,
+            "segment_rounds": 4, "sources": sources, "thread_id": "companion-thread-1",
+            "transcript": [["content": "", "role": "assistant", "tool_calls": [["arguments": "{}", "id": "saved-1", "name": NativeCompanionFinishRig.lookupName]]],
+                           ["content": "{\"seats\":40}", "role": "tool", "tool_call_id": "saved-1"]],
+        ]
+        guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else { throw NativeTaskFixture.Failure.assertion("Claimed") }
+        let waiting = try rig.store.commitStep(id, generation: claimed.generation, step: NativeTaskStepResult(
+            state: .needsDecision, checkpoint: try NativeTaskStore.canonical(checkpoint), event: "progress",
+            decision: try NativeTaskStore.canonical(["prompt": "Keep going, or finish with what it has?", "choices": ["continue", "finish"]])))
+        rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
+        try rig.reply(waiting, "finish")
+        let ended = try await rig.settle()
+        let result = try rig.report(ended.record)
+        let report = result["report"] as? String ?? ""
+        let listed = Set((result["sources"] as? [[String: Any]] ?? []).compactMap { ($0["n"] as? NSNumber)?.intValue })
+        let cited = Set(CitationResolver.scan(report, known: Set(1...6)).refs)
+        try require(ended.record.state == .completed && !cited.isEmpty && cited.isSubset(of: listed) && !cited.contains(2),
+                    "Every number in the unfinished write-up has a matching source: cited \(cited.sorted()) listed \(listed.sorted())\n\(report)")
+        try require(report.contains("1 more page was saved but can't be listed.") && !report.contains("Archive scan"),
+                    "A page that can't be listed is counted, not cited: \(report)")
+        try require(report.contains("Pages read:\n- Central reading room [1]\n- example.org [3]")
+                    && report.contains("Found in a search, not read:\n- Branch list [4]")
+                    && report.contains("Pages found:\n- Opening hours [5]\n- seats.example.org [6]"),
+                    "Read, search-only and older pages each get their own list with readable names: \(report)")
+        try require(!report.contains("http") && !report.lowercased().contains("nothing"), "No address is used as a name and nothing is overstated: \(report)")
     }
 
     nonisolated static func companionEngineCompletion(_ job: NativeTaskGenerationJob) -> NativeTaskGenerationCompletion {
         if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-        if job.tools == nil || job.toolChoice == "none" { return .text("The garden has three beds.") }
-        return NativeCompanionScriptedModel.call("garden_status", "{}", id: "call-\(job.messages.count)")
+        if job.tools == nil || job.toolChoice == "none" { return .text("The central reading room has forty seats.") }
+        return NativeCompanionScriptedModel.call(NativeCompanionFinishRig.lookupName, "{}", id: "call-\(job.messages.count)")
     }
 
     private static func companionFinishThroughEngine() async throws {
@@ -436,7 +502,7 @@ extension SelfTest {
         let rules = NativeRuleSource()
         rules.setGlobal(NativeRules(choices: [:]))
         let grants = NativeFolderGrantSource()
-        let tools = NativeCompanionHarness.tools(NativeCompanionFakeService(), reconcile: false)
+        let tools = NativeCompanionFinishRig.libraryTools()
         var environment = NativeCompanionWorkerEnvironment(
             context: { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: tools) },
             authority: { conversation, request in
@@ -456,7 +522,7 @@ extension SelfTest {
                 return companionEngineCompletion(job)
             }
         try await harness.start()
-        let reference = try await harness.submitDot("Check the garden")
+        let reference = try await harness.submitDot("Check the reading room hours at the central library")
         func decision() throws -> NativeTaskDecision? {
             guard let snapshot = try repository.taskProjection(id: reference.id)?.snapshot, snapshot.state == .needsDecision else { return nil }
             return snapshot.decision
@@ -499,6 +565,19 @@ extension SelfTest {
 }
 
 extension NativeCompanionFinishRig {
+    static let lookupName = "room_hours"
+
+    static func libraryTools() -> [NativeToolDefinition] {
+        let object: NativeJSONValue = .object(["type": .string("object"), "properties": .object([:])])
+        var hours = NativeToolDefinition(id: "library", name: lookupName, title: "Check the reading room hours",
+                                         description: "Read the reading room opening hours", parameters: object, confirmation: .none,
+                                         isAvailable: { true }, execute: { _ in
+            .object(["opens": .string("9:00"), "closes": .string("17:00"), "seats": .number(40)])
+        })
+        hours.effect = .read
+        return [hours]
+    }
+
     func decision(_ record: NativeTaskRecord) throws -> [String] {
         guard let raw = record.decision else { throw NativeTaskFixture.Failure.assertion("A question is waiting") }
         return try NativeTaskStore.object(raw)["choices"] as? [String] ?? []

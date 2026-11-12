@@ -78,7 +78,7 @@ enum NativeTaskProjection {
             }
             card.status = .needsInput
             if dot, PausedWorkCopy.applies(snapshot) {
-                let pause = PausedWorkCopy.pause(snapshot.checkpoint, answer: retryPending ? answered : nil)
+                let pause = PausedWorkCopy.pause(snapshot.checkpoint, answer: retryPending ? answered : nil, decisionID: decision.id)
                 card.pause = pause
                 card.milestone = PausedWorkCopy.answered(pause.answer) ?? PausedWorkCopy.savedMilestone
                 break
