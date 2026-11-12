@@ -62,6 +62,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
                                     remembered: asksTools.contains { $0.utf8.elementsEqual(name.utf8) }, hints: hints)
     }
     func sameService(_ other: Self) -> Bool { asking([]) == other.asking([]) }
+    func carried(_ previous: Self) -> Set<String> { previous.id == id && previous.endpoint == endpoint ? previous.asksTools : [] }
     func asking(_ names: Set<String>) -> Self {
         var copy = self
         copy.asksTools = names.intersection(readTools)
@@ -190,8 +191,8 @@ final class NativeMCPAccess: @unchecked Sendable {
             let previous = (Array(oauthOwners.values), Array(authorizations.values), observer)
             oauthOwners = [:]
             authorizations = [:]
-            let remembered = Dictionary(states.map { ($0.id, $0.configuration.asksTools) }, uniquingKeysWith: { first, _ in first })
-            states = servers.map { NativeMCPServerState(configuration: $0.asking($0.asksTools.union(remembered[$0.id] ?? []))) }
+            let remembered = Dictionary(states.map { ($0.id, $0.configuration) }, uniquingKeysWith: { first, _ in first })
+            states = servers.map { NativeMCPServerState(configuration: $0.asking($0.asksTools.union(remembered[$0.id].map($0.carried) ?? []))) }
             revision += 1
             return previous
         }
@@ -209,7 +210,7 @@ final class NativeMCPAccess: @unchecked Sendable {
                     next.append(NativeMCPServerState(configuration: server))
                     continue
                 }
-                let server = server.asking(server.asksTools.union(state.configuration.asksTools))
+                let server = server.asking(server.asksTools.union(server.carried(state.configuration)))
                 if state.configuration == server {
                     next.append(state)
                 } else if state.configuration.sameService(server) || Self.keepsConnection(state, server) {

@@ -486,6 +486,13 @@ enum NativeMCPChangesSelftest {
         await manager.disconnect(id)
         await manager.connect(id)
         try require((savedRow(disk)?["asks_tools"] as? [String]) == ["lookup"], "A save that failed is tried again on the next connection, even after the service stopped marking the tool")
+        let elsewhere = try NativeMCPServerConfiguration(id: id, name: "Other tracker", endpoint: URL(string: "https://other-fixture.invalid/mcp")!, readTools: ["lookup"])
+        await manager.replaceConfiguration([elsewhere])
+        try require(manager.servers.first?.configuration.asksTools.isEmpty == true, "A marking does not follow its id to a different address when the configuration is replaced")
+        manager.applyConfigurationSynchronously(NativeMCPServerConfiguration.load(disk.contents).0)
+        try require(manager.servers.first?.configuration.asksTools == ["lookup"], "The saved marking comes back with the saved service")
+        manager.applyConfigurationSynchronously([elsewhere])
+        try require(manager.servers.first?.configuration.asksTools.isEmpty == true, "A marking does not follow its id to a different address when the configuration is edited")
         withExtendedLifetime(config) {}
     }
 
