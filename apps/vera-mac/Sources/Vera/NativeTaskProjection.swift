@@ -211,7 +211,7 @@ enum NativeTaskProjection {
             throw NativeTaskHTTPError.invalidResponse
         }
         return try sources.map { source in
-            guard (1...14).contains(source.n), source.title.unicodeScalars.count <= 200,
+            guard (1...14).contains(source.n), source.title.unicodeScalars.count <= NativeTaskSource.labelScalars,
                   source.url.unicodeScalars.count <= 1024 else {
                 throw NativeTaskHTTPError.invalidResponse
             }

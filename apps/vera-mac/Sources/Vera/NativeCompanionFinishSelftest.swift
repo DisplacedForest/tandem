@@ -517,6 +517,12 @@ extension SelfTest {
         try require(named[3] == "example.org" && named[6] == "seats.example.org" && named[1] == "Central reading room"
                     && !named.values.contains { $0.contains("http") } && linked.contains("https://www.example.org/hours"),
                     "The saved result names each source readably and keeps where it goes: \(named)")
+        let wide = "https://" + (0..<3).map { _ in String(repeating: "b", count: 63) }.joined(separator: ".") + ".example.org/hours"
+        let untitled = NativeTaskSource(n: 1, title: "", url: wide, read: true)
+        let shown = try NativeTaskProjection.displaySources([NativeTaskSource(n: 1, title: untitled.label, url: untitled.url)])
+        try require(untitled.label.unicodeScalars.count == NativeTaskSource.labelScalars && shown.first?.title == untitled.label
+                    && NativeTaskSource(n: 2, title: String(repeating: "t", count: 260), url: "https://example.org/a").label.unicodeScalars.count == NativeTaskSource.labelScalars,
+                    "A very long site name is cut to what a finished result can show: \(untitled.label.unicodeScalars.count)")
     }
 
     private static func companionFinishFallbackKeepsPages() async throws {
