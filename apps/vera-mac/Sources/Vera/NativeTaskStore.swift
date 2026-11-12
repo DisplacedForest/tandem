@@ -66,7 +66,7 @@ struct NativeTaskStepResult: Sendable {
 
 final class NativeTaskStore: Sendable {
     static let maximumJSONBytes = 262144
-    static let maximumCheckpointBytes = 786432
+    static let maximumCheckpointBytes = 720896
     static let maximumSnapshotBytes = 1048576
     static let maximumEventBytes = 16384
     static let emptyObject = Data("{}".utf8)

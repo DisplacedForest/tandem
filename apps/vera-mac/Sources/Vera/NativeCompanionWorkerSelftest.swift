@@ -462,14 +462,15 @@ extension SelfTest {
             let context = NativeCompanionWorker.authority(base, taskID: id, origin: origin).resolver.context
             try require(context?.taskID == id && context?.scheduleID == scheduleID, "Decisions in a \(mode) run see the schedule that started it")
         }
-        let insisting = try NativeCompanionHarness(rules: permissive) { messages in
+        var insisting = try NativeCompanionHarness(rules: permissive) { messages in
             NativeCompanionScriptedModel.call("water_bed", "{\"bed\":\"north\"}", id: "call-\(NativeCompanionScriptedModel.toolResults(messages).count)")
         }
+        insisting.environment.budget = NativeCompanionWorkerBudget(transcriptBytes: 16384 + 6000)
         let insistingID = try insisting.create(mode: "scheduled", scheduleID: schedule)
-        let gaveUp = try await insisting.runUntilSettled(40)
+        let gaveUp = try await insisting.runUntilSettled(400)
         let gaveUpReport = try insisting.result(gaveUp)["report"] as? String ?? ""
         try require(gaveUp.state == .completed && insisting.service.count("water_bed") == 0 && (try insisting.effects(insistingID)).isEmpty,
-                    "A scheduled run that keeps asking to write finishes at its limit and never waits to be told to keep going")
+                    "A scheduled run that keeps asking to write finishes when it runs out of room and never waits to be told to keep going")
         try require(gaveUpReport.components(separatedBy: "Left undone").count == 2, "Its report names the undone step once")
         for uncertain in [false, true] {
             let legacy = try NativeCompanionHarness(rules: [.networkSends: .ask], withReconcile: true, script: script)
@@ -1326,22 +1327,22 @@ extension SelfTest {
                     "The stopped task keeps the action the person should check")
 
         var crowded = NativeCompanionCheckpoint()
-        crowded.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 32000),
+        crowded.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 96000),
                                                           toolCalls: [NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"),
                                                                       NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}")])]
-        let quotes = String(repeating: "\"", count: 90000)
+        let quotes = String(repeating: "\"", count: 270000)
         crowded.answer(NativeTaskGenerationToolCall(id: "c1", name: "garden_status", arguments: "{}"), quotes)
         crowded.answer(NativeTaskGenerationToolCall(id: "c2", name: "garden_status", arguments: "{}"), quotes)
-        try require(try crowded.encoded().count < NativeTaskStore.maximumJSONBytes,
+        try require(try crowded.encoded().count < NativeTaskStore.maximumCheckpointBytes,
                     "Escaping-heavy results are cut to fit the saved checkpoint")
 
         var envelopes = NativeCompanionCheckpoint()
         let ids = (0..<64).map { index in String(repeating: "\u{1}", count: 120) + String(format: "%04d", index) }
-        envelopes.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 23000),
+        envelopes.transcript = [NativeTaskGenerationMessage(role: "assistant", content: String(repeating: "\u{1}", count: 69000),
                                                             toolCalls: ids.map { NativeTaskGenerationToolCall(id: $0, name: "garden_status", arguments: "{}") })]
-        envelopes.answer(NativeTaskGenerationToolCall(id: ids[0], name: "garden_status", arguments: "{}"), String(repeating: "\"", count: 32000))
+        envelopes.answer(NativeTaskGenerationToolCall(id: ids[0], name: "garden_status", arguments: "{}"), String(repeating: "\"", count: 96000))
         for id in ids.dropFirst() { envelopes.answer(NativeTaskGenerationToolCall(id: id, name: "unknown", arguments: "{}"), NativeCompanionWorker.message("Unknown tool.")) }
-        try require(try envelopes.encoded().count < NativeTaskStore.maximumJSONBytes && envelopes.outstandingCalls.isEmpty,
+        try require(try envelopes.encoded().count < NativeTaskStore.maximumCheckpointBytes && envelopes.outstandingCalls.isEmpty,
                     "Every call is answered and the checkpoint still fits, whatever the call ids look like")
 
         let blind = try NativeCompanionHarness(rules: [.networkSends: .act], toolSeconds: 0.2, script: waterThenReport)
@@ -1354,7 +1355,7 @@ extension SelfTest {
                     && (try JSONDecoder().decode(NativeTaskCheckpoint.self, from: canceled.checkpoint)).unconfirmedEffects == ["Water a bed"],
                     "Stopping while the person is asked whether it happened still names the action to check")
 
-        let huge = String(repeating: "word ", count: 50000)
+        let huge = String(repeating: "word ", count: 150000)
         let wordy = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty
                 ? NativeTaskGenerationCompletion(content: huge, toolCalls: [NativeTaskGenerationToolCall(id: "call-1", name: "water_bed", arguments: "{\"bed\":\"north\"}")],
@@ -1363,13 +1364,13 @@ extension SelfTest {
         }
         _ = try wordy.create()
         let kept = try await wordy.step()
-        try require(kept.state == .queued && wordy.service.count("water_bed") == 1 && kept.checkpoint.count < NativeTaskStore.maximumJSONBytes,
+        try require(kept.state == .queued && wordy.service.count("water_bed") == 1 && kept.checkpoint.count < NativeTaskStore.maximumCheckpointBytes && !String(decoding: kept.checkpoint, as: UTF8.self).contains("word word"),
                     "An oversized reply keeps its actions and drops its prose so the checkpoint still saves")
 
         let bulky = String(repeating: "x", count: 15000)
         let flooding = try NativeCompanionHarness(rules: [.networkSends: .act]) { messages in
             NativeCompanionScriptedModel.toolResults(messages).isEmpty && !messages.contains(where: { $0.role == "assistant" })
-                ? NativeTaskGenerationCompletion(content: "", toolCalls: (0..<20).map {
+                ? NativeTaskGenerationCompletion(content: "", toolCalls: (0..<50).map {
                     NativeTaskGenerationToolCall(id: "call-\($0)", name: "water_bed", arguments: "{\"bed\":\"\(bulky)\"}") }, finishReason: "tool_calls")
                 : .text("Finished.")
         }

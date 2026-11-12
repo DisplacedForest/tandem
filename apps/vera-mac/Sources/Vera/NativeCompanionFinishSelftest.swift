@@ -302,7 +302,7 @@ extension SelfTest {
         let sources = result["sources"] as? [[String: Any]] ?? []
         try require(ended.record.state == .completed && !ended.states.contains(.needsDecision) && (try rig.asked(id)) == 0,
                     "A closing write-up that cannot run ends the work without asking: \(ended.states)")
-        try require(report.hasPrefix("The write-up could not be finished.") && report.contains("Rain totals [1]"),
+        try require(report.hasPrefix("I couldn't finish the write-up. Here's what I'd saved.") && report.contains("Rain totals [1]"),
                     "The result says the write-up could not be finished and lists what was saved: \(report)")
         try require(report.contains("Found in a search, not read:") && !report.contains("Pages read:") && !report.contains("Pages found:"),
                     "Pages that only turned up in a search are never listed as read: \(report)")
@@ -317,14 +317,14 @@ extension SelfTest {
         let nothing = try await empty.settle()
         let nothingReport = try empty.report(nothing.record)["report"] as? String ?? ""
         try require(nothing.record.state == .completed
-                    && nothingReport == "The write-up could not be finished. No pages were read before it stopped.",
+                    && nothingReport == "I couldn't finish the write-up. I hadn't read any pages yet.",
                     "With only other tool results the result says no pages were read: \(nothingReport)")
         try require(!nothingReport.lowercased().contains("nothing"), "The result never claims nothing was found")
     }
 
     private static func companionFinishScalarLimit() async throws {
         let require = NativeTaskFixture.require
-        let lead = "The write-up could not be finished. This is what was saved before it stopped."
+        let lead = "I couldn't finish the write-up. Here's what I'd saved."
         let title = "a" + String(repeating: "\u{0301}", count: 12000)
         let definition = NativeCompanionFinishRig.libraryTools()[0]
         let described = NativeCompanionWorker.describe(definition, ["title": .string(title)])
