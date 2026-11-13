@@ -81,6 +81,7 @@ enum OwnSettingsSelftest {
         try checkDatabase(runRoot, scratch: scratch.appendingPathComponent("database", isDirectory: true))
         try checkRealFiles(scratch.appendingPathComponent("real-files", isDirectory: true))
         try checkToolsProbe(scratch.appendingPathComponent("tools-probe", isDirectory: true))
+        try checkOutputs(scratch.appendingPathComponent("outputs", isDirectory: true))
         try await checkWebViews()
         try checkKeysStayInMemory()
         try checkPreferences()
@@ -336,6 +337,55 @@ enum OwnSettingsSelftest {
         }
     }
 
+    static func spawn(_ arguments: [String], environment extra: [String: String]) throws -> (status: Int32, errors: String, printed: String) {
+        guard let binary = Bundle.main.executableURL else { throw NativeTaskFixture.Failure.assertion("The selftest binary is known") }
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(extra) { $1 }
+        let errors = Pipe()
+        let output = Pipe()
+        process.standardError = errors
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        return (process.terminationStatus, String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
+                String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+
+    static func checkOutputs(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let config = AppLocations.realConfigFolder(home: home)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: AppLocations.dataFolder(home: home), withIntermediateDirectories: true)
+        let settings = AppLocations.realSettingsFile(home: home)
+        let original = Data("stand-in settings".utf8)
+        try original.write(to: settings)
+        let linkedParent = root.appendingPathComponent("linked-parent", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: linkedParent, withDestinationURL: config)
+        let fresh = config.appendingPathComponent("new-shot.png")
+        try require(AppLocations.touchesRealFiles(settings, home: home), "An output aimed at the settings file is refused")
+        try require(AppLocations.touchesRealFiles(fresh, home: home), "An output that doesn't exist yet inside the config folder is refused")
+        try require(AppLocations.touchesRealFiles(linkedParent.appendingPathComponent("other.png"), home: home), "An output under a linked parent is refused")
+        try require(AppLocations.touchesRealFiles(AppLocations.dataFolder(home: home).appendingPathComponent("x.png"), home: home),
+                    "An output inside the data folder is refused")
+        try require(!AppLocations.touchesRealFiles(root.appendingPathComponent("shot.png"), home: home), "An ordinary scratch output is allowed")
+        try require(AppLocations.standInHome == nil && AppLocations.checkedOutput(root.appendingPathComponent("shot.png").path) == root.appendingPathComponent("shot.png"),
+                    "A checked output is the path that was asked for")
+
+        let standIn = [AppLocations.standInHomeSetting: home.path]
+        let shot = try spawn(["--shot", settings.path, "--view", "chat"], environment: standIn)
+        try require(shot.status == 3 && shot.errors.contains("This test run keeps its own files") && (try? Data(contentsOf: settings)) == original,
+                    "A shot aimed at the stand-in settings file stops with exit 3 and leaves it byte for byte")
+        let linked = try spawn(["--shot", linkedParent.appendingPathComponent("through-link.png").path, "--view", "chat"], environment: standIn)
+        try require(linked.status == 3 && !FileManager.default.fileExists(atPath: config.appendingPathComponent("through-link.png").path),
+                    "A shot aimed through a linked parent stops and writes nothing")
+        let repository = try spawn(["--selftest"], environment: standIn.merging([probeSetting: "repository"]) { $1 })
+        try require(repository.status == 3 && !repository.printed.contains("PROBE NOT STOPPED") && (try? Data(contentsOf: settings)) == original,
+                    "A history opened on the stand-in settings file stops before it is read or changed")
+    }
+
     static func checkToolsProbe(_ root: URL) throws {
         let require = NativeTaskFixture.require
         guard let real = AppLocations.realSettingsFile, let binary = Bundle.main.executableURL else { return }
@@ -376,7 +426,8 @@ enum OwnSettingsSelftest {
         defer { server.stop() }
         let port = server.port
         let restricted = OutboundGuard.webView()
-        let html = "<html><body><img src='http://127.0.0.1:\(port)/inside.gif'><img src='http://localhost.:\(port)/trailing.gif'><img src='http://198.51.100.7:9/outside.gif'></body></html>"
+        let script = "<script>document.title = 'script ran'; new Image().src = 'http://127.0.0.1:\(port)/script.gif';</script>"
+        let html = "<html><body><img src='http://127.0.0.1:\(port)/inside.gif'><img src='http://localhost.:\(port)/trailing.gif'><img src='http://198.51.100.7:9/outside.gif'>\(script)</body></html>"
         _ = restricted.loadHTMLString(html, baseURL: nil)
         let started = Date()
         var settled = false
@@ -389,14 +440,19 @@ enum OwnSettingsSelftest {
         try require(settled && server.paths.contains("/inside.gif"), "A test run's web view loads from a loopback fixture")
         try require(!server.paths.contains("/trailing.gif"), "A blocked address is never attempted, even one that would reach this Mac")
         try require(elapsed < 15, "The outside image finished at once instead of waiting on a connection")
+        try await Task.sleep(for: .milliseconds(500))
+        let title = try? await restricted.evaluateJavaScript("document.title") as? String
+        try require(!server.paths.contains("/script.gif") && title != "script ran", "Page script never runs in a test run's web view")
 
         let open = OutboundGuard.webView(policy: .open)
-        _ = open.loadHTMLString("<html><body><img src='http://localhost.:\(port)/control.gif'></body></html>", baseURL: nil)
+        let controlScript = "<script>new Image().src = 'http://127.0.0.1:\(port)/script-control.gif';</script>"
+        _ = open.loadHTMLString("<html><body><img src='http://localhost.:\(port)/control.gif'>\(controlScript)</body></html>", baseURL: nil)
         let controlStarted = Date()
-        while Date().timeIntervalSince(controlStarted) < 15 && !server.paths.contains("/control.gif") {
+        while Date().timeIntervalSince(controlStarted) < 15 && !(server.paths.contains("/control.gif") && server.paths.contains("/script-control.gif")) {
             try await Task.sleep(for: .milliseconds(200))
         }
         try require(server.paths.contains("/control.gif"), "Without the restriction the same kind of address does reach the fixture, so the block is what stopped it")
+        try require(server.paths.contains("/script-control.gif"), "Without the restriction the same page script does run, so the restriction is what stopped it")
     }
 
     static func checkKeysStayInMemory() throws {
@@ -461,6 +517,11 @@ enum OwnSettingsSelftest {
             _ = NativeKeychainOperations().read(query as CFDictionary, nil)
         case "preferences":
             _ = AppLocations.standardPreferences
+        case "repository":
+            guard let home = AppLocations.standInHome else { break }
+            let target = AppLocations.realSettingsFile(home: home)
+            guard AppLocations.isHeadless, AppLocations.protectsFile(target) else { break }
+            _ = try? LocalChatRepository(url: target)
         case "tools":
             let folder = NativeCapabilityTools.defaultDirectory
             let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []

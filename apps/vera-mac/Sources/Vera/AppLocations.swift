@@ -245,13 +245,37 @@ struct AppLocations: Equatable, Sendable {
         return touchesRealFiles(folder, home: home, foldCase: foldCase) || holdsConfig || holdsData
     }
 
+    static let standInHomeSetting = "VERA_TRAP_STAND_IN_HOME"
+
+    static var standInHome: URL? {
+        guard isHeadless, let raw = ProcessInfo.processInfo.environment[standInHomeSetting], !raw.isEmpty else { return nil }
+        return URL(fileURLWithPath: raw, isDirectory: true)
+    }
+
+    static func protectsFile(_ url: URL) -> Bool {
+        touchesRealFiles(url) || standInHome.map { touchesRealFiles(url, home: $0) } == true
+    }
+
     static func refuseRealFile(_ url: URL) {
-        guard isHeadless, touchesRealFiles(url) else { return }
+        guard isHeadless, protectsFile(url) else { return }
         stop("This test run keeps its own files, but it was about to read \(url.path), which belongs to the app's real settings or data.")
     }
 
+    static func checkedOutput(_ path: String) -> URL {
+        let url = URL(fileURLWithPath: path)
+        refuseRealFile(url)
+        return url
+    }
+
+    static func refuseRealArguments(_ arguments: [String]) {
+        for argument in arguments where !argument.isEmpty && !argument.hasPrefix("--") {
+            refuseRealFile(URL(fileURLWithPath: argument))
+        }
+    }
+
     static func refuseRealFolder(_ url: URL) {
-        guard isHeadless, holdsRealFiles(url) else { return }
+        let standIn = standInHome.map { holdsRealFiles(url, home: $0) } == true
+        guard isHeadless, holdsRealFiles(url) || standIn else { return }
         stop("This test run keeps its own files, but it was about to open the folder \(url.path), which holds or belongs to the app's real settings or data.")
     }
 

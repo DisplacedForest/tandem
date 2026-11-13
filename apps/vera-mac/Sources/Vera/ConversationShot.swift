@@ -62,7 +62,7 @@ enum ConversationShot {
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { exit(1) }
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
-        do { try data.write(to: URL(fileURLWithPath: path)); print("Rendered conversation") }
+        do { try data.write(to: AppLocations.checkedOutput(path)); print("Rendered conversation") }
         catch { exit(1) }
     }
 }

@@ -10,6 +10,7 @@ if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.enviro
 }
 OutboundGuard.install(OutboundGuard.policy(for: launchMode, environment: ProcessInfo.processInfo.environment))
 AppLocations.settle()
+AppLocations.refuseRealArguments(Array(arguments.dropFirst()))
 AppLocations.checkSettingDataRoot()
 switch SelectedCredentialAuthorization.dispatch(Array(arguments.dropFirst())) {
 case .authorize(let values):

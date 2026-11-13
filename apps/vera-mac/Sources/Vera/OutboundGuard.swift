@@ -182,6 +182,8 @@ final class GuardedWebView: WKWebView {
         }()
         store.proxyConfigurations = [proxy]
         configuration.websiteDataStore = store
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         navigationGuard = GuardedWebNavigation(policy: chosen)
         super.init(frame: .zero, configuration: configuration)
         navigationDelegate = navigationGuard
@@ -245,12 +247,14 @@ final class GuardedWebNavigation: NSObject, WKNavigationDelegate {
 
     init(policy: OutboundGuard.Policy) { self.policy = policy }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        preferences.allowsContentJavaScript = false
         guard OutboundGuard.permits(navigationAction.request.url, policy: policy) else {
             OutboundGuard.noteRefusal()
-            return .cancel
+            return (.cancel, preferences)
         }
-        return .allow
+        return (.allow, preferences)
     }
 }
 

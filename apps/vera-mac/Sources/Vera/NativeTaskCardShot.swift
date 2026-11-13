@@ -84,7 +84,7 @@ enum NativeTaskCardShot {
             exit(1)
         }
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("Rendered task card")
         } catch {
             FileHandle.standardError.write(Data("Task card image couldn't be saved\n".utf8))

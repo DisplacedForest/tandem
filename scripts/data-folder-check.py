@@ -9,82 +9,107 @@ ROOT = "apps/vera-mac/Sources/Vera"
 GUARDED = r"(?:UserDefaults|URLSession|KeychainNativeCredentialStore|NWConnection|WKWebView)"
 
 RULES = [
-    (r"applicationSupportDirectory",
+    ("support", r"applicationSupportDirectory",
      {"AppLocations.swift", "AppLocationsSelftest.swift"},
      "looks up applicationSupportDirectory"),
-    (r"homeDirectoryForCurrentUser|NSHomeDirectory",
+    ("home", r"homeDirectoryForCurrentUser|NSHomeDirectory",
      {"AppLocations.swift", "AppLocationsSelftest.swift", "EngineManager.swift", "NativeCompanionLive.swift",
       "NativePiModelBroker.swift", "NativePiPresentation.swift"},
      "looks up the home folder"),
-    (r"\bUserDefaults\s*\.\s*standard\b|\bUserDefaults\s*=\s*\.\s*standard\b|:\s*UserDefaults\s*\??\s*=\s*\.\s*standard\b",
+    ("standard", r"\bUserDefaults\s*\.\s*standard\b|\bUserDefaults\s*\??\s*=\s*\.\s*standard\b",
      {"AppLocations.swift"},
      "uses the standard preferences"),
-    (r"\bUserDefaults\s*(?:\.\s*init\s*)?\(\s*suiteName\b|\.\s*init\s*\(\s*suiteName\s*:",
+    ("suite", r"\bUserDefaults\s*(?:\.\s*init\s*)?\(\s*suiteName\b|\.\s*init\s*\(\s*suiteName\s*:",
      {"MemoryPreferences.swift"},
      "opens a preferences suite"),
-    (r"@AppStorage\s*\((?![^)]*\bstore\s*:)",
+    ("storage", r"@AppStorage\s*\((?![^)]*\bstore\s*:)",
      set(),
      "keeps a preference without naming its store"),
-    (r"\bKeychainNativeCredentialStore\s*(?:\.\s*init\s*)?\((?![^)]*\boperations\s*:)"
+    ("keychain", r"\bKeychainNativeCredentialStore\s*(?:\.\s*init\s*)?\((?![^)]*\boperations\s*:)"
      r"|\bKeychainNativeCredentialStore\s*\??\s*=\s*\.\s*init\s*\((?![^)]*\boperations\s*:)"
      r"|\.\s*init\s*\(\s*allowsInteraction\s*:(?![^)]*\boperations\s*:)",
      {"AppLocations.swift", "NativeProviderSmoke.swift", "OwnSettingsSelftest.swift"},
      "builds the real Keychain store"),
-    (r"\bURLSession\s*(?:\.\s*init\s*)?\(|\.\s*init\s*\(\s*configuration\s*:",
+    ("session", r"\bURLSession\s*(?:\.\s*init\s*)?\(|\.\s*init\s*\(\s*configuration\s*:",
      {"OutboundGuard.swift"},
      "builds a URLSession outside the guarded factory"),
-    (r"\bNWConnection\s*(?:\.\s*init\s*)?\(|\.\s*init\s*\(\s*(?:host|to)\s*:[^)]*\busing\s*:",
+    ("connection", r"\bNWConnection\s*(?:\.\s*init\s*)?\(|\.\s*init\s*\(\s*(?:host|to)\s*:[^)]*\busing\s*:",
      {"NativePageTransport.swift"},
      "opens a network connection outside the guarded page reader"),
-    (r"\bWKWebView\s*(?:\.\s*init\s*)?\(|\bWKWebView\s*\??\s*=\s*\.\s*init\s*\(|\.\s*init\s*\(\s*frame\s*:[^)]*\bconfiguration\s*:",
+    ("webview", r"\bWKWebView\s*(?:\.\s*init\s*)?\(|\bWKWebView\s*\??\s*=\s*\.\s*init\s*\(|\.\s*init\s*\(\s*frame\s*:[^)]*\bconfiguration\s*:",
      {"OutboundGuard.swift"},
      "builds a web view outside the guarded factory"),
-    (r"\b" + GUARDED + r"\s*\.\s*init\b(?!\s*\()",
+    ("by-name", r"\b" + GUARDED + r"\s*\.\s*init\b(?!\s*\()",
      set(),
      "passes a guarded initializer around by name"),
-    (r"\btypealias\s+\w+\s*=\s*" + GUARDED + r"\b",
+    ("alias", r"\btypealias\s+\w+\s*(?:<[^>]*>)?\s*=[^;{}]*?\b" + GUARDED + r"\b",
      set(),
      "renames a guarded type"),
-    (r"\bSecItem(?:CopyMatching|Add|Update|Delete)\s*\(",
+    ("inferred", r"(?:->|:)\s*" + GUARDED + r"\s*[?!]?\s*(?:\{|=|in\b)\s*(?:return\s+)?\.\s*(?:standard\b|init\b(?!\s*\([^)]*\boperations\s*:))",
+     {"AppLocations.swift", "OutboundGuard.swift", "MemoryPreferences.swift"},
+     "builds a guarded value from its declared type"),
+    ("secitem", r"\bSecItem(?:CopyMatching|Add|Update|Delete)\s*\(",
      {"NativeChatSettings.swift", "NativePiCheckpoint.swift", "SelectedCredentialAuthorization.swift"},
      "calls the Keychain directly"),
 ]
 
-COMPILED = [(re.compile(pattern), allowed, problem) for pattern, allowed, problem in RULES]
+COMPILED = [(rule, re.compile(pattern), allowed, problem) for rule, pattern, allowed, problem in RULES]
+
+QUALIFIER = re.compile(r"\b(?:Foundation|Network|WebKit|Security|CoreServices|CFNetwork|Darwin)\s*\.\s*(?=" + GUARDED + r"\b|SecItem)")
 
 PERMIT = "scratchPermitForTests"
 PERMIT_HOME = "StartupCleanup.swift"
 
 CAUGHT = [
-    "let d = UserDefaults.standard",
-    "let d: UserDefaults = .standard",
-    "let d = UserDefaults(suiteName: \"x\")",
-    "let d: UserDefaults? = .init(suiteName: \"x\")",
-    "let d = UserDefaults.init(suiteName: \"x\")",
-    "let d = UserDefaults\n    (suiteName: \"x\")",
-    "let s = URLSession(configuration: .ephemeral)",
-    "let s: URLSession = .init(configuration: .ephemeral)",
-    "let s: URLSession = .init(configuration: .ephemeral, delegate: nil, delegateQueue: nil)",
-    "let s = URLSession.init(configuration: .ephemeral)",
-    "let s = URLSession\n    (\n configuration: .ephemeral)",
-    "let make = URLSession.init",
-    "typealias Session = URLSession",
-    "typealias Prefs = UserDefaults",
-    "let k = KeychainNativeCredentialStore()",
-    "let k = KeychainNativeCredentialStore(allowsInteraction: false)",
-    "let k: KeychainNativeCredentialStore = .init()",
-    "let k: KeychainNativeCredentialStore = .init(allowsInteraction: false)",
-    "let k = KeychainNativeCredentialStore\n    .init()",
-    "let c = NWConnection(host: h, port: p, using: .tcp)",
-    "let c: NWConnection = .init(host: h, port: p, using: .tcp)",
-    "let w = WKWebView()",
-    "let w: WKWebView = .init()",
-    "let w: WKWebView = .init(frame: .zero, configuration: c)",
-    "let w = WKWebView\n    (frame: .zero, configuration: c)",
-    "typealias Web = WKWebView",
-    "_ = SecItemCopyMatching(q, &r)",
-    "_ = SecItemDelete(q)",
-    "@AppStorage(\"x\") var x = false",
+    ("support", "let s = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)"),
+    ("home", "let h = FileManager.default.homeDirectoryForCurrentUser"),
+    ("home", "let h = NSHomeDirectory()"),
+    ("standard", "let d = UserDefaults.standard"),
+    ("standard", "let d: UserDefaults = .standard"),
+    ("standard", "let d = Foundation.UserDefaults.standard"),
+    ("suite", "let d = UserDefaults(suiteName: \"x\")"),
+    ("suite", "let d: UserDefaults? = .init(suiteName: \"x\")"),
+    ("suite", "let d = UserDefaults.init(suiteName: \"x\")"),
+    ("suite", "let d = UserDefaults\n    (suiteName: \"x\")"),
+    ("suite", "let d = Foundation.UserDefaults(suiteName: \"x\")"),
+    ("storage", "@AppStorage(\"x\") var x = false"),
+    ("keychain", "let k = KeychainNativeCredentialStore()"),
+    ("keychain", "let k = KeychainNativeCredentialStore(allowsInteraction: false)"),
+    ("keychain", "let k: KeychainNativeCredentialStore = .init()"),
+    ("keychain", "let k: KeychainNativeCredentialStore = .init(allowsInteraction: false)"),
+    ("keychain", "let k = KeychainNativeCredentialStore\n    .init()"),
+    ("session", "let s = URLSession(configuration: .ephemeral)"),
+    ("session", "let s: URLSession = .init(configuration: .ephemeral)"),
+    ("session", "let s: URLSession = .init(configuration: .ephemeral, delegate: nil, delegateQueue: nil)"),
+    ("session", "let s = URLSession.init(configuration: .ephemeral)"),
+    ("session", "let s = URLSession\n    (\n configuration: .ephemeral)"),
+    ("session", "let s = Foundation.URLSession(configuration: .ephemeral)"),
+    ("connection", "let c = NWConnection(host: h, port: p, using: .tcp)"),
+    ("connection", "let c: NWConnection = .init(host: h, port: p, using: .tcp)"),
+    ("connection", "let c = Network.NWConnection(host: h, port: p, using: .tcp)"),
+    ("webview", "let w = WKWebView()"),
+    ("webview", "let w: WKWebView = .init()"),
+    ("webview", "let w: WKWebView = .init(frame: .zero, configuration: c)"),
+    ("webview", "let w = WKWebView\n    (frame: .zero, configuration: c)"),
+    ("webview", "let w = WebKit.WKWebView()"),
+    ("by-name", "let make = URLSession.init"),
+    ("by-name", "let make = Foundation.UserDefaults.init"),
+    ("alias", "typealias Session = URLSession"),
+    ("alias", "typealias Prefs = UserDefaults"),
+    ("alias", "typealias Prefs = Foundation.UserDefaults"),
+    ("alias", "typealias Web = WebKit.WKWebView"),
+    ("alias", "typealias Maybe = Optional<URLSession>"),
+    ("inferred", "func prefs() -> UserDefaults { .standard }"),
+    ("inferred", "func prefs() -> UserDefaults { return .standard }"),
+    ("inferred", "var prefs: UserDefaults { .standard }"),
+    ("inferred", "func session() -> URLSession { .init(configuration: .ephemeral) }"),
+    ("inferred", "let make = { () -> URLSession in .init(configuration: .ephemeral) }"),
+    ("inferred", "var web: WKWebView { .init() }"),
+    ("inferred", "func prefs() -> Foundation.UserDefaults? { .init(suiteName: \"x\") }"),
+    ("secitem", "_ = SecItemCopyMatching(q, &r)"),
+    ("secitem", "_ = SecItemDelete(q)"),
+    ("secitem", "_ = Security.SecItemAdd(q, nil)"),
+    ("permit", "let p = StartupCleanup.scratchPermitForTests(inputs, scratchRoot: root)"),
 ]
 
 CLEAN = [
@@ -95,6 +120,9 @@ CLEAN = [
     "let k: KeychainNativeCredentialStore = .init(operations: ops)",
     "@AppStorage(\"x\", store: AppLocations.preferences) var x = false",
     "let shared = URLSession.shared",
+    "func use(_ defaults: UserDefaults) -> Bool { defaults.bool(forKey: \"x\") }",
+    "var companionDefaults: UserDefaults = AppLocations.preferences",
+    "func make() -> WKWebView { OutboundGuard.webView() }",
 ]
 
 
@@ -129,29 +157,35 @@ def original_line(text, starts, position):
     return text.count("\n", 0, original) + 1
 
 
-def problems(name, text):
+def problems(name, text, rules=False):
     flat, starts = collapse(text)
+    flat = QUALIFIER.sub(lambda match: " " * len(match.group(0)), flat)
     found = []
-    for pattern, allowed, problem in COMPILED:
+    for rule, pattern, allowed, problem in COMPILED:
         if name in allowed:
             continue
         for match in pattern.finditer(flat):
-            found.append((original_line(text, starts, match.start()), problem))
+            found.append((original_line(text, starts, match.start()), rule if rules else problem))
     if PERMIT in text and name != PERMIT_HOME and not test_file(name):
         for number, line in enumerate(text.splitlines(), start=1):
             if PERMIT in line:
-                found.append((number, "asks for a clean-up permit outside a selftest"))
+                found.append((number, "permit" if rules else "asks for a clean-up permit outside a selftest"))
     return sorted(set(found))
 
 
 def self_check():
     failures = []
-    for sample in CAUGHT:
-        if not problems("Probe.swift", sample):
-            failures.append(f"not caught: {sample!r}")
+    for rule, sample in CAUGHT:
+        tripped = {found for _, found in problems("Probe.swift", sample, rules=True)}
+        if rule not in tripped:
+            failures.append(f"not caught by {rule}: {sample!r}")
     for sample in CLEAN:
         if problems("Probe.swift", sample):
             failures.append(f"wrongly caught: {sample!r}")
+    covered = {rule for rule, _ in CAUGHT}
+    for rule in [entry[0] for entry in RULES] + ["permit"]:
+        if rule not in covered:
+            failures.append(f"no example trips the {rule} rule")
     return failures
 
 
