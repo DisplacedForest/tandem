@@ -62,7 +62,7 @@ enum CompanionOverviewFixture {
 
     static let newSinceMinutes: Double = 15
 
-    static func profileModel(name: String = "Ada") -> CompanionOverviewModel {
+    static func profileModel(name: String = "Ada", extraTasks: [CompanionActivityItem] = []) -> CompanionOverviewModel {
         let now = Date()
         let extra = [
             task(UUID(), "Compare frost cloth options", status: .completed, minutesAgo: 1500),
@@ -77,7 +77,7 @@ enum CompanionOverviewFixture {
             profile: NativeDotProfile(state: .active, setupCompleted: true),
             services: "Can reach Web search, Documents and 1 more.",
             rules: "",
-            activity: CompanionOverviewModel.activity(tasks: tasks() + extra, runs: [run], schedules: profileSchedules()),
+            activity: CompanionOverviewModel.activity(tasks: extraTasks + tasks() + extra, runs: [run], schedules: profileSchedules()),
             results: [
                 CompanionOverviewResult(id: "art-4", title: "Seed order for spring", kind: .document, updatedAt: now.addingTimeInterval(-170_000)),
                 CompanionOverviewResult(id: "art-3", title: "Frost cloth comparison", kind: .document, updatedAt: now.addingTimeInterval(-90_000)),

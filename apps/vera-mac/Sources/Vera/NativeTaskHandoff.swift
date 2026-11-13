@@ -10,6 +10,11 @@ protocol NativeTaskRepository: Sendable {
     func failTaskDelivery(id: UUID, permanent: Bool, message: String) throws -> NativeTaskReference
     func requestTaskCancellation(id: UUID) throws -> NativeTaskReference
     func acknowledgeTaskCancellation(id: UUID, snapshot: NativeTaskSnapshot) throws -> NativeTaskReference
+    func prepareTaskChange(id: UUID, change: NativeTaskPendingChange, engine: NativeTaskEngineIdentity,
+                           request: NativeResearchTaskRequest, profile: NativeTaskProfileBinding?,
+                           options: NativeTaskResearchOptions) throws -> NativeTaskReference?
+    func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference
+    func withdrawTaskChange(id: UUID) throws -> Bool
 }
 
 actor NativeTaskHandoffService {
@@ -35,6 +40,16 @@ actor NativeTaskHandoffService {
         try Task.checkCancellation()
         let reference = try repository.prepareTaskReference(
             origin: origin, engine: engine, request: request, profile: profile, options: researchOptions)
+        return try await deliver(reference.id)
+    }
+
+    func submitChange(id: UUID, change: NativeTaskPendingChange, request: NativeResearchTaskRequest,
+                      profile: NativeTaskProfileBinding? = nil) async throws -> NativeTaskReference? {
+        guard let base = configuredBase() else { throw NativeTaskError.invalidEngine }
+        let engine = try NativeTaskEngineIdentity(base)
+        try Task.checkCancellation()
+        guard let reference = try repository.prepareTaskChange(id: id, change: change, engine: engine, request: request,
+                                                               profile: profile, options: researchOptions) else { return nil }
         return try await deliver(reference.id)
     }
 

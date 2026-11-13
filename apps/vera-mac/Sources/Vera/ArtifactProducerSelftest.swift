@@ -345,8 +345,10 @@ enum ArtifactProducerSelftest {
         let parser = try legacyRepository.artifactVersion(sourceKey: "canvas-library:parser")
         try check(parser?.fileName.hasSuffix(".swift") == true && parser?.details.language == "swift", "Legacy code keeps its language")
         try check(!FileManager.default.fileExists(atPath: legacyURL.path), "The legacy library file moves away")
-        try check((try? JSONDecoder().decode([Artifact].self, from: Data(contentsOf: backupURL)))?.count == 2,
-                  "The backup replaces an older one")
+        try check((try? Data(contentsOf: backupURL)) == Data("stale".utf8), "An older backup survives byte for byte")
+        let numberedBackup = legacyDirectory.appendingPathComponent("artifacts-migrated-2.json")
+        try check((try? JSONDecoder().decode([Artifact].self, from: Data(contentsOf: numberedBackup)))?.count == 2,
+                  "The imported library moves to the next free backup name")
         try check(try ChatStore.importLegacyCanvasLibrary(from: legacyURL, into: legacyRepository) == 0,
                   "A missing legacy library imports nothing")
 

@@ -142,7 +142,7 @@ struct NativeTaskOutputReference: Codable, Hashable, Sendable {
 
 struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     enum Status: String, Codable, Sendable {
-        case preparing, queued, working, stopping, stopped, completed, needsInput, failed
+        case preparing, queued, working, stopping, stopped, completed, needsInput, failed, setAside, newer
 
         var title: String { title(document: false) }
 
@@ -156,6 +156,8 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
             case .completed: return document ? "Document ready" : "Research complete"
             case .needsInput: return "Needs your answer"
             case .failed: return "Couldn't finish"
+            case .setAside: return "Put aside"
+            case .newer: return "Needs an update"
             }
         }
 
@@ -169,6 +171,8 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
             case .completed: return "checkmark.circle"
             case .needsInput: return "questionmark.circle"
             case .failed: return "exclamationmark.circle"
+            case .setAside: return "pause.circle"
+            case .newer: return "arrow.down.circle"
             }
         }
     }
@@ -189,8 +193,14 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var answer: String? = nil
     var why: NativeRuleWhy? = nil
     var stop: NativeTaskStop? = nil
+    var canSetAside: Bool? = nil
+    var canPickUp: Bool? = nil
 
     static let workStopped = "Work stopped"
+    static let setAsideLine = "Put aside."
+    static let newerLine = "A newer version of the app saved this. Update to carry on with it."
+    static let setAsideTitle = "Put aside"
+    static let pickUpTitle = "Pick back up"
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }
@@ -223,7 +233,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .stopped: return Self.workStopped
         case .completed: return stoppedHere ? Self.workStopped : needsYou ? RefusalCopy.needsYou : "Work done"
         case .needsInput: return "Needs your answer"
-        case .queued, .failed: return status.title(document: false)
+        case .queued, .failed, .setAside, .newer: return status.title(document: false)
         }
     }
     var statusSymbol: String { needsYou ? "hand.raised" : stoppedHere ? Status.stopped.symbol : status.symbol(document: isDocument) }

@@ -107,7 +107,7 @@ enum NativeTaskDelivery {
         switch snapshot.state {
         case .needsDecision, .blocked: return true
         case .completed: return snapshot.result?.stop?.drawable == true
-        case .queued, .running, .failed, .canceled: return false
+        case .queued, .running, .failed, .canceled, .paused, .unknown: return false
         }
     }
 

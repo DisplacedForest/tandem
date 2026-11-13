@@ -39,6 +39,12 @@ enum NativeTaskProjection {
         let sources = document ? [] : try displaySources(snapshot.checkpoint.sources)
         card.sources = sources
         card.canCancel = !snapshot.state.isTerminal && !reference.cancelRequested && !snapshot.cancelRequested
+        if snapshot.state == .unknown {
+            card.status = .newer
+            card.milestone = NativeTaskCardPresentation.newerLine
+            card.canCancel = false
+            return (card, nil)
+        }
         let count = sources.count
         let sourcePhrase = "\(count) \(count == 1 ? "source" : "sources")"
         let saved = document ? documentProgress(snapshot.checkpoint) : nil
@@ -51,7 +57,15 @@ enum NativeTaskProjection {
             }
             return (card, nil)
         }
+        if snapshot.held {
+            card.status = .setAside
+            card.milestone = NativeTaskCardPresentation.setAsideLine
+            card.canPickUp = true
+            return (card, nil)
+        }
+        card.canSetAside = !snapshot.state.isTerminal
         switch snapshot.state {
+        case .paused, .unknown: break
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
             if dot {

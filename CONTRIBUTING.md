@@ -81,6 +81,8 @@ swift build
 .build/debug/Vera --selftest
 ```
 
+Selftests, shots and the other test modes keep attachments, project files and the app's other data in a temporary folder that's removed when the run ends, and a test that hands them a path inside your real data folder stops with an error. They still read your `config.json` and Keychain unless `VERA_CONFIG_DIR` points somewhere else. An option the app doesn't recognize is refused with exit status 2 instead of opening the app. `python3 scripts/data-folder-check.py` fails if app code looks up the Application Support folder anywhere except the one place that resolves data locations.
+
 Packaging also requires Python 3.14 or later to assemble the pinned portable runtime. The packaging script finds `python3.14` on your PATH even when `python3` is older; set `VERA_PACKAGE_PYTHON` to use a specific interpreter. See [Mac packaging](apps/vera-mac/README.md#package--install) for cache controls and the offline packaged-runtime contract.
 
 The app builds **only on macOS**. It is SwiftUI/AppKit; on Linux (containers, cloud

@@ -4,10 +4,7 @@ import Darwin
 @MainActor
 enum NativePiProduction {
     struct Failure: Error { let message: String }
-    static var defaultRoot: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vera/Assistant", isDirectory: true)
-    }
+    static var defaultRoot: URL { AppLocations.current.assistant }
     static func presentation(config: ConfigStore, store: ChatStore, root: URL = defaultRoot,
                              http: PiProviderHTTP = PiProviderHTTP(), admission: NativeInferenceAdmission? = nil,
                              arguments: [String] = []) -> NativePiPresentation {

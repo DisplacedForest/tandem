@@ -3,13 +3,10 @@
 13 apps/vera-mac/Sources/Vera/NativeDotSelftest.swift
 2 apps/vera-mac/Sources/Vera/NativeImageToolsSelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeMCPTransport.swift
-1 apps/vera-mac/Sources/Vera/NativeMemoryGate.swift
 1 apps/vera-mac/Sources/Vera/NativePiPresentation.swift
-1 apps/vera-mac/Sources/Vera/NativePiProduction.swift
 1 apps/vera-mac/Sources/Vera/NativeRules.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskTransportTiming.swift
 1 apps/vera-mac/Sources/Vera/SafeAppReplacement.swift
 21 apps/vera-mac/Sources/Vera/SelfTest.swift
-1 apps/vera-mac/Sources/Vera/Store.swift
 2 apps/vera-mac/Sources/Vera/StoreRuleRecords.swift
 1 prototypes/assistant-ui/Sources/VeraAssistantUI/SelfTest.swift

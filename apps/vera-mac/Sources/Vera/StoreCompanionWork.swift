@@ -71,8 +71,10 @@ extension ChatStore {
         }
     }
 
-    nonisolated static func companionRequest(_ assignment: String, connectedToolIDs: [String]?, said: String? = nil) throws -> NativeResearchTaskRequest {
-        try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", connectedToolIDs: connectedToolIDs, said: said))
+    nonisolated static func companionRequest(_ assignment: String, connectedToolIDs: [String]?, said: String? = nil,
+                                             carried: NativeCompanionCarried? = nil) throws -> NativeResearchTaskRequest {
+        try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual", connectedToolIDs: connectedToolIDs, said: said,
+                                                                      carried: carried))
     }
 
     func cancelCompanionWork() {

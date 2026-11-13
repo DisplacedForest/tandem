@@ -40,13 +40,16 @@ struct VeraApp: App {
         let fixture = NativePiNativeContext.candidate
         let configInstance = fixture?.config ?? ConfigStore()
         let native = NativeMCPUIFixture.current != nil ? NativeChatConfig(baseURL: URL(string: "https://fixture.invalid/v1")!, apiKey: nil, model: "fixture", chatTemplateKwargs: nil) : fixture == nil ? configInstance.nativeResolved : nil
+        let locations = AppLocations.current
+        let attachmentStore = NativeAttachmentStore(directory: locations.attachments)
         let repository: LocalChatRepository?
         let repositoryError: String?
         do {
             if let fixture {
                 repository = try LocalChatRepository(url: fixture.root.url.appendingPathComponent("focused.sqlite"))
             } else {
-                repository = try LocalChatRepository()
+                repository = try LocalChatRepository(url: locations.database, artifactDirectory: locations.attachments,
+                                                     projectsDirectory: locations.projects)
             }
             repositoryError = nil
         } catch {
@@ -79,7 +82,7 @@ struct VeraApp: App {
             nativeRules: configInstance.nativeSettings.rules,
             nativeMCP: configInstance.nativeMCP,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
-            sweepOrphanedAttachments: false,
+            attachmentStore: attachmentStore,
             nativeTaskConfiguration: NativeMCPUIFixture.current == nil ? NativeTaskConfiguration(
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,

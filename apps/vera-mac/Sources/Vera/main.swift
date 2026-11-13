@@ -1,9 +1,14 @@
 import Foundation
 import AppKit
 
-// Entry point. `Vera --shot <path>` renders the UI to a PNG headlessly (no window) and exits;
-// otherwise it launches the normal app.
 let arguments = CommandLine.arguments
+let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
+let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()), isolatedModes: piModes)
+if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.environment) {
+    AppLocations.isolateForHeadlessRun()
+}
+AppLocations.settle()
+AppLocations.checkSettingDataRoot()
 switch SelectedCredentialAuthorization.dispatch(Array(arguments.dropFirst())) {
 case .authorize(let values):
     SelectedCredentialAuthorization.main(values, configuration: { ConfigFile.read() })
@@ -12,9 +17,12 @@ case .reject:
 case .unrelated:
     break
 }
-let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
 if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.contains(arguments.dropFirst().first ?? "") {
     FileHandle.standardError.write(Data("Unsupported isolated mode\n".utf8))
+    exit(2)
+}
+if case .refused(let flag) = launchMode {
+    FileHandle.standardError.write(Data((LaunchPlan.refusal(flag) + "\n").utf8))
     exit(2)
 }
 if arguments.dropFirst().first == "--document-artifact-selftest" {
@@ -136,6 +144,9 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
     NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {
     SelfTest.dumpContext()
-} else {
+} else if launchMode == .app {
     VeraApp.main()
+} else {
+    FileHandle.standardError.write(Data((LaunchPlan.refusal(arguments.dropFirst().first ?? "") + "\n").utf8))
+    exit(2)
 }

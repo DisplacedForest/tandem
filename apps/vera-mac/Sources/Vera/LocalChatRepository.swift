@@ -55,16 +55,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     let database: DatabaseQueue
     let artifactDirectory: URL
     let projectsDirectory: URL
+    let createdThisLaunch: Bool
 
-    static var defaultURL: URL {
-        let directory: URL
-        if let override = ProcessInfo.processInfo.environment["VERA_CONFIG_DIR"], !override.isEmpty {
-            directory = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera", isDirectory: true)
-        }
-        return directory.appendingPathComponent("vera.sqlite")
-    }
+    static var defaultURL: URL { AppLocations.current.database }
 
     convenience init() throws {
         try self.init(url: Self.defaultURL)
@@ -72,8 +65,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
+        createdThisLaunch = !FileManager.default.fileExists(atPath: url.path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var configuration = Configuration()
         configuration.busyMode = .timeout(0.25)
@@ -85,8 +80,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(inMemory: Bool, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        for location in [artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
+        createdThisLaunch = true
         database = try DatabaseQueue()
         try migrate()
         try recoverInterruptedMessages()
@@ -286,6 +283,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration(NativeTaskDelivery.migration) { db in try NativeTaskDelivery.migrate(db) }
         migrator.registerMigration(MessageReactionStore.migration) { db in try MessageReactionStore.migrate(db) }
         migrator.registerMigration(NativeInstructionUseStore.migration) { db in try NativeInstructionUseStore.migrate(db) }
+        migrator.registerMigration(NativeTaskStore.pauseMigration) { db in try NativeTaskStore.migratePause(db) }
         return migrator
     }
 
@@ -583,6 +581,27 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             return names
         }
     }
+
+    func strictReferencedAttachmentFileNames() throws -> Set<String> {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db, sql: "SELECT attachments_json FROM messages WHERE attachments_json IS NOT NULL")
+            var names: Set<String> = []
+            for row in rows {
+                guard let raw = row["attachments_json"] as String?, let data = raw.data(using: .utf8) else {
+                    throw UnreadableAttachmentRecord()
+                }
+                let attachments = try JSONDecoder().decode([MessageAttachment].self, from: data)
+                for attachment in attachments {
+                    if let fileName = attachment.fileName { names.insert(fileName) }
+                }
+            }
+            names.formUnion(try String.fetchAll(db, sql: "SELECT file_name FROM artifact_versions"))
+            return names
+        }
+    }
+
+    struct UnreadableAttachmentRecord: Error {}
 
     func allMemories() throws -> [NativeMemoryRecord] {
         try database.read { db in

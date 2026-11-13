@@ -7,6 +7,7 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
             guard let reference = try Self.readTaskReference(db, id: referenceID),
                   reference.profile != nil else { throw NativeTaskError.persistenceUnavailable }
             try job.validate(reference: reference)
+            if try Self.generationHeld(db, reference: reference, running: true) { return .pending }
             if let row = try Row.fetchOne(db, sql: """
                 SELECT messages_digest, state, response, failure, reserved_until FROM native_task_generations
                 WHERE request_id = ? AND generation_key = ?
@@ -28,6 +29,18 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
         }
     }
 
+    func taskGenerationStale(referenceID: UUID, job: NativeTaskGenerationJob) -> Bool {
+        let stale = try? database.read { db -> Bool in
+            guard let reference = try Self.readTaskReference(db, id: referenceID), let remote = reference.remoteTaskID,
+                  try db.tableExists("native_engine_tasks"),
+                  let row = try Row.fetchOne(db, sql: "SELECT state, generation, pause_requested FROM native_engine_tasks WHERE id = ?",
+                                             arguments: [remote]) else { return false }
+            let moved = (row["generation"] as Int) != job.generation || (row["state"] as String) != NativeTaskState.running.rawValue
+            return moved || (row["pause_requested"] as Int) != 0
+        }
+        return stale ?? false
+    }
+
     func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob,
                               response: String?, failure: String?) throws {
         let allowedFailures: Set<String> = ["provider_unavailable", "provider_auth", "provider_quota",
@@ -35,6 +48,12 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
         guard (response == nil) != (failure == nil), response.map({ $0.utf8.count <= 262144 }) ?? true,
               failure.map({ allowedFailures.contains($0) }) ?? true else { throw NativeTaskHTTPError.invalidResponse }
         try database.write { db in
+            if failure == "canceled", let reference = try Self.readTaskReference(db, id: referenceID), !reference.cancelRequested,
+               try Self.generationHeld(db, reference: reference, running: false) || Self.generationMoved(db, reference: reference, job: job) {
+                try db.execute(sql: "DELETE FROM native_task_generations WHERE request_id = ? AND generation_key = ? AND state = 'reserved'",
+                               arguments: [referenceID.uuidString, job.key])
+                return
+            }
             guard let reference = try Self.readTaskReference(db, id: referenceID), !reference.cancelRequested else {
                 try db.execute(sql: """
                     UPDATE native_task_generations SET state = 'failed', failure = 'canceled', response = NULL
@@ -49,5 +68,24 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
                                    referenceID.uuidString, job.key, job.messagesDigest, response, Date().timeIntervalSince1970])
             guard db.changesCount == 1 else { throw NativeTaskHTTPError.invalidResponse }
         }
+    }
+}
+
+extension LocalChatRepository {
+    static func generationMoved(_ db: Database, reference: NativeTaskReference, job: NativeTaskGenerationJob) throws -> Bool {
+        guard let remote = reference.remoteTaskID, try db.tableExists("native_engine_tasks"),
+              let row = try Row.fetchOne(db, sql: "SELECT state, generation FROM native_engine_tasks WHERE id = ?", arguments: [remote]) else { return false }
+        let ended = [NativeTaskState.completed, .failed, .canceled].map(\.rawValue).contains(row["state"] as String)
+        return !ended && (row["generation"] as Int) != job.generation
+    }
+
+    static func generationHeld(_ db: Database, reference: NativeTaskReference, running: Bool) throws -> Bool {
+        guard let remote = reference.remoteTaskID, try db.tableExists("native_engine_tasks"),
+              let row = try Row.fetchOne(db, sql: "SELECT state, pause_requested, cancel_requested FROM native_engine_tasks WHERE id = ?",
+                                         arguments: [remote]) else { return false }
+        let state: String = row["state"]
+        let held = (row["pause_requested"] as Int) != 0 || state == NativeTaskState.paused.rawValue
+        if !running { return held }
+        return held || (row["cancel_requested"] as Int) != 0 || state != NativeTaskState.running.rawValue
     }
 }

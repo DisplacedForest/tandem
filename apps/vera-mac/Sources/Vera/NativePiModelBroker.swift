@@ -15,11 +15,14 @@ final class PiExperimentRoot: @unchecked Sendable {
     let url: URL
     private var lock: Int32 = -1
     init(_ url: URL) throws {
+        AppLocations.refuseRealData(url)
         var original = stat()
         if lstat(url.path, &original) == 0 { try piCheck((original.st_mode & S_IFMT) == S_IFDIR, .storage) }
         let path = try piCanonical(url)
-        let home = try piCanonical(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera")).path
-        try piCheck(path.path != "/" && path.path != home && !path.path.hasPrefix(home + "/") && !home.hasPrefix(path.path + "/"), .storage)
+        let home = try piCanonical(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera"))
+        var resolvedAssistant: URL?
+        if AppLocations.settingInEffect { resolvedAssistant = try piCanonical(AppLocations.current.assistant) }
+        try piCheck(Self.allowsLocation(path, standardConfig: home, resolvedAssistant: resolvedAssistant), .storage)
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var info = stat()
         try piCheck(lstat(path.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR && info.st_uid == getuid() && info.st_mode & 0o077 == 0, .storage)
@@ -33,6 +36,20 @@ final class PiExperimentRoot: @unchecked Sendable {
         self.url = path
     }
     deinit { if lock >= 0 { close(lock) } }
+
+    static func allowsLocation(_ path: URL, standardConfig: URL, resolvedAssistant: URL?) -> Bool {
+        let isRoot = path.path == "/"
+        let isStandardConfig = AppLocations.namesSameFolder(path, standardConfig)
+        let holdsStandardConfig = AppLocations.isInside(standardConfig, path, includingFolder: false)
+        let underStandardConfig = AppLocations.isInside(path, standardConfig, includingFolder: false)
+        let isResolvedAssistant = resolvedAssistant.map { AppLocations.isInside(path, $0, includingFolder: true) } ?? false
+        let assistantDeepEnough = resolvedAssistant.map { candidate in
+            !AppLocations.namesSameFolder(candidate.deletingLastPathComponent(), standardConfig)
+        } ?? false
+        let handedOut = isResolvedAssistant && assistantDeepEnough
+        guard !isRoot, !isStandardConfig, !holdsStandardConfig else { return false }
+        return !underStandardConfig || handedOut
+    }
 }
 
 final class PiModelLedger: @unchecked Sendable {

@@ -407,6 +407,7 @@ enum NativeTaskGenerationReservation: Equatable, Sendable {
 
 protocol NativeTaskGenerationRepository: NativeTaskRepository {
     func reserveTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob) throws -> NativeTaskGenerationReservation
+    func taskGenerationStale(referenceID: UUID, job: NativeTaskGenerationJob) -> Bool
     func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob,
                               response: String?, failure: String?) throws
 }

@@ -218,9 +218,10 @@ struct NativeEffectLedgerStore: Sendable {
                     try Self.transition(db, digest: digest, to: .expired, at: current)
                     return .refused(.expired)
                 }
-                guard let task = try Row.fetchOne(db, sql: "SELECT state, generation, cancel_requested FROM native_engine_tasks WHERE id = ?",
+                guard let task = try Row.fetchOne(db, sql: "SELECT state, generation, cancel_requested, pause_requested FROM native_engine_tasks WHERE id = ?",
                                                   arguments: [record.proposal.taskID]),
-                      (task["state"] as String) == NativeTaskState.running.rawValue, (task["cancel_requested"] as Int) == 0 else {
+                      (task["state"] as String) == NativeTaskState.running.rawValue, (task["cancel_requested"] as Int) == 0,
+                      (task["pause_requested"] as Int) == 0 else {
                     return .refused(.taskInactive)
                 }
                 if (task["generation"] as Int) != generation { return .refused(.staleGeneration) }

@@ -20,6 +20,7 @@ struct NativeTaskRecord: Equatable, Sendable {
     let generation: Int
     let createdAt: Double
     let updatedAt: Double
+    var pauseRequested = false
 
     func snapshotJSON() throws -> Data {
         var object: [String: Any] = [
@@ -28,7 +29,7 @@ struct NativeTaskRecord: Equatable, Sendable {
             "result": try result.map(NativeTaskStore.object) ?? NSNull(),
             "decision": try decision.map(NativeTaskStore.object) ?? NSNull(),
             "decision_reply": try decisionReply.map(NativeTaskStore.object) ?? NSNull(),
-            "cancel_requested": cancelRequested, "generation": generation,
+            "cancel_requested": cancelRequested, "pause_requested": pauseRequested, "generation": generation,
             "created_at": createdAt, "updated_at": updatedAt,
         ]
         object["id"] = id
@@ -57,6 +58,7 @@ struct NativeTaskStepResult: Sendable {
     var event: String = "progress"
     var data: Data = NativeTaskStore.emptyObject
     var decision: Data? = nil
+    var keepsReply = false
 
     static func failed(checkpoint: Data, reason: String) -> NativeTaskStepResult {
         NativeTaskStepResult(state: .failed, checkpoint: checkpoint, event: "failed",
@@ -119,6 +121,13 @@ final class NativeTaskStore: Sendable {
             """)
     }
 
+    static let pauseMigration = "nativeTaskPauseV43"
+
+    static func migratePause(_ db: Database) throws {
+        try db.execute(sql: "ALTER TABLE native_engine_tasks ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0")
+        try db.execute(sql: "ALTER TABLE native_engine_tasks ADD COLUMN paused_from TEXT")
+    }
+
     static func object(_ data: Data) throws -> [String: Any] {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NativeTaskStoreError.invalid("Task data must be a JSON object")
@@ -140,11 +149,11 @@ final class NativeTaskStore: Sendable {
 
     private static func record(_ row: Row) -> NativeTaskRecord {
         NativeTaskRecord(id: row["id"], workerType: row["worker_type"], payload: Data((row["payload"] as String).utf8),
-            state: NativeTaskState(rawValue: row["state"]) ?? .failed, checkpoint: Data((row["checkpoint"] as String).utf8),
+            state: NativeTaskState(rawValue: row["state"]) ?? .unknown, checkpoint: Data((row["checkpoint"] as String).utf8),
             result: (row["result"] as String?).map { Data($0.utf8) }, decision: (row["decision"] as String?).map { Data($0.utf8) },
             decisionReply: (row["decision_reply"] as String?).map { Data($0.utf8) },
             cancelRequested: (row["cancel_requested"] as Int) != 0, generation: row["generation"],
-            createdAt: row["created_at"], updatedAt: row["updated_at"])
+            createdAt: row["created_at"], updatedAt: row["updated_at"], pauseRequested: (row["pause_requested"] as Int) != 0)
     }
 
     private static func row(_ db: Database, _ id: String) throws -> Row {
@@ -215,7 +224,7 @@ final class NativeTaskStore: Sendable {
                 """, arguments: [after, taskID, taskID, max(1, min(limit, 200))])
             return rows.map { row in
                 NativeTaskEventRecord(id: row["id"], taskID: row["task_id"], kind: row["kind"],
-                    state: NativeTaskState(rawValue: row["state"]) ?? .failed,
+                    state: NativeTaskState(rawValue: row["state"]) ?? .unknown,
                     data: Data((row["data"] as String).utf8), createdAt: row["created_at"])
             }
         }
@@ -269,13 +278,60 @@ final class NativeTaskStore: Sendable {
                 throw NativeTaskStoreError.conflict("Worker claim is no longer current")
             }
             if (row["cancel_requested"] as Int) != 0 { return try Self.finishCancel(db, id, checkpoint: checkpoint) }
+            let held = (row["pause_requested"] as Int) != 0
+            let reply: String? = held && step.keepsReply && step.state == .queued ? row["decision_reply"] : nil
             try db.execute(sql: """
-                UPDATE native_engine_tasks SET state = ?, checkpoint = ?, result = ?, decision = ?, decision_reply = NULL, updated_at = ? WHERE id = ?
+                UPDATE native_engine_tasks SET state = ?, checkpoint = ?, result = ?, decision = ?, decision_reply = ?, updated_at = ? WHERE id = ?
                 """, arguments: [step.state.rawValue, String(decoding: checkpoint, as: UTF8.self),
                                  result.map { String(decoding: $0, as: UTF8.self) },
-                                 decisionData.map { String(decoding: $0, as: UTF8.self) }, Self.now(), id])
+                                 decisionData.map { String(decoding: $0, as: UTF8.self) }, reply, Self.now(), id])
             let order = try Self.event(db, id, kind: step.event, state: step.state, data: step.data)
             try Self.setQueueOrder(db, id, order)
+            if held {
+                if step.state.isTerminal {
+                    try db.execute(sql: "UPDATE native_engine_tasks SET pause_requested = 0 WHERE id = ?", arguments: [id])
+                } else {
+                    try Self.hold(db, id, from: step.state)
+                }
+            }
+            return try Self.fetch(db, id)
+        }
+    }
+
+    private static func hold(_ db: Database, _ id: String, from: NativeTaskState) throws {
+        try db.execute(sql: """
+            UPDATE native_engine_tasks SET state = 'paused', paused_from = ?, pause_requested = 0, generation = generation + 1, updated_at = ? WHERE id = ?
+            """, arguments: [from.rawValue, now(), id])
+        try event(db, id, kind: "paused", state: .paused, data: emptyObject)
+    }
+
+    func pause(_ id: String) throws -> NativeTaskRecord {
+        try database.write { db in
+            let record = try Self.fetch(db, id)
+            let settled = record.state.isTerminal || record.state == .unknown || record.state == .paused
+            if settled || record.cancelRequested || record.pauseRequested { return record }
+            if record.state != .running {
+                try Self.hold(db, id, from: record.state)
+                return try Self.fetch(db, id)
+            }
+            try db.execute(sql: "UPDATE native_engine_tasks SET pause_requested = 1, updated_at = ? WHERE id = ?", arguments: [Self.now(), id])
+            try Self.event(db, id, kind: "pause_requested", state: .running, data: Self.emptyObject)
+            return try Self.fetch(db, id)
+        }
+    }
+
+    func unpause(_ id: String) throws -> NativeTaskRecord {
+        try database.write { db in
+            let row = try Self.row(db, id)
+            let record = Self.record(row)
+            guard record.state == .paused else { return record }
+            let saved = (row["paused_from"] as String?).flatMap(NativeTaskState.init(rawValue:))
+            let waiting = saved == .needsDecision && record.decision != nil
+            let back: NativeTaskState = waiting ? .needsDecision : (saved == .blocked ? .blocked : .queued)
+            try db.execute(sql: "UPDATE native_engine_tasks SET state = ?, paused_from = NULL, updated_at = ? WHERE id = ?",
+                           arguments: [back.rawValue, Self.now(), id])
+            let order = try Self.event(db, id, kind: "picked_up", state: back, data: Self.emptyObject)
+            if back == .queued { try Self.setQueueOrder(db, id, order) }
             return try Self.fetch(db, id)
         }
     }
@@ -285,7 +341,8 @@ final class NativeTaskStore: Sendable {
             try db.execute(sql: "UPDATE native_engine_tasks SET checkpoint = ? WHERE id = ?", arguments: [String(decoding: checkpoint, as: UTF8.self), id])
         }
         try db.execute(sql: """
-            UPDATE native_engine_tasks SET state = 'canceled', cancel_requested = 1, generation = generation + 1, decision = NULL, updated_at = ? WHERE id = ?
+            UPDATE native_engine_tasks SET state = 'canceled', cancel_requested = 1, pause_requested = 0, paused_from = NULL,
+                generation = generation + 1, decision = NULL, updated_at = ? WHERE id = ?
             """, arguments: [now(), id])
         try event(db, id, kind: "canceled", state: .canceled, data: emptyObject)
         return try fetch(db, id)
@@ -294,7 +351,7 @@ final class NativeTaskStore: Sendable {
     func cancel(_ id: String) throws -> NativeTaskRecord {
         try database.write { db in
             let record = try Self.fetch(db, id)
-            if record.state.isTerminal || record.cancelRequested { return record }
+            if record.state.isTerminal || record.cancelRequested || record.state == .unknown { return record }
             if record.state != .running { return try Self.finishCancel(db, id) }
             try db.execute(sql: "UPDATE native_engine_tasks SET cancel_requested = 1, updated_at = ? WHERE id = ?", arguments: [Self.now(), id])
             try Self.event(db, id, kind: "cancel_requested", state: .running, data: Self.emptyObject)
@@ -363,6 +420,10 @@ final class NativeTaskStore: Sendable {
                 let id: String = row["id"]
                 if (row["cancel_requested"] as Int) != 0 {
                     _ = try Self.finishCancel(db, id)
+                    continue
+                }
+                if (row["pause_requested"] as Int) != 0 {
+                    try Self.hold(db, id, from: .queued)
                     continue
                 }
                 try db.execute(sql: "UPDATE native_engine_tasks SET state = 'queued', generation = generation + 1, updated_at = ? WHERE id = ?",

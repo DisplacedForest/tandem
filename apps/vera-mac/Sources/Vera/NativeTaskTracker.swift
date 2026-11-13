@@ -235,6 +235,9 @@ actor NativeTaskTracker {
         defer { actions.remove(id) }
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
         do {
+            if ((try? repository.taskProjection(id: id)) ?? nil) == nil {
+                _ = try? repository.projectTask(id: id, snapshot: nil, cursor: 0, connectionNote: nil, lease: nil, generation: nil)
+            }
             _ = try repository.beginTaskRefresh(id: id, lease: lease)
             _ = try repository.requestTaskCancellation(id: id)
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
@@ -243,6 +246,32 @@ actor NativeTaskTracker {
             _ = try await service.requestCancellation(id)
         } catch {}
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
+    }
+
+    func fresh(_ id: UUID) async -> NativeTaskSnapshot? {
+        guard let reference = try? repository.taskReference(id: id), let lease = try? actionSession(for: reference) else { return nil }
+        guard let generation = try? repository.beginTaskRefresh(id: id, lease: lease), current(lease),
+              let snapshot = try? await client.fetch(reference) else { return nil }
+        if let update = try? repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
+            connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }
+        return snapshot
+    }
+
+    func hold(_ id: UUID, resume: Bool) async -> NativeTaskSnapshot? {
+        guard !actions.contains(id), let reference = try? repository.taskReference(id: id), !reference.cancelRequested,
+              let lease = try? actionSession(for: reference) else { return nil }
+        actions.insert(id)
+        defer { actions.remove(id) }
+        if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
+        defer { if let remote = reference.remoteTaskID { states[remote]?.invalidate() } }
+        do {
+            let generation = try repository.beginTaskRefresh(id: id, lease: lease)
+            guard current(lease) else { return nil }
+            let snapshot = resume ? try await client.resume(reference) : try await client.pause(reference)
+            if let update = try? repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
+                connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }
+            return snapshot
+        } catch { return nil }
     }
 
     func retry(_ id: UUID) async {

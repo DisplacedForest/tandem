@@ -29,6 +29,30 @@ extension LocalChatRepository: NativeTaskRepository {
                               request: NativeResearchTaskRequest,
                               profile: NativeTaskProfileBinding?,
                               options: NativeTaskResearchOptions = .standard) throws -> NativeTaskReference {
+        try database.write { db in
+            try Self.prepareTaskReference(db, origin: origin, engine: engine, request: request, profile: profile, options: options)
+        }
+    }
+
+    func prepareTaskChange(id: UUID, change: NativeTaskPendingChange, engine: NativeTaskEngineIdentity,
+                           request: NativeResearchTaskRequest, profile: NativeTaskProfileBinding?,
+                           options: NativeTaskResearchOptions) throws -> NativeTaskReference? {
+        try database.write { db in
+            guard var old = try Self.readTaskReference(db, id: id), old.pendingChange == change, old.replacedBy == nil,
+                  old.cancelRequested else { return nil }
+            let prepared = try Self.prepareTaskReference(db, origin: change.origin, engine: engine, request: request, profile: profile, options: options)
+            guard prepared.id != id else { throw NativeTaskError.persistenceUnavailable }
+            old.replacedBy = prepared.id
+            old.pendingChange = nil
+            try db.execute(sql: "UPDATE native_task_outbox SET reference_json = ? WHERE id = ?",
+                           arguments: [try nativeTaskEncoded(old), id.uuidString])
+            return prepared
+        }
+    }
+
+    static func prepareTaskReference(_ db: Database, origin: NativeTaskOrigin, engine: NativeTaskEngineIdentity,
+                                     request: NativeResearchTaskRequest, profile: NativeTaskProfileBinding?,
+                                     options: NativeTaskResearchOptions) throws -> NativeTaskReference {
         struct Intent: Encodable {
             let userMessageID: UUID
             let engine: NativeTaskEngineIdentity
@@ -37,49 +61,47 @@ extension LocalChatRepository: NativeTaskRepository {
         let index = origin.index ?? 0
         let intentKey = nativeTaskDigest(try nativeTaskEncoded(
             Intent(userMessageID: origin.userMessageID, engine: engine, index: index > 0 ? index : nil)))
-        return try database.write { db in
-            if let bytes = try Data.fetchOne(db, sql: """
-                SELECT reference_json FROM native_task_outbox WHERE conversation_id = ?
-                AND json_extract(CAST(reference_json AS TEXT), '$.origin.userMessageID') = ?
-                AND COALESCE(json_extract(CAST(reference_json AS TEXT), '$.origin.index'), 0) = ? ORDER BY rowid LIMIT 1
-                """, arguments: [origin.conversationID, origin.userMessageID.uuidString, index]) {
-                let existing = try JSONDecoder().decode(NativeTaskReference.self, from: bytes)
-                guard existing.engine == engine else { throw NativeTaskError.engineChanged }
-                return existing
-            }
-            if let row = try Row.fetchOne(db, sql: "SELECT reference_json FROM native_task_outbox WHERE intent_key = ?",
-                                          arguments: [intentKey]) {
-                guard let bytes: Data = row["reference_json"] else { throw NativeTaskError.persistenceUnavailable }
-                return try JSONDecoder().decode(NativeTaskReference.self, from: bytes)
-            }
-            guard (1...5).contains(options.subquestions), (0...4).contains(options.pagesPerQuestion) else {
-                throw NativeTaskError.invalidRequest("Research limits must be bounded.")
-            }
-            let count = try Int.fetchOne(db, sql: """
-                SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND
-                ((id = ? AND role = 'user') OR (id = ? AND role = 'assistant'))
-                """, arguments: [origin.conversationID, origin.userMessageID.uuidString,
-                                   origin.assistantMessageID.uuidString])
-            guard count == 2 else { throw NativeTaskError.persistenceUnavailable }
-            let id = UUID()
-            let binding: NativeTaskAdmissionBinding?
-            if let profile {
-                binding = NativeTaskAdmissionBinding(id: profile.id, admissionBase: profile.provider.base,
-                    enrollmentDigest: nativeTaskDigest(try nativeTaskEncoded(profile) + nativeTaskEncoded(request)))
-            } else {
-                binding = nil
-            }
-            let create = NativeTaskCreateRequest(request: request, idempotencyKey: id, nativeBinding: binding, options: options)
-            let reference = NativeTaskReference(
-                id: id, origin: origin, engine: engine, request: request, createRequest: create,
-                body: try create.encoded(), profile: profile, remoteTaskID: nil, deliveryState: .pending,
-                cancelRequested: false, cancelDelivered: false, lastDeliveryError: nil, snapshot: nil)
-            try db.execute(sql: """
-                INSERT INTO native_task_outbox(id, intent_key, conversation_id, reference_json)
-                VALUES (?, ?, ?, ?)
-                """, arguments: [id.uuidString, intentKey, origin.conversationID, try nativeTaskEncoded(reference)])
-            return reference
+        if let bytes = try Data.fetchOne(db, sql: """
+            SELECT reference_json FROM native_task_outbox WHERE conversation_id = ?
+            AND json_extract(CAST(reference_json AS TEXT), '$.origin.userMessageID') = ?
+            AND COALESCE(json_extract(CAST(reference_json AS TEXT), '$.origin.index'), 0) = ? ORDER BY rowid LIMIT 1
+            """, arguments: [origin.conversationID, origin.userMessageID.uuidString, index]) {
+            let existing = try JSONDecoder().decode(NativeTaskReference.self, from: bytes)
+            guard existing.engine == engine else { throw NativeTaskError.engineChanged }
+            return existing
         }
+        if let row = try Row.fetchOne(db, sql: "SELECT reference_json FROM native_task_outbox WHERE intent_key = ?",
+                                      arguments: [intentKey]) {
+            guard let bytes: Data = row["reference_json"] else { throw NativeTaskError.persistenceUnavailable }
+            return try JSONDecoder().decode(NativeTaskReference.self, from: bytes)
+        }
+        guard (1...5).contains(options.subquestions), (0...4).contains(options.pagesPerQuestion) else {
+            throw NativeTaskError.invalidRequest("Research limits must be bounded.")
+        }
+        let count = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND
+            ((id = ? AND role = 'user') OR (id = ? AND role = 'assistant'))
+            """, arguments: [origin.conversationID, origin.userMessageID.uuidString,
+                               origin.assistantMessageID.uuidString])
+        guard count == 2 else { throw NativeTaskError.persistenceUnavailable }
+        let id = UUID()
+        let binding: NativeTaskAdmissionBinding?
+        if let profile {
+            binding = NativeTaskAdmissionBinding(id: profile.id, admissionBase: profile.provider.base,
+                enrollmentDigest: nativeTaskDigest(try nativeTaskEncoded(profile) + nativeTaskEncoded(request)))
+        } else {
+            binding = nil
+        }
+        let create = NativeTaskCreateRequest(request: request, idempotencyKey: id, nativeBinding: binding, options: options)
+        let reference = NativeTaskReference(
+            id: id, origin: origin, engine: engine, request: request, createRequest: create,
+            body: try create.encoded(), profile: profile, remoteTaskID: nil, deliveryState: .pending,
+            cancelRequested: false, cancelDelivered: false, lastDeliveryError: nil, snapshot: nil)
+        try db.execute(sql: """
+            INSERT INTO native_task_outbox(id, intent_key, conversation_id, reference_json)
+            VALUES (?, ?, ?, ?)
+            """, arguments: [id.uuidString, intentKey, origin.conversationID, try nativeTaskEncoded(reference)])
+        return reference
     }
 
     func taskReferences(conversationID: String? = nil) throws -> [NativeTaskReference] {
@@ -125,6 +147,24 @@ extension LocalChatRepository: NativeTaskRepository {
 
     func requestTaskCancellation(id: UUID) throws -> NativeTaskReference {
         try mutateTaskReference(id) { $0.cancelRequested = true }
+    }
+
+    func withdrawTaskChange(id: UUID) throws -> Bool {
+        var withdrawn = false
+        _ = try mutateTaskReference(id) { reference in
+            withdrawn = reference.pendingChange != nil && reference.replacedBy == nil
+            if withdrawn { reference.pendingChange = nil }
+        }
+        return withdrawn
+    }
+
+    func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference {
+        try mutateTaskReference(id) { reference in
+            guard reference.cancelRequested, reference.replacedBy == nil, reference.pendingChange == nil || reference.pendingChange == change else {
+                throw NativeTaskError.persistenceUnavailable
+            }
+            reference.pendingChange = change
+        }
     }
 
     func acknowledgeTaskCancellation(id: UUID, snapshot: NativeTaskSnapshot) throws -> NativeTaskReference {

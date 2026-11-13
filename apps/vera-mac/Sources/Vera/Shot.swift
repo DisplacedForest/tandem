@@ -90,7 +90,7 @@ enum Shot {
             size = CGSize(width: 520, height: 300)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 760)
-        } else if view == "companion-activity-detail" {
+        } else if view == "companion-activity-detail" || ["companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
             size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
@@ -521,13 +521,29 @@ enum Shot {
                     .padding(20)
                     .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
             )
-        } else if ["companion-profile-closed", "companion-profile-open", "companion-profile-empty", "companion-profile-unnamed",
+        } else if ["companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
+            let fixture = OngoingWorkFixture.asideStore()
+            let position = ["companion-going-detail": 0, "companion-aside-detail": 1,
+                            "companion-changed-detail": 2, "companion-newer-detail": 3][view] ?? 0
+            let items = OngoingWorkFixture.asideItems(fixture)
+            let item = items[position]
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, services: "", rules: "", paused: false,
+                                               activity: items, outputs: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                CompanionThreadPanel(fixed: model, selectedID: item.id)
+                    .environment(\.renderSafe, true).environmentObject(fixture).environmentObject(config)
+                    .padding(20)
+                    .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
+            )
+        } else if ["companion-profile-closed", "companion-profile-open", "companion-profile-aside", "companion-profile-empty", "companion-profile-unnamed",
                     "companion-profile-closed-narrow", "companion-profile-open-narrow"].contains(view) {
             NativeDotShotFixture.populate(store, paused: false, setupCompleted: true)
             if view == "companion-profile-unnamed" { store.adoptAssistantName(nil) }
-            let filled = ["companion-profile-open", "companion-profile-closed", "companion-profile-open-narrow",
+            let filled = ["companion-profile-open", "companion-profile-aside", "companion-profile-closed", "companion-profile-open-narrow",
                           "companion-profile-closed-narrow"].contains(view)
-            let model = filled ? CompanionOverviewFixture.profileModel(name: store.companion.leading)
+            let model = filled ? CompanionOverviewFixture.profileModel(name: store.companion.leading,
+                                                                       extraTasks: view == "companion-profile-aside" ? OngoingWorkFixture.asideItems(OngoingWorkFixture.asideStore()) : [])
                 : CompanionOverviewModel.build(name: store.companion.leading, profile: store.dotProfile, services: "",
                                                rules: "", activity: [], results: [],
                                                lastMessage: store.conversations.first { $0.id == store.veraThreadID }?.messages.last?.createdAt)
@@ -666,9 +682,11 @@ enum Shot {
               let tiff = nsImage.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else {
+            CompanionShotFixture.removeLeftovers()
             FileHandle.standardError.write(Data("render failed\n".utf8))
             exit(1)
         }
+        CompanionShotFixture.removeLeftovers()
         do {
             try png.write(to: URL(fileURLWithPath: path))
             print("wrote \(path)")
@@ -1639,9 +1657,23 @@ private struct ShotCompanionStates: View {
 
 @MainActor
 enum CompanionShotFixture {
+    private static var leftovers: (suites: [String], folders: [URL]) = ([], [])
+
+    static func removeLeftovers() {
+        let preferences = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences", isDirectory: true)
+        for suite in leftovers.suites {
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+            CFPreferencesAppSynchronize(suite as CFString)
+            try? FileManager.default.removeItem(at: preferences.appendingPathComponent(suite + ".plist"))
+        }
+        for folder in leftovers.folders { try? FileManager.default.removeItem(at: folder) }
+        leftovers = ([], [])
+    }
+
     static func store() -> ChatStore {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("tandem-companion-shot-\(UUID().uuidString.lowercased())", isDirectory: true)
+        leftovers.folders.append(root)
         let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
         try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         guard let repository = try? LocalChatRepository(inMemory: true, artifactDirectory: artifacts) else { return ChatStore() }
@@ -1649,7 +1681,9 @@ enum CompanionShotFixture {
             nativeConfig: nil, nativeTransport: nil, repository: repository,
             attachmentStore: NativeAttachmentStore(directory: artifacts),
             artifactPersistenceEnabled: false)
-        store.companionDefaults = UserDefaults(suiteName: "tandem-companion-shot-\(UUID().uuidString)") ?? .standard
+        let suite = "tandem-companion-shot-\(UUID().uuidString)"
+        leftovers.suites.append(suite)
+        store.companionDefaults = UserDefaults(suiteName: suite) ?? .standard
         store.ensureVeraThread()
         guard let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) else { return store }
         let now = Date()
