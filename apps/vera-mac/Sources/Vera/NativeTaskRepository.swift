@@ -127,6 +127,15 @@ extension LocalChatRepository: NativeTaskRepository {
         try mutateTaskReference(id) { $0.cancelRequested = true }
     }
 
+    func markTaskReplaced(id: UUID, by replacement: UUID) throws -> NativeTaskReference {
+        try mutateTaskReference(id) { reference in
+            guard reference.cancelRequested, reference.replacedBy == nil || reference.replacedBy == replacement else {
+                throw NativeTaskError.persistenceUnavailable
+            }
+            reference.replacedBy = replacement
+        }
+    }
+
     func acknowledgeTaskCancellation(id: UUID, snapshot: NativeTaskSnapshot) throws -> NativeTaskReference {
         try mutateTaskReference(id) { reference in
             guard reference.remoteTaskID == snapshot.id,

@@ -143,6 +143,11 @@ final class ChatStore: ObservableObject {
 
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
+
+    func askedWorkProfile() -> (profile: NativeTaskProfileBinding?, usable: Bool) {
+        let profile = nativeTaskEnrollment ?? nativeConfig.flatMap { config in try? nativeTaskConfiguration?.enroll(config: config) }
+        return (profile, nativeTaskConfiguration == nil || profile != nil)
+    }
     private var nativeTransport: (any NativeChatTransport)?
     private var titleGenerationInFlight: Set<String> = []
     private var titleGenerationAttempted: Set<String> = []

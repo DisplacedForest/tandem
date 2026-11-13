@@ -141,9 +141,31 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+struct NativeCompanionCarried: Codable, Equatable, Hashable, Sendable {
+    static let requestLimit = 5000
+    static let noteLimit = 400
+    static let titleLimit = 400
+    static let sourceLimit = 40
+    static let effectLimit = 32
+
+    let request: String
+    var note: String? = nil
+    var sources: [NativeTaskSource] = []
+    var done: [String] = []
+    var unsure: [String] = []
+
+    var valid: Bool {
+        let texts = [request] + sources.map(\.title) + sources.map(\.url)
+        let short = (done + unsure + sources.map(\.title)).allSatisfy { $0.unicodeScalars.count <= Self.titleLimit }
+        let counted = sources.count <= Self.sourceLimit && done.count <= Self.effectLimit && unsure.count <= Self.effectLimit
+        let sized = request.unicodeScalars.count <= Self.requestLimit && (note?.unicodeScalars.count ?? 0) <= Self.noteLimit
+        return short && counted && sized && texts.allSatisfy { $0.utf8.count <= 8192 }
+    }
+}
+
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
-    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said"]
+    static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said", "carried"]
     static let saidLimit = 5000
 
     let assignment: String
@@ -151,13 +173,15 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     let connectedToolIDs: [String]?
     let scheduleID: String?
     let said: String?
+    let carried: NativeCompanionCarried?
     private var savedGoal: NativeCarriedJSON? = nil
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
     var typedRequest: String { said ?? (mode == "manual" ? assignment : "") }
 
-    init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil) throws {
+    init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil,
+         carried: NativeCompanionCarried? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
             throw NativeTaskError.invalidRequest("The assignment must contain 1 to 5,000 characters.")
@@ -178,6 +202,10 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         guard (said?.unicodeScalars.count ?? 0) <= Self.saidLimit else {
             throw NativeTaskError.invalidRequest("The request must contain at most 5,000 characters.")
         }
+        guard carried?.valid != false, carried == nil || mode == "manual" else {
+            throw NativeTaskError.invalidRequest("What was carried over isn't valid.")
+        }
+        self.carried = carried
         self.said = said
         self.assignment = cleanAssignment
         self.mode = mode
@@ -189,7 +217,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         case assignment, mode, goal
         case connectedToolIDs = "connected_tool_ids"
         case scheduleID = "schedule_id"
-        case said
+        case said, carried
     }
 
     init(from decoder: Decoder) throws {
@@ -198,7 +226,8 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
                       mode: container.decode(String.self, forKey: .mode),
                       connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
                       scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID),
-                      said: container.decodeIfPresent(String.self, forKey: .said))
+                      said: container.decodeIfPresent(String.self, forKey: .said),
+                      carried: container.decodeIfPresent(NativeCompanionCarried.self, forKey: .carried))
         savedGoal = NativeCarriedJSON.carried(container, .goal)
     }
 
@@ -210,6 +239,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         try container.encodeIfPresent(connectedToolIDs, forKey: .connectedToolIDs)
         try container.encodeIfPresent(scheduleID, forKey: .scheduleID)
         try container.encodeIfPresent(said, forKey: .said)
+        try container.encodeIfPresent(carried, forKey: .carried)
     }
 }
 
@@ -427,11 +457,16 @@ struct NativeTaskReference: Codable, Equatable, Hashable, Identifiable, Sendable
     var cancelDelivered: Bool
     var lastDeliveryError: String?
     var snapshot: NativeTaskSnapshot?
+    var replacedBy: UUID? = nil
 }
 
 enum NativeTaskState: String, Codable, Equatable, Hashable, Sendable {
-    case queued, running, blocked, completed, failed, canceled
+    case queued, running, blocked, completed, failed, canceled, paused, unknown
     case needsDecision = "needs_decision"
+
+    init(from decoder: Decoder) throws {
+        self = NativeTaskState(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
 
     var isTerminal: Bool { [.completed, .failed, .canceled].contains(self) }
 }
@@ -535,12 +570,16 @@ struct NativeTaskSnapshot: Codable, Equatable, Hashable, Sendable {
     let cancelRequested: Bool
     let generation: Int
     let updatedAt: Double
+    var pauseRequested: Bool? = nil
+
+    var held: Bool { state == .paused || pauseRequested == true }
 
     private enum CodingKeys: String, CodingKey {
         case id, payload, state, checkpoint, result, decision, generation
         case workerType = "worker_type"
         case cancelRequested = "cancel_requested"
         case updatedAt = "updated_at"
+        case pauseRequested = "pause_requested"
     }
 }
 

@@ -46,7 +46,7 @@ actor NativeTaskGenerationExchange {
         guard NativeResearchTaskRequest.workerTypes.contains(task.workerType), Self.binding(of: task) == body else {
             throw NativeTaskLocalStatus(code: 409, detail: "Native task binding does not match")
         }
-        guard !task.cancelRequested, ![.completed, .failed, .canceled, .needsDecision].contains(task.state) else {
+        guard !task.cancelRequested, !task.pauseRequested, ![.completed, .failed, .canceled, .needsDecision, .paused, .unknown].contains(task.state) else {
             throw NativeTaskLocalStatus(code: 409, detail: "This task cannot request native generation")
         }
     }
@@ -69,7 +69,7 @@ actor NativeTaskGenerationExchange {
         }
         guard let job = pending[taskID], job.deadline > now else { return nil }
         let current = try store.get(taskID)
-        guard !current.cancelRequested, current.state == .running, current.generation == job.job.generation else {
+        guard !current.cancelRequested, !current.pauseRequested, current.state == .running, current.generation == job.job.generation else {
             throw NativeTaskLocalStatus(code: 409, detail: "This generation is no longer active")
         }
         let remaining = nativeTaskSeconds(ContinuousClock.now.duration(to: job.deadline))
@@ -95,7 +95,7 @@ actor NativeTaskGenerationExchange {
             }
         }
         let task = try store.get(taskID)
-        guard let job = pending[taskID], job.deadline > .now, !task.cancelRequested, task.state == .running,
+        guard let job = pending[taskID], job.deadline > .now, !task.cancelRequested, !task.pauseRequested, task.state == .running,
               task.generation == body.generation, job.job.id == body.jobID, job.job.bindingID == body.bindingID,
               job.job.generation == body.generation, job.job.messagesDigest == body.messagesDigest else {
             throw NativeTaskLocalStatus(code: 409, detail: "This generation is no longer active")
@@ -170,7 +170,7 @@ actor NativeTaskGenerationExchange {
         while ContinuousClock.now < entry.deadline {
             try Task.checkCancellation()
             let current = try store.get(task.id)
-            guard !current.cancelRequested, current.state == .running, current.generation == task.generation else {
+            guard !current.cancelRequested, !current.pauseRequested, current.state == .running, current.generation == task.generation else {
                 throw CancellationError()
             }
             if let outcome = entry.outcome {

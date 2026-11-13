@@ -339,6 +339,10 @@ final class NativeTaskLocalEngine: Sendable {
             return (try store.get(id).snapshotJSON(), 200)
         case ("POST", 3, let id?, "cancel"):
             return (try store.cancel(id).snapshotJSON(), 200)
+        case ("POST", 3, let id?, "pause"):
+            return (try store.pause(id).snapshotJSON(), 200)
+        case ("POST", 3, let id?, "resume"):
+            return (try store.unpause(id).snapshotJSON(), 200)
         case ("POST", 3, let id?, "decision"):
             return (try decision(id, body ?? Data()).snapshotJSON(), 200)
         case ("POST", 4, let id?, "ready") where parts[2] == "native":

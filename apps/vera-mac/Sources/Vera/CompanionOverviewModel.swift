@@ -18,6 +18,8 @@ struct CompanionActivityItem: Identifiable, Equatable, Sendable {
     let canOpen: Bool
     let canStop: Bool
     var cadence: String? = nil
+    var canSetAside = false
+    var canPickUp = false
 
     var line: String { cadence ?? state }
     var needsDecision: Bool { status == .needsInput }
@@ -83,7 +85,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
         let state = card.listState(card.status == .completed ? (hasArtifact ? "Ready to open" : card.statusTitle) : card.status.title(document: document))
         return CompanionActivityItem(id: reference.id.uuidString, title: card.title, state: state, status: card.status,
                                      isDocument: document, hasArtifact: hasArtifact, decision: decision, date: date, source: .task(reference.id),
-                                     canOpen: true, canStop: card.canCancel)
+                                     canOpen: true, canStop: card.canCancel, canSetAside: card.canSetAside == true, canPickUp: card.canPickUp == true)
     }
 
     static func runStatus(_ outcome: NativeScheduleOutcome) -> NativeTaskCardPresentation.Status {
@@ -157,11 +159,15 @@ struct CompanionOverviewModel: Equatable, Sendable {
 }
 
 struct CompanionActivityDetail: Equatable, Sendable {
+    static let beforeLabel = "Before you changed it"
+
     let request: String?
     let outcome: String?
     let canOpen: Bool
+    var before: String? = nil
 
-    init(request: String?, outcome: String?, canOpen: Bool) {
+    init(request: String?, outcome: String?, canOpen: Bool, before: String? = nil) {
+        self.before = before.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.request = request.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.outcome = outcome.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.canOpen = canOpen

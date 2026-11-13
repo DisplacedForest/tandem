@@ -106,12 +106,24 @@ struct NativeTaskClient: Sendable {
     }
 
     func cancel(_ reference: NativeTaskReference) async throws -> NativeTaskSnapshot {
+        try await act("cancel", reference)
+    }
+
+    func pause(_ reference: NativeTaskReference) async throws -> NativeTaskSnapshot {
+        try await act("pause", reference)
+    }
+
+    func resume(_ reference: NativeTaskReference) async throws -> NativeTaskSnapshot {
+        try await act("resume", reference)
+    }
+
+    private func act(_ verb: String, _ reference: NativeTaskReference) async throws -> NativeTaskSnapshot {
         guard let id = reference.remoteTaskID, UUID(uuidString: id) != nil else {
             throw NativeTaskHTTPError.invalidResponse
         }
         let (data, status) = try await request(
             "POST", reference.engine.base.appendingPathComponent("tasks").appendingPathComponent(id)
-                .appendingPathComponent("cancel"), Data("{}".utf8), 5)
+                .appendingPathComponent(verb), Data("{}".utf8), 5)
         guard (200..<300).contains(status) else { throw NativeTaskHTTPError.status(status) }
         try NativeTaskJSON.validate(data)
         guard data.count <= 1048576,

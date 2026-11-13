@@ -278,11 +278,18 @@ struct CompanionThreadPanel: View {
             .buttonStyle(.plain).accessibilityLabel("Back to overview")
             Text(item.title).font(.system(size: 18, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
-            if let request = detail.request {
+            if let request = detail.request, request.trimmingCharacters(in: .whitespacesAndNewlines) != item.title.trimmingCharacters(in: .whitespacesAndNewlines) {
                 Text(request).font(.system(size: 13)).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.conversationBackground, in: RoundedRectangle(cornerRadius: ConversationMetrics.cardRadius))
+            }
+            if let before = detail.before {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(CompanionActivityDetail.beforeLabel).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+                    Text(before).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Text(item.state).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
             if let outcome = detail.outcome {
@@ -292,9 +299,11 @@ struct CompanionThreadPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if item.canRetry || item.canStop {
+            if item.canRetry || item.canStop || item.canPickUp {
                 HStack {
                     if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
+                    if item.canPickUp { Button(NativeTaskCardPresentation.pickUpTitle) { store.setCompanionWorkAside(item, resume: true) } }
+                    if item.canSetAside { Button(NativeTaskCardPresentation.setAsideTitle) { store.setCompanionWorkAside(item, resume: false) } }
                     if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
                 }.controlSize(.small)
             }

@@ -22,7 +22,7 @@ extension ChatStore {
         let linked = Set(scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
             .compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let stored = ((try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? nil) ?? nativeTaskReferences
-        return stored.filter { $0.origin.conversationID == threadID || linked.contains($0.id) }
+        return stored.filter { ($0.origin.conversationID == threadID || linked.contains($0.id)) && $0.replacedBy == nil }
     }
 
     private func companionTalkSnapshot(_ reference: NativeTaskReference) -> (snapshot: NativeTaskSnapshot?, note: String?) {
@@ -92,7 +92,8 @@ extension ChatStore {
         return CompanionTalkEntry(referenceID: reference.id, what: what, phase: phase,
                                   why: phase == .couldNotFinish ? companionTalkWhy(reference, snapshot: snapshot) : nil,
                                   note: noteText.flatMap { $0.isEmpty ? nil : $0 }, question: question, decisionID: decisionID,
-                                  spoken: spoken, buttonOnly: buttonOnly, canStop: card.canCancel && phase.ongoing, date: date)
+                                  spoken: spoken, buttonOnly: buttonOnly, canStop: card.canCancel && phase.ongoing, date: date,
+                                  canSetAside: card.canSetAside == true && phase.ongoing, canPickUp: card.canPickUp == true)
     }
 
     private func companionTalkPhase(_ status: NativeTaskCardPresentation.Status, state: NativeTaskState?) -> CompanionTalkPhase {
@@ -105,6 +106,8 @@ extension ChatStore {
         case .completed: return .finished
         case .stopped: return .stopped
         case .failed: return .couldNotFinish
+        case .setAside: return .setAside
+        case .newer: return .newer
         }
     }
 
@@ -113,12 +116,12 @@ extension ChatStore {
         return snapshot.checkpoint.failureReason.flatMap { CompanionTalkCopy.reasons[$0] }
     }
 
-    private func companionTalkLive(_ id: UUID) -> CompanionTalkEntry? {
+    func companionTalkLive(_ id: UUID) -> CompanionTalkEntry? {
         guard let reference = ((try? nativeTaskRepository?.taskReference(id: id)) ?? nil) else { return nil }
         return companionTalkEntry(reference)
     }
 
-    private func companionTalkEarlier(_ turn: NativeConversationTurn) -> String? {
+    func companionTalkEarlier(_ turn: NativeConversationTurn) -> String? {
         guard let end = turn.history.firstIndex(where: { $0.id == turn.userMessageID }) else { return nil }
         guard let reply = turn.history[..<end].last(where: { $0.role == "assistant" }) else { return nil }
         let text = CompanionTalkTools.clipped(reply.text, CompanionTalkTools.earlierLimit)
@@ -219,7 +222,9 @@ extension ChatStore {
                 if case .object(let fields) = outcome, fields["changed"] == .bool(true) { ledger.keep(key, outcome) }
                 return outcome
             })
-        return [stop, answer]
+        let gate = CompanionHoldGate(control: control, turn: turn, typedHere: typedHere, known: known, said: said, earlier: earlier,
+                                     answerer: answerer, timeout: timeout, toolTimeout: toolTimeout, ledger: ledger)
+        return [stop, answer] + companionHoldTools(gate)
     }
 
     func companionTalkStop(_ id: UUID) async -> NativeJSONValue {

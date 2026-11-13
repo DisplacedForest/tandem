@@ -10,6 +10,7 @@ protocol NativeTaskRepository: Sendable {
     func failTaskDelivery(id: UUID, permanent: Bool, message: String) throws -> NativeTaskReference
     func requestTaskCancellation(id: UUID) throws -> NativeTaskReference
     func acknowledgeTaskCancellation(id: UUID, snapshot: NativeTaskSnapshot) throws -> NativeTaskReference
+    func markTaskReplaced(id: UUID, by replacement: UUID) throws -> NativeTaskReference
 }
 
 actor NativeTaskHandoffService {

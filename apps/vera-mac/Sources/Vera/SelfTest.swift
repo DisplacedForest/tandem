@@ -322,6 +322,11 @@ enum SelfTest {
             catch { print("COMPANION TALK CONTROL SELFTEST FAILED: \(error)"); exit(1) }
             exit(0)
         }
+        if ProcessInfo.processInfo.environment["VERA_COMPANION_WORK_ASIDE_SELFTEST"] == "1" {
+            do { try await runCompanionWorkAside(); print("COMPANION WORK ASIDE SELFTEST OK") }
+            catch { print("COMPANION WORK ASIDE SELFTEST FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if ProcessInfo.processInfo.environment["VERA_PROJECT_CONTEXT_SELFTEST"] == "1" {
             do { try await ProjectContextSelftest.checkProviderProjectContext(); print("PROJECT PROVIDER CONTEXT OK") }
             catch { print("PROJECT PROVIDER CONTEXT FAILED: \(error)"); exit(1) }
@@ -427,6 +432,7 @@ enum SelfTest {
         do { try await runCompanion() } catch { print("SELFTEST ERROR: companion \(error)"); exit(1) }
         do { try await runCompanionAskedWork() } catch { print("SELFTEST ERROR: companion asked work \(error)"); exit(1) }
         do { try await runCompanionTalkControl() } catch { print("SELFTEST ERROR: companion talk control \(error)"); exit(1) }
+        do { try await runCompanionWorkAside() } catch { print("SELFTEST ERROR: companion work aside \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runTransientRetry() } catch { print("SELFTEST ERROR: transient retry \(error)"); exit(1) }
