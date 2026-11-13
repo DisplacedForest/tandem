@@ -150,7 +150,7 @@ struct SidebarRow: View {
                     InterfaceIconView(icon: .more, size: InterfaceIconSize.small)
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .help("Chat options").accessibilityLabel(Self.optionsLabel(convo.title))
             } else if convo.pinned {
                 InterfaceIconView(icon: .pin, size: InterfaceIconSize.mark)
