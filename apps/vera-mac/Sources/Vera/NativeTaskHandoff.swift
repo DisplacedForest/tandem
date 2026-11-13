@@ -11,6 +11,7 @@ protocol NativeTaskRepository: Sendable {
     func requestTaskCancellation(id: UUID) throws -> NativeTaskReference
     func acknowledgeTaskCancellation(id: UUID, snapshot: NativeTaskSnapshot) throws -> NativeTaskReference
     func markTaskReplaced(id: UUID, by replacement: UUID) throws -> NativeTaskReference
+    func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference
 }
 
 actor NativeTaskHandoffService {

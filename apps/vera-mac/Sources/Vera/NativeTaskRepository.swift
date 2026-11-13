@@ -133,6 +133,16 @@ extension LocalChatRepository: NativeTaskRepository {
                 throw NativeTaskError.persistenceUnavailable
             }
             reference.replacedBy = replacement
+            reference.pendingChange = nil
+        }
+    }
+
+    func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference {
+        try mutateTaskReference(id) { reference in
+            guard reference.cancelRequested, reference.replacedBy == nil, reference.pendingChange == nil || reference.pendingChange == change else {
+                throw NativeTaskError.persistenceUnavailable
+            }
+            reference.pendingChange = change
         }
     }
 

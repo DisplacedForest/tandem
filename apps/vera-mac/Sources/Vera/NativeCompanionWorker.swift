@@ -238,7 +238,9 @@ enum NativeCompanionWorker {
         do {
             return try await run.advance(&checkpoint)
         } catch is CancellationError where run.heldProbe() {
-            return try run.progress(checkpoint)
+            var step = try run.progress(checkpoint)
+            step.keepsReply = checkpoint.pending != nil
+            return step
         } catch is NativeTaskExecutorUnavailable {
             checkpoint.nativeUnavailable = payload.nativeBinding?.id
             return NativeTaskStepResult(state: .blocked, checkpoint: try checkpoint.encoded(), event: "progress",
@@ -846,8 +848,14 @@ private struct NativeCompanionRun {
 
     func advance(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult {
         if let pending = checkpoint.pending {
+            let before = checkpoint
             checkpoint.pending = nil
-            if let early = try await resolve(pending, &checkpoint) { return early }
+            do {
+                if let early = try await resolve(pending, &checkpoint) { return early }
+            } catch is CancellationError where heldProbe() {
+                checkpoint = before
+                throw CancellationError()
+            }
         }
         if checkpoint.finishing == true {
             for remaining in checkpoint.outstandingCalls {
@@ -1064,7 +1072,9 @@ private struct NativeCompanionRun {
                     checkpoint.answer(call, NativeCompanionWorker.message(detail))
                     return
                 }
+                if heldProbe() { throw CancellationError() }
                 try await environment.pause(NativeCompanionWorker.readRetryDelays[attempt])
+                if heldProbe() { throw CancellationError() }
                 attempt += 1
             }
         }

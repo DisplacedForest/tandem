@@ -217,6 +217,7 @@ final class ChatStore: ObservableObject {
     var taskRevealGeneration = 0
     var revealedCompanionWorkDecisionIDs: Set<String> = []
     var composerSentTurns: [UUID: CompanionTalkCapture] = [:]
+    var changesStarting: Set<UUID> = []
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()

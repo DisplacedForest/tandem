@@ -20,6 +20,7 @@ enum CompanionHoldTools {
     static let names: Set<String> = [setAsideName, pickUpName, changeName]
     static let workLimit = 4000
     static let changeIndex = 900
+    static let promptChecks = 20
 
     static func about(_ ask: String, _ entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?, only: String) -> String {
         ask + CompanionTalkTools.quoted(NativeInstructionCheck.clean(entry.description)) + "."
@@ -104,10 +105,12 @@ enum CompanionHoldCopy {
     static let resting = "Nothing was changed. You are paused, so nothing new can start. Tell the person to resume you and ask again."
     static let changed = "Changed. What you were doing before has stopped, and you are now doing the job as it stands, with what you had already found."
     static let stoppedOnly = "What you were doing before has stopped, but the changed job couldn't be started. Tell the person plainly and suggest asking for it again."
+    static let changeSaved = "The change is saved. What you were doing before is finishing stopping, and the changed job starts by itself as soon as it has. Tell the person that in one line. They don't need to say it again."
+    static let changeWaiting = "The person changed this one. It is finishing stopping, and the changed job starts by itself as soon as it has."
 
     static let modelSentences: [String] = [guide, setAsideDescription, pickUpDescription, changeDescription, setAsideTitle, pickUpTitle, changeTitle,
                                            invalid, invalidChange, notGoing, alreadyAside, newer, setAside, settingAside, couldNotSetAside, notAside,
-                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly,
+                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly, changeSaved, changeWaiting,
                                            NativeCompanionWorker.carriedLead]
 }
 
@@ -236,53 +239,79 @@ extension ChatStore {
     }
 
     func companionTalkChange(_ id: UUID, work: String, gate: CompanionHoldGate) async -> NativeJSONValue {
-        guard let service = nativeTaskService, let projection = repository as? any NativeTaskProjectionRepository,
+        guard nativeTaskService != nil, let projection = repository as? any NativeTaskProjectionRepository,
               let old = (try? projection.taskReference(id: id)) ?? nil else {
             return CompanionTalkTools.refusal(CompanionHoldCopy.couldNotChange)
         }
-        let firstAsked = conversations.first { $0.id == old.origin.conversationID }?.messages.first { $0.id == old.origin.userMessageID }?.text
-        let stopped = await companionTalkStop(id)
-        guard case .object(let fields) = stopped, fields["changed"] == .bool(true) else {
-            let ended = companionTalkLive(id).map { !$0.phase.ongoing } ?? true
-            return CompanionTalkTools.refusal(ended ? CompanionHoldCopy.cannotChange : CompanionHoldCopy.couldNotChange)
-        }
-        func titles(_ key: String) -> [String] {
-            guard case .array(let values)? = fields[key] else { return [] }
-            return values.compactMap { if case .string(let text) = $0 { return text } else { return nil } }
-        }
-        let done = titles("already_done")
-        let unsure = titles("may_have_happened")
-        var outcome: [String: NativeJSONValue] = ["changed": .bool(true)]
-        var tail = ""
-        if !done.isEmpty {
-            tail += CompanionTalkCopy.alreadyDone
-            outcome["already_done"] = fields["already_done"]
-        }
-        if !unsure.isEmpty {
-            tail += CompanionTalkCopy.maybeDone
-            outcome["may_have_happened"] = fields["may_have_happened"]
-        }
-        let latest = (try? projection.taskReference(id: id)) ?? nil
-        let saved = ((try? projection.taskProjection(id: id)) ?? nil)?.snapshot
-        let carried = CompanionHoldTools.carried(reference: old, firstAsked: firstAsked,
-                                                 snapshots: CompanionTalkTools.oldestFirst(saved, latest?.snapshot ?? old.snapshot), done: done, unsure: unsure)
         let typed = gate.said.unicodeScalars.count <= NativeCompanionTaskPayload.saidLimit ? gate.said : ""
         let origin = NativeTaskOrigin(conversationID: gate.turn.conversationID, userMessageID: gate.turn.userMessageID,
                                       assistantMessageID: gate.turn.assistantMessageID, index: CompanionHoldTools.changeIndex)
-        let (profile, enrolled) = askedWorkProfile()
-        var started: NativeTaskReference?
-        if enrolled, turnOwned(gate.turn),
-           let request = try? ChatStore.companionRequest(work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(), said: typed, carried: carried) {
-            started = try? await service.submit(origin: origin, request: request, profile: profile)
+        let change = NativeTaskPendingChange(work: work, said: typed, origin: origin)
+        let trial = CompanionHoldTools.carried(reference: old, firstAsked: companionFirstAsked(old), snapshots: CompanionTalkTools.oldestFirst(nil, old.snapshot), done: [], unsure: [])
+        guard askedWorkProfile().usable, turnOwned(gate.turn),
+              (try? ChatStore.companionRequest(work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(), said: typed, carried: trial)) != nil else {
+            return CompanionTalkTools.refusal(CompanionHoldCopy.couldNotChange)
         }
-        guard let started, started.deliveryState != .rejected, !started.cancelRequested else {
+        let stopped = await companionTalkStop(id)
+        guard case .object(let stopFields) = stopped, stopFields["changed"] == .bool(true) else {
+            let ended = companionTalkLive(id).map { !$0.phase.ongoing } ?? true
+            return CompanionTalkTools.refusal(ended ? CompanionHoldCopy.cannotChange : CompanionHoldCopy.couldNotChange)
+        }
+        var outcome: [String: NativeJSONValue] = ["changed": .bool(true)]
+        var tail = ""
+        if let done = stopFields["already_done"] {
+            tail += CompanionTalkCopy.alreadyDone
+            outcome["already_done"] = done
+        }
+        if let unsure = stopFields["may_have_happened"] {
+            tail += CompanionTalkCopy.maybeDone
+            outcome["may_have_happened"] = unsure
+        }
+        guard (try? projection.saveTaskChange(id: id, change: change)) != nil else {
             reloadNativeTaskReferences()
             outcome["result"] = .string(CompanionHoldCopy.stoppedOnly + tail)
             return .object(outcome)
         }
-        _ = try? projection.markTaskReplaced(id: id, by: started.id)
+        for _ in 0..<CompanionHoldTools.promptChecks {
+            _ = await nativeTaskTracker?.fresh(id)
+            reloadNativeTaskReferences()
+            await startSettledChanges()
+            if ((try? projection.taskReference(id: id)) ?? nil)?.replacedBy != nil { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
         reloadNativeTaskReferences()
-        outcome["result"] = .string(CompanionHoldCopy.changed + tail)
+        let started = ((try? projection.taskReference(id: id)) ?? nil)?.replacedBy != nil
+        outcome["result"] = .string((started ? CompanionHoldCopy.changed : CompanionHoldCopy.changeSaved) + tail)
         return .object(outcome)
+    }
+
+    func companionFirstAsked(_ reference: NativeTaskReference) -> String? {
+        let loaded = conversations.first { $0.id == reference.origin.conversationID }
+        let conversation = loaded ?? (try? repository?.listConversations().first { $0.id == reference.origin.conversationID })
+        return conversation?.messages.first { $0.id == reference.origin.userMessageID }?.text
+    }
+
+    func startSettledChanges() async {
+        guard nativeTaskReferences.contains(where: { $0.pendingChange != nil && $0.replacedBy == nil }),
+              let service = nativeTaskService, let projection = repository as? any NativeTaskProjectionRepository,
+              let references = try? projection.taskReferences(conversationID: nil) else { return }
+        for old in references where old.pendingChange != nil && old.replacedBy == nil && !changesStarting.contains(old.id) {
+            guard let change = old.pendingChange else { continue }
+            let saved = ((try? projection.taskProjection(id: old.id)) ?? nil)?.snapshot
+            let snapshots = CompanionTalkTools.oldestFirst(saved, old.snapshot)
+            let stoppedBeforeStart = old.remoteTaskID == nil && old.deliveryState == .rejected
+            guard snapshots.contains(where: { $0.state.isTerminal }) || stoppedBeforeStart else { continue }
+            let (done, unsure) = CompanionTalkTools.effects(snapshots)
+            let carried = CompanionHoldTools.carried(reference: old, firstAsked: companionFirstAsked(old), snapshots: snapshots, done: done, unsure: unsure)
+            let (profile, usable) = askedWorkProfile()
+            guard usable, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
+                                                                        said: change.said, carried: carried) else { continue }
+            changesStarting.insert(old.id)
+            let started = try? await service.submit(origin: change.origin, request: request, profile: profile)
+            changesStarting.remove(old.id)
+            guard let started else { continue }
+            _ = try? projection.markTaskReplaced(id: old.id, by: started.id)
+            reloadNativeTaskReferences()
+        }
     }
 }

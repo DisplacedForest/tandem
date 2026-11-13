@@ -84,7 +84,8 @@ extension ChatStore {
                 if approves || saves { buttonOnly[choiceTitle] = wire } else { spoken[choiceTitle] = wire }
             }
         }
-        let noteText = (snapshot?.checkpoint.note?.text).map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
+        let noteText = reference.pendingChange != nil ? CompanionHoldCopy.changeWaiting
+            : (snapshot?.checkpoint.note?.text).map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         let date = snapshot?.updatedAt
             ?? conversations.first { $0.id == reference.origin.conversationID }?.messages.first { $0.id == reference.origin.userMessageID }?
                 .createdAt.timeIntervalSince1970

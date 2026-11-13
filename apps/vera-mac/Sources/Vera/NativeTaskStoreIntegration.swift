@@ -37,6 +37,7 @@ extension ChatStore {
                     await service.recoverPending()
                     guard let self else { return }
                     self.reloadNativeTaskReferences()
+                    await self.startSettledChanges()
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 }
             }

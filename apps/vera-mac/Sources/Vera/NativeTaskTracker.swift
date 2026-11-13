@@ -245,6 +245,15 @@ actor NativeTaskTracker {
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
     }
 
+    func fresh(_ id: UUID) async -> NativeTaskSnapshot? {
+        guard let reference = try? repository.taskReference(id: id), let lease = try? actionSession(for: reference) else { return nil }
+        guard let generation = try? repository.beginTaskRefresh(id: id, lease: lease), current(lease),
+              let snapshot = try? await client.fetch(reference) else { return nil }
+        if let update = try? repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
+            connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }
+        return snapshot
+    }
+
     func hold(_ id: UUID, resume: Bool) async -> NativeTaskSnapshot? {
         guard !actions.contains(id), let reference = try? repository.taskReference(id: id), !reference.cancelRequested,
               let lease = try? actionSession(for: reference) else { return nil }

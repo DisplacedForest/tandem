@@ -155,7 +155,7 @@ struct NativeCompanionCarried: Codable, Equatable, Hashable, Sendable {
     var unsure: [String] = []
 
     var valid: Bool {
-        let texts = [request] + sources.map(\.title) + sources.map(\.url)
+        let texts = sources.map(\.title) + sources.map(\.url)
         let short = (done + unsure + sources.map(\.title)).allSatisfy { $0.unicodeScalars.count <= Self.titleLimit }
         let counted = sources.count <= Self.sourceLimit && done.count <= Self.effectLimit && unsure.count <= Self.effectLimit
         let sized = request.unicodeScalars.count <= Self.requestLimit && (note?.unicodeScalars.count ?? 0) <= Self.noteLimit
@@ -458,6 +458,13 @@ struct NativeTaskReference: Codable, Equatable, Hashable, Identifiable, Sendable
     var lastDeliveryError: String?
     var snapshot: NativeTaskSnapshot?
     var replacedBy: UUID? = nil
+    var pendingChange: NativeTaskPendingChange? = nil
+}
+
+struct NativeTaskPendingChange: Codable, Equatable, Hashable, Sendable {
+    let work: String
+    let said: String
+    let origin: NativeTaskOrigin
 }
 
 enum NativeTaskState: String, Codable, Equatable, Hashable, Sendable {

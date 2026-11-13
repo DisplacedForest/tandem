@@ -58,6 +58,7 @@ struct NativeTaskStepResult: Sendable {
     var event: String = "progress"
     var data: Data = NativeTaskStore.emptyObject
     var decision: Data? = nil
+    var keepsReply = false
 
     static func failed(checkpoint: Data, reason: String) -> NativeTaskStepResult {
         NativeTaskStepResult(state: .failed, checkpoint: checkpoint, event: "failed",
@@ -277,14 +278,16 @@ final class NativeTaskStore: Sendable {
                 throw NativeTaskStoreError.conflict("Worker claim is no longer current")
             }
             if (row["cancel_requested"] as Int) != 0 { return try Self.finishCancel(db, id, checkpoint: checkpoint) }
+            let held = (row["pause_requested"] as Int) != 0
+            let reply: String? = held && step.keepsReply && step.state == .queued ? row["decision_reply"] : nil
             try db.execute(sql: """
-                UPDATE native_engine_tasks SET state = ?, checkpoint = ?, result = ?, decision = ?, decision_reply = NULL, updated_at = ? WHERE id = ?
+                UPDATE native_engine_tasks SET state = ?, checkpoint = ?, result = ?, decision = ?, decision_reply = ?, updated_at = ? WHERE id = ?
                 """, arguments: [step.state.rawValue, String(decoding: checkpoint, as: UTF8.self),
                                  result.map { String(decoding: $0, as: UTF8.self) },
-                                 decisionData.map { String(decoding: $0, as: UTF8.self) }, Self.now(), id])
+                                 decisionData.map { String(decoding: $0, as: UTF8.self) }, reply, Self.now(), id])
             let order = try Self.event(db, id, kind: step.event, state: step.state, data: step.data)
             try Self.setQueueOrder(db, id, order)
-            if (row["pause_requested"] as Int) != 0 {
+            if held {
                 if step.state.isTerminal {
                     try db.execute(sql: "UPDATE native_engine_tasks SET pause_requested = 0 WHERE id = ?", arguments: [id])
                 } else {
@@ -321,11 +324,6 @@ final class NativeTaskStore: Sendable {
         try database.write { db in
             let row = try Self.row(db, id)
             let record = Self.record(row)
-            if record.state == .running, record.pauseRequested, !record.cancelRequested {
-                try db.execute(sql: "UPDATE native_engine_tasks SET pause_requested = 0, updated_at = ? WHERE id = ?", arguments: [Self.now(), id])
-                try Self.event(db, id, kind: "picked_up", state: .running, data: Self.emptyObject)
-                return try Self.fetch(db, id)
-            }
             guard record.state == .paused else { return record }
             let saved = (row["paused_from"] as String?).flatMap(NativeTaskState.init(rawValue:))
             let waiting = saved == .needsDecision && record.decision != nil
