@@ -64,7 +64,7 @@ extension ChatStore {
         let (snapshot, connectionNote) = companionTalkSnapshot(reference)
         guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot, connectionNote: connectionNote) else { return nil }
         let card = display.card
-        let workerType = reference.createRequest.workerType
+        let workerType = CompanionCurrentWork.shownWorkerType(reference)
         let title = CompanionTalkTools.clipped(card.title, CompanionTalkTools.titleLimit)
         let what = CompanionCurrentWork.words(workerType: workerType, phase: snapshot?.checkpoint.phase, title: title)
         let phase = companionTalkPhase(card.status, state: snapshot?.state)
@@ -74,7 +74,7 @@ extension ChatStore {
         var decisionID: String?
         if phase == .waiting, let decision = snapshot?.decision {
             decisionID = decision.id
-            let shown = CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: workerType == "companion")
+            let shown = CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.createRequest.workerType == "companion")
             question = CompanionTalkTools.clipped(shown, CompanionTalkTools.questionLimit)
             for wire in decision.choices where !NativeTaskProjection.carryOnChoices.contains(wire) {
                 guard let choiceTitle = NativeTaskCardPresentation.choiceTitle(wire) else { continue }

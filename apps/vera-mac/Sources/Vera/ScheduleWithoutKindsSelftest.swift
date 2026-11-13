@@ -18,7 +18,10 @@ extension SelfTest {
         try scheduleWithoutKindsRunWords(require)
         try await scheduleWithoutKindsProfileAside(require)
         try scheduleWithoutKindsLibrary(require)
-        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile)")
+        try scheduleWithoutKindsDelivered(require)
+        try scheduleWithoutKindsCurrentLine(require)
+        try await scheduleWithoutKindsDeletedChat(require)
+        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
     }
 
     private static func scheduleWithoutKindsStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -659,6 +662,153 @@ extension SelfTest {
         try require(shown.contains("Bed note") && !shown.contains("Heater comparison"), "The Library's companion filter includes it: \(shown)")
         let outputs = store.companionOverviewModel().outputs.map(\.title)
         try require(outputs.contains("Bed note") && !outputs.contains("Heater comparison"), "The profile's outputs include it: \(outputs)")
+        try require(store.resetDot(), "Start over completes")
+        guard let fresh = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("A fresh companion conversation opens") }
+        let saved = try repository.listArtifacts()
+        let kept = saved.first { $0.title == "Bed note" }
+        try require(kept != nil && kept?.conversationID == companion.chat && kept?.originTitle != CompanionSavedText.marker
+                    && (try repository.listConversations()).contains { $0.id == companion.chat },
+                    "After start over the document and its chat stay, credited to its chat: \(kept?.originTitle ?? "nil")")
+        let reopened = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: "Ada",
+                                 attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        reopened.loadDotProfile()
+        reopened.conversations = try repository.listConversations()
+        reopened.ensureVeraThread()
+        reopened.reloadArtifacts()
+        var after = ArtifactLibrarySelection()
+        after.conversationFilter = reopened.veraThreadID ?? fresh
+        let afterShown = after.visible(reopened.artifactRecords, companionThreadID: reopened.veraThreadID ?? fresh).map(\.title)
+        let afterOutputs = reopened.companionOverviewModel().outputs.map(\.title)
+        try require(!afterShown.contains("Bed note") && !afterOutputs.contains("Bed note"),
+                    "The new companion's Library filter and outputs don't list it, after reopening from the database: \(afterShown) \(afterOutputs)")
+    }
+
+
+    private static func scheduleWithoutKindsDelivered(_ require: (Bool, String) throws -> Void) throws {
+        func delivered(_ request: NativeResearchTaskRequest, workerType: String, result: [String: Any]) throws -> Message? {
+            let repository = try LocalChatRepository(inMemory: true)
+            let origin = try NativeTaskFixture.origin(repository)
+            let prepared = try repository.prepareTaskReference(origin: origin, engine: try NativeTaskEngineIdentity(CardShot.engineURL), request: request, profile: nil)
+            let remote = UUID().uuidString
+            _ = try repository.acknowledgeTaskReference(id: prepared.id, snapshot: try scheduleWithoutKindsSnapshot(prepared, remote: remote, workerType: workerType, state: "queued"))
+            guard let reference = try repository.taskReference(id: prepared.id) else { return nil }
+            var finished = result
+            finished["query"] = reference.request.objective
+            _ = try repository.projectTask(id: reference.id, snapshot: try scheduleWithoutKindsSnapshot(reference, remote: remote, workerType: workerType,
+                                                                                                        state: "completed", result: finished))
+            return try repository.deliverTaskMessages(id: reference.id).first?.message
+        }
+        func openTitle(_ message: Message?) -> String? {
+            message?.displayBlocks.compactMap { if case .artifact(let artifact) = $0 { artifact.openTitle } else { nil } }.first
+        }
+        let schedule = UUID().uuidString.lowercased()
+        let documentResult: [String: Any] = ["kind": "document_report", "report": "# Frost\n\nNo frost tonight.", "sources": []]
+        let keptResult: [String: Any] = ["kind": "companion_report", "report": "# Beds\n\nAll watered.", "summary": "All watered.",
+                                         "title": "Bed note", "sources": [], "keep": true]
+        let older = try delivered(try NativeResearchTaskRequest(objective: "Frost check", deliverables: ["A short note"], workerType: "document", scheduleID: schedule),
+                                  workerType: "document", result: documentResult)
+        let companion = try delivered(try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: "Write the bed note", mode: "scheduled",
+                                                                                                  scheduleID: schedule), title: "Bed note"),
+                                      workerType: NativeSchedule.companionWorkerType, result: keptResult)
+        let chat = try delivered(try NativeResearchTaskRequest(objective: "Frost check", deliverables: ["A short note"], workerType: "document"),
+                                 workerType: "document", result: documentResult)
+        try require(openTitle(older) == "Open" && openTitle(companion) == "Open",
+                    "A scheduled run's delivered result opens with a plain button: \(openTitle(older) ?? "nil") \(openTitle(companion) ?? "nil")")
+        try require(openTitle(chat) == "Open document", "A document asked for in a chat keeps its button: \(openTitle(chat) ?? "nil")")
+        if var older {
+            older.displayBlocks = try JSONDecoder().decode([NativeDisplayBlock].self, from: JSONEncoder().encode(older.displayBlocks))
+            try require(openTitle(older) == "Open", "The flag survives being saved and read back")
+        }
+    }
+
+    private static func scheduleWithoutKindsCurrentLine(_ require: (Bool, String) throws -> Void) throws {
+        func line(workerType: String, phase: String?, scheduled: Bool) throws -> String? {
+            let repository = try LocalChatRepository(inMemory: true)
+            let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
+            store.loadDotProfile()
+            store.skipDotSetup()
+            store.ensureVeraThread()
+            guard let thread = store.veraThreadID else { return nil }
+            let user = Message(role: .user, text: "Check the frost")
+            let reply = Message(role: .assistant, text: "", state: .streaming)
+            try repository.saveMessage(user, conversationID: thread, ordinal: 0)
+            try repository.saveMessage(reply, conversationID: thread, ordinal: 1)
+            let origin = NativeTaskOrigin(conversationID: thread, userMessageID: user.id, assistantMessageID: reply.id)
+            let request = try NativeResearchTaskRequest(objective: "Frost check", deliverables: ["A short note"], workerType: workerType,
+                                                        title: "Frost check", scheduleID: scheduled ? UUID().uuidString.lowercased() : nil)
+            let prepared = try repository.prepareTaskReference(origin: origin, engine: try NativeTaskEngineIdentity(CardShot.engineURL), request: request, profile: nil)
+            let remote = UUID().uuidString
+            _ = try repository.acknowledgeTaskReference(id: prepared.id, snapshot: try scheduleWithoutKindsSnapshot(prepared, remote: remote, workerType: workerType,
+                state: "running", checkpoint: phase.map { ["phase": $0] }))
+            guard let reference = try repository.taskReference(id: prepared.id) else { return nil }
+            store.nativeTaskReferences = [reference]
+            return store.companionBackgroundWork.current?.words
+        }
+        for workerType in ["research", "document"] {
+            for phase in [nil, "gather", "synthesize"] as [String?] {
+                let scheduled = try line(workerType: workerType, phase: phase, scheduled: true)
+                try require(scheduled == "Working on Frost check",
+                            "A scheduled \(workerType) run in \(phase ?? "planning") reads as the companion's own work: \(scheduled ?? "nil")")
+                let chat = try line(workerType: workerType, phase: phase, scheduled: false)
+                try require(chat == CompanionCurrentWork.words(workerType: workerType, phase: phase, title: "Frost check"),
+                            "Chat-started \(workerType) in \(phase ?? "planning") reads as before: \(chat ?? "nil")")
+            }
+        }
+        try require(CompanionCurrentWork.words(workerType: "research", phase: "synthesize", title: "Frost check") == "Writing up Frost check"
+                    && CompanionCurrentWork.words(workerType: "document", phase: nil, title: "Frost check") == "Writing Frost check",
+                    "Chat-started words are today's")
+    }
+
+    private static func scheduleWithoutKindsDeletedChat(_ require: (Bool, String) throws -> Void) async throws {
+        let harness = try await CompanionTalkControlFixture.harness { _, _, _ in CompanionAskedWorkTransport.say("Fine.") }
+        defer { Task { await CompanionTalkControlFixture.finish(harness) } }
+        let store = harness.store
+        let scheduleStore = NativeScheduleStore(database: harness.repository.database)
+        store.nativeScheduleStore = scheduleStore
+        var draft = NativeScheduleDraft()
+        draft.title = "Vent check"
+        draft.instruction = CompanionTalkControlFixture.askRetry
+        draft.owner = .conversation
+        guard let schedule = store.createSchedule(draft) else { throw NativeTaskFixture.Failure.assertion("The schedule saves") }
+        guard case .started(let text) = await store.fireSchedule(schedule, run: NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date(), outcome: .running),
+                                                                 bind: { _, _ in }),
+              let referenceID = UUID(uuidString: text), let reference = try harness.repository.taskReference(id: referenceID),
+              let ownChat = try scheduleStore.get(schedule.id)?.conversationID else {
+            throw NativeTaskFixture.Failure.assertion("The schedule's run starts")
+        }
+        try scheduleStore.saveRun(NativeScheduleRun(scheduleID: schedule.id, scheduledFor: Date(), startedAt: Date(), outcome: .running, conversationID: ownChat,
+                                                    messageID: reference.origin.assistantMessageID.uuidString, taskReferenceID: reference.id.uuidString))
+        store.reloadSchedules()
+        store.reloadNativeTaskReferences()
+        try await CompanionTalkControlFixture.settle(harness, reference, .waiting)
+        guard var run = try scheduleStore.runs(scheduleID: schedule.id).first else { throw NativeTaskFixture.Failure.assertion("The run is saved") }
+        run.outcome = .waiting
+        try scheduleStore.saveRun(run)
+        store.reloadSchedules()
+        store.select(harness.threadID)
+        store.postScheduleCheckIns()
+        guard let posted = try harness.repository.messages(conversationID: harness.threadID).last,
+              posted.text.hasPrefix("The scheduled \"Vent check\" stopped to ask: ") else {
+            throw NativeTaskFixture.Failure.assertion("The question is posted in the companion's conversation")
+        }
+        func loaded() -> Bool {
+            store.conversations.first { $0.id == harness.threadID }?.messages.contains { $0.id == posted.id } ?? false
+        }
+        func saved() throws -> Bool { try harness.repository.messages(conversationID: harness.threadID).contains { $0.id == posted.id } }
+        try require(loaded() && (try saved()), "The question is in the loaded companion conversation and the database")
+        store.deleteConversation(ownChat)
+        try require(!loaded() && !(try saved()), "Deleting the schedule's own chat takes its question out of the companion's conversation")
+        try require(try scheduleStore.get(schedule.id) != nil, "The schedule stays")
+        try await CompanionTalkControlFixture.eventually("The run's work stops") {
+            let state = (try? CompanionTalkControlFixture.engineRecord(harness, reference))??.state
+            return state == .canceled || state == nil
+        }
+        store.reloadNativeTaskReferences()
+        let reopened = try harness.repository.listConversations().first { $0.id == harness.threadID }
+        try require(!(try saved()) && !(reopened?.messages.contains { $0.id == posted.id } ?? false)
+                    && !(try harness.repository.messages(conversationID: harness.threadID)).contains { message in
+                        message.displayBlocks.contains { if case .taskCard(let card) = $0 { card.id == reference.id.uuidString } else { false } } },
+                    "Read back from the database, no question or card for that run is left")
     }
 
 }

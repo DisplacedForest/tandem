@@ -152,7 +152,7 @@ enum NativeTaskDelivery {
                                     delivery: NativeDeliveredMessage(referenceID: id, kind: NativeDeliveredMessage.result,
                                                                      title: documentTitle, finished: true, document: true), now: now)
             message.displayBlocks = [.artifact(NativeResearchArtifact(id: snapshot.id, title: documentTitle,
-                report: result.report, sources: sources, kind: "document"))]
+                report: result.report, sources: sources, kind: "document", scheduled: reference.request.scheduleID != nil ? true : nil))]
             return message
         }
         let body = linked(result.report, sources: sources)

@@ -216,7 +216,23 @@ extension LocalChatRepository: NativeTaskRepository {
                 """, arguments: [try nativeTaskEncoded(reference), text])
             try db.execute(sql: "UPDATE native_task_generations SET response = NULL, failure = NULL WHERE request_id = ?",
                            arguments: [text])
+            for mirror in try taskCardMirrorIDs(db, referenceID: id) {
+                try db.execute(sql: "DELETE FROM messages WHERE id = ? AND conversation_id != ?", arguments: [mirror.uuidString, conversationID])
+            }
+            if try db.tableExists("native_task_card_mirrors") {
+                try db.execute(sql: "DELETE FROM native_task_card_mirrors WHERE reference_id = ?", arguments: [text])
+            }
             try cleanOrphanedTask(db, reference: reference)
+        }
+    }
+
+    func mirroredCardMessageIDs(originConversationID: String) throws -> Set<UUID> {
+        try database.read { db in
+            guard try db.tableExists("native_task_card_mirrors") else { return [] }
+            return Set(try String.fetchAll(db, sql: """
+                SELECT c.message_id FROM native_task_card_mirrors c JOIN native_task_outbox o ON o.id = c.reference_id
+                WHERE o.conversation_id = ? AND c.conversation_id != ?
+                """, arguments: [originConversationID, originConversationID]).compactMap(UUID.init(uuidString:)))
         }
     }
 

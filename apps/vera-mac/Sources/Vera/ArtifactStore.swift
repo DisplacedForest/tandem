@@ -305,6 +305,16 @@ extension LocalChatRepository: ArtifactRepository {
                     arguments: [conversationID])
                 return []
             case .keepAsCompanion:
+                let elsewhere = try Row.fetchAll(db, sql: """
+                    SELECT a.id AS id, c.title AS title FROM artifacts a LEFT JOIN conversations c ON c.id = a.conversation_id
+                    WHERE a.origin_title = ? AND a.conversation_id IS NOT NULL AND a.conversation_id <> ?
+                    """, arguments: [CompanionSavedText.marker, conversationID])
+                for row in elsewhere {
+                    let title: String? = row["title"]
+                    let id: String = row["id"]
+                    try db.execute(sql: "UPDATE artifacts SET origin_title = ? WHERE id = ?",
+                                   arguments: [title.map(CompanionSavedText.sanitized), id])
+                }
                 try db.execute(
                     sql: "UPDATE artifacts SET conversation_id = NULL, origin_title = ? WHERE conversation_id = ?",
                     arguments: [CompanionSavedText.marker, conversationID])

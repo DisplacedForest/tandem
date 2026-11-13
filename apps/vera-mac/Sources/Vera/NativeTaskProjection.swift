@@ -170,7 +170,7 @@ enum NativeTaskProjection {
             guard !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (card, nil) }
             return (card, NativeResearchArtifact(
                 id: snapshot.id, title: reference.request.displayTitle,
-                report: result.report, sources: companionSources, kind: "document"))
+                report: result.report, sources: companionSources, kind: "document", scheduled: scheduled ? true : nil))
         case .completed:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   !result.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -205,7 +205,7 @@ enum NativeTaskProjection {
     static func answerDocument(_ card: NativeTaskCardPresentation) -> NativeResearchArtifact? {
         guard card.isCompanion, card.status == .completed,
               let answer = card.answer?.trimmingCharacters(in: .whitespacesAndNewlines), !answer.isEmpty else { return nil }
-        return NativeResearchArtifact(id: card.id, title: card.title, report: answer, sources: card.sources, kind: "document")
+        return NativeResearchArtifact(id: card.id, title: card.title, report: answer, sources: card.sources, kind: "document", scheduled: card.scheduled)
     }
 
     static func documentProgress(_ checkpoint: NativeTaskCheckpoint) -> String? {

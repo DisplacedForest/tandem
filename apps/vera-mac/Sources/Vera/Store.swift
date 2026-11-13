@@ -1801,7 +1801,11 @@ final class ChatStore: ObservableObject {
     func purgeConversation(_ id: String) throws {
         discardedConversationIDs.insert(id)
         let stored = (try? repository?.messages(conversationID: id)) ?? []
+        let mirrored = (try? (repository as? LocalChatRepository)?.mirroredCardMessageIDs(originConversationID: id)) ?? []
         try repository?.deleteConversation(id)
+        if !mirrored.isEmpty {
+            for index in conversations.indices { conversations[index].messages.removeAll { mirrored.contains($0.id) } }
+        }
         removeRules(for: .conversation(id))
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }

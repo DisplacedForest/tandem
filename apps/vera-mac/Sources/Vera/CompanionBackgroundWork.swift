@@ -21,6 +21,10 @@ struct CompanionCurrentWork: Equatable, Sendable {
 
     var line: String { count.map { "\(words) \($0)" } ?? words }
 
+    static func shownWorkerType(_ reference: NativeTaskReference) -> String {
+        reference.request.scheduleID != nil ? NativeSchedule.companionWorkerType : reference.createRequest.workerType
+    }
+
     static func words(workerType: String, phase: String?, title: String) -> String {
         let subject = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let lead: String
@@ -104,7 +108,7 @@ extension ChatStore {
                 work.running += 1
                 let started = messages.first { $0.id == reference.origin.userMessageID }?.createdAt
                     ?? runStart[reference.id] ?? .distantPast
-                let type = reference.createRequest.workerType
+                let type = CompanionCurrentWork.shownWorkerType(reference)
                 let phase = reference.snapshot?.checkpoint.phase
                 take(started, index, CompanionCurrentWork(kind: CompanionCurrentWork.kind(workerType: type, phase: phase),
                                                           words: CompanionCurrentWork.words(workerType: type, phase: phase, title: display.card.title)))
