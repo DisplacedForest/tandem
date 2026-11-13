@@ -86,7 +86,9 @@ enum Shot {
             size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
-        } else if view == "companion-thread" || CompanionShotFixture.workingViews.contains(view) || NativeTaskDeliveryShot.views.contains(view) {
+        } else if view == "top-bar-menu" {
+            size = CGSize(width: 1100, height: 420)
+        } else if view == "companion-thread" || view == "companion-thread-collapsed" || CompanionShotFixture.workingViews.contains(view) || NativeTaskDeliveryShot.views.contains(view) {
             size = CGSize(width: 1180, height: 1040)
         } else if view.hasPrefix("companion-profile-"), view.hasSuffix("-narrow") {
             size = CGSize(width: 920, height: 900)
@@ -533,7 +535,10 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if ["companion-thread", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-working-attention", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
+        } else if view == "top-bar-menu" {
+            content = AnyView(TopBarMenuProposal(cards: ConversationTopBarShot.cards())
+                .frame(width: size.width, height: size.height))
+        } else if ["companion-thread", "companion-thread-collapsed", "companion-thread-unnamed", "companion-working-one", "companion-working-three", "companion-working-two-left", "companion-working-writing", "companion-working-changing", "companion-working-attention", "companion-thread-empty", "companion-thread-error", "companion-introduction", "companion-refinement", "vera-setup"].contains(view) {
             let introduction = view == "companion-introduction" || view == "vera-setup"
             let refinement = view == "companion-refinement"
             let populated = view != "companion-thread-empty" && view != "companion-thread-error"
@@ -555,8 +560,8 @@ enum Shot {
                                                rules: store.companionRulesSummary, activity: [], results: [])
             let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
             content = AnyView(
-                ShotView(store: store, section: .vera, emptyChat: !populated, dotHeader: false, companionPanel: model,
-                         companionSelection: nil, height: size.height)
+                ShotView(store: store, section: .vera, emptyChat: !populated, collapsedSidebar: view == "companion-thread-collapsed",
+                         dotHeader: false, companionPanel: model, companionSelection: nil, height: size.height)
                     .environment(\.companionLiveState, CompanionStateMapper.state(CompanionPresence.snapshot(store: store)))
                     .environment(\.renderSafe, true)
                     .environmentObject(store)
@@ -610,6 +615,7 @@ enum Shot {
             default: section = .chat
             }
             store.section = section
+            if ConversationTopBarShot.titledViews.contains(view) { ConversationTopBarShot.seedTitledChat(store) }
             if view == "scheduled" || view == "scheduled-paused" || view == "scheduled-caught-up" {
                 NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused", caughtUp: view == "scheduled-caught-up")
             }
@@ -622,7 +628,7 @@ enum Shot {
                          folder: view == "chats-folder",
                          command: view == "chats-command",
                          schedule: view == "chats-schedule",
-                         collapsedSidebar: view == "sidebar-collapsed",
+                         collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed",
                          mentions: view == "chats-mentions",
                          jumpToLatest: view == "chats-jump",
                          artifactSelection: artifactSeed?.selection,

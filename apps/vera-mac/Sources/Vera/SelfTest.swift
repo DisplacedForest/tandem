@@ -419,6 +419,7 @@ enum SelfTest {
         do { try runEndpointEditor() } catch { print("SELFTEST ERROR: endpoint editor \(error)"); exit(1) }
         do { try runCompanionAppearance() } catch { print("SELFTEST ERROR: companion appearance \(error)"); exit(1) }
         do { try runCompanionOverview() } catch { print("SELFTEST ERROR: companion overview \(error)"); exit(1) }
+        do { try runConversationTopBar() } catch { print("SELFTEST ERROR: conversation top bar \(error)"); exit(1) }
         do { try runCompanionNameStyling() } catch { print("SELFTEST ERROR: companion name styling \(error)"); exit(1) }
         do { try await runCardSentenceLiteral() } catch { print("SELFTEST ERROR: card sentence literal \(error)"); exit(1) }
         do { try await runCompanionSavedText() } catch { print("SELFTEST ERROR: companion saved text \(error)"); exit(1) }
@@ -427,7 +428,6 @@ enum SelfTest {
         do { try await runCompanionAskedWork() } catch { print("SELFTEST ERROR: companion asked work \(error)"); exit(1) }
         do { try await runCompanionTalkControl() } catch { print("SELFTEST ERROR: companion talk control \(error)"); exit(1) }
         do { try runCompanionShortcut() } catch { print("SELFTEST ERROR: companion shortcut \(error)"); exit(1) }
-        do { try await runConversationStatus() } catch { print("SELFTEST ERROR: conversation status \(error)"); exit(1) }
         do { try runOngoingWork() } catch { print("SELFTEST ERROR: ongoing work \(error)"); exit(1) }
         do { try await runTransientRetry() } catch { print("SELFTEST ERROR: transient retry \(error)"); exit(1) }
         do { try runConversationPresence() } catch { print("SELFTEST ERROR: conversation presence \(error)"); exit(1) }
@@ -452,6 +452,7 @@ enum SelfTest {
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
         do { try await runInstructions() } catch { print("SELFTEST ERROR: instructions \(error)"); exit(1) }
         do { try await runInstructionCheck() } catch { print("SELFTEST ERROR: instruction check \(error)"); exit(1) }
+        do { try await runInstructionSpent() } catch { print("SELFTEST ERROR: instruction spent \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }
         do { try await runRefusalReasons() } catch { print("SELFTEST ERROR: refusal reasons \(error)"); exit(1) }

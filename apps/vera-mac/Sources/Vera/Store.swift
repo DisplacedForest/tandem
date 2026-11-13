@@ -863,18 +863,6 @@ final class ChatStore: ObservableObject {
         return conversations.first { $0.id == id }
     }
 
-    var conversationStatusLine: String {
-        guard let id = selectedID else { return "Ready" }
-        let turns = conversationTurns.filter { $0.conversationID == id }
-        if let status = turns.filter({ $0.state == .running }).lazy.compactMap({ self.turnStatuses[$0.assistantMessageID] }).first {
-            let trimmed = status.trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespaces))
-            return trimmed.isEmpty ? "Working on your answer" : trimmed
-        }
-        if turnExecutions.values.contains(where: { $0.record.conversationID == id }) { return "Working on your answer" }
-        if turns.contains(where: { turnConfirmations[$0.assistantMessageID] != nil }) { return "Waiting for your approval" }
-        return "Ready"
-    }
-
     // MARK: - Memory actions
 
     func inspectMemoryCitation(_ url: String) {
@@ -2439,6 +2427,7 @@ final class ChatStore: ObservableObject {
         generating = true
         let sharedDefinitions = nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
         var turnRegistry = NativeToolRegistry(definitions: sharedDefinitions)
+        let typed = typedWords(for: turn)
         if let service = nativeTaskService, nativeTaskEngine.base != nil,
            turnOwned(turn) {
             let origin = NativeTaskOrigin(conversationID: id,
@@ -2449,7 +2438,7 @@ final class ChatStore: ObservableObject {
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
                         searchAvailable: nativeSearchAvailable, allowedWorkerTypes: { workerTypes },
-                        general: isVeraThread(id) ? companionHandOff() : nil,
+                        general: isVeraThread(id) ? companionHandOff(said: typed.said) : nil,
                         didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }
@@ -2460,7 +2449,6 @@ final class ChatStore: ObservableObject {
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
-        let typed = typedWords(for: turn)
         let said = typed.said
         let uses = turnInstructionUses(for: turn)
         let resolver = ruleResolver(for: id, requestText: said, typed: typed)

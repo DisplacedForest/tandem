@@ -144,6 +144,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
     static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said"]
+    static let saidLimit = 5000
 
     let assignment: String
     let mode: String
@@ -174,7 +175,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
         guard NativeRunOrigin.validSchedule(scheduleID), scheduleID == nil || mode == "scheduled" else {
             throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
         }
-        guard (said?.unicodeScalars.count ?? 0) <= 5000 else {
+        guard (said?.unicodeScalars.count ?? 0) <= Self.saidLimit else {
             throw NativeTaskError.invalidRequest("The request must contain at most 5,000 characters.")
         }
         self.said = said

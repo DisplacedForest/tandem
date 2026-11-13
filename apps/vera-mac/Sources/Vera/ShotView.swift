@@ -73,14 +73,14 @@ struct ShotView: View {
                                      initialSelection: integrationsSeed?.selection)
                 case .vera, .chat:
                     if emptyChat, companionPanel == nil, section != .vera {
-                        emptyChatShot
+                        emptyChatShot.overlay { ConversationTopBar() }
                     } else {
                         HStack(alignment: .top, spacing: 0) {
                             if let companionPanel {
                                 CompanionProfileLayout(state: .constant(shotProfileState), fixed: companionPanel,
                                                        selectedID: companionSelection) { conversationColumn }
                             } else {
-                                conversationColumn
+                                conversationColumn.overlay { ConversationTopBar(conversation: emptyChat ? nil : store.selected) }
                             }
                             if workColumn {
                                 OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })
@@ -91,6 +91,7 @@ struct ShotView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
+            .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: collapsedSidebar) {})
         }
     }
 
@@ -517,12 +518,6 @@ struct ShotView: View {
         return "Message \(store.conversationAssistantName)"
     }
 
-    private var shotStatusLine: String {
-        if streaming { return "Working on your answer" }
-        if command || schedule || cardChat != nil { return "Waiting for your approval" }
-        return "Ready"
-    }
-
     private func shotFileCard(title: String, badge: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
@@ -567,9 +562,6 @@ struct ShotView: View {
 
     private var chat: some View {
         VStack(spacing: 0) {
-            if ConversationPresence.headerKind(companionThread: store.isVeraThread(store.selectedID)) == .conversation, companionPanel == nil {
-                ConversationHeader(name: ConversationPresence.headerTitle(conversationTitle: store.selected?.title), status: shotStatusLine)
-            }
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(shotMessages) { message in
                     MessageRow(message: message, pendingConfirmation: cardChat.flatMap { card in message.toolActivities.contains { $0.id == card.confirmation.id } ? card.confirmation : nil }
@@ -581,7 +573,7 @@ struct ShotView: View {
                     }
                 }
             }
-            .padding(.horizontal, 28).padding(.top, companionPanel == nil ? 22 : CompanionProfileMetrics.transcriptTop).padding(.bottom, 26)
+            .padding(.horizontal, 28).padding(.top, ConversationTopBarMetrics.transcriptTop).padding(.bottom, 26)
             .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottom)
             .clipped()

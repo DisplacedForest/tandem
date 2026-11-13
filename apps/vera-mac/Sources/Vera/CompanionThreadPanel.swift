@@ -12,7 +12,6 @@ enum CompanionProfileMetrics {
     static let divider: CGFloat = 1
     static let edge: CGFloat = 16
     static let top: CGFloat = 14
-    static let toggleSize: CGFloat = 32
     static let transcriptTop: CGFloat = 66
 
     static func panelWidth(available: CGFloat) -> CGFloat {
@@ -67,7 +66,7 @@ struct CompanionProfileLayout<Conversation: View>: View {
                     .environment(\.companionProfileOpener, shown ? CompanionProfileOpener(open: open) : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
-                        if shown { CompanionProfileControls(state: $state, fixed: fixed) }
+                        ConversationTopBar(profile: shown ? $state : nil, fixed: fixed)
                     }
                 if shown, state.isOpen {
                     HStack(spacing: 0) {
@@ -83,60 +82,6 @@ struct CompanionProfileLayout<Conversation: View>: View {
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
         }
-    }
-}
-
-struct CompanionProfileControls: View {
-    @EnvironmentObject var store: ChatStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Binding var state: CompanionProfileState
-    var fixed: CompanionOverviewModel? = nil
-
-    private var mention: String { fixed?.mention ?? store.companion.inline }
-    private var toggleTitle: String { CompanionProfileCopy.toggleTitle(name: mention, open: state.isOpen) }
-
-    private func toggle() {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { state.toggle(now: Date()) }
-    }
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            Button(action: toggle) {
-                HStack(spacing: 8) {
-                    CompanionAvatar(size: 22)
-                    CompanionNamedText(template: CompanionSentence.placeholder)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.warmTextPrimary)
-                        .lineLimit(1)
-                }
-                .padding(.leading, 6).padding(.trailing, 14).padding(.vertical, 5)
-                .background(Capsule().fill(Theme.cardFill).shadow(color: .black.opacity(0.08), radius: 6, y: 2))
-                .overlay(Capsule().stroke(Theme.cardStroke, lineWidth: 1))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(toggleTitle)
-            .accessibilityLabel(toggleTitle)
-            .padding(.top, CompanionProfileMetrics.top)
-            .padding(.horizontal, CompanionProfileMetrics.toggleSize + CompanionProfileMetrics.edge * 2)
-
-            Button(action: toggle) {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(state.isOpen ? Theme.warmTextPrimary : Theme.warmTextSecondary)
-                    .frame(width: CompanionProfileMetrics.toggleSize, height: CompanionProfileMetrics.toggleSize)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(state.isOpen ? Theme.cardFill : Color.clear))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(toggleTitle)
-            .accessibilityLabel(toggleTitle)
-            .padding(.top, CompanionProfileMetrics.top)
-            .padding(.trailing, CompanionProfileMetrics.edge)
-            .frame(maxWidth: .infinity, alignment: .topTrailing)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

@@ -80,6 +80,7 @@ struct NativeChatEffectTicket: Sendable, Equatable {
     let digest: String
     let proposal: NativeEffectProposal
     let activityID: String
+    var instruction: String? = nil
 }
 
 enum NativeChatEffectAdmission: Sendable, Equatable {
@@ -113,6 +114,7 @@ struct NativeChatEffectLedger: Sendable {
     let conversationID: String
     let turnID: String
     let attempt: String
+    var userMessageID: UUID? = nil
 
     func revisions() -> NativeChatEffectRevisions {
         NativeChatEffectRevisions(rules: rules.revision, grants: grants.revision)
@@ -146,13 +148,14 @@ struct NativeChatEffectLedger: Sendable {
         let records = records
         let reply = answer.map { NativeChatEffects.reply($0, digest: ticket.digest) }
         let decisionID: String? = answer == nil ? nil : ticket.activityID
+        let spend = spend(ticket, decision: decision)
         return await Task.detached(priority: .userInitiated) { () -> NativeChatEffectAdmission in
             let admission: NativeEffectAdmission
             do {
                 admission = try ledger.admit(digest: ticket.digest, generation: 0, rulesRevision: ticket.proposal.rulesRevision,
                                              grantsRevision: ticket.proposal.grantsRevision, decision: decision, decisionID: decisionID,
                                              reply: reply, live: { (rules.revision, grants.revision) }, rulesDurable: rules.isDurable,
-                                             authorizedBy: [])
+                                             authorizedBy: [], instruction: spend)
             } catch {
                 return .refused
             }
@@ -164,6 +167,12 @@ struct NativeChatEffectLedger: Sendable {
             case .refused: return .refused
             }
         }.value
+    }
+
+    func spend(_ ticket: NativeChatEffectTicket, decision: NativeRuleDecision) -> NativeInstructionSpend? {
+        guard decision == .act(.instruction), let signature = ticket.instruction, let userMessageID else { return nil }
+        return NativeInstructionSpend(messageID: userMessageID, conversationID: conversationID, signature: signature,
+                                      holder: ticket.proposal.idempotencyKey)
     }
 
     func decline(_ ticket: NativeChatEffectTicket, answer: NativeCardAnswer) async {

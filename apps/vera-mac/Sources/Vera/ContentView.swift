@@ -28,7 +28,7 @@ struct ContentView: View {
                     switch store.section {
                     case .vera:
                         CompanionProfileLayout(state: $companionProfile, shown: companionThread) { ChatPane() }
-                    case .chat: ChatPane()
+                    case .chat: ChatPane().overlay { ConversationTopBar(conversation: store.selected) }
                     case .pulse: PulseView()
                     case .memory: MemoryView()
                     case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -39,6 +39,7 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: sidebarCollapsed) { sidebarCollapsed.toggle() })
                 if store.showCanvas, chatSection {
                     Divider()
                     CanvasPanel().frame(width: 480)
@@ -276,16 +277,14 @@ struct ChatPane: View {
         }
     }
 
-    private var showsHeader: Bool {
-        guard let convo = conversation else { return false }
-        return !convo.messages.isEmpty || (convo.isPersisted && !store.isVeraThread(convo.id))
+    private var showsNotice: Bool {
+        if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id { return true }
+        guard let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id) else { return false }
+        return store.companionConfigurationError != nil
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsHeader, ConversationPresence.headerKind(companionThread: store.isVeraThread(conversation?.id)) == .conversation {
-                ConversationHeader(name: ConversationPresence.headerTitle(conversationTitle: conversation?.title), status: store.conversationStatusLine)
-            }
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
@@ -299,7 +298,7 @@ struct ChatPane: View {
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
                 .frame(maxWidth: ConversationMetrics.columnWidth)
-                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
+                .padding(.horizontal, 28).padding(.top, ConversationTopBarMetrics.clearance)
                 .accessibilityElement(children: .contain)
             }
             if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
@@ -311,7 +310,8 @@ struct ChatPane: View {
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
                 .frame(maxWidth: ConversationMetrics.columnWidth)
-                .padding(.horizontal, 28).padding(.top, showsHeader ? 10 : 36)
+                .padding(.horizontal, 28)
+                .padding(.top, store.pendingSourceNotice?.conversationID == conversation?.id ? 10 : ConversationTopBarMetrics.clearance)
                 .accessibilityElement(children: .combine)
             }
             if let convo = conversation, !convo.messages.isEmpty {
@@ -348,7 +348,7 @@ struct ChatPane: View {
                         }
                         .scrollTargetLayout()
                         .padding(.horizontal, 28)
-                        .padding(.top, store.isVeraThread(convo.id) ? CompanionProfileMetrics.transcriptTop : 22)
+                        .padding(.top, showsNotice ? 22 : ConversationTopBarMetrics.transcriptTop)
                         .padding(.bottom, 26)
                         .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
                         .frame(maxWidth: .infinity)
@@ -483,41 +483,6 @@ struct ChatPane: View {
     }
 }
 
-struct ConversationHeader: View {
-    let name: String
-    let status: String
-    var companionThread = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ConversationFigureView(figure: ConversationPresence.headerFigure(companionThread: companionThread),
-                                   size: ConversationMetrics.avatarSize)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(name)
-                    .font(.system(size: ConversationMetrics.headerNameSize, weight: .semibold))
-                    .foregroundStyle(Theme.warmTextPrimary)
-                    .lineLimit(1)
-                if ConversationPresence.headerShowsStatus(companionThread: companionThread) {
-                    HStack(spacing: 6) {
-                        Circle().fill(Theme.statusGreen).frame(width: 7, height: 7)
-                        Text(status)
-                            .font(.system(size: ConversationMetrics.metaSize))
-                            .foregroundStyle(Theme.warmTextSecondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 28)
-        .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 36).padding(.bottom, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
-    }
-}
-
 /// Shimmering placeholder shown while a real chat's history loads (no welcome-screen flash).
 private struct ChatLoadingSkeleton: View {
     @State private var on = false
@@ -528,7 +493,7 @@ private struct ChatLoadingSkeleton: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 26)
+        .padding(.horizontal, 28).padding(.top, ConversationTopBarMetrics.transcriptTop).padding(.bottom, 26)
         .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
         .opacity(on ? 0.45 : 0.9)
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { on = true } }

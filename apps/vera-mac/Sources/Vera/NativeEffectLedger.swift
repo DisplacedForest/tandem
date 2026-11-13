@@ -24,6 +24,7 @@ enum NativeEffectRefusal: String, Codable, Equatable, Sendable {
     case ruleHandsOff = "rule_hands_off"
     case taskInactive = "task_inactive"
     case grantSpent = "grant_spent"
+    case instructionSpent = "instruction_spent"
 }
 
 enum NativeEffectObservation: Equatable, Sendable {
@@ -198,7 +199,7 @@ struct NativeEffectLedgerStore: Sendable {
     func admit(digest: String, generation: Int, rulesRevision: Int, grantsRevision: Int,
                decision: NativeRuleDecision, decisionID: String?, reply: NativeJSONValue?,
                live: (@Sendable () -> (rules: Int, grants: Int))? = nil, rulesDurable: Bool = false,
-               authorizedBy recordIDs: [String] = []) throws -> NativeEffectAdmission {
+               authorizedBy recordIDs: [String] = [], instruction: NativeInstructionSpend? = nil) throws -> NativeEffectAdmission {
         try database.write { db in
             let revisions = live?() ?? (rules: rulesRevision, grants: grantsRevision)
             let current = now()
@@ -254,6 +255,10 @@ struct NativeEffectLedgerStore: Sendable {
                         outcome = .refused(.staleRules)
                         return .rollback
                     }
+                }
+                if let instruction, try !NativeInstructionUseStore.spend(db, instruction, at: current) {
+                    outcome = .refused(.instructionSpent)
+                    return .rollback
                 }
                 try db.execute(sql: """
                     UPDATE native_effect_ledger SET state = 'admitted', decision_id = ?, decision_reply_json = ?, updated_at = ?
