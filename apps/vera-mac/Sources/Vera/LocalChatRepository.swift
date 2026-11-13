@@ -283,6 +283,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration(NativeTaskDelivery.migration) { db in try NativeTaskDelivery.migrate(db) }
         migrator.registerMigration(MessageReactionStore.migration) { db in try MessageReactionStore.migrate(db) }
         migrator.registerMigration(NativeInstructionUseStore.migration) { db in try NativeInstructionUseStore.migrate(db) }
+        migrator.registerMigration(NativeTaskStore.pauseMigration) { db in try NativeTaskStore.migratePause(db) }
         return migrator
     }
 

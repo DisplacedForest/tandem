@@ -9,7 +9,7 @@ extension ChatStore {
         let threadID = veraThreadID
         let projection = repository as? any NativeTaskProjectionRepository
         var tasks: [CompanionActivityItem] = []
-        for reference in nativeTaskReferences where reference.origin.conversationID == threadID {
+        for reference in nativeTaskReferences where reference.origin.conversationID == threadID && reference.replacedBy == nil {
             let saved = try? projection?.taskProjection(id: reference.id)
             let snapshot = saved?.snapshot ?? reference.snapshot
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
@@ -17,7 +17,9 @@ extension ChatStore {
             let date = snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) }
                 ?? conversations.first { $0.id == threadID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
                 ?? .distantPast
-            tasks.append(CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: snapshot?.decision,
+            var card = display.card
+            if reference.pendingChange != nil { card.canCancel = true }
+            tasks.append(CompanionOverviewModel.taskItem(card: card, reference: reference, decision: snapshot?.decision,
                                                          hasArtifact: display.artifact != nil && settledBeforeDelivery(reference.id), date: date))
         }
         let runs = scheduleRuns.values.flatMap { $0 }
@@ -39,7 +41,8 @@ extension ChatStore {
 
     func stopCompanionWork(_ item: CompanionActivityItem) {
         switch item.source {
-        case .task(let id): cancelNativeTask(id.uuidString)
+        case .task(let id):
+            if (try? nativeTaskRepository?.withdrawTaskChange(id: id)) == true { reloadNativeTaskReferences() } else { cancelNativeTask(id.uuidString) }
         case .run(let runID):
             if let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == runID }) { stopScheduleRun(run) }
         }
@@ -69,9 +72,9 @@ extension ChatStore {
             let settled = settledBeforeDelivery(id)
             let delivered = resultWasDelivered(id)
             let outcome = stopped ?? (settled ? display?.artifact?.report ?? display?.card.answer : nil)
-                ?? (delivered ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
+                ?? (delivered || display?.card.status == .setAside ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
-                                           canOpen: conversation != nil)
+                                           canOpen: conversation != nil, before: reference.request.dot?.carried?.request)
         case .run(let id):
             guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)

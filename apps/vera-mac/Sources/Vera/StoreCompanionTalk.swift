@@ -22,7 +22,7 @@ extension ChatStore {
         let linked = Set(scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
             .compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let stored = ((try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? nil) ?? nativeTaskReferences
-        return stored.filter { $0.origin.conversationID == threadID || linked.contains($0.id) }
+        return stored.filter { ($0.origin.conversationID == threadID || linked.contains($0.id)) && $0.replacedBy == nil }
     }
 
     private func companionTalkSnapshot(_ reference: NativeTaskReference) -> (snapshot: NativeTaskSnapshot?, note: String?) {
@@ -52,11 +52,11 @@ extension ChatStore {
         for reference in companionTalkReferences() {
             guard let entry = companionTalkEntry(reference) else { continue }
             let recent = entry.date >= since
-            guard entry.phase.ongoing || recent else { continue }
+            guard entry.phase.ongoing || recent || entry.changePending else { continue }
             drafted.append(entry)
         }
-        let ongoing = drafted.filter { $0.phase.ongoing }.sorted { $0.date > $1.date }
-        let ended = drafted.filter { !$0.phase.ongoing }.sorted { $0.date > $1.date }
+        let ongoing = drafted.filter { $0.phase.ongoing || $0.changePending }.sorted { $0.date > $1.date }
+        let ended = drafted.filter { !$0.phase.ongoing && !$0.changePending }.sorted { $0.date > $1.date }
         return Array((ongoing + ended).prefix(CompanionTalkTools.listLimit))
     }
 
@@ -84,7 +84,9 @@ extension ChatStore {
                 if approves || saves { buttonOnly[choiceTitle] = wire } else { spoken[choiceTitle] = wire }
             }
         }
-        let noteText = (snapshot?.checkpoint.note?.text).map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
+        let waitingNote = phase.ongoing ? CompanionHoldCopy.changeWaiting : CompanionHoldCopy.changeResting
+        let noteText = reference.pendingChange != nil ? waitingNote
+            : (snapshot?.checkpoint.note?.text).map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         let date = snapshot?.updatedAt
             ?? conversations.first { $0.id == reference.origin.conversationID }?.messages.first { $0.id == reference.origin.userMessageID }?
                 .createdAt.timeIntervalSince1970
@@ -92,7 +94,9 @@ extension ChatStore {
         return CompanionTalkEntry(referenceID: reference.id, what: what, phase: phase,
                                   why: phase == .couldNotFinish ? companionTalkWhy(reference, snapshot: snapshot) : nil,
                                   note: noteText.flatMap { $0.isEmpty ? nil : $0 }, question: question, decisionID: decisionID,
-                                  spoken: spoken, buttonOnly: buttonOnly, canStop: card.canCancel && phase.ongoing, date: date)
+                                  spoken: spoken, buttonOnly: buttonOnly, canStop: (card.canCancel && phase.ongoing) || reference.pendingChange != nil, date: date,
+                                  canSetAside: card.canSetAside == true && phase.ongoing, canPickUp: card.canPickUp == true,
+                                  changePending: reference.pendingChange != nil)
     }
 
     private func companionTalkPhase(_ status: NativeTaskCardPresentation.Status, state: NativeTaskState?) -> CompanionTalkPhase {
@@ -105,6 +109,8 @@ extension ChatStore {
         case .completed: return .finished
         case .stopped: return .stopped
         case .failed: return .couldNotFinish
+        case .setAside: return .setAside
+        case .newer: return .newer
         }
     }
 
@@ -113,12 +119,12 @@ extension ChatStore {
         return snapshot.checkpoint.failureReason.flatMap { CompanionTalkCopy.reasons[$0] }
     }
 
-    private func companionTalkLive(_ id: UUID) -> CompanionTalkEntry? {
+    func companionTalkLive(_ id: UUID) -> CompanionTalkEntry? {
         guard let reference = ((try? nativeTaskRepository?.taskReference(id: id)) ?? nil) else { return nil }
         return companionTalkEntry(reference)
     }
 
-    private func companionTalkEarlier(_ turn: NativeConversationTurn) -> String? {
+    func companionTalkEarlier(_ turn: NativeConversationTurn) -> String? {
         guard let end = turn.history.firstIndex(where: { $0.id == turn.userMessageID }) else { return nil }
         guard let reply = turn.history[..<end].last(where: { $0.role == "assistant" }) else { return nil }
         let text = CompanionTalkTools.clipped(reply.text, CompanionTalkTools.earlierLimit)
@@ -221,12 +227,18 @@ extension ChatStore {
                 if case .object(let fields) = outcome, fields["changed"] == .bool(true) { ledger.keep(key, outcome) }
                 return outcome
             })
-        return [stop, answer]
+        let gate = CompanionHoldGate(control: control, turn: turn, typedHere: typedHere, known: known, said: said, earlier: earlier,
+                                     answerer: answerer, timeout: timeout, toolTimeout: toolTimeout, ledger: ledger)
+        return [stop, answer] + companionHoldTools(gate)
     }
 
     func companionTalkStop(_ id: UUID) async -> NativeJSONValue {
         guard let tracker = nativeTaskTracker, let projection = repository as? any NativeTaskProjectionRepository else {
             return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotStop)
+        }
+        if (try? projection.withdrawTaskChange(id: id)) == true {
+            reloadNativeTaskReferences()
+            return .object(["result": .string(CompanionHoldCopy.changeWithdrawn), "changed": .bool(true)])
         }
         if ((try? projection.taskProjection(id: id)) ?? nil) == nil { _ = try? projection.projectTask(id: id, snapshot: nil, cursor: 0, connectionNote: nil, lease: nil, generation: nil) }
         await tracker.cancel(id)
@@ -261,7 +273,7 @@ extension ChatStore {
         return .object(fields)
     }
 
-    private func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
+    func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
         guard let remote = reference.remoteTaskID, let local = repository as? LocalChatRepository,
               let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return ([], []) }
         return CompanionTalkTools.unsaved(records, notes: notes)

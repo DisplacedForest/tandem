@@ -74,7 +74,7 @@ actor NativeTaskGenerationBroker {
                 continue
             }
             guard reference.remoteTaskID != nil, !reference.cancelRequested,
-                  reference.snapshot?.state.isTerminal != true, reference.deliveryState == .accepted,
+                  reference.snapshot?.state.isTerminal != true, reference.snapshot?.state != .paused, reference.deliveryState == .accepted,
                   !active.contains(reference.id), let profile = reference.profile,
                   let base = configuredBase(), (try? NativeTaskEngineIdentity(base)) == reference.engine,
                   await isProfileAvailable(profile) else { continue }
@@ -98,7 +98,8 @@ actor NativeTaskGenerationBroker {
         let watcher = Task {
             while !Task.isCancelled {
                 guard let current = try? repository.taskReference(id: reference.id),
-                      !current.cancelRequested, current.snapshot?.state.isTerminal != true,
+                      !current.cancelRequested, current.snapshot?.state.isTerminal != true, current.snapshot?.held != true,
+                      !repository.taskGenerationStale(referenceID: reference.id, job: job),
                       let base = configuredBase(), (try? NativeTaskEngineIdentity(base)) == current.engine else {
                     operation.cancel()
                     return
@@ -130,6 +131,10 @@ actor NativeTaskGenerationBroker {
                 try await client.returnGeneration(current, job: job, response: nil, failure: error.code)
                 return
             }
+            if let live = try? await client.fetch(current) {
+                guard !live.held, !live.cancelRequested, live.state == .running else { return }
+            }
+            guard try repository.taskReference(id: reference.id)?.snapshot?.held != true else { return }
             let reservation = try repository.reserveTaskGeneration(referenceID: reference.id, job: job)
             let completion: NativeTaskGenerationCompletion?
             let failure: String?

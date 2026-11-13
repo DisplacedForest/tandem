@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct OngoingWorkItem: Identifiable, Equatable {
-    enum Glyph: Equatable { case done, running, waiting, problem }
+    enum Glyph: Equatable { case done, running, waiting, problem, held }
 
     let id: String
     let conversationID: String
@@ -55,6 +55,8 @@ enum OngoingWork {
         case .completed: return (.done, hasArtifact ? readyToOpen : label)
         case .preparing, .queued, .working, .stopping: return (.running, label)
         case .needsInput: return (.waiting, label)
+        case .setAside: return (.held, label)
+        case .newer: return (.problem, label)
         case .failed, .stopped: return (.problem, label)
         }
     }
@@ -136,6 +138,9 @@ struct OngoingWorkGlyph: View {
             case .waiting:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
                 Image(systemName: "clock").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+            case .held:
+                Circle().fill(Theme.warmTextSecondary.opacity(0.16))
+                Image(systemName: "pause.fill").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
             case .problem:
                 Circle().fill(Theme.accent.opacity(0.18))
                 Image(systemName: "exclamationmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.accent)

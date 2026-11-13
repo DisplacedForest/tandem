@@ -187,7 +187,9 @@ actor NativeTaskDispatcher {
             case .success(let value): outcome = value
             case .failure(let error) where error is CancellationError:
                 if shuttingDown { return }
-                outcome = .failed(checkpoint: task.checkpoint, reason: "step_canceled")
+                let held = (try? store.get(task.id))?.pauseRequested == true
+                outcome = held ? NativeTaskStepResult(state: .queued, checkpoint: task.checkpoint)
+                    : .failed(checkpoint: task.checkpoint, reason: "step_canceled")
             case .failure: outcome = .failed(checkpoint: task.checkpoint, reason: "worker_error")
             }
         } catch is NativeTaskDispatcherTimeout {
