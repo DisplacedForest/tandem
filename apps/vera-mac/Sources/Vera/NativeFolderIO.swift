@@ -64,6 +64,7 @@ enum NativeFolderIO {
     }
 
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
+        AppLocations.refuseRealFolder(URL(fileURLWithPath: grant.path, isDirectory: true))
         let fd = open(grant.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { throw NativeFolderAccessError.notFound(grant.path) }
         let descriptor = NativeFolderDescriptor(fd)

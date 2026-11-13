@@ -9,6 +9,7 @@ enum ConfigFile {
 
     static func read(at url: URL = defaultURL) -> [String: Any] {
         AppLocations.refuseRealSettings(url)
+        AppLocations.refuseRealFile(url)
         guard let data = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         return obj
@@ -17,6 +18,7 @@ enum ConfigFile {
     /// Atomic write, creating the parent directory if needed.
     static func write(_ raw: [String: Any], at url: URL = defaultURL) throws {
         AppLocations.refuseRealSettings(url)
+        AppLocations.refuseRealFile(url)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])

@@ -1,5 +1,7 @@
 import Foundation
 import Darwin
+import Network
+import WebKit
 
 enum OutboundGuard {
     enum Policy: Equatable, Sendable {
@@ -127,4 +129,143 @@ final class OutboundGuardProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+extension OutboundGuard {
+    static let closedProxyPort: UInt16 = 9
+
+    static func webRules(for chosen: Policy) -> String? {
+        guard case .loopbackOnly(let allowed) = chosen else { return nil }
+        var rules: [[String: Any]] = [["trigger": ["url-filter": ".*"], "action": ["type": "block"]]]
+        var filters = [
+            "^[a-z][a-z0-9+.-]*://localhost[:/]",
+            "^[a-z][a-z0-9+.-]*://127\\.[0-9]+\\.[0-9]+\\.[0-9]+[:/]",
+            "^[a-z][a-z0-9+.-]*://\\[::1\\][:/]",
+            "^file:", "^data:", "^about:", "^blob:",
+        ]
+        for host in allowed.sorted() {
+            let escaped = host.map { character -> String in
+                character.isLetter || character.isNumber || character == "-" ? String(character) : "\\" + String(character)
+            }.joined()
+            filters.append("^[a-z][a-z0-9+.-]*://\(escaped)[:/]")
+        }
+        for filter in filters {
+            rules.append(["trigger": ["url-filter": filter], "action": ["type": "ignore-previous-rules"]])
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys]) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    @MainActor
+    static func webView(policy chosen: Policy = policy) -> WKWebView {
+        guard chosen != .open else { return WKWebView() }
+        return GuardedWebView(policy: chosen)
+    }
+}
+
+@MainActor
+final class GuardedWebView: WKWebView {
+    enum State: Equatable { case waiting, ready, refused }
+
+    private(set) var state: State = .waiting
+    private var pending: (() -> Void)?
+    private let navigationGuard: GuardedWebNavigation
+
+    init(policy chosen: OutboundGuard.Policy) {
+        let configuration = WKWebViewConfiguration()
+        let store = WKWebsiteDataStore.nonPersistent()
+        var proxy = ProxyConfiguration(httpCONNECTProxy: NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: OutboundGuard.closedProxyPort)!))
+        proxy.allowFailover = false
+        proxy.excludedDomains = ["localhost", "127.0.0.1", "::1"] + {
+            if case .loopbackOnly(let allowed) = chosen { return allowed.sorted() }
+            return []
+        }()
+        store.proxyConfigurations = [proxy]
+        configuration.websiteDataStore = store
+        navigationGuard = GuardedWebNavigation(policy: chosen)
+        super.init(frame: .zero, configuration: configuration)
+        navigationDelegate = navigationGuard
+        Task { await self.attachRules(chosen) }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    private func attachRules(_ chosen: OutboundGuard.Policy) async {
+        guard let encoded = OutboundGuard.webRules(for: chosen),
+              let list = try? await GuardedWebRules.compiled(encoded) else {
+            state = .refused
+            pending = nil
+            return
+        }
+        configuration.userContentController.add(list)
+        state = .ready
+        let load = pending
+        pending = nil
+        load?()
+    }
+
+    private func whenReady(_ load: @escaping () -> Void) {
+        switch state {
+        case .ready: load()
+        case .waiting: pending = load
+        case .refused: break
+        }
+    }
+
+    override func loadHTMLString(_ string: String, baseURL: URL?) -> WKNavigation? {
+        if state == .ready { return super.loadHTMLString(string, baseURL: baseURL) }
+        whenReady { [weak self] in _ = self?.loadHTMLString(string, baseURL: baseURL) }
+        return nil
+    }
+
+    override func load(_ request: URLRequest) -> WKNavigation? {
+        guard OutboundGuard.permits(request.url, policy: navigationGuard.policy) else { OutboundGuard.noteRefusal(); return nil }
+        if state == .ready { return super.load(request) }
+        whenReady { [weak self] in _ = self?.load(request) }
+        return nil
+    }
+
+    override func loadFileURL(_ URL: URL, allowingReadAccessTo readAccessURL: URL) -> WKNavigation? {
+        if state == .ready { return super.loadFileURL(URL, allowingReadAccessTo: readAccessURL) }
+        whenReady { [weak self] in _ = self?.loadFileURL(URL, allowingReadAccessTo: readAccessURL) }
+        return nil
+    }
+
+    override func load(_ data: Data, mimeType MIMEType: String, characterEncodingName: String, baseURL: URL?) -> WKNavigation? {
+        let base = baseURL ?? Foundation.URL(string: "about:blank")!
+        if state == .ready { return super.load(data, mimeType: MIMEType, characterEncodingName: characterEncodingName, baseURL: base) }
+        whenReady { [weak self] in _ = self?.load(data, mimeType: MIMEType, characterEncodingName: characterEncodingName, baseURL: base) }
+        return nil
+    }
+}
+
+@MainActor
+final class GuardedWebNavigation: NSObject, WKNavigationDelegate {
+    let policy: OutboundGuard.Policy
+
+    init(policy: OutboundGuard.Policy) { self.policy = policy }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        guard OutboundGuard.permits(navigationAction.request.url, policy: policy) else {
+            OutboundGuard.noteRefusal()
+            return .cancel
+        }
+        return .allow
+    }
+}
+
+@MainActor
+enum GuardedWebRules {
+    private static var compiledLists: [String: WKContentRuleList] = [:]
+
+    static func compiled(_ encoded: String) async throws -> WKContentRuleList? {
+        if let existing = compiledLists[encoded] { return existing }
+        let folder = (AppLocations.headlessRoot ?? FileManager.default.temporaryDirectory)
+            .appendingPathComponent("web-rules-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard let store = WKContentRuleListStore(url: folder) else { return nil }
+        let list = try await store.compileContentRuleList(forIdentifier: "outbound", encodedContentRuleList: encoded)
+        if let list { compiledLists[encoded] = list }
+        return list
+    }
 }

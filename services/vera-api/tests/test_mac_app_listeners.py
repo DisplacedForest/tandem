@@ -7,6 +7,7 @@ LISTENER_TERMS = ("NWListener", "CFSocketCreate", "GCDAsyncSocket", "HTTPServer"
 
 LISTENER_ALLOWLIST = {
     "apps/vera-mac/Sources/Vera/NativePiPresentationSelftest.swift": ("NWListener",),
+    "apps/vera-mac/Sources/Vera/OwnSettingsSelftest.swift": ("NWListener",),
 }
 
 

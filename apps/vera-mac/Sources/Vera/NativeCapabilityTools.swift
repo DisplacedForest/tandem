@@ -136,6 +136,7 @@ enum NativeCapabilityTools {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for file in files {
             let label = file.lastPathComponent
+            AppLocations.refuseRealFile(file)
             guard let data = try? Data(contentsOf: file) else {
                 failures.append(NativeToolDeclarationFailure(
                     file: label, reason: "The file could not be read"))

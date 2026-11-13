@@ -227,6 +227,34 @@ struct AppLocations: Equatable, Sendable {
         stop("This test run keeps its own conversation history, but it was about to open the app's real database at \(url.path).")
     }
 
+    static func realConfigFolder(home: URL) -> URL { home.appendingPathComponent(".vera", isDirectory: true) }
+
+    static func touchesRealFiles(_ url: URL, home: URL? = accountHome, foldCase: Bool? = nil) -> Bool {
+        guard let home else { return true }
+        let settings = isRealSettingsFile(url, realFile: realSettingsFile(home: home), foldCase: foldCase)
+        let database = isRealDatabaseFile(url, realFile: realDatabase(home: home), foldCase: foldCase)
+        let configFolder = isInside(url, realConfigFolder(home: home), foldCase: foldCase)
+        let dataFolder = isInside(url, dataFolder(home: home), foldCase: foldCase)
+        return settings || database || configFolder || dataFolder
+    }
+
+    static func holdsRealFiles(_ folder: URL, home: URL? = accountHome, foldCase: Bool? = nil) -> Bool {
+        guard let home else { return true }
+        let holdsConfig = isInside(realConfigFolder(home: home), folder, foldCase: foldCase)
+        let holdsData = isInside(dataFolder(home: home), folder, foldCase: foldCase)
+        return touchesRealFiles(folder, home: home, foldCase: foldCase) || holdsConfig || holdsData
+    }
+
+    static func refuseRealFile(_ url: URL) {
+        guard isHeadless, touchesRealFiles(url) else { return }
+        stop("This test run keeps its own files, but it was about to read \(url.path), which belongs to the app's real settings or data.")
+    }
+
+    static func refuseRealFolder(_ url: URL) {
+        guard isHeadless, holdsRealFiles(url) else { return }
+        stop("This test run keeps its own files, but it was about to open the folder \(url.path), which holds or belongs to the app's real settings or data.")
+    }
+
     static func stop(_ message: String) -> Never {
         FileHandle.standardError.write(Data((message + "\n").utf8))
         exit(3)

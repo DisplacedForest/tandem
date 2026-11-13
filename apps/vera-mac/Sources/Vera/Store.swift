@@ -404,6 +404,7 @@ final class ChatStore: ObservableObject {
 
     func loadArtifacts() {
         guard artifactPersistenceEnabled else { return }
+        AppLocations.refuseRealFile(Self.artifactsURL)
         if let d = try? Data(contentsOf: Self.artifactsURL),
            let arr = try? JSONDecoder().decode([Artifact].self, from: d) {
             artifactLibrary = arr
@@ -2088,6 +2089,7 @@ final class ChatStore: ObservableObject {
         let fileURL = record.fileName.flatMap { attachmentStore.url(for: $0) }
         let att = Attachment(url: sourceURL ?? fileURL ?? URL(fileURLWithPath: record.name))
         att.nativeRecord = record
+        if let fileURL { AppLocations.refuseRealFile(fileURL) }
         if let fileURL, let image = NSImage(contentsOf: fileURL) {
             att.thumbnail = ImageEncoder.downscale(image, maxDim: 96)
         }

@@ -1,5 +1,52 @@
 import Foundation
 import Security
+import Network
+import WebKit
+
+final class OwnSettingsLoopbackServer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [String] = []
+    private let listener: NWListener
+    private(set) var port: UInt16 = 0
+
+    var paths: [String] { lock.withLock { seen } }
+
+    init() async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
+        let started = listener
+        let gate = NativePiReadyGate()
+        port = try await withCheckedThrowingContinuation { continuation in
+            started.stateUpdateHandler = { state in
+                switch state {
+                case .ready: gate.finish { continuation.resume(returning: started.port?.rawValue ?? 0) }
+                case .failed(let error): gate.finish { continuation.resume(throwing: error) }
+                default: break
+                }
+            }
+            started.start(queue: DispatchQueue(label: "own-settings-loopback"))
+        }
+    }
+
+    private func serve(_ connection: NWConnection) {
+        connection.start(queue: DispatchQueue(label: "own-settings-loopback-connection"))
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+            let line = data.flatMap { String(data: $0, encoding: .utf8) }?.components(separatedBy: "\r\n").first ?? ""
+            let parts = line.split(separator: " ")
+            if parts.count > 1 { self?.record(String(parts[1])) }
+            let gif = Data([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
+                            0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b])
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: \(gif.count)\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(head.utf8) + gif, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+
+    private func record(_ path: String) { lock.withLock { seen.append(path) } }
+
+    func stop() { listener.cancel() }
+}
 
 final class OwnSettingsWire: URLProtocol, @unchecked Sendable {
     static let host = "fixture.example"
@@ -32,6 +79,9 @@ enum OwnSettingsSelftest {
         try await checkRequestsStopBeforeConnecting()
         try checkSettingsFile(runRoot, scratch: scratch.appendingPathComponent("settings", isDirectory: true))
         try checkDatabase(runRoot, scratch: scratch.appendingPathComponent("database", isDirectory: true))
+        try checkRealFiles(scratch.appendingPathComponent("real-files", isDirectory: true))
+        try checkToolsProbe(scratch.appendingPathComponent("tools-probe", isDirectory: true))
+        try await checkWebViews()
         try checkKeysStayInMemory()
         try checkPreferences()
         try checkRetiredKeys()
@@ -249,6 +299,106 @@ enum OwnSettingsSelftest {
                     "A scratch database or an unrelated name is not the real database")
     }
 
+    static func checkRealFiles(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let config = AppLocations.realConfigFolder(home: home)
+        let data = AppLocations.dataFolder(home: home)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        let settings = AppLocations.realSettingsFile(home: home)
+        try Data("{}".utf8).write(to: settings)
+        let plain = root.appendingPathComponent("plain.json")
+        try Data("{}".utf8).write(to: plain)
+        let link = root.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: settings)
+        let hard = root.appendingPathComponent("hard.json")
+        try FileManager.default.linkItem(at: settings, to: hard)
+        let other = config.appendingPathComponent("tools.d/other.json")
+        let dataFile = data.appendingPathComponent("attachments/a.png")
+        let folderLink = root.appendingPathComponent("linked-config", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: folderLink, withDestinationURL: config)
+        try require(!AppLocations.touchesRealFiles(plain, home: home), "A plain scratch file passes")
+        try require(AppLocations.touchesRealFiles(link, home: home), "A link to the real settings file stops")
+        try require(AppLocations.touchesRealFiles(hard, home: home), "A hard link to the real settings file stops")
+        try require(AppLocations.touchesRealFiles(other, home: home) && AppLocations.touchesRealFiles(dataFile, home: home),
+                    "A file inside the real config or data folder stops")
+        try require(AppLocations.touchesRealFiles(folderLink.appendingPathComponent("anything.json"), home: home),
+                    "A file reached through a linked config folder stops")
+        try require(AppLocations.touchesRealFiles(URL(fileURLWithPath: AppLocations.realDatabase(home: home).path + "-wal"), home: home),
+                    "The real database's siblings stop")
+        try require(AppLocations.holdsRealFiles(home, home: home) && AppLocations.holdsRealFiles(config, home: home)
+                    && !AppLocations.holdsRealFiles(root.appendingPathComponent("elsewhere", isDirectory: true), home: home),
+                    "A folder that holds the real config or data stops, a separate one passes")
+        if let real = AppLocations.realSettingsFile {
+            try require(AppLocations.touchesRealFiles(real) && !AppLocations.touchesRealFiles(AppLocations.current.configFile),
+                        "The real settings file stops and this run's own passes")
+        }
+    }
+
+    static func checkToolsProbe(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        guard let real = AppLocations.realSettingsFile, let binary = Bundle.main.executableURL else { return }
+        let tools = root.appendingPathComponent("config/tools.d", isDirectory: true)
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        let probe = tools.appendingPathComponent("probe.json")
+        try FileManager.default.createSymbolicLink(at: probe, withDestinationURL: real)
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = ["--selftest"]
+        var environment = ProcessInfo.processInfo.environment
+        environment[probeSetting] = "tools"
+        environment[AppLocations.settingName] = root.appendingPathComponent("config", isDirectory: true).path
+        process.environment = environment
+        let errors = Pipe()
+        let output = Pipe()
+        process.standardError = errors
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        try require(process.terminationStatus != 0 && !printed.contains("PROBE NOT STOPPED") && message.contains("This test run keeps its own files"),
+                    "A tool declaration linked to the real settings file stops the run before it is read")
+    }
+
+    static func checkWebViews() async throws {
+        let require = NativeTaskFixture.require
+        try require(OutboundGuard.webRules(for: .open) == nil, "An open run gets today's web view with no rules")
+        try require(type(of: OutboundGuard.webView(policy: .open)) == WKWebView.self, "An open run's web view is exactly today's")
+        let rules = OutboundGuard.webRules(for: .loopbackOnly(["memory.example"])) ?? ""
+        try require(rules.contains("\"block\"") && rules.contains("memory\\\\.example"), "The rules block everything but loopback and the named host")
+        try require(OutboundGuard.webView() is GuardedWebView, "A test run's web view is the restricted one")
+        let compiled = try await GuardedWebRules.compiled(OutboundGuard.webRules(for: OutboundGuard.policy) ?? "")
+        try require(compiled != nil, "The restriction compiles, so a web view can load at all")
+
+        let server = try await OwnSettingsLoopbackServer()
+        defer { server.stop() }
+        let port = server.port
+        let restricted = OutboundGuard.webView()
+        let html = "<html><body><img src='http://127.0.0.1:\(port)/inside.gif'><img src='http://localhost.:\(port)/trailing.gif'><img src='http://198.51.100.7:9/outside.gif'></body></html>"
+        _ = restricted.loadHTMLString(html, baseURL: nil)
+        let started = Date()
+        var settled = false
+        while Date().timeIntervalSince(started) < 15 {
+            try await Task.sleep(for: .milliseconds(200))
+            let complete = try? await restricted.evaluateJavaScript("Array.from(document.images).length == 3 && Array.from(document.images).every(function (i) { return i.complete })") as? Bool
+            if complete == true && server.paths.contains("/inside.gif") { settled = true; break }
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        try require(settled && server.paths.contains("/inside.gif"), "A test run's web view loads from a loopback fixture")
+        try require(!server.paths.contains("/trailing.gif"), "A blocked address is never attempted, even one that would reach this Mac")
+        try require(elapsed < 15, "The outside image finished at once instead of waiting on a connection")
+
+        let open = OutboundGuard.webView(policy: .open)
+        _ = open.loadHTMLString("<html><body><img src='http://localhost.:\(port)/control.gif'></body></html>", baseURL: nil)
+        let controlStarted = Date()
+        while Date().timeIntervalSince(controlStarted) < 15 && !server.paths.contains("/control.gif") {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        try require(server.paths.contains("/control.gif"), "Without the restriction the same kind of address does reach the fixture, so the block is what stopped it")
+    }
+
     static func checkKeysStayInMemory() throws {
         let require = NativeTaskFixture.require
         let store = AppLocations.credentialStore()
@@ -311,6 +461,11 @@ enum OwnSettingsSelftest {
             _ = NativeKeychainOperations().read(query as CFDictionary, nil)
         case "preferences":
             _ = AppLocations.standardPreferences
+        case "tools":
+            let folder = NativeCapabilityTools.defaultDirectory
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            guard AppLocations.isHeadless, !files.isEmpty, files.allSatisfy({ AppLocations.touchesRealFiles($0) }) else { break }
+            _ = NativeCapabilityTools.catalog(directory: folder)
         case "database", "database-wal":
             guard let real = AppLocations.realDatabase else { break }
             let target = kind == "database" ? real : URL(fileURLWithPath: real.path + "-wal")
