@@ -63,6 +63,7 @@ extension SelfTest {
     struct IconGeometry: Equatable {
         let bytes: Int
         let hash: UInt64
+        var side = 24
     }
 
     static let iconGeometry: [InterfaceIcon: IconGeometry] = [
@@ -71,7 +72,43 @@ extension SelfTest {
         .sidebar: IconGeometry(bytes: 1366, hash: 10167534887057486873),
         .sidebarShown: IconGeometry(bytes: 2225, hash: 14390550895553307252),
         .more: IconGeometry(bytes: 100, hash: 9401086856371832709),
+        .home: IconGeometry(bytes: 1398, hash: 1669975422232020603),
+        .chat: IconGeometry(bytes: 719, hash: 4727889612936719036),
+        .settings: IconGeometry(bytes: 1271, hash: 14184745131888506841),
+        .projects: IconGeometry(bytes: 697, hash: 4946116776941346420, side: 20),
+        .projectOpen: IconGeometry(bytes: 2405, hash: 16637674623537552920),
+        .library: IconGeometry(bytes: 1280, hash: 6289694957238832706),
+        .scheduled: IconGeometry(bytes: 453, hash: 17768382527750560289),
+        .plugins: IconGeometry(bytes: 1437, hash: 8724439596248102886),
+        .pulse: IconGeometry(bytes: 2415, hash: 18024484980784978891),
+        .workflows: IconGeometry(bytes: 1556, hash: 8722813287961875453),
+        .activity: IconGeometry(bytes: 456, hash: 15428600264880338152),
+        .memory: IconGeometry(bytes: 1166, hash: 8953277172807369300),
+        .companion: IconGeometry(bytes: 574, hash: 13623657184867545989),
+        .attention: IconGeometry(bytes: 651, hash: 10506749735272278851),
+        .update: IconGeometry(bytes: 592, hash: 12592026924203043116),
+        .clear: IconGeometry(bytes: 263, hash: 5878221935624466636),
+        .pin: IconGeometry(bytes: 1107, hash: 17874464801791710818),
     ]
+
+    static let candidateGeometry: [InterfaceIconCandidate: IconGeometry] = [
+        .libraryFolders: IconGeometry(bytes: 4814, hash: 18357995022696952958),
+        .memoryArchive: IconGeometry(bytes: 1315, hash: 12612217413575214331),
+        .workflowsBranch: IconGeometry(bytes: 1069, hash: 9936219808698129602),
+    ]
+
+    private static func checkIconFile(_ name: String, url: URL?, image: NSImage?, geometry: IconGeometry?) throws {
+        let require = NativeTaskFixture.require
+        guard let url, let svg = try? String(contentsOf: url, encoding: .utf8) else {
+            throw SelfTestFailure("The \(name) icon file is missing from the app resources")
+        }
+        guard let geometry else { throw SelfTestFailure("The \(name) icon has no pinned geometry") }
+        try require(svg.contains("viewBox=\"0 0 \(geometry.side) \(geometry.side)\"") && iconGeometry(svg).bytes == geometry.bytes
+                    && iconGeometry(svg).hash == geometry.hash, "The \(name) icon keeps its source geometry")
+        guard let image else { throw SelfTestFailure("The \(name) icon does not load as an image") }
+        try require(image.isTemplate, "The \(name) icon takes the text color")
+        try require(iconDraws(image), "The \(name) icon draws visible marks")
+    }
 
     static func iconGeometry(_ svg: String) -> IconGeometry {
         var paths: [String] = []
@@ -94,17 +131,31 @@ extension SelfTest {
     static func runConversationTopBar() throws {
         let require = NativeTaskFixture.require
 
-        try require(Set(InterfaceIcon.allCases.map(\.resource)).count == InterfaceIcon.allCases.count, "Each icon meaning has its own file")
+        let resources = InterfaceIcon.allCases.map(\.resource) + InterfaceIconCandidate.allCases.map(\.resource)
+        try require(Set(resources).count == resources.count, "Each icon meaning has its own file")
         for icon in InterfaceIcon.allCases {
-            guard let url = icon.url, let svg = try? String(contentsOf: url, encoding: .utf8) else {
-                throw SelfTestFailure("The \(icon.rawValue) icon file is missing from the app resources")
-            }
-            try require(svg.contains("viewBox=\"0 0 24 24\"") && iconGeometry(svg) == iconGeometry[icon],
-                        "The \(icon.rawValue) icon keeps its source geometry")
-            guard let image = icon.image else { throw SelfTestFailure("The \(icon.rawValue) icon does not load as an image") }
-            try require(image.isTemplate, "The \(icon.rawValue) icon takes the text color")
-            try require(iconDraws(image), "The \(icon.rawValue) icon draws visible marks")
+            try checkIconFile(icon.rawValue, url: icon.url, image: icon.image, geometry: iconGeometry[icon])
+            let menu = InterfaceIconCache.shared.menuImage(icon.resource)
+            try require(icon.menuImage != nil && menu?.isTemplate == true
+                        && menu?.size == NSSize(width: InterfaceIconSize.menu, height: InterfaceIconSize.menu)
+                        && menu.map(iconDraws) == true, "The \(icon.rawValue) icon has a menu image")
         }
+        for candidate in InterfaceIconCandidate.allCases {
+            try checkIconFile(candidate.rawValue, url: candidate.url, image: candidate.image, geometry: candidateGeometry[candidate])
+            try require(candidate.resource.hasPrefix(candidate.role.resource + "-"), "The \(candidate.rawValue) icon sits beside the one it could replace")
+        }
+        try require(Set(SidebarDestination.primary + SidebarDestination.secondary) == Set(SidebarDestination.allCases),
+                    "Every destination shows in the rail or its menu")
+        for destination in SidebarDestination.allCases {
+            try require(destination.glyph.image != nil, "The \(destination.title) destination draws its icon")
+        }
+        for section in AppSection.allCases {
+            try require(section.glyph.image != nil, "The \(section.title) section draws its icon")
+        }
+        try require(SidebarDestination.integrations.glyph == .plugins && AppSection.integrations.glyph == .plugins,
+                    "Plugins shows the plugins icon")
+        try require(SidebarDestination.chats.glyph == .home && SidebarDestination.library.glyph == AppSection.artifacts.glyph
+                    && SidebarDestination.workflows.glyph == AppSection.agentic.glyph, "The rail and the screens agree on icons")
         try require(VeraResources.url("interface-icons-NOTICE", ext: "txt") != nil, "The icon notice ships inside the app")
 
         for section in AppSection.allCases {
@@ -208,7 +259,7 @@ extension SelfTest {
             + [ConversationTopBarModel.moreTitle]
         try require(!every.contains { $0.localizedCaseInsensitiveContains("vera") || $0.contains("\u{2014}") },
                     "Menu wording stays plain")
-        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, menus, one sidebar control)")
+        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, \(InterfaceIconCandidate.allCases.count) alternates, menus, one sidebar control)")
     }
 }
 

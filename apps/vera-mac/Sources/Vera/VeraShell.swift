@@ -92,7 +92,7 @@ struct CompanionTileBadge: View {
             Circle().fill(ring)
             Circle().fill(attention ? Theme.attention : Theme.statusGreen).padding(CompanionTileMetrics.badgeRing)
             if attention {
-                Image(systemName: "star.fill").font(.system(size: 7.5, weight: .bold)).foregroundStyle(.white)
+                InterfaceIconView(icon: .attention, size: InterfaceIconSize.badge).foregroundStyle(.white)
             }
         }
         .frame(width: CompanionTileMetrics.badge, height: CompanionTileMetrics.badge)
@@ -261,22 +261,22 @@ struct VeraSidebar: View {
     private var globalRail: some View {
         VStack(spacing: 10) {
             ForEach(SidebarDestination.primary) { destination in
-                railButton(destination.title, icon: destination.icon,
+                railButton(destination.title, icon: destination.glyph,
                            selected: destination.isRailSelected(section: store.section, pane: store.agenticPane)) { go(destination) }
             }
-            if renderSafe { railGlyph("ellipsis", selected: moreSelected) }
+            if renderSafe { railGlyph(.more, selected: moreSelected) }
             else { moreMenu }
             Spacer(minLength: 12)
             if collapsed {
-                railButton("New chat", icon: "square.and.pencil") { store.newConversation() }
-                railButton("Search chats", icon: "magnifyingglass") { collapsed = false; openSearch() }
-                railButton(store.companion.leading, icon: "bubble.left") { onSelect(.vera) }
+                railButton("New chat", icon: .add) { store.newConversation() }
+                railButton("Search chats", icon: .search) { collapsed = false; openSearch() }
+                railButton(store.companion.leading, icon: .companion) { onSelect(.vera) }
                 if !renderSafe { CompactUpdateBadge { collapsed = false } }
             }
             if ConversationTopBarModel.showsRailToggle(section: store.section) { collapseToggle }
-            if renderSafe { railGlyph("gearshape", selected: false) }
+            if renderSafe { railGlyph(.settings, selected: false) }
             else {
-                SettingsLink { railGlyph("gearshape", selected: false) }
+                SettingsLink { railGlyph(.settings, selected: false) }
                     .buttonStyle(SidebarRowStyle())
                     .help("Settings").accessibilityLabel("Settings")
             }
@@ -286,15 +286,15 @@ struct VeraSidebar: View {
         .background(Theme.bg)
     }
 
-    private func railGlyph(_ icon: String, selected: Bool) -> some View {
-        Image(systemName: icon).font(.system(size: 19, weight: .regular))
+    private func railGlyph(_ icon: InterfaceIcon, selected: Bool) -> some View {
+        InterfaceIconView(icon: icon, size: InterfaceIconSize.rail)
             .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             .frame(width: 38, height: 38)
             .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
-    private func railButton(_ title: String, icon: String, selected: Bool = false, action: @escaping () -> Void) -> some View {
+    private func railButton(_ title: String, icon: InterfaceIcon, selected: Bool = false, action: @escaping () -> Void) -> some View {
         if renderSafe {
             railGlyph(icon, selected: selected)
                 .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius).fill(selected ? Theme.surfaceSelected : .clear))
@@ -337,7 +337,7 @@ struct VeraSidebar: View {
             HStack(spacing: 4) {
                 SidebarSectionHeader(title: "Projects")
                 Button { projectName = ""; creatingProject = true } label: {
-                    Image(systemName: "plus").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: .add, size: InterfaceIconSize.small).foregroundStyle(Theme.textSecondary)
                         .frame(width: 24, height: 28)
                 }
                 .buttonStyle(SidebarRowStyle()).help("New project").accessibilityLabel("New project")
@@ -392,7 +392,7 @@ struct VeraSidebar: View {
     }
 
     private var collapseToggle: some View {
-        railButton(collapsed ? "Expand sidebar" : "Collapse sidebar", icon: "sidebar.left") { collapsed.toggle() }
+        railButton(collapsed ? "Expand sidebar" : "Collapse sidebar", icon: ConversationTopBarModel.sidebarIcon(collapsed: collapsed)) { collapsed.toggle() }
     }
 
     private var moreSelected: Bool {
@@ -402,10 +402,12 @@ struct VeraSidebar: View {
     private var moreMenu: some View {
         Menu {
             ForEach(SidebarDestination.secondary) { destination in
-                Button { go(destination) } label: { Label(destination.title, systemImage: destination.icon) }
+                Button { go(destination) } label: {
+                    Label { Text(destination.title) } icon: { destination.glyph.menuImage }
+                }
             }
         } label: {
-            railGlyph("ellipsis", selected: moreSelected)
+            railGlyph(.more, selected: moreSelected)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help("More").accessibilityLabel("More destinations")
@@ -476,12 +478,12 @@ struct VeraSidebar: View {
 
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            InterfaceIconView(icon: .search, size: InterfaceIconSize.small).foregroundStyle(Theme.textSecondary)
             TextField("Search chats", text: $search).textFieldStyle(.plain).font(.system(size: SidebarMetrics.labelSize))
                 .focused($searchFocused)
                 .onExitCommand { search = ""; searching = false; searchFocused = false }
             if !search.isEmpty {
-                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)) }
+                Button { search = "" } label: { InterfaceIconView(icon: .clear, size: InterfaceIconSize.small) }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Clear search")
             }
         }
@@ -507,6 +509,7 @@ struct SidebarProjectRow: View {
     let selected: Bool
     let onExpand: () -> Void
     let onNewChat: () -> Void
+    var revealsControls = false
     @EnvironmentObject var store: ChatStore
     @State private var hovering = false
     @State private var previewing = false
@@ -521,8 +524,8 @@ struct SidebarProjectRow: View {
         HStack(spacing: 0) {
             Button(action: onExpand) {
                 HStack(spacing: 8) {
-                    Image(systemName: expanded ? "folder.fill" : "folder")
-                        .font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 18)
+                    InterfaceIconView(icon: expanded ? .projectOpen : .projects, size: InterfaceIconSize.row)
+                        .foregroundStyle(Theme.textSecondary)
                     Text(project.name).font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -538,21 +541,21 @@ struct SidebarProjectRow: View {
                 Button("Project details", action: showPreview)
                 Button("Edit project") { editing = true }
             } label: {
-                Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 28)
+                InterfaceIconView(icon: .more, size: InterfaceIconSize.small).frame(width: 22, height: 28)
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .opacity(hovering || focused != nil ? 1 : 0)
+            .opacity(hovering || revealsControls || focused != nil ? 1 : 0)
             .focused($focused, equals: .options)
             .help("Project options").accessibilityLabel("Options for \(project.name)")
             Button(action: createChat) {
-                Image(systemName: "square.and.pencil").font(.system(size: 13)).frame(width: 24, height: 28)
+                InterfaceIconView(icon: .add, size: InterfaceIconSize.regular).frame(width: 24, height: 28)
             }
-            .buttonStyle(.plain).opacity(hovering || focused != nil ? 1 : 0)
+            .buttonStyle(.plain).opacity(hovering || revealsControls || focused != nil ? 1 : 0)
             .focused($focused, equals: .newChat)
             .help("New chat in \(project.name)").accessibilityLabel("New chat in \(project.name)")
         }
         .foregroundStyle(Theme.textSecondary)
-        .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius).fill(selected ? Theme.surfaceSelected : hovering ? Theme.surfaceHover : .clear))
+        .background(RoundedRectangle(cornerRadius: SidebarMetrics.radius).fill(selected ? Theme.surfaceSelected : hovering || revealsControls ? Theme.surfaceHover : .clear))
         .onHover { entered in
             hovering = entered
             if entered {
@@ -615,8 +618,7 @@ struct CompactUpdateBadge: View {
     var body: some View {
         if let release = updates.available {
             Button(action: onOpen) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 15)).foregroundStyle(Theme.accent)
+                InterfaceIconView(icon: .update, size: InterfaceIconSize.row).foregroundStyle(Theme.accent)
                     .frame(width: 32, height: 32)
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -634,7 +636,7 @@ struct DestinationPlaceholder: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: section.icon).font(.system(size: 30, weight: .light))
+            InterfaceIconView(icon: section.glyph, size: InterfaceIconSize.placeholder)
                 .foregroundStyle(Theme.textSecondary)
             Text(section.placeholder?.title ?? section.title).font(.system(size: 20, weight: .semibold))
             Text(section.placeholder?.note ?? "")

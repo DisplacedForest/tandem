@@ -23,6 +23,19 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .agentic: "point.3.connected.trianglepath.dotted"
         }
     }
+    var glyph: InterfaceIcon {
+        switch self {
+        case .vera: .companion
+        case .chat: .chat
+        case .projects: .projects
+        case .artifacts: .library
+        case .scheduled: .scheduled
+        case .integrations: .plugins
+        case .pulse: .pulse
+        case .memory: .memory
+        case .agentic: .workflows
+        }
+    }
     var placeholder: (title: String, note: String)? {
         switch self {
         case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")

@@ -153,8 +153,7 @@ struct UpdateBanner: View {
     var body: some View {
         if let release = updates.available {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 13)).foregroundStyle(Theme.accent)
+                InterfaceIconView(icon: .update, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Update available (\(release.tag_name))")
                         .font(.system(size: 12, weight: .medium))
