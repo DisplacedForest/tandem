@@ -1034,9 +1034,8 @@ struct NativeToolConfirmationBar: View {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
-        if request.toolID == NativeScheduleTools.toolID,
-           let draft = NativeScheduleTools.draft(inRequest: request.request, general: companionThread) {
-            return NativeScheduleTools.literal(for: draft)
+        if request.toolID == NativeScheduleTools.toolID {
+            return NativeScheduleTools.draft(inRequest: request.request, general: companionThread).map { NativeScheduleTools.literal(for: $0) }
         }
         let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines

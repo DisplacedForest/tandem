@@ -36,7 +36,7 @@ enum NativeScheduleTools {
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
                            save: @escaping @Sendable (NativeScheduleDraft) async throws -> NativeSchedule) -> NativeToolDefinition {
-        NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
+        var definition = NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
             description: description(general: general),
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
@@ -70,6 +70,10 @@ enum NativeScheduleTools {
                     "saved": .bool(true),
                 ])
             }, wants: wants, marksEffect: true)
+        definition.refusesBeforeAsking = { arguments in
+            _ = try draft(from: arguments, now: now(), timeZone: timeZone(), general: general)
+        }
+        return definition
     }
 
     static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone, general: Bool = false) throws -> NativeScheduleDraft {
@@ -141,7 +145,7 @@ enum NativeScheduleTools {
     }
 
     static func destination(for draft: NativeScheduleDraft) -> String {
-        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)'s thread." : "Results go to its own chat."
+        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)." : "Results go to its own chat."
     }
 
     private static func minute(_ value: NativeJSONValue?) throws -> Int {

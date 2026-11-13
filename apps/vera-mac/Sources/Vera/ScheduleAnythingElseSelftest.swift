@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 @MainActor
@@ -7,9 +8,10 @@ extension SelfTest {
         try await scheduleAnythingElseStore(require)
         try scheduleAnythingElseTool(require)
         try await scheduleAnythingElseAdvertised(require)
+        try await scheduleAnythingElseLoop(require)
         try scheduleAnythingElseCard(require)
         try scheduleAnythingElseWords(require)
-        print("  schedule anything else OK (store create, reload, edit, run without search, paused, tool unchanged in ordinary chats, companion kind, advertised per conversation, card, check-in, detail line, empty state, words)")
+        print("  schedule anything else OK (store create, reload, edit, run without search, paused, tool unchanged in ordinary chats, companion kind, advertised per conversation, ordinary chat refuses the extra kind without a card, ordinary research still asks, companion asks and Allow saves, Decline saves nothing, unreadable request refused without a card in both, card, check-in, detail line, empty state, words)")
     }
 
     private static func scheduleAnythingElseStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -139,7 +141,7 @@ extension SelfTest {
         try require(block.hasPrefix("Morning summary, weekdays at") && block.hasSuffix("Check my calendar and the weather."),
                     "The companion's card shows the name, cadence and what it will do: \(block)")
         let closing = NativeToolConfirmationBar.closingLine(for: card, actor: placeholder, companionThread: true)
-        try require(closing?.plain(name: "Ada") == "Results go to Ada's thread." && closing?.plain(name: nil) == "Results go to your companion's thread.",
+        try require(closing?.plain(name: "Ada") == "Results go to Ada." && closing?.plain(name: nil) == "Results go to your companion.",
                     "The companion's card says results go to the companion")
         try require(NativeToolConfirmationBar.literal(for: card) == nil && NativeToolConfirmationBar.closingLine(for: card, actor: "Tandem") == nil,
                     "An ordinary chat shows no schedule details for anything else")
@@ -195,4 +197,91 @@ extension SelfTest {
             try require(!words.contains { banned.contains($0) } && !text.contains("\u{2014}"), "New wording stays plain: \(text)")
         }
     }
+
+    private static func scheduleAnythingElseLoop(_ require: (Bool, String) throws -> Void) async throws {
+        let ask = "Every weekday at 7 research lunar ice news."
+        let calls = ScheduleAnythingElseCalls()
+        let harness = try CompanionAskedWorkFixture.harness { _, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("Done.") }
+            return CompanionAskedWorkTransport.hand([CompanionAskedWorkTransport.call(NativeScheduleTools.toolName, calls.next())])
+        }
+        defer { harness.store.conversationTurnLoop?.cancel() }
+        let scheduleStore = NativeScheduleStore(database: harness.repository.database)
+        harness.store.nativeScheduleStore = scheduleStore
+        let raised = ScheduleAnythingElseCards()
+        let watch = harness.store.$pendingToolConfirmation.sink { if $0 != nil { raised.add() } }
+        defer { watch.cancel() }
+        harness.store.newConversation()
+        guard let focused = harness.store.selectedID, focused != harness.threadID else { throw NativeTaskFixture.Failure.assertion("A focused chat opens") }
+
+        func arguments(_ kind: String, repeatKind: String = "weekdays") -> [String: NativeJSONValue] {
+            ["title": .string("Morning summary"), "worker_type": .string(kind), "instruction": .string("Check my calendar and the weather."),
+             "repeat": .string(repeatKind), "time": .string("07:00")]
+        }
+        func toolReply(_ text: String) -> String {
+            let records = harness.transport.records.filter { $0.user == text }
+            return records.last?.messages.last { $0.role == "tool" }?.content ?? ""
+        }
+        func turn(_ label: String, in conversationID: String, _ values: [String: NativeJSONValue], decide: Bool?) async throws -> Message {
+            calls.set(values)
+            let text = ask + " " + label
+            let before = raised.count
+            try require(harness.store.sendText(text, conversationID: conversationID, fromComposer: true), "The message is accepted: \(label)")
+            if let decide {
+                try await NativeSessionFixture.eventually("A card is raised: \(label)") { harness.store.pendingToolConfirmation != nil }
+                try require(harness.store.pendingToolConfirmation?.toolID == NativeScheduleTools.toolID, "The card is for the schedule: \(label)")
+                harness.store.resolveToolConfirmation(decide)
+            }
+            var answer: Message?
+            try await NativeSessionFixture.eventually("The reply completes: \(label)") {
+                let saved = (try? harness.repository.messages(conversationID: conversationID)) ?? []
+                guard let index = saved.lastIndex(where: { $0.role == .user && $0.text == text }), saved.indices.contains(index + 1),
+                      saved[index + 1].state == .complete,
+                      !harness.store.conversationTurns.contains(where: { $0.conversationID == conversationID && ($0.state == .pending || $0.state == .running) })
+                else { return false }
+                answer = saved[index + 1]
+                return true
+            }
+            try require(raised.count == before + (decide == nil ? 0 : 1), "\(decide == nil ? "No card" : "One card") is raised: \(label)")
+            guard let answer else { throw NativeTaskFixture.Failure.assertion("The reply exists: \(label)") }
+            return answer
+        }
+
+        let refused = "Scheduled work must be research or a document."
+        _ = try await turn("ordinary general", in: focused, arguments(NativeTaskTools.generalWorkerType), decide: nil)
+        try require(toolReply(ask + " ordinary general").contains(refused) && (try scheduleStore.all()).isEmpty,
+                    "An ordinary chat refuses the extra kind before asking, saves nothing and tells the model why: \(toolReply(ask + " ordinary general"))")
+
+        _ = try await turn("ordinary research", in: focused, arguments("research"), decide: false)
+        try require((try scheduleStore.all()).isEmpty, "Declining ordinary research saves nothing")
+
+        _ = try await turn("companion decline", in: harness.threadID, arguments(NativeTaskTools.generalWorkerType), decide: false)
+        try require((try scheduleStore.all()).isEmpty, "Declining in the companion's conversation saves nothing")
+
+        _ = try await turn("companion allow", in: harness.threadID, arguments(NativeTaskTools.generalWorkerType), decide: true)
+        let saved = try scheduleStore.all()
+        try require(saved.count == 1 && saved[0].workerType == NativeSchedule.companionWorkerType && saved[0].owner == .dot,
+                    "Allow in the companion's conversation saves anything else for the companion: \(saved.map(\.workerType))")
+
+        let weekday = "A weekly schedule needs a weekday."
+        for (label, conversationID) in [("ordinary weekly", focused), ("companion weekly", harness.threadID)] {
+            _ = try await turn(label, in: conversationID, arguments("research", repeatKind: "weekly"), decide: nil)
+            try require(toolReply(ask + " " + label).contains(weekday) && (try scheduleStore.all()).count == 1,
+                        "An unreadable request is refused before asking with its own reason: \(label) \(toolReply(ask + " " + label))")
+        }
+    }
+}
+
+final class ScheduleAnythingElseCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: NativeJSONValue] = [:]
+
+    func set(_ next: [String: NativeJSONValue]) { lock.withLock { values = next } }
+    func next() -> [String: NativeJSONValue] { lock.withLock { values } }
+}
+
+@MainActor
+final class ScheduleAnythingElseCards {
+    private(set) var count = 0
+    func add() { count += 1 }
 }

@@ -81,8 +81,8 @@ extension SelfTest {
         var threaded = parsed
         threaded.owner = .dot
         let toCompanion = NativeScheduleTools.destination(for: threaded)
-        try require(CompanionSentence.plain(toCompanion, name: nil) == "Results go to your companion's thread."
-                    && CompanionSentence.plain(toCompanion, name: "Sol") == "Results go to Sol's thread.",
+        try require(CompanionSentence.plain(toCompanion, name: nil) == "Results go to your companion."
+                    && CompanionSentence.plain(toCompanion, name: "Sol") == "Results go to Sol.",
                     "A schedule that reports to the companion names it when it has a name")
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 

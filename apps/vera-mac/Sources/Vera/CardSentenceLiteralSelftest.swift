@@ -406,13 +406,13 @@ extension SelfTest {
               let ordinaryClosing = NativeToolConfirmationBar.closingLine(for: toCompanion, actor: "Tandem") else {
             throw NativeTaskFixture.Failure.assertion("A schedule card has a closing line")
         }
-        try require(nameParts(companionClosing) == 1 && companionClosing.plain(name: "Ada") == "Results go to Ada's thread."
-                    && companionClosing.plain(name: nil) == "Results go to your companion's thread.",
+        try require(nameParts(companionClosing) == 1 && companionClosing.plain(name: "Ada") == "Results go to Ada."
+                    && companionClosing.plain(name: nil) == "Results go to your companion.",
                     "The companion conversation's schedule card names where results go")
-        try require(nameParts(ordinaryClosing) == 0 && ordinaryClosing == .literal("Results go to your companion's thread."),
+        try require(nameParts(ordinaryClosing) == 0 && ordinaryClosing == .literal("Results go to your companion."),
                     "An ordinary chat's schedule closing line is literal")
         for name in names {
-            try require(ordinaryClosing.plain(name: name) == "Results go to your companion's thread." && !ordinaryClosing.plain(name: name).contains("Ada"),
+            try require(ordinaryClosing.plain(name: name) == "Results go to your companion." && !ordinaryClosing.plain(name: name).contains("Ada"),
                         "An ordinary chat's schedule closing line never names the companion for \(name ?? "no name")")
         }
         let ownChat = try scheduleRequest("own_chat")
