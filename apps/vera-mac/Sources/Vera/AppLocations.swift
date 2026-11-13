@@ -107,12 +107,17 @@ struct AppLocations: Equatable, Sendable {
 
     static func isolateForHeadlessRun() {
         guard headlessRoot == nil else { return }
-        let root = FileManager.default.temporaryDirectory
+        let root = scratchParent(ProcessInfo.processInfo.environment)
             .appendingPathComponent(runPrefix + "\(getpid())-\(UUID().uuidString.lowercased())", isDirectory: true)
         removeAbandonedRoots(in: root.deletingLastPathComponent())
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         headlessRoot = root
         atexit { AppLocations.removeHeadlessRoot() }
+    }
+
+    static func scratchParent(_ environment: [String: String]) -> URL {
+        guard let chosen = environment["TMPDIR"], !chosen.isEmpty else { return FileManager.default.temporaryDirectory }
+        return URL(fileURLWithPath: chosen, isDirectory: true)
     }
 
     static func removeAbandonedRoots(in folder: URL) {
