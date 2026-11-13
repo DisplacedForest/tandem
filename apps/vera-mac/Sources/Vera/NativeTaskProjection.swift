@@ -17,7 +17,7 @@ enum NativeTaskProjection {
         let work = dot ? "Work" : document ? "Writing" : "Research"
         var card = NativeTaskCardPresentation(
             id: id, title: reference.request.displayTitle, status: .preparing,
-            milestone: "The request is saved here.", connectionNote: connectionNote,
+            milestone: "The request is saved here.", connectionNote: connectionNote.map(SavedWording.current),
             canCancel: true, workerType: reference.createRequest.workerType)
         guard let snapshot else {
             if reference.deliveryState == .rejected {
@@ -29,7 +29,7 @@ enum NativeTaskProjection {
                 card.milestone = "Waiting to confirm that \(work.lowercased()) has stopped."
                 card.canCancel = false
             } else if let error = reference.lastDeliveryError {
-                card.connectionNote = error
+                card.connectionNote = SavedWording.current(error)
             }
             return (card, nil)
         }

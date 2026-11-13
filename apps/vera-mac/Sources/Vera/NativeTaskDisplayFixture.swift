@@ -471,6 +471,14 @@ extension NativeTaskDisplayFixture {
             refused.deliveryState = .rejected
             refused.lastDeliveryError = old
             try require(NativeTaskProjection.display(reference: refused, snapshot: nil).card.milestone == new, "A refused card saved earlier reads with the current words: \(old)")
+            var waiting = try OngoingWorkFixture.reference(conversationID: "words-saved", title: "Lumber prices this month", state: nil)
+            waiting.lastDeliveryError = old
+            try require(waiting.deliveryState != .rejected && !waiting.cancelRequested
+                            && NativeTaskProjection.display(reference: waiting, snapshot: nil).card.connectionNote == new,
+                        "A card still waiting to connect reads with the current words: \(old)")
+            waiting.lastDeliveryError = nil
+            try require(NativeTaskProjection.display(reference: waiting, snapshot: nil, connectionNote: old).card.connectionNote == new,
+                        "A saved connection note reads with the current words: \(old)")
         }
         let typed = ["Is the task engine down? The task engine couldn't be reached. is all it says", "The task engine couldn't be reached. Again.",
                      " The task engine couldn't be reached.", "the task engine couldn't be reached.", "Tandem wasn't running at the scheduled time.",
