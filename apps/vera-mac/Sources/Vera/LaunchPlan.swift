@@ -19,7 +19,9 @@ enum LaunchPlan {
 
     static func settle(_ mode: Mode) { current = mode }
 
-    static var isShotRun: Bool { current == .run(shotMode) }
+    static func drawsBuiltInSiteIcon(_ mode: Mode) -> Bool { mode == .run(shotMode) }
+
+    static var isShotRun: Bool { drawsBuiltInSiteIcon(current) }
 
     static func mode(_ arguments: [String], isolatedModes piModes: Set<String>) -> Mode {
         switch SelectedCredentialAuthorization.dispatch(arguments) {

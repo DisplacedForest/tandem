@@ -73,6 +73,11 @@ enum OwnSettingsSelftest {
         try require(permits("https://openrouter.ai/api/v1", .open) && permits("http://[fd12:3456::8]/", .open), "An open run reaches every address")
         try require(OutboundGuard.policy != .open, "This test run only reaches this Mac")
         try require(!LaunchPlan.isShotRun, "Only a shot uses the built-in site icon, never a selftest")
+        try require(LaunchPlan.drawsBuiltInSiteIcon(.run(LaunchPlan.shotMode)), "A shot draws the built-in site icon")
+        try require(!LaunchPlan.drawsBuiltInSiteIcon(.app), "A plain start loads real site icons")
+        try require(!LaunchPlan.drawsBuiltInSiteIcon(.run(LaunchPlan.selftestMode)) && !LaunchPlan.drawsBuiltInSiteIcon(.run(LaunchPlan.documentArtifactMode))
+                    && LaunchPlan.realDataModes.allSatisfy { !LaunchPlan.drawsBuiltInSiteIcon(.run($0)) },
+                    "Selftests and live modes keep the real site icon loader")
     }
 
     static func checkPlainStoreHasNoConnection() throws {
