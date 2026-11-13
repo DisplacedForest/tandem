@@ -91,12 +91,6 @@ extension SelfTest {
         .pin: IconGeometry(bytes: 1107, hash: 17874464801791710818),
     ]
 
-    static let candidateGeometry: [InterfaceIconCandidate: IconGeometry] = [
-        .libraryFolders: IconGeometry(bytes: 4814, hash: 18357995022696952958),
-        .memoryArchive: IconGeometry(bytes: 1315, hash: 12612217413575214331),
-        .workflowsBranch: IconGeometry(bytes: 1069, hash: 9936219808698129602),
-    ]
-
     private static func checkIconFile(_ name: String, url: URL?, image: NSImage?, geometry: IconGeometry?) throws {
         let require = NativeTaskFixture.require
         guard let url, let svg = try? String(contentsOf: url, encoding: .utf8) else {
@@ -131,7 +125,7 @@ extension SelfTest {
     static func runConversationTopBar() throws {
         let require = NativeTaskFixture.require
 
-        let resources = InterfaceIcon.allCases.map(\.resource) + InterfaceIconCandidate.allCases.map(\.resource)
+        let resources = InterfaceIcon.allCases.map(\.resource)
         try require(Set(resources).count == resources.count, "Each icon meaning has its own file")
         for icon in InterfaceIcon.allCases {
             try checkIconFile(icon.rawValue, url: icon.url, image: icon.image, geometry: iconGeometry[icon])
@@ -139,10 +133,6 @@ extension SelfTest {
             try require(icon.menuImage != nil && menu?.isTemplate == true
                         && menu?.size == NSSize(width: InterfaceIconSize.menu, height: InterfaceIconSize.menu)
                         && menu.map(iconDraws) == true, "The \(icon.rawValue) icon has a menu image")
-        }
-        for candidate in InterfaceIconCandidate.allCases {
-            try checkIconFile(candidate.rawValue, url: candidate.url, image: candidate.image, geometry: candidateGeometry[candidate])
-            try require(candidate.resource.hasPrefix(candidate.role.resource + "-"), "The \(candidate.rawValue) icon sits beside the one it could replace")
         }
         try require(Set(SidebarDestination.primary + SidebarDestination.secondary) == Set(SidebarDestination.allCases),
                     "Every destination shows in the rail or its menu")
@@ -259,7 +249,7 @@ extension SelfTest {
             + [ConversationTopBarModel.moreTitle]
         try require(!every.contains { $0.localizedCaseInsensitiveContains("vera") || $0.contains("\u{2014}") },
                     "Menu wording stays plain")
-        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, \(InterfaceIconCandidate.allCases.count) alternates, menus, one sidebar control)")
+        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, menus, one sidebar control)")
     }
 }
 

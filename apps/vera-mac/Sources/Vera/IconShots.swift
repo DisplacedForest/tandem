@@ -4,7 +4,6 @@ import SwiftUI
 @MainActor
 enum IconShot {
     static let sizes: [CGFloat] = [16, 20, 24]
-    static let candidateSizes: [CGFloat] = [20, 24]
 
     static func render(view: String, to path: String, appearance: String) {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
@@ -15,9 +14,6 @@ enum IconShot {
         case "icons-sheet":
             size = CGSize(width: 900, height: 360)
             content = AnyView(sheet())
-        case "icons-candidates":
-            size = CGSize(width: 560, height: 250)
-            content = AnyView(candidates())
         case "icons-sidebar-states":
             size = CGSize(width: 980, height: 760)
             content = AnyView(sidebarStates())
@@ -72,50 +68,6 @@ enum IconShot {
         }
         .foregroundStyle(Theme.textPrimary)
         .padding(24)
-    }
-
-    private struct Choice {
-        let title: String
-        let current: String
-        let role: InterfaceIcon
-        let alternate: InterfaceIconCandidate
-    }
-
-    private static let choices = [
-        Choice(title: "Library", current: AppSection.artifacts.icon, role: .library, alternate: .libraryFolders),
-        Choice(title: "Memory", current: AppSection.memory.icon, role: .memory, alternate: .memoryArchive),
-        Choice(title: "Workflows", current: AppSection.agentic.icon, role: .workflows, alternate: .workflowsBranch),
-    ]
-
-    private static func candidates() -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ForEach(choices, id: \.title) { choice in
-                HStack(alignment: .center, spacing: 28) {
-                    Text(choice.title).font(.system(size: 13, weight: .medium)).frame(width: 90, alignment: .leading)
-                    column("now") {
-                        ForEach(candidateSizes, id: \.self) { side in
-                            Image(systemName: choice.current).font(.system(size: side - 3)).frame(width: side, height: side)
-                        }
-                    }
-                    column("A") {
-                        ForEach(candidateSizes, id: \.self) { side in InterfaceIconView(icon: choice.role, size: side) }
-                    }
-                    column("B") {
-                        ForEach(candidateSizes, id: \.self) { side in InterfaceIconView(candidate: choice.alternate, size: side) }
-                    }
-                }
-            }
-        }
-        .foregroundStyle(Theme.textPrimary)
-        .padding(28)
-    }
-
-    private static func column<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .center, spacing: 12) { content() }.frame(height: 30)
-            Text(title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-        }
-        .frame(width: 110)
     }
 
     private static func sidebarStates() -> some View {

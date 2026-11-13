@@ -61,32 +61,6 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     }
 }
 
-enum InterfaceIconCandidate: String, CaseIterable, Sendable {
-    case libraryFolders
-    case memoryArchive
-    case workflowsBranch
-
-    var role: InterfaceIcon {
-        switch self {
-        case .libraryFolders: .library
-        case .memoryArchive: .memory
-        case .workflowsBranch: .workflows
-        }
-    }
-
-    var resource: String {
-        switch self {
-        case .libraryFolders: "interface-library-folders"
-        case .memoryArchive: "interface-memory-archive"
-        case .workflowsBranch: "interface-workflows-branch"
-        }
-    }
-
-    var url: URL? { VeraResources.url(resource, ext: "svg") }
-
-    @MainActor var image: NSImage? { InterfaceIconCache.shared.image(resource) }
-}
-
 enum InterfaceIconSize {
     static let badge: CGFloat = 10
     static let mark: CGFloat = 12
@@ -133,11 +107,6 @@ struct InterfaceIconView: View {
 
     init(icon: InterfaceIcon, size: CGFloat = InterfaceIconSize.regular) {
         resource = icon.resource
-        self.size = size
-    }
-
-    init(candidate: InterfaceIconCandidate, size: CGFloat = InterfaceIconSize.regular) {
-        resource = candidate.resource
         self.size = size
     }
 

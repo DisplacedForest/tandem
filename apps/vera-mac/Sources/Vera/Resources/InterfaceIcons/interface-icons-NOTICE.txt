@@ -13,15 +13,12 @@ src/components/Icon/svg/Settings.tsx as interface-settings.svg
 src/components/Icon/svg/Folder.tsx as interface-projects.svg
 src/components/Icon/svg/FolderOpen.tsx as interface-project-open.svg
 src/components/Icon/svg/Book.tsx as interface-library.svg
-src/components/Icon/svg/Folders.tsx as interface-library-folders.svg
 src/components/Icon/svg/Clock.tsx as interface-scheduled.svg
 src/components/Icon/svg/ConnectorsConnectedApps.tsx as interface-plugins.svg
 src/components/Icon/svg/NewsPaper.tsx as interface-pulse.svg
 src/components/Icon/svg/Nodes.tsx as interface-workflows.svg
-src/components/Icon/svg/Branch.tsx as interface-workflows-branch.svg
 src/components/Icon/svg/Bolt.tsx as interface-activity.svg
 src/components/Icon/svg/MemoryOnRemember.tsx as interface-memory.svg
-src/components/Icon/svg/Archive.tsx as interface-memory-archive.svg
 src/components/Icon/svg/Sparkle.tsx as interface-companion.svg
 src/components/Icon/svg/StarFilled.tsx as interface-attention.svg
 src/components/Icon/svg/DownloadCircle.tsx as interface-update.svg
