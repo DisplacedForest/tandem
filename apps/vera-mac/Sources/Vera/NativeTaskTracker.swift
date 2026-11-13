@@ -249,12 +249,13 @@ actor NativeTaskTracker {
     }
 
     @discardableResult
-    func decide(_ id: UUID, choice: String) async -> Bool {
+    func decide(_ id: UUID, choice: String, expecting decisionID: String? = nil) async -> Bool {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
+              decisionID == nil || decision.id == decisionID,
               decision.choices.contains(choice), !reference.cancelRequested else { return false }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
