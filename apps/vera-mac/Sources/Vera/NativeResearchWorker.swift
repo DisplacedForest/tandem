@@ -124,8 +124,8 @@ enum NativeTaskWorkerFailures {
 
     static func terminalMessage(_ code: String, work: String) -> String {
         switch code {
-        case "request_limit": return "This \(work) task reached its saved generation limit."
-        case "input_limit": return "This \(work) input exceeds the task's saved input limit."
+        case "request_limit": return "This \(work) reached its saved generation limit."
+        case "input_limit": return "This \(work) input is over its saved input limit."
         default: return "The saved model request conflicts with an earlier attempt."
         }
     }

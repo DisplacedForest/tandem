@@ -98,9 +98,9 @@ enum NativeTaskProjection {
             card.status = .failed
             let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
             switch snapshot.checkpoint.failureReason {
-            case "request_limit": card.milestone = "This task reached its model request limit. \(again) to continue."
-            case "input_limit" where dot: card.milestone = "The assignment and its notes are too large for this task. Start the work again with less."
-            case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large for this task. Start a new document with a shorter brief." : "The research input is too large for this task. Start a smaller research request."
+            case "request_limit": card.milestone = "This reached its model request limit. \(again) to continue."
+            case "input_limit" where dot: card.milestone = "The assignment and its notes are too large. Start the work again with less."
+            case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             default:
                 if dot {

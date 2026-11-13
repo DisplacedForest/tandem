@@ -15,6 +15,7 @@ struct ComposerMentionItem: Identifiable, Equatable, Sendable {
     let icon: String
     let available: Bool
     let kind: Kind
+    var aliases: [String] = []
 
     var toolIDs: Set<String> {
         if case .tools(let ids) = kind { return ids }
@@ -41,11 +42,11 @@ struct ComposerMentionCatalog: Equatable, Sendable {
             ComposerMentionItem(id: NativeWebTools.searchToolID, section: .tools, name: "Search the web",
                 detail: "Answer from live search results", icon: "magnifyingglass", available: webAvailable,
                 kind: .tools([NativeWebTools.searchToolID])),
-            ComposerMentionItem(id: NativeWebTools.researchToolID, section: .tools, name: "Background research",
-                detail: "A cited report gathered in the background", icon: "doc.text.magnifyingglass", available: webAvailable,
-                kind: .tools([NativeWebTools.researchToolID, NativeTaskTools.toolID])),
+            ComposerMentionItem(id: NativeWebTools.researchToolID, section: .tools, name: "Research",
+                detail: "A cited report, gathered while you keep chatting", icon: "doc.text.magnifyingglass", available: webAvailable,
+                kind: .tools([NativeWebTools.researchToolID, NativeTaskTools.toolID]), aliases: ["Background research"]),
             ComposerMentionItem(id: NativeTaskTools.toolID, section: .tools, name: "Write a document",
-                detail: "A longer document written in the background", icon: "doc.text", available: true,
+                detail: "A longer document, written while you keep chatting", icon: "doc.text", available: true,
                 kind: .tools([NativeWebTools.researchToolID, NativeTaskTools.toolID])),
             ComposerMentionItem(id: NativeImageTools.toolID, section: .tools, name: "Create images",
                 detail: "Generate a picture from a description", icon: "photo", available: imageAvailable,
@@ -118,7 +119,7 @@ enum ComposerMentions {
         let masked = Array(NativeTurnToolAuthority.literalMask(text).lowercased())
         let original = Array(text)
         guard masked.count == original.count else { return [] }
-        let names = catalog.items.map { (Array($0.name.lowercased()), $0.toolIDs) }
+        let names = catalog.items.flatMap { item in ([item.name] + item.aliases).map { (Array($0.lowercased()), item.toolIDs) } }
             .sorted { $0.0.count > $1.0.count }
         var ids: Set<String> = []
         var index = 0

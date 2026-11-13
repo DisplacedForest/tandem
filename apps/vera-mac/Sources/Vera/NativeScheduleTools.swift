@@ -3,6 +3,7 @@ import Foundation
 enum NativeScheduleTools {
     static let toolID = "scheduled-work"
     static let toolName = "schedule_task"
+    static let missingArguments = "Provide a title, the kind of work, an instruction and a repeat."
     static let weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
     static let repeatKinds = ["daily", "weekdays", "weekly", "every_hours", "once"]
     static let argumentNames: Set<String> = ["title", "worker_type", "instruction", "results_to", "repeat", "time", "weekday", "hours", "at"]
@@ -70,7 +71,7 @@ enum NativeScheduleTools {
               case .string(let workerType)? = arguments["worker_type"],
               case .string(let instruction)? = arguments["instruction"],
               case .string(let repeatKind)? = arguments["repeat"] else {
-            throw NativeToolError.invalidArguments("Provide a title, a worker type, an instruction and a repeat.")
+            throw NativeToolError.invalidArguments(missingArguments)
         }
         guard NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) else {
             throw NativeToolError.invalidArguments("Scheduled work must be research or a document.")

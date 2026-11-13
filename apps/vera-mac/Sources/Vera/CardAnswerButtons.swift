@@ -56,7 +56,7 @@ struct CardAnswers: Equatable {
               let wire = choices.first(where: { NativeCardChoices.kind(wire: $0) == .never }) else { return answers }
         let commands = wire == NativeCardChoices.commandNever
         guard commands || shown(neverTitle) != nil, var title = commands ? NativeCardChoices.wireTitle(wire) : neverTitle else { return answers }
-        if run, title.hasSuffix("in this task") { title = String(title.dropLast(4)) + "run" }
+        if run, ["for this work", "in this task"].contains(where: title.hasSuffix) { title = String(title.dropLast(4)) + "run" }
         answers.declineMenu = [CardMenuItem(id: wire, title: title, note: commands ? NativeCardChoices.neverHelp : nil)]
         return answers
     }
@@ -201,7 +201,7 @@ struct CardMenuPreview: View {
             Text(heading).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
             ForEach(items) { item in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).font(.system(size: 13))
+                    Text(item.title).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
                     if let note = item.note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary) }
                 }
             }
