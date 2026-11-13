@@ -232,6 +232,7 @@ enum CompanionTalkCopy {
     static let notWaiting = "Nothing was changed. That one isn't waiting on a question."
     static let staleQuestion = "Nothing was changed. That question changed or was already answered, so this answer wasn't sent. Say so plainly."
     static let stoppedBeforeAnswer = "Nothing was changed. That one was stopped before the answer went in, so the answer wasn't sent. Say so plainly."
+    static let stoppedAfterAnswer = "The answer went in, but that one has since been stopped, so it won't carry on. Say so plainly."
     static let notOffered = "Nothing was changed. That isn't one of the answers on offer. The answers are listed with the item."
     static let needsButton = "Nothing was changed. Approving something or saving a rule only happens when the person presses the button on the question. Tell them that."
     static let answered = "The answer is saved, and it will carry on from there."
@@ -243,7 +244,7 @@ enum CompanionTalkCopy {
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
                                            notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
-                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, stoppedBeforeAnswer, notOffered, needsButton,
+                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 
     static func line(_ entry: CompanionTalkEntry) -> String {

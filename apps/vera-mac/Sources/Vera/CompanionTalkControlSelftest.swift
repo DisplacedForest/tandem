@@ -302,6 +302,7 @@ enum CompanionTalkControlFixture {
         try await notFirst()
         try await oldHandles()
         try await answers()
+        try await stoppedWhileAnswering()
         try await staleQuestion()
         try await vetoFailure()
         try await workerStopsBetweenRetries()
@@ -890,6 +891,45 @@ enum CompanionTalkControlFixture {
                     && phase(harness, folder) == .waiting && (try engineRecord(harness, folder))?.state == .needsDecision,
                     "An approving or saving answer is refused with the button sentence and the question stays open")
         try require(harness.veto.calls.count == 1, "The button refusal never asks the check")
+    }
+
+    static func stoppedWhileAnswering() async throws {
+        let require = NativeTaskFixture.require
+        let retry = "Yes, retry the vent schedule."
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("Done.") }
+            if user == retry { return CompanionAskedWorkTransport.hand([answer(handle(messages, "vent"), "Retry")]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let vent = try await start(harness, askRetry)
+        try await settle(harness, vent, .waiting)
+        guard let projection = harness.store.repository as? any NativeTaskProjectionRepository, let service = harness.store.nativeTaskService else {
+            throw NativeTaskFixture.Failure.assertion("The store tracks work")
+        }
+        let armed = CompanionTalkBox(false)
+        let repository = harness.repository
+        let store = harness.store
+        let ventID = vent.id
+        harness.store.stopNativeTaskRecovery()
+        harness.store.nativeTaskTracker = NativeTaskTracker(repository: projection, client: harness.engine.client, service: service,
+            transport: harness.engine.transport, configuredBase: { NativeTaskLocalEngine.identity.base },
+            onUpdate: { [weak store] updates in
+                if armed.value {
+                    armed.value = false
+                    _ = try? repository.requestTaskCancellation(id: ventID)
+                }
+                store?.applyNativeTaskUpdates(updates)
+            })
+        armed.value = true
+        let reply = try await send(harness, retry)
+        let result = results(reply).first ?? ""
+        guard let remote = try harness.repository.taskReference(id: vent.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work has a remote") }
+        let replies = try await harness.repository.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_decisions WHERE task_id = ?", arguments: [remote]) ?? 0
+        }
+        let refused = result.contains(CompanionTalkCopy.stoppedBeforeAnswer) && result.contains("\"changed\":false")
+        try require(refused && replies == 0 && !armed.value, "An answer overtaken by a stop isn't sent and isn't reported as saved: \(result)")
     }
 
     static func staleQuestion() async throws {

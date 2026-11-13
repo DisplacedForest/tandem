@@ -263,10 +263,10 @@ extension ChatStore {
             let current = companionTalkLive(id)
             return CompanionTalkTools.refusal(current?.decisionID == decisionID ? CompanionTalkCopy.couldNotAnswer : CompanionTalkCopy.staleQuestion)
         }
-        if delivery == .dropped {
-            let stopped = ((try? nativeTaskRepository?.taskReference(id: id)) ?? nil)?.cancelRequested == true
-            return CompanionTalkTools.refusal(stopped ? CompanionTalkCopy.stoppedBeforeAnswer : CompanionTalkCopy.staleQuestion)
-        }
+        let stopped = ((try? nativeTaskRepository?.taskReference(id: id)) ?? nil)?.cancelRequested == true
+        if stopped && delivery != .sent { return CompanionTalkTools.refusal(CompanionTalkCopy.stoppedBeforeAnswer) }
+        if stopped { return .object(["result": .string(CompanionTalkCopy.stoppedAfterAnswer), "changed": .bool(true)]) }
+        if delivery == .dropped { return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion) }
         return .object(["result": .string(CompanionTalkCopy.answered), "changed": .bool(true)])
     }
 }

@@ -279,9 +279,10 @@ actor NativeTaskTracker {
     @discardableResult
     private func deliverRetry(_ intent: NativeTaskDecisionIntent, lease: NativeTaskStreamLease) async -> AnswerDelivery {
         let id = intent.referenceID
-        guard !retryActive.contains(id), !actions.contains(id), current(lease),
-              let reference = try? repository.taskReference(id: id), reference.engine == lease.engine else { return .waiting }
+        guard let reference = try? repository.taskReference(id: id) else { return .waiting }
         guard !reference.cancelRequested else { try? repository.resolveTaskRetry(intent); return .dropped }
+        let idle = !retryActive.contains(id) && !actions.contains(id)
+        guard idle, current(lease), reference.engine == lease.engine else { return .waiting }
         guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return .waiting }
         guard saved.state == .needsDecision, let decision = saved.decision, decision.id == intent.decisionID,
               decision.choices.contains(intent.choice) else {
