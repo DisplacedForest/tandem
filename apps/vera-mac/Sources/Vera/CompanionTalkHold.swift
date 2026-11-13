@@ -309,19 +309,18 @@ extension ChatStore {
             let snapshots = CompanionTalkTools.oldestFirst(saved, old.snapshot)
             let stoppedBeforeStart = old.remoteTaskID == nil && old.deliveryState == .rejected
             guard snapshots.contains(where: { $0.state.isTerminal }) || stoppedBeforeStart else { continue }
-            let (done, unsure) = CompanionTalkTools.effects(snapshots)
+            var (done, unsure) = CompanionTalkTools.effects(snapshots)
+            let notes = snapshots.map(\.checkpoint.effects).max { $0.count < $1.count } ?? []
+            let unsaved = companionTalkUnsaved(old, notes: notes)
+            for title in unsaved.done where !done.contains(title) { done.append(title) }
+            for title in unsaved.unsure where !unsure.contains(title) { unsure.append(title) }
             let carried = CompanionHoldTools.carried(reference: old, firstAsked: companionFirstAsked(old), snapshots: snapshots, done: done, unsure: unsure)
             let (profile, usable) = askedWorkProfile()
             guard usable, !dotProfile.isPaused, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
                                                                         said: change.said, carried: carried) else { continue }
-            guard let live = (try? projection.taskReference(id: old.id)) ?? nil, live.pendingChange == change, live.replacedBy == nil else { continue }
             changesStarting.insert(old.id)
-            let started = try? await service.submit(origin: change.origin, request: request, profile: profile)
+            _ = try? await service.submitChange(id: old.id, change: change, request: request, profile: profile)
             changesStarting.remove(old.id)
-            guard let started else { continue }
-            if (try? projection.markTaskReplaced(id: old.id, by: started.id, change: change)) == nil {
-                await nativeTaskTracker?.cancel(started.id)
-            }
             reloadNativeTaskReferences()
         }
     }

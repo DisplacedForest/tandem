@@ -273,7 +273,7 @@ extension ChatStore {
         return .object(fields)
     }
 
-    private func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
+    func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
         guard let remote = reference.remoteTaskID, let local = repository as? LocalChatRepository,
               let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return ([], []) }
         return CompanionTalkTools.unsaved(records, notes: notes)

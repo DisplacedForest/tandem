@@ -235,6 +235,9 @@ actor NativeTaskTracker {
         defer { actions.remove(id) }
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
         do {
+            if ((try? repository.taskProjection(id: id)) ?? nil) == nil {
+                _ = try? repository.projectTask(id: id, snapshot: nil, cursor: 0, connectionNote: nil, lease: nil, generation: nil)
+            }
             _ = try repository.beginTaskRefresh(id: id, lease: lease)
             _ = try repository.requestTaskCancellation(id: id)
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
