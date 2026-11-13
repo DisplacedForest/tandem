@@ -42,7 +42,7 @@ final class PiExperimentRoot: @unchecked Sendable {
         let isStandardConfig = AppLocations.namesSameFolder(path, standardConfig)
         let holdsStandardConfig = AppLocations.isInside(standardConfig, path, includingFolder: false)
         let underStandardConfig = AppLocations.isInside(path, standardConfig, includingFolder: false)
-        let isResolvedAssistant = resolvedAssistant.map { AppLocations.namesSameFolder(path, $0) } ?? false
+        let isResolvedAssistant = resolvedAssistant.map { AppLocations.isInside(path, $0, includingFolder: true) } ?? false
         let assistantDeepEnough = resolvedAssistant.map { candidate in
             !AppLocations.namesSameFolder(candidate.deletingLastPathComponent(), standardConfig)
         } ?? false

@@ -74,6 +74,10 @@ enum AppLocationsSelftest {
         let assistant = locations.assistant
         try require(PiExperimentRoot.allowsLocation(assistant, standardConfig: standard, resolvedAssistant: assistant),
                     "The assistant folder the resolver hands out under a nested setting is accepted")
+        for inner in ["accounting", "model", "accounting/deeper"] {
+            try require(PiExperimentRoot.allowsLocation(assistant.appendingPathComponent(inner, isDirectory: true), standardConfig: standard, resolvedAssistant: assistant),
+                        "A folder the assistant keeps inside its own folder is accepted: \(inner)")
+        }
         try require(!PiExperimentRoot.allowsLocation(standard, standardConfig: standard, resolvedAssistant: assistant), "The standard config folder itself is refused")
         try require(!PiExperimentRoot.allowsLocation(standard.appendingPathComponent("config-files"), standardConfig: standard, resolvedAssistant: assistant),
                     "A sibling under the standard folder that wasn't handed out is refused")
