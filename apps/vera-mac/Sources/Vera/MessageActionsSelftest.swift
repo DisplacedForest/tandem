@@ -190,7 +190,7 @@ enum MessageActionsSelftest {
 
     static func copySweep() throws {
         let banned = ["vera", "background", "worker", "agent", "task", "he", "she", "him", "her", "his", "hers"]
-        for text in MessageActions.addedStrings + MessageMenuAction.offered.map(\.symbol) {
+        for text in MessageActions.addedStrings {
             let words = text.lowercased().split { !$0.isLetter }.map(String.init)
             let hit = banned.first { words.contains($0) }
             try require(hit == nil, "\"\(text)\" has no banned word")

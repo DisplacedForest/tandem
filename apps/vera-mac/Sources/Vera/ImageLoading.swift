@@ -47,8 +47,7 @@ struct AuthedAsyncImage: View {
     }
 
     private var failureMark: some View {
-        Image(systemName: "photo")
-            .font(.system(size: 18))
+        InterfaceIconView(icon: .image, size: InterfaceIconSize.rail)
             .foregroundStyle(Theme.textSecondary)
     }
 

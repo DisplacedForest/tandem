@@ -36,7 +36,7 @@ struct FolderGrantChips: View {
                 ScrollView(.horizontal, showsIndicators: false) { chips }
             }
             if let unsupported {
-                Label(unsupported, systemImage: "exclamationmark.triangle")
+                Label { Text(unsupported) } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }
@@ -50,10 +50,10 @@ struct FolderGrantChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.accent)
+            InterfaceIconView(icon: .folder, size: InterfaceIconSize.small).foregroundStyle(Theme.accent)
             Text(grant.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
             Button(action: onRemove) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
             }
             .buttonStyle(.plain)
             .opacity(hover ? 1 : 0.55)
@@ -100,20 +100,20 @@ struct NativeFileChangeCard: View {
         }
     }
 
-    private var symbol: String {
+    var icon: InterfaceIcon {
         switch change.kind {
-        case .created: return "doc.badge.plus"
-        case .edited: return "pencil.line"
-        case .moved: return "arrow.right.doc.on.clipboard"
-        case .directory: return "folder.badge.plus"
-        case .trashed: return "trash"
+        case .created: return .fileAdded
+        case .edited: return .edit
+        case .moved: return .moved
+        case .directory: return .folderAdded
+        case .trashed: return .trash
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: symbol).foregroundStyle(Theme.accent).frame(width: 18)
+                InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent).frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(change.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)

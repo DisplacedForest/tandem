@@ -126,12 +126,12 @@ struct AssistantBody: View {
         let clean = parsed.clean
         if !clean.isEmpty {
             HStack(spacing: 16) {
-                msgAction("doc.on.doc", label: "Copy response") {
+                msgAction(.copy, label: "Copy response") {
                     copyText(Self.copiedText(message))
                 }
                 if nativeActions {
-                    msgAction("hand.thumbsup", label: "Good response", on: store.messageRatings[message.id] == "up") { rate("up") }
-                    msgAction("hand.thumbsdown", label: "Bad response", on: store.messageRatings[message.id] == "down") { rate("down") }
+                    msgAction(.good, chosen: .goodChosen, label: "Good response", on: store.messageRatings[message.id] == "up") { rate("up") }
+                    msgAction(.bad, chosen: .badChosen, label: "Bad response", on: store.messageRatings[message.id] == "down") { rate("down") }
                 }
             }
             .padding(.top, 2)
@@ -147,10 +147,10 @@ struct AssistantBody: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func msgAction(_ icon: String, label: String, on: Bool = false, _ go: @escaping () -> Void) -> some View {
+    private func msgAction(_ icon: InterfaceIcon, chosen: InterfaceIcon? = nil, label: String, on: Bool = false, _ go: @escaping () -> Void) -> some View {
         Button(action: go) {
-            Image(systemName: on ? icon + ".fill" : icon)
-                .font(.system(size: 13)).foregroundStyle(on ? Theme.sage : Theme.warmTextSecondary)
+            InterfaceIconView(icon: on ? chosen ?? icon : icon, size: InterfaceIconSize.regular)
+                .foregroundStyle(on ? Theme.sage : Theme.warmTextSecondary)
                 .frame(width: 24, height: 20)
         }
         .buttonStyle(.plain).pointerCursor()
@@ -266,7 +266,7 @@ struct ToolGroupChip: View {
         VStack(alignment: .leading, spacing: 6) {
             Button { if !details.isEmpty { open.toggle() } } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "wrench.and.screwdriver.fill").font(.system(size: 9))
+                    InterfaceIconView(icon: .tool, size: InterfaceIconSize.mark)
                     Text("Used \(group.label)").font(.system(size: 11, weight: .medium))
                     if group.calls.count > 1 {
                         Text("\(group.calls.count)×").font(.system(size: 10, weight: .semibold))
@@ -274,7 +274,7 @@ struct ToolGroupChip: View {
                             .background(Theme.surface).clipShape(Capsule())
                     }
                     if !details.isEmpty {
-                        Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 8))
+                        InterfaceIconView(icon: open ? .expand : .next, size: InterfaceIconSize.mark)
                     }
                 }
                 .foregroundStyle(Theme.textSecondary)

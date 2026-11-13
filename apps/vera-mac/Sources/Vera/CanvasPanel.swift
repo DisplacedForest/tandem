@@ -46,9 +46,11 @@ struct CanvasPanel: View {
                 Picker("", selection: $mode) {
                     Text("Preview").tag(Mode.preview); Text("Source").tag(Mode.source)
                 }.pickerStyle(.segmented).fixedSize().labelsHidden()
-                Button { copy() } label: { Image(systemName: "doc.on.doc") }.buttonStyle(.plain)
+                Button { copy() } label: { InterfaceIconView(icon: .copy, size: InterfaceIconSize.regular) }.buttonStyle(.plain)
+                    .help("Copy").accessibilityLabel("Copy")
             }
-            Button { store.closeCanvas() } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+            Button { store.closeCanvas() } label: { InterfaceIconView(icon: .close, size: InterfaceIconSize.regular) }.buttonStyle(.plain)
+                .help("Close").accessibilityLabel("Close")
         }
         .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         // 36 top — the panel runs under the hidden title bar.

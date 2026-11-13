@@ -45,19 +45,20 @@ struct AttachmentsBar: View {
 struct AttachmentChipView: View {
     @ObservedObject var att: Attachment
     var onRemove: () -> Void
+    var revealsRemove = false
     @State private var hover = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Group { if att.kind == .image { imageChip } else { fileChip } }
-            if hover {
+            if hover || revealsRemove {
                 Button(action: onRemove) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(Theme.surface, Theme.textPrimary.opacity(0.75))
+                    InterfaceIconView(icon: .clear, size: InterfaceIconSize.row)
+                        .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                        .background(Circle().fill(Theme.surface).padding(3))
                 }
                 .buttonStyle(.plain).padding(4)
+                .accessibilityLabel("Remove \(att.name)")
             }
         }
         .onHover { hover = $0 }
@@ -141,8 +142,7 @@ struct SentImageThumb: View {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             } else if failed {
                 Theme.surface
-                Image(systemName: "photo")
-                    .font(.system(size: 18))
+                InterfaceIconView(icon: .image, size: InterfaceIconSize.rail)
                     .foregroundStyle(Theme.textSecondary)
             } else {
                 Skeleton()
