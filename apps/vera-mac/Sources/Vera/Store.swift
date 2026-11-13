@@ -211,6 +211,7 @@ final class ChatStore: ObservableObject {
     @Published private(set) var composerSend = ComposerSend()
     var taskRevealGeneration = 0
     var revealedCompanionWorkDecisionIDs: Set<String> = []
+    var composerSentTurns: [UUID: CompanionTalkCapture] = [:]
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
@@ -2235,7 +2236,10 @@ final class ChatStore: ObservableObject {
             grounding: conversation.grounding, memorySettings: nativeMemorySettings, createdAt: Date(),
             history: NativeTurnHistoryMessage.snapshot(conversation.messages, current: user, mode: .chat))
         turn.dotContext = dotContext(for: id, requestText: fromComposer ? text : "")
-        if fromComposer { turn.preferenceEligible = true }
+        if fromComposer {
+            turn.preferenceEligible = true
+            if isVeraThread(id) { composerSentTurns[turn.id] = companionTalkCapture() }
+        }
         do {
             let answered = answering(pendingReply, conversationID: id)
             if let answered, let local = turnRepository as? LocalChatRepository {
@@ -2369,9 +2373,11 @@ final class ChatStore: ObservableObject {
         }
         let profileTool = companionProfileTool(for: turn)
         if profileTool != nil && supportsTools && authority.allowsTools { allowed.insert(NativeCompanionProfileTools.toolID) }
+        if companionTalkOffered(turn) && supportsTools && authority.allowsTools { allowed.insert(CompanionTalkTools.toolID) }
         if turn.companionEvent != nil { allowed = [] }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
+        if activity.toolID == CompanionTalkTools.toolID { return CompanionTalkTools.names.contains(activity.name) }
         var definitions: [NativeToolDefinition] = nativeToolRegistry.definitions
         if turn.mode != .continuous {
             let serviceDefinitions: [NativeToolDefinition] = nativeMCP?.authority.definitions(scope: "focused") ?? []
@@ -2488,6 +2494,9 @@ final class ChatStore: ObservableObject {
         let answerer: NativeInstructionAnswerer = instructionCheck ?? { said, about in
             await NativeInstructionCheck.ask(transport: checkTransport, model: checkModel, said: said, about: about, timeout: checkTimeout)
         }
+        let capture = composerSentTurns.removeValue(forKey: turn.id)
+        let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
+        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, answerer: answerer, timeout: checkTimeout)) }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2522,6 +2531,7 @@ final class ChatStore: ObservableObject {
             enabledToolIDs.remove(NativeCommandTools.toolID)
         }
         if profileTool != nil && capabilityProfile.supportsTools && authority.allowsTools { enabledToolIDs.insert(NativeCompanionProfileTools.toolID) }
+        if talk != nil { enabledToolIDs.insert(CompanionTalkTools.toolID) }
         if turn.companionEvent != nil { enabledToolIDs = [] }
         let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
             ? NativeFolderTools.grantNote(turnGrants) : nil
@@ -2683,9 +2693,11 @@ final class ChatStore: ObservableObject {
                         + accessNotes,
                     assistantProfile: turnDotContext(turn)))
                 turnMessages = companionRequestMessages(turnMessages, turn: turn)
+                let talkSection: String = talk.map { "\n\n" + $0.section } ?? ""
+                let otherWorkRule: String = talk == nil ? "Other accepted turns may still be working; this message does not cancel or change them." : CompanionTalkCopy.otherWork
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
-                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. Other accepted turns may still be working; this message does not cancel or change them." + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
+                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + talkSection + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. " + otherWorkRule + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories
@@ -2725,7 +2737,7 @@ final class ChatStore: ObservableObject {
                                latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
                                 openArtifact(latest)
                             }
-                            setTurnStatus(snapshot.activities.last(where: { $0.state == .pending })
+                            setTurnStatus(snapshot.activities.last(where: { $0.state == .pending && $0.toolID != CompanionTalkTools.toolID })
                                 .map { "Using \($0.title)…" } ?? (turnCheckpointStalled(turn) ? Self.saveWaitingStatus : nil), turn: turn)
                             if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
                                 scheduleTurnCheckpoint(turn, message: conversations[i].messages[replyIndex], ordinal: replyIndex)
