@@ -285,6 +285,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration(NativeEffectLedgerStore.turnsMigration) { db in try NativeEffectLedgerStore.migrateTurns(db) }
         migrator.registerMigration(NativeTaskDelivery.migration) { db in try NativeTaskDelivery.migrate(db) }
         migrator.registerMigration(MessageReactionStore.migration) { db in try MessageReactionStore.migrate(db) }
+        migrator.registerMigration(NativeInstructionUseStore.migration) { db in try NativeInstructionUseStore.migrate(db) }
         return migrator
     }
 
@@ -562,6 +563,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             try Self.detachTasks(db, conversationID: id)
             try db.execute(sql: "DELETE FROM conversations WHERE id = ?", arguments: [id])
             try db.execute(sql: "DELETE FROM native_rule_offers WHERE conversation_id = ? AND conversation_id != ''", arguments: [id])
+            try NativeInstructionUseStore.remove(db, conversationID: id)
         }
     }
 

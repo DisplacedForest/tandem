@@ -865,7 +865,7 @@ struct NativeToolLoop: Sendable {
                                     }
                                     if let recording, let current = ticket, let activity = activities.first(where: { $0.id == call.id }) {
                                         let admitted = try await Self.admit(current, recording: recording, definition: definition, arguments: arguments,
-                                                                            activity: activity, answer: answer, instructed: cleared != nil)
+                                                                            activity: activity, answer: answer, instruction: cleared)
                                         ticket = admitted
                                         if admitted == nil { handsOff = true }
                                         if let answer, admitted != nil { await recording.answered(activity, answer) }
@@ -894,6 +894,7 @@ struct NativeToolLoop: Sendable {
                                     defer { gate.close() }
                                     let approved = needsConfirmation
                                     let clearing = cleared
+                                    let holding = cleared == nil ? nil : ticket?.proposal.idempotencyKey
                                     let expectsHandOff = handsOff
                                     let boundary = NativeEffectBoundary()
                                     do {
@@ -905,9 +906,11 @@ struct NativeToolLoop: Sendable {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
                                                                 try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
                                                                     try await NativeToolCallContext.$sameToolOrdinal.withValue(ordinal) {
-                                                                        try await Self.execute(
-                                                                            definition, arguments: arguments, activity: activity,
-                                                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                        try await NativeToolCallContext.$instructionHolder.withValue(holding) {
+                                                                            try await Self.execute(
+                                                                                definition, arguments: arguments, activity: activity,
+                                                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -1036,12 +1039,13 @@ struct NativeToolLoop: Sendable {
 
     private static func admit(_ ticket: NativeChatEffectTicket, recording: NativeChatEffectHook, definition: NativeToolDefinition,
                               arguments: [String: NativeJSONValue], activity: NativeToolActivity, answer: NativeCardAnswer?,
-                              instructed: Bool) async throws -> NativeChatEffectTicket? {
+                              instruction: String?) async throws -> NativeChatEffectTicket? {
         var current = ticket
         var attempts = 0
         while true {
             try Task.checkCancellation()
-            let decision: NativeRuleDecision = answer != nil ? .ask : (instructed ? .act(.instruction) : .act(.rule))
+            let decision: NativeRuleDecision = answer != nil ? .ask : (instruction != nil ? .act(.instruction) : .act(.rule))
+            current.instruction = answer == nil ? instruction : nil
             switch await recording.admit(current, decision, answer) {
             case .admitted: return current
             case .refused: throw CancellationError()

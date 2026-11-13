@@ -41,6 +41,7 @@ final class NativeCompanionWorkerRelay: @unchecked Sendable {
             },
             ledger: NativeEffectLedgerStore(database: database),
             tasks: NativeTaskStore(database: database))
+        environment.instructionUses = NativeInstructionUseStore(database: database)
         environment.preferences = { NativePreferenceStore(database: database).activeStatements() }
         environment.saveRules = { [weak self] records in
             let store = NativeRuleRecordStore(database: database)

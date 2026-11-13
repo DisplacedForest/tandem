@@ -2433,6 +2433,7 @@ final class ChatStore: ObservableObject {
         generating = true
         let sharedDefinitions = nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
         var turnRegistry = NativeToolRegistry(definitions: sharedDefinitions)
+        let typed = typedWords(for: turn)
         if let service = nativeTaskService, nativeTaskEngine.base != nil,
            turnOwned(turn) {
             let origin = NativeTaskOrigin(conversationID: id,
@@ -2443,7 +2444,7 @@ final class ChatStore: ObservableObject {
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
                         searchAvailable: nativeSearchAvailable, allowedWorkerTypes: { workerTypes },
-                        general: isVeraThread(id) ? companionHandOff() : nil,
+                        general: isVeraThread(id) ? companionHandOff(said: typed.said) : nil,
                         didSave: { [weak self] _ in await self?.reloadNativeTaskReferences() }),
                 ])
             }
@@ -2454,7 +2455,6 @@ final class ChatStore: ObservableObject {
         let turnGrants = grants(for: id)
         let folderConsented = nativeEnabledToolIDs.contains(NativeFolderTools.toolID)
         let commandsConsented = nativeEnabledToolIDs.contains(NativeCommandTools.toolID)
-        let typed = typedWords(for: turn)
         let said = typed.said
         let uses = turnInstructionUses(for: turn)
         let resolver = ruleResolver(for: id, requestText: said, typed: typed)
