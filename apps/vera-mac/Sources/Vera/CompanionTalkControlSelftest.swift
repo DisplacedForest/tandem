@@ -851,6 +851,13 @@ enum CompanionTalkControlFixture {
         let twice = [record(.completed, path: "list.txt"), record(.completed, path: "list.txt")]
         let second = CompanionTalkTools.unsaved(twice, notes: [note("Write a note: list.txt")])
         try require(second.done == [CompanionTalkCopy.justDone("list.txt")], "A second write to the same file that no saved step holds is still reported: \(second)")
+        let skipped = NativeCompanionEffectNote(title: "Write a note: list.txt", outcome: CompanionTalkTools.notDoneOutcome, reason: nil)
+        let afterSkip = [record(.uncertain, receipt: absent, path: "list.txt"), record(.completed, path: "list.txt")]
+        let later = CompanionTalkTools.unsaved(afterSkip, notes: [skipped])
+        try require(later.done == [CompanionTalkCopy.justDone("list.txt")] && later.unsure.isEmpty,
+                    "A write that succeeds after an earlier attempt didn't happen is reported, not hidden by the earlier note: \(later)")
+        let onlySkip = CompanionTalkTools.unsaved([record(.completed, path: "list.txt")], notes: [skipped])
+        try require(onlySkip.done == [CompanionTalkCopy.justDone("list.txt")], "A note saying it wasn't done never covers an action that was: \(onlySkip)")
         let bare = CompanionTalkTools.unsaved([record(.completed, path: nil)], notes: [note("Write a note: other.txt")])
         try require(bare.done == [CompanionTalkCopy.justDone(nil)], "An action with nothing to name it is reported unless a saved step holds one like it: \(bare)")
     }

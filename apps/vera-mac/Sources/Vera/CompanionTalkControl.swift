@@ -161,7 +161,11 @@ enum CompanionTalkTools {
         return NativeCompanionWorker.subject(values)
     }
 
-    static func covers(_ note: NativeCompanionEffectNote, _ subject: String?) -> Bool {
+    static let notDoneOutcome = "not done"
+
+    static func covers(_ note: NativeCompanionEffectNote, _ subject: String?, neverRan: Bool) -> Bool {
+        let saysNotDone = note.outcome == notDoneOutcome
+        guard saysNotDone == neverRan else { return false }
         guard let subject else { return !note.title.contains(subjectMark) }
         return note.title.hasSuffix(subjectMark + subject)
     }
@@ -176,14 +180,14 @@ enum CompanionTalkTools {
             guard inFlight || settled else { continue }
             let ran = NativeCompanionWorker.ran(record)
             let neverRan = record.state == .uncertain && ran == nil
-            if neverRan { continue }
             if settled {
                 let subject = subject(record)
-                if let index = open.firstIndex(where: { covers($0, subject) }) {
+                if let index = open.firstIndex(where: { covers($0, subject, neverRan: neverRan) }) {
                     open.remove(at: index)
                     continue
                 }
             }
+            if neverRan { continue }
             if ran == true {
                 let title = CompanionTalkCopy.justDone(record.proposal.target)
                 if !done.contains(title) { done.append(title) }
