@@ -642,7 +642,7 @@ extension SelfTest {
         let expected: [(String?, String??, String)] = [("Ada", nil, "Ada"), ("Ada", .some("Moss"), "Moss"), (nil, nil, "Your companion")]
         for (name, rename, shown) in expected {
             let text = try waitingCheckIn(name: name, rename: rename) ?? ""
-            try require(text == "The scheduled research \"Saved check\" stopped to ask: " + shown
+            try require(text == "The scheduled \"Saved check\" stopped to ask: " + shown
                             + " can't tell whether this happened: Water the north bed. Please check, then say what you found."
                         && !hasMarkerScalar(text) && !text.contains("{name}"),
                         "The posted check-in fills the current name and carries no marker: \(text)")

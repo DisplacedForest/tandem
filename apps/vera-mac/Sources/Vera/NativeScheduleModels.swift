@@ -208,7 +208,8 @@ enum NativeScheduleError: Error, LocalizedError, Equatable, Sendable {
 }
 
 struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
-    static let workerTypes: [String] = ["research", "document", "companion"]
+    static let companionWorkerType = "companion"
+    static let workerTypes: [String] = ["research", "document", companionWorkerType]
 
     let id: String
     var owner: NativeScheduleOwner
@@ -242,7 +243,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
         }
         try cadence.validate()
         self.id = id
-        self.owner = owner
+        self.owner = workerType == Self.companionWorkerType ? .dot : owner
         self.conversationID = conversationID
         self.workerType = workerType
         self.title = cleanTitle
@@ -261,6 +262,12 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     var isDocument: Bool { workerType == "document" }
     var isCompanionWork: Bool { workerType == "companion" }
     var workTitle: String { isDocument ? "Document" : "Research" }
+    var kindWord: String? { isCompanionWork ? nil : workTitle }
+    var detailLead: String { (kindWord.map { "\($0). " } ?? "") + "\(cadenceSummary). " }
+
+    func checkInSentence(_ question: String) -> String {
+        "The scheduled " + (kindWord.map { "\($0.lowercased()) " } ?? "") + "\"\(title)\" stopped to ask: " + question
+    }
 
     func deliverables() -> [String] {
         isDocument ? ["Write the document the brief asks for"] : ["A cited summary of what was found"]

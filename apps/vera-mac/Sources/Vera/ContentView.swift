@@ -755,7 +755,7 @@ struct MessageRow: View {
                                 detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
                                 actor: companionThread ? CompanionSentence.placeholder : "Tandem",
                                 onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
-                                onChoice: { onToolDecision?($0) })
+                                onChoice: { onToolDecision?($0) }, companionThread: companionThread)
                         }
                     }
                     AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
@@ -1004,6 +1004,7 @@ struct NativeToolConfirmationBar: View {
     var allowDecline = true
     var onDecision: (Bool) -> Void
     var onChoice: ((NativeCardChoiceKind) -> Void)? = nil
+    var companionThread = false
     @Environment(\.renderSafe) private var renderSafe
 
     static func prompt(for request: NativeToolConfirmationRequest) -> String? {
@@ -1019,8 +1020,8 @@ struct NativeToolConfirmationBar: View {
         NativeCardChoices.sentence(actor: actor, subject: request.subject, title: request.title)
     }
 
-    static func closingLine(for request: NativeToolConfirmationRequest, actor: String) -> CompanionLine? {
-        guard let closing = closing(for: request) else { return nil }
+    static func closingLine(for request: NativeToolConfirmationRequest, actor: String, companionThread: Bool = false) -> CompanionLine? {
+        guard let closing = closing(for: request, companionThread: companionThread) else { return nil }
         let line = CompanionLine.named(closing)
         return actor == CompanionSentence.placeholder ? line : .literal(line.plain(name: nil))
     }
@@ -1031,20 +1032,22 @@ struct NativeToolConfirmationBar: View {
         return actor == CompanionSentence.placeholder ? .parts([.name, .text(rest)]) : .literal(actor + rest)
     }
 
-    static func literal(for request: NativeToolConfirmationRequest) -> String? {
+    static func literal(for request: NativeToolConfirmationRequest, companionThread: Bool = false) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+        if request.toolID == NativeScheduleTools.toolID,
+           let draft = NativeScheduleTools.draft(inRequest: request.request, general: companionThread) {
             return NativeScheduleTools.literal(for: draft)
         }
         let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines
     }
 
-    static func closing(for request: NativeToolConfirmationRequest) -> String? {
-        guard request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) else { return nil }
+    static func closing(for request: NativeToolConfirmationRequest, companionThread: Bool = false) -> String? {
+        guard request.toolID == NativeScheduleTools.toolID,
+              let draft = NativeScheduleTools.draft(inRequest: request.request, general: companionThread) else { return nil }
         return NativeScheduleTools.destination(for: draft)
     }
 
@@ -1059,7 +1062,7 @@ struct NativeToolConfirmationBar: View {
             let rest = prompt.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
             return rest.isEmpty ? nil : rest
         }
-        return Self.literal(for: request)
+        return Self.literal(for: request, companionThread: companionThread)
     }
 
     var body: some View {
@@ -1077,7 +1080,7 @@ struct NativeToolConfirmationBar: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(block)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                if prompt == nil, let closing = Self.closingLine(for: request, actor: actor) {
+                                if prompt == nil, let closing = Self.closingLine(for: request, actor: actor, companionThread: companionThread) {
                                     CompanionLineText(line: closing)
                                 }
                             }

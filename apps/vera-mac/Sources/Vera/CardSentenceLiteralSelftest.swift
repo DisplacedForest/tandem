@@ -385,7 +385,7 @@ extension SelfTest {
             try require(document == "The scheduled document \"Hostile check\" stopped to ask: " + hostileQuestion,
                         "A document check-in quotes the whole question unchanged for \(label): \(document ?? "")")
             let companion = try checkIn(name: name, workerType: "companion")
-            try require(companion == "The scheduled research \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
+            try require(companion == "The scheduled \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
                         "A companion check-in fills the name and keeps the hostile tail for \(label): \(companion ?? "")")
         }
 
