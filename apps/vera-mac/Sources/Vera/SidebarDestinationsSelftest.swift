@@ -27,7 +27,7 @@ extension SelfTest {
                 + (section == .vera ? 1 : 0) + (section == .chat ? 1 : 0)
             try require(shown == 1, "Exactly one sidebar row is selected for \(section.rawValue) while a conversation row is shown")
         }
-        try require(SidebarDestination.allCases.allSatisfy { !$0.title.isEmpty && !$0.icon.isEmpty }, "Every destination has a title and an icon")
+        try require(SidebarDestination.allCases.allSatisfy { !$0.title.isEmpty && $0.glyph.image != nil }, "Every destination has a title and an icon")
         for section in [AppSection.chat, .vera, .projects] {
             try require(SidebarDestination.primary.filter { $0.isRailSelected(section: section, pane: .canvas) } == [.chats],
                         "Home stays selected through ordinary, companion and project navigation")

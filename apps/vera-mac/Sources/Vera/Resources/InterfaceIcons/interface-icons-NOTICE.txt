@@ -1,8 +1,29 @@
 Apps SDK UI icons
 https://github.com/openai/apps-sdk-ui
 Commit 0f00143c7a639906f1621fe58e1b6be7b5bea46d
-Files: src/components/Icon/svg/Search.tsx, src/components/Icon/svg/PlusLg.tsx, src/components/Icon/svg/SidebarFloatingLeft.tsx, src/components/Icon/svg/SidebarFloatingOpenLeft.tsx, src/components/Icon/svg/DotsHorizontal.tsx
-Shipped as interface-search.svg, interface-add.svg, interface-sidebar.svg, interface-sidebar-shown.svg and interface-more.svg with the path data unchanged.
+Files and the names they ship under, with the path data unchanged:
+src/components/Icon/svg/Search.tsx as interface-search.svg
+src/components/Icon/svg/PlusLg.tsx as interface-add.svg
+src/components/Icon/svg/SidebarFloatingLeft.tsx as interface-sidebar.svg
+src/components/Icon/svg/SidebarFloatingOpenLeft.tsx as interface-sidebar-shown.svg
+src/components/Icon/svg/DotsHorizontal.tsx as interface-more.svg
+src/components/Icon/svg/Home.tsx as interface-home.svg
+src/components/Icon/svg/Chat.tsx as interface-chat.svg
+src/components/Icon/svg/Settings.tsx as interface-settings.svg
+src/components/Icon/svg/Folder.tsx as interface-projects.svg
+src/components/Icon/svg/FolderOpen.tsx as interface-project-open.svg
+src/components/Icon/svg/Book.tsx as interface-library.svg
+src/components/Icon/svg/Clock.tsx as interface-scheduled.svg
+src/components/Icon/svg/ConnectorsConnectedApps.tsx as interface-plugins.svg
+src/components/Icon/svg/NewsPaper.tsx as interface-pulse.svg
+src/components/Icon/svg/Nodes.tsx as interface-workflows.svg
+src/components/Icon/svg/Bolt.tsx as interface-activity.svg
+src/components/Icon/svg/MemoryOnRemember.tsx as interface-memory.svg
+src/components/Icon/svg/Sparkle.tsx as interface-companion.svg
+src/components/Icon/svg/StarFilled.tsx as interface-attention.svg
+src/components/Icon/svg/DownloadCircle.tsx as interface-update.svg
+src/components/Icon/svg/XCircleFilled.tsx as interface-clear.svg
+src/components/Icon/svg/Pin.tsx as interface-pin.svg
 
 MIT License
 
