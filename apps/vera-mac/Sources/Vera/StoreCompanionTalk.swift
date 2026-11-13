@@ -18,7 +18,7 @@ extension ChatStore {
 
     private func companionTalkReferences() -> [NativeTaskReference] {
         guard let threadID = veraThreadID else { return [] }
-        let owned = Set(schedules.filter { $0.owner == .dot }.map(\.id))
+        let owned = Set(schedules.filter(\.runsAsCompanion).map(\.id))
         let linked = Set(scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
             .compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let stored = ((try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? nil) ?? nativeTaskReferences

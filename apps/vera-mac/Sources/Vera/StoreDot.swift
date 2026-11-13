@@ -87,7 +87,7 @@ extension ChatStore {
 
     func skipMissedDotRuns(now: Date) {
         guard let store = nativeScheduleStore else { return }
-        for var schedule in (try? store.all()) ?? [] where schedule.owner == .dot && schedule.enabled {
+        for var schedule in (try? store.all()) ?? [] where schedule.runsAsCompanion && schedule.enabled {
             guard let due = schedule.nextRunAt, due <= now else { continue }
             schedule.advance(after: now, from: due)
             do { try store.save(schedule) } catch {
@@ -163,7 +163,7 @@ extension ChatStore {
     func dotRemovalSummary() -> NativeDotRemovalSummary {
         var summary = NativeDotRemovalSummary(services: dotProfile.connectedToolIDs != nil)
         summary.artifacts = veraThreadID.flatMap { try? artifactRepository?.artifactIDs(conversationID: $0).count } ?? 0
-        summary.schedules = ((try? nativeScheduleStore?.all()) ?? schedules).filter { $0.owner == .dot }.count
+        summary.schedules = ((try? nativeScheduleStore?.all()) ?? schedules).filter(\.runsAsCompanion).count
         guard let threadID = veraThreadID else { return summary }
         summary.messages = ((try? repository?.messages(conversationID: threadID)) ?? []).count
         if let memoryRepository = repository as? any NativeMemoryRepository {
@@ -214,7 +214,7 @@ extension ChatStore {
                 stopAnswer(turn.assistantMessageID)
             }
         }
-        for schedule in ((try? nativeScheduleStore?.all()) ?? schedules) where schedule.owner == .dot {
+        for schedule in ((try? nativeScheduleStore?.all()) ?? schedules) where schedule.runsAsCompanion {
             deleteSchedule(schedule.id)
         }
         if let threadID, let memoryRepository = repository as? any NativeMemoryRepository {

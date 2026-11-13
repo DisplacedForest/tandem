@@ -109,7 +109,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     static func activity(tasks: [CompanionActivityItem], runs: [NativeScheduleRun], schedules: [NativeSchedule]) -> [CompanionActivityItem] {
         let taskIDs = Set(tasks.map(\.id))
-        let owned = Dictionary(schedules.filter { $0.owner == .dot }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let owned = Dictionary(schedules.filter(\.runsAsCompanion).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let runItems = runs.compactMap { run -> CompanionActivityItem? in
             guard let schedule = owned[run.scheduleID] else { return nil }
             if let reference = run.taskReferenceID, taskIDs.contains(reference.uppercased()) || taskIDs.contains(reference) { return nil }
@@ -123,7 +123,7 @@ struct CompanionOverviewModel: Equatable, Sendable {
     }
 
     static func upcoming(_ schedules: [NativeSchedule]) -> [CompanionUpcoming] {
-        schedules.filter { $0.owner == .dot }
+        schedules.filter(\.runsAsCompanion)
             .sorted { ($0.nextRunAt ?? .distantFuture, $0.title) < ($1.nextRunAt ?? .distantFuture, $1.title) }
             .map { CompanionUpcoming(id: $0.id, title: $0.title, when: $0.cadenceSummary, enabled: $0.enabled) }
     }

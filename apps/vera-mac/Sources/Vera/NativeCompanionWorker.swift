@@ -15,6 +15,10 @@ struct NativeCompanionWorkerContext: Sendable {
     var companion: CompanionSubject { CompanionSubject(assistantName) }
     let threadID: String
     let tools: [NativeToolDefinition]
+    var searchNote: String? = nil
+
+    static let noSearchURL = "You can't search the web in this run because no search URL is set in Settings. If the work needed a search, say plainly in your reply that you couldn't search and why."
+    static let searchNotOn = "You can't search the web in this run because web search isn't turned on for you in Settings. If the work needed a search, say plainly in your reply that you couldn't search and why."
 }
 
 struct NativeCompanionWorkerAuthority: Sendable {
@@ -828,6 +832,7 @@ private struct NativeCompanionRun {
         ]
         lines.append("When you used web results, cite them with the bracket numbers shown on the results, like [1], right after the sentence they support. Do not list web addresses at the end; the app adds the list of sources.")
         if let preferences = NativePreferencePrompt.section(environment.preferences()) { lines.append(preferences) }
+        if let searchNote = context.searchNote { lines.append(searchNote) }
         if origin.unattended {
             lines.append("This run was started by a schedule or by Tandem itself, so it is read-only. You can look things up but cannot change anything. If the assignment needs a change, do the rest and say plainly what you left undone.")
         }

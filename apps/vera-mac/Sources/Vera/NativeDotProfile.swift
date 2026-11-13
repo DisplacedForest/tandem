@@ -118,12 +118,12 @@ struct NativeDotProfile: Codable, Equatable, Sendable {
         return base.intersection(connectedToolIDs)
     }
 
-    func allowsScheduledRun(owner: NativeScheduleOwner) -> Bool {
-        !(owner == .dot && state == .paused)
+    func allowsScheduledRun(runsAsCompanion: Bool) -> Bool {
+        !(runsAsCompanion && state == .paused)
     }
 
-    func missedWhilePaused(owner: NativeScheduleOwner, scheduledFor: Date) -> Bool {
-        guard owner == .dot, let resumedAt else { return false }
+    func missedWhilePaused(runsAsCompanion: Bool, scheduledFor: Date) -> Bool {
+        guard runsAsCompanion, let resumedAt else { return false }
         return scheduledFor <= resumedAt
     }
 }

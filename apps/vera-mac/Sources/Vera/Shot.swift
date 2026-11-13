@@ -54,6 +54,10 @@ enum Shot {
             CardShot.render(view: "card-schedule-anything-ada", to: path, appearance: appearance)
             return
         }
+        if view == "companion-schedule-card-own-chat" {
+            CardShot.render(view: "card-schedule-anything-own-ada", to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("task-card") {
             NativeTaskCardShot.render(view: view, to: path, appearance: appearance)
             return

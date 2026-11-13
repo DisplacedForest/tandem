@@ -379,10 +379,10 @@ extension SelfTest {
         for name in names {
             let label = name ?? "no name"
             let research = try checkIn(name: name, workerType: "research")
-            try require(research == "The scheduled research \"Hostile check\" stopped to ask: " + hostileQuestion,
+            try require(research == "The scheduled \"Hostile check\" stopped to ask: " + hostileQuestion,
                         "A research check-in quotes the whole question unchanged for \(label): \(research ?? "")")
             let document = try checkIn(name: name, workerType: "document")
-            try require(document == "The scheduled document \"Hostile check\" stopped to ask: " + hostileQuestion,
+            try require(document == "The scheduled \"Hostile check\" stopped to ask: " + hostileQuestion,
                         "A document check-in quotes the whole question unchanged for \(label): \(document ?? "")")
             let companion = try checkIn(name: name, workerType: "companion")
             try require(companion == "The scheduled \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
@@ -390,7 +390,7 @@ extension SelfTest {
         }
 
         func scheduleRequest(_ resultsTo: String) throws -> NativeToolConfirmationRequest {
-            let arguments: [String: Any] = ["title": "Daily check", "worker_type": "document", "instruction": "Write a short note about \(joined)",
+            let arguments: [String: Any] = ["title": "Daily check", "instruction": "Write a short note about \(joined)",
                                             "results_to": resultsTo, "repeat": "every_hours", "hours": 6]
             let data = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
             var built = NativeToolConfirmationRequest(activity: NativeToolActivity(

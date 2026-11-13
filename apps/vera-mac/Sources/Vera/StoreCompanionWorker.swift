@@ -86,6 +86,10 @@ extension ChatStore {
         definitions.append(contentsOf: extra)
         enabled.formUnion(extra.map(\.id))
         let tools = NativeToolRegistry(definitions: definitions).active(enabledIDs: enabled)
-        return NativeCompanionWorkerContext(assistantName: companionName, threadID: threadID, tools: tools)
+        var context = NativeCompanionWorkerContext(assistantName: companionName, threadID: threadID, tools: tools)
+        if !tools.contains(where: { $0.id == NativeWebTools.searchToolID }) {
+            context.searchNote = nativeSearchAvailable() ? NativeCompanionWorkerContext.searchNotOn : NativeCompanionWorkerContext.noSearchURL
+        }
+        return context
     }
 }

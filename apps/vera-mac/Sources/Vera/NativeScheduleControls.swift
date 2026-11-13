@@ -6,7 +6,7 @@ enum NativeScheduleControl: Hashable, Sendable {
 
 enum NativeScheduleControls {
     static func waitsOnPausedAssistant(_ schedule: NativeSchedule, assistantPaused: Bool) -> Bool {
-        assistantPaused && schedule.owner == .dot && schedule.enabled
+        assistantPaused && schedule.runsAsCompanion && schedule.enabled
     }
 
     static func pausedNote(_ schedule: NativeSchedule, assistantPaused: Bool) -> String? {

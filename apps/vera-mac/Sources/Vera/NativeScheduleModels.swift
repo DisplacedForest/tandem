@@ -209,6 +209,7 @@ enum NativeScheduleError: Error, LocalizedError, Equatable, Sendable {
 
 struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     static let companionWorkerType = "companion"
+    static let unreadableKind = "This schedule can't be run."
     static let workerTypes: [String] = ["research", "document", companionWorkerType]
 
     let id: String
@@ -239,11 +240,11 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
             throw NativeScheduleError.invalid("Describe the work in up to 5,000 characters.")
         }
         guard Self.workerTypes.contains(workerType) else {
-            throw NativeScheduleError.invalid("Scheduled work must be research or a document.")
+            throw NativeScheduleError.invalid(Self.unreadableKind)
         }
         try cadence.validate()
         self.id = id
-        self.owner = workerType == Self.companionWorkerType ? .dot : owner
+        self.owner = owner
         self.conversationID = conversationID
         self.workerType = workerType
         self.title = cleanTitle
@@ -260,13 +261,12 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
     var cadenceSummary: String { cadence.summary(timeZone: timeZone) }
     var isDocument: Bool { workerType == "document" }
-    var isCompanionWork: Bool { workerType == "companion" }
-    var workTitle: String { isDocument ? "Document" : "Research" }
-    var kindWord: String? { isCompanionWork ? nil : workTitle }
-    var detailLead: String { (kindWord.map { "\($0). " } ?? "") + "\(cadenceSummary). " }
+    var isCompanionWork: Bool { workerType == Self.companionWorkerType }
+    var runsAsCompanion: Bool { isCompanionWork || owner == .dot }
+    var detailLead: String { "\(cadenceSummary). " }
 
     func checkInSentence(_ question: String) -> String {
-        "The scheduled " + (kindWord.map { "\($0.lowercased()) " } ?? "") + "\"\(title)\" stopped to ask: " + question
+        "The scheduled \"\(title)\" stopped to ask: " + question
     }
 
     func deliverables() -> [String] {
@@ -279,7 +279,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     }
 
     func taskRequest() throws -> NativeResearchTaskRequest {
-        if workerType == "companion" {
+        if isCompanionWork {
             return try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: instruction, mode: "scheduled", scheduleID: id), title: title)
         }
         return try NativeResearchTaskRequest(objective: instruction, deliverables: deliverables(), workerType: workerType, title: title,

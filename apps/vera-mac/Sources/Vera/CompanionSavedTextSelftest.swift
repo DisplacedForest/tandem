@@ -647,11 +647,11 @@ extension SelfTest {
                         && !hasMarkerScalar(text) && !text.contains("{name}"),
                         "The posted check-in fills the current name and carries no marker: \(text)")
         }
-        let definition = NativeScheduleTools.definition(searchAvailable: { true }, save: { draft in
+        let definition = NativeScheduleTools.definition(save: { draft in
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title, instruction: draft.instruction,
                                cadence: draft.cadence, timeZone: .current)
         })
-        let saved = try await definition.execute(["title": .string("Bed check"), "worker_type": .string("document"),
+        let saved = try await definition.execute(["title": .string("Bed check"),
                                                    "instruction": .string("Write the bed note."), "results_to": .string("assistant"),
                                                    "repeat": .string("every_hours"), "hours": .number(6)])
         guard case .object(let fields) = saved, case .string(let message)? = fields["message"] else {

@@ -10,10 +10,9 @@ extension SelfTest {
         let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 19, hour: 6, minute: 30))!
         try require(calendar.component(.weekday, from: now) == 2, "The fixture anchor is a Monday")
 
-        func arguments(_ extra: [String: NativeJSONValue], workerType: String = "research") -> [String: NativeJSONValue] {
+        func arguments(_ extra: [String: NativeJSONValue]) -> [String: NativeJSONValue] {
             var base: [String: NativeJSONValue] = [
                 "title": .string("Morning policy check"),
-                "worker_type": .string(workerType),
                 "instruction": .string("Summarize overnight developments with sources."),
             ]
             base.merge(extra) { _, new in new }
@@ -31,7 +30,7 @@ extension SelfTest {
         try require(daily.owner == .conversation, "Results go to the schedule's own chat by default")
         try require(daily.title == "Morning policy check", "The title carries through")
         try require(daily.instruction == "Summarize overnight developments with sources.", "The instruction carries through")
-        try require(daily.workerType == "research", "The worker type carries through")
+        try require(daily.workerType == NativeSchedule.companionWorkerType, "Every schedule from chat is carried out by the companion")
         let weekdaysArguments = arguments(["repeat": .string("weekdays"), "time": .string("08:30")])
         try require(try draft(weekdaysArguments).cadence == .weekdays(minuteOfDay: 510), "Weekdays at 08:30 projects to minute 510")
         try require(try draft(arguments(["repeat": .string("weekly"), "weekday": .string("friday"), "time": .string("15:30")])).cadence
@@ -57,7 +56,7 @@ extension SelfTest {
             ("fractional hours", arguments(["repeat": .string("every_hours"), "hours": .number(2.5)])),
             ("a past one-time date", arguments(["repeat": .string("once"), "at": .string(formatter.string(from: yesterday))])),
             ("an unknown repeat", arguments(["repeat": .string("monthly"), "time": .string("07:00")])),
-            ("an unknown worker type", arguments(["repeat": .string("daily"), "time": .string("07:00")], workerType: "voice")),
+            ("a kind field", arguments(["repeat": .string("daily"), "time": .string("07:00"), "worker_type": .string("research")])),
             ("an unknown field", arguments(["repeat": .string("daily"), "time": .string("07:00"), "priority": .string("high")])),
             ("daily without a time", arguments(["repeat": .string("daily")])),
             ("weekly without a weekday", arguments(["repeat": .string("weekly"), "time": .string("07:00")])),
@@ -67,7 +66,7 @@ extension SelfTest {
             try require(rejects(values), "The projection rejects \(label)")
         }
 
-        let fixture = "{\"title\":\"Morning policy check\",\"worker_type\":\"research\",\"instruction\":\"Summarize overnight developments in semiconductor export policy with sources.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}"
+        let fixture = "{\"title\":\"Morning policy check\",\"instruction\":\"Summarize overnight developments in semiconductor export policy with sources.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}"
         guard let parsed = NativeScheduleTools.draft(inRequest: fixture, now: now, timeZone: zone) else {
             throw NativeTaskFixture.Failure.assertion("The confirmation request parses")
         }
@@ -150,8 +149,7 @@ extension SelfTest {
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,
                                instruction: draft.instruction, cadence: draft.cadence, timeZone: zone)
         }
-        let definition = NativeScheduleTools.definition(searchAvailable: { true },
-                                                        now: { now }, timeZone: { zone }, save: save)
+        let definition = NativeScheduleTools.definition(now: { now }, timeZone: { zone }, save: save)
         try require(definition.confirmation == .required, "Scheduling always asks first")
         try require(definition.name == "schedule_task", "The tool is named schedule_task")
         try require(definition.wantsPhrase == "schedule this" && definition.action == .otherChanges,
@@ -168,19 +166,7 @@ extension SelfTest {
         }
         try require(threadMessage.hasSuffix("results go to the companion's conversation.") && !threadMessage.contains("Sol") && !threadMessage.contains(CompanionSentence.placeholder) && !threadMessage.contains(CompanionSavedText.marker), "The result names the companion's conversation without a name")
 
-        let offline = NativeScheduleTools.definition(searchAvailable: { false },
-                                                     now: { now }, timeZone: { zone }, save: save)
-        do {
-            _ = try await offline.execute(weekdaysArguments)
-            throw NativeTaskFixture.Failure.assertion("Research without search should be refused")
-        } catch let error as NativeToolError {
-            try require(error == .failed(NativeTaskTools.searchUnavailable), "Research without search is refused with the usual explanation")
-        }
-        let document = try await offline.execute(arguments(["repeat": .string("weekdays"), "time": .string("08:30")], workerType: "document"))
-        guard case .object(let documentResult) = document else { throw NativeTaskFixture.Failure.assertion("A document schedule returns an object") }
-        try require(documentResult["saved"] == .bool(true), "A document schedule saves without search")
-
-        let refusing = NativeScheduleTools.definition(searchAvailable: { true }, now: { now }, timeZone: { zone },
+        let refusing = NativeScheduleTools.definition(now: { now }, timeZone: { zone },
                                                       save: { _ in throw NativeScheduleError.invalid("Pick a time that is still ahead.") })
         do {
             _ = try await refusing.execute(weekdaysArguments)
@@ -189,7 +175,7 @@ extension SelfTest {
             try require(error == .failed("Pick a time that is still ahead."), "A failed save surfaces its reason")
         }
 
-        let hourlyWire = "{\"title\":\"Hourly check\",\"worker_type\":\"document\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":1}"
+        let hourlyWire = "{\"title\":\"Hourly check\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":1}"
         let hourlyArguments = try definition.validatedArguments(hourlyWire)
         try require(hourlyArguments["hours"] == .number(1), "A JSON 1 stays a number on the wire")
         try require(try draft(hourlyArguments).cadence == .everyHours(1), "Hourly projects through the real JSON path")
@@ -198,12 +184,12 @@ extension SelfTest {
         let hourlySaved = try await definition.execute(hourlyArguments)
         guard case .object(let hourlyResult) = hourlySaved else { throw NativeTaskFixture.Failure.assertion("An hourly schedule returns an object") }
         try require(hourlyResult["saved"] == .bool(true), "An hourly schedule saves")
-        let flagWire = "{\"title\":\"Hourly check\",\"worker_type\":\"document\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":true}"
+        let flagWire = "{\"title\":\"Hourly check\",\"instruction\":\"Note anything new.\",\"repeat\":\"every_hours\",\"hours\":true}"
         try require((try? draft(try definition.validatedArguments(flagWire))) == nil, "A JSON true is not an hour count")
 
-        let missingRepeat = "{\"title\":\"Morning policy check\",\"worker_type\":\"research\",\"instruction\":\"Summarize.\",\"time\":\"07:00\"}"
+        let missingRepeat = "{\"title\":\"Morning policy check\",\"instruction\":\"Summarize.\",\"time\":\"07:00\"}"
         try require((try? definition.validatedArguments(missingRepeat)) == nil, "The generic validator requires repeat")
 
-        print("  native schedule tool: PASS (projection, rejections, confirmation copy, enablement, turn authority, save, search gate, save failure, schema)")
+        print("  native schedule tool: PASS (projection, rejections, confirmation copy, enablement, turn authority, save, save failure, schema)")
     }
 }

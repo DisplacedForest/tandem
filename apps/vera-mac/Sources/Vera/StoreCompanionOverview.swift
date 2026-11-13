@@ -114,7 +114,7 @@ extension ChatStore {
 
     @discardableResult
     func switchCompanionSchedule(_ id: String, on: Bool) -> String? {
-        guard schedules.contains(where: { $0.id == id && $0.owner == .dot }) else { return nil }
+        guard schedules.contains(where: { $0.id == id && $0.runsAsCompanion }) else { return nil }
         setSchedule(id, enabled: on)
         return schedules.first { $0.id == id }?.enabled == on ? nil : scheduleError
     }

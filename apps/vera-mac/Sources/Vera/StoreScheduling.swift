@@ -3,7 +3,7 @@ import Foundation
 struct NativeScheduleDraft: Equatable, Sendable {
     var title: String = ""
     var instruction: String = ""
-    var workerType: String = "research"
+    var workerType: String = NativeSchedule.companionWorkerType
     var owner: NativeScheduleOwner = .conversation
     var cadence: NativeScheduleCadence = .daily(minuteOfDay: 9 * 60)
 
@@ -98,12 +98,13 @@ extension ChatStore {
         var posted = false
         for run in scheduleRuns.values.flatMap({ $0 }) where run.outcome == .waiting {
             guard let referenceID = run.taskReferenceID, let uuid = UUID(uuidString: referenceID),
-                  let conversationID = run.conversationID,
+                  let runConversationID = run.conversationID,
                   let reference = try? projectionRepository.taskReference(id: uuid),
                   let snapshot = (try? projectionRepository.taskProjection(id: uuid))?.snapshot,
                   snapshot.state == .needsDecision, let decision = snapshot.decision else { continue }
             let key = Self.checkInKey(taskReferenceID: referenceID, decision: decision)
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
+            let conversationID = schedule.isCompanionWork ? (veraThreadID ?? runConversationID) : runConversationID
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
                                   text: schedule.checkInSentence(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion")),
@@ -218,9 +219,9 @@ extension ChatStore {
         throw NativeScheduleError.invalid(scheduleError ?? "The schedule couldn't be saved.")
     }
 
-    func scheduleToolDefinition(general: Bool = false) -> NativeToolDefinition? {
+    func scheduleToolDefinition(companionThread: Bool = false) -> NativeToolDefinition? {
         guard nativeScheduleStore != nil else { return nil }
-        return NativeScheduleTools.definition(general: general, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
+        return NativeScheduleTools.definition(companionThread: companionThread, save: { [weak self] draft in
             guard let self else { throw NativeScheduleError.invalid("Tandem is closing.") }
             return try await self.scheduleFromChat(draft)
         })
@@ -313,8 +314,8 @@ extension ChatStore {
 
     func fireSchedule(_ schedule: NativeSchedule, run: NativeScheduleRun, bind: NativeScheduleBind) async -> NativeScheduleFireResult {
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
-        if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
+        guard dotProfile.allowsScheduledRun(runsAsCompanion: schedule.runsAsCompanion) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
+        if dotProfile.missedWhilePaused(runsAsCompanion: schedule.runsAsCompanion, scheduledFor: run.scheduledFor) {
             return .skipped("Missed while \(CompanionSavedText.marker) was paused.")
         }
         guard let repository, let service = nativeTaskService, nativeTaskEngine.base != nil else {
@@ -324,6 +325,7 @@ extension ChatStore {
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
         if nativeTaskConfiguration != nil && profile == nil { return .failed("The model profile couldn't be prepared.") }
         if schedule.workerType == "research" && !nativeSearchAvailable() { return .failed("Search isn't set up. Add a search URL in Settings.") }
+        if schedule.isCompanionWork { ensureVeraThread() }
         let request: NativeResearchTaskRequest
         do { request = try schedule.taskRequest() } catch { return .failed(error.localizedDescription) }
         guard let conversationID = scheduleConversation(schedule) else {
@@ -335,8 +337,8 @@ extension ChatStore {
         reply.contentType = .runOrigin
         await bind(conversationID, reply.id.uuidString)
         guard scheduleIsLive(schedule.id) else { return .skipped(Self.removedScheduleReason) }
-        guard dotProfile.allowsScheduledRun(owner: schedule.owner) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
-        if dotProfile.missedWhilePaused(owner: schedule.owner, scheduledFor: run.scheduledFor) {
+        guard dotProfile.allowsScheduledRun(runsAsCompanion: schedule.runsAsCompanion) else { return .skipped("\(CompanionSavedText.marker) is paused.") }
+        if dotProfile.missedWhilePaused(runsAsCompanion: schedule.runsAsCompanion, scheduledFor: run.scheduledFor) {
             return .skipped("Missed while \(CompanionSavedText.marker) was paused.")
         }
         if schedule.owner == .dot && !isVeraThread(conversationID) {

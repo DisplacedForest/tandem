@@ -17,6 +17,8 @@ enum SavedWording {
         ("Background work must be research or a document.", "This must be research or a document."),
         ("Background generation limits must be finite and bounded.", "Those generation settings are out of range."),
         ("Provide a title, a worker type, an instruction and a repeat.", NativeScheduleTools.missingArguments),
+        ("Provide a title, the kind of work, an instruction and a repeat.", NativeScheduleTools.missingArguments),
+        ("Scheduled work must be research or a document.", NativeSchedule.unreadableKind),
         ("Provide a worker type, an objective and deliverables.", NativeTaskTools.missingArguments),
         ("Tandem can't coordinate the model request right now. Check the engine connection and try again.",
          "Tandem can't line up the model request right now. Try again in a moment."),

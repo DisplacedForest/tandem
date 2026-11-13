@@ -84,7 +84,7 @@ extension ChatStore {
             work.current = current()
         }
         let threadID = veraThreadID
-        let owned = Set(schedules.filter { $0.owner == .dot }.map(\.id))
+        let owned = Set(schedules.filter(\.runsAsCompanion).map(\.id))
         let runs = scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
         let linked = Set(runs.compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let runStart = Dictionary(runs.compactMap { run in
