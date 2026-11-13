@@ -36,6 +36,12 @@ final class OwnSettingsLoopbackServer: @unchecked Sendable {
             let line = data.flatMap { String(data: $0, encoding: .utf8) }?.components(separatedBy: "\r\n").first ?? ""
             let parts = line.split(separator: " ")
             if parts.count > 1 { self?.record(String(parts[1])) }
+            let path = parts.count > 1 ? String(parts[1]) : ""
+            if let target = self?.redirects[path] {
+                let moved = "HTTP/1.1 302 Found\r\nLocation: \(target)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(moved.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
             let gif = Data([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
                             0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b])
             let head = "HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: \(gif.count)\r\nConnection: close\r\n\r\n"
@@ -44,6 +50,12 @@ final class OwnSettingsLoopbackServer: @unchecked Sendable {
     }
 
     private func record(_ path: String) { lock.withLock { seen.append(path) } }
+
+    var redirects: [String: String] {
+        get { lock.withLock { routes } }
+        set { lock.withLock { routes = newValue } }
+    }
+    private var routes: [String: String] = [:]
 
     func stop() { listener.cancel() }
 }
@@ -62,6 +74,18 @@ final class OwnSettingsWire: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+final class OwnSettingsRedirectWitness: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [String] = []
+    var asked: [String] { lock.withLock { seen } }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        lock.withLock { seen.append(request.url?.path ?? "") }
+        completionHandler(request)
+    }
 }
 
 @MainActor
@@ -83,6 +107,7 @@ enum OwnSettingsSelftest {
         try checkToolsProbe(scratch.appendingPathComponent("tools-probe", isDirectory: true))
         try checkOutputs(scratch.appendingPathComponent("outputs", isDirectory: true))
         try await checkWebViews()
+        try await checkRedirects()
         try checkKeysStayInMemory()
         try checkPreferences()
         try checkRetiredKeys()
@@ -453,6 +478,80 @@ enum OwnSettingsSelftest {
         }
         try require(server.paths.contains("/control.gif"), "Without the restriction the same kind of address does reach the fixture, so the block is what stopped it")
         try require(server.paths.contains("/script-control.gif"), "Without the restriction the same page script does run, so the restriction is what stopped it")
+    }
+
+    static func checkRedirects() async throws {
+        let require = NativeTaskFixture.require
+        let server = try await OwnSettingsLoopbackServer()
+        defer { server.stop() }
+        let port = server.port
+        let base = "http://127.0.0.1:\(port)"
+        server.redirects = [
+            "/to-outside": "http://198.51.100.7:9/outside",
+            "/to-near": "http://127.1:\(port)/after-near",
+            "/to-near-data": "http://127.1:\(port)/after-data",
+            "/to-near-download": "http://127.1:\(port)/after-download",
+            "/to-near-bytes": "http://127.1:\(port)/after-bytes",
+            "/to-near-upload": "http://127.1:\(port)/after-upload",
+            "/to-near-factory": "http://127.1:\(port)/after-factory",
+            "/socket": "ws://127.1:\(port)/after-socket",
+            "/control": "http://127.1:\(port)/after-control",
+            "/redirect-allowed": "http://127.0.0.1:\(port)/after-allowed",
+        ]
+        try require(!OutboundGuard.permits(URL(string: "http://127.1:\(port)/"), policy: OutboundGuard.policy),
+                    "The redirect target is an address the guard refuses, though it would reach this Mac")
+        func url(_ path: String) -> URL { URL(string: base + path)! }
+        var before = OutboundGuard.refusals
+        let outside = await refusal { _ = try await URLSession.shared.data(from: url("/to-outside")) }
+        try require(outside.refused && outside.seconds < 5 && OutboundGuard.refusals > before,
+                    "A loopback request redirected outside fails with the guard's error at once")
+        let shared = await refusal { _ = try await URLSession.shared.data(from: url("/to-near-data")) }
+        let download = await refusal { _ = try await URLSession.shared.download(from: url("/to-near-download")) }
+        let bytes = await refusal {
+            let (stream, _) = try await URLSession.shared.bytes(from: url("/to-near-bytes"))
+            for try await _ in stream {}
+        }
+        var upload = URLRequest(url: url("/to-near-upload"))
+        upload.httpMethod = "POST"
+        let uploaded = await refusal { _ = try await URLSession.shared.upload(for: upload, from: Data("x".utf8)) }
+        let factory = OutboundGuard.session()
+        defer { factory.invalidateAndCancel() }
+        before = OutboundGuard.refusals
+        let (_, factoryResponse) = try await factory.data(from: url("/to-near-factory"))
+        try require(shared.refused && download.refused && bytes.refused && uploaded.refused,
+                    "Redirected data, download, bytes and upload requests on the shared session all fail with the guard's error")
+        try require((factoryResponse as? HTTPURLResponse)?.statusCode == 302 && OutboundGuard.refusals > before,
+                    "A made session refuses the redirect itself, hands back the redirect response, and counts the refusal")
+        let wrappedDelegate = OwnSettingsRedirectWitness()
+        let wrapped = OutboundGuard.session(delegate: wrappedDelegate)
+        defer { wrapped.invalidateAndCancel() }
+        _ = try? await wrapped.data(from: url("/to-near-factory"))
+        _ = try? await wrapped.data(from: url("/redirect-allowed"))
+        try require(wrappedDelegate.asked == ["/after-allowed"], "A caller's own redirect handling still runs for allowed redirects, and never sees refused ones")
+        try await Task.sleep(for: .milliseconds(300))
+        let followed = server.paths.filter { $0.hasPrefix("/after-") && $0 != "/after-allowed" }
+        try require(followed.isEmpty, "No redirected request ever reached its new address: \(followed)")
+
+        before = OutboundGuard.refusals
+        let socket = try OutboundGuard.webSocketTask(with: URL(string: "ws://127.0.0.1:\(port)/socket")!)
+        socket.resume()
+        let socketFailed = await refusal {
+            do { _ = try await socket.receive() } catch { throw NSError(domain: OutboundGuard.errorDomain, code: OutboundGuard.refusalCode) }
+        }
+        socket.cancel()
+        try await Task.sleep(for: .milliseconds(300))
+        try require(socketFailed.refused && server.paths.contains("/socket") && !server.paths.contains("/after-socket"),
+                    "A guarded socket whose handshake is redirected fails, and the new address is never contacted")
+        try require(OutboundGuard.refusals > before, "The socket redirect refusal is counted")
+        let socketRefused = await refusal { _ = try OutboundGuard.webSocketTask(with: URL(string: "wss://198.51.100.7/ws")!) }
+        try require(socketRefused.refused, "A guarded socket to an outside address is refused before it is made")
+        try require(try OutboundGuard.webSocketTask(with: URL(string: "ws://198.51.100.7/ws")!, policy: .open).currentRequest?.url?.host == "198.51.100.7",
+                    "With the open policy the socket comes from the shared session exactly as today")
+
+        let open = OutboundGuard.session(policy: .open)
+        defer { open.invalidateAndCancel() }
+        _ = try? await open.data(from: url("/control"))
+        try require(server.paths.contains("/after-control"), "Without the guard the same redirect does reach the new address, so the guard is what stopped it")
     }
 
     static func checkKeysStayInMemory() throws {

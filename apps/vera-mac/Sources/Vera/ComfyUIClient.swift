@@ -26,11 +26,11 @@ struct ComfyUITransport: Sendable {
         },
         events: { url in
             AsyncThrowingStream { continuation in
-                do { try OutboundGuard.check(url) } catch {
+                let socket: URLSessionWebSocketTask
+                do { socket = try OutboundGuard.webSocketTask(with: url) } catch {
                     continuation.finish(throwing: error)
                     return
                 }
-                let socket = URLSession.shared.webSocketTask(with: url)
                 socket.resume()
                 let reader = Task {
                     do {

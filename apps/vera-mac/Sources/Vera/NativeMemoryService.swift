@@ -413,7 +413,7 @@ extension NativeMemoryServing {
 
 struct NativeMemoryService: NativeMemoryServing, Sendable {
     let configuration: NativeMemoryServiceConfiguration
-    var session: URLSession = .shared
+    var session: URLSession = URLSession.shared
     var admission: NativeInferenceAdmission? = nil
 
     var supportsSemanticRecall: Bool { !configuration.embeddingsModel.isEmpty }

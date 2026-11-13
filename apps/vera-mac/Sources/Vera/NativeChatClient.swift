@@ -245,7 +245,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     }
 
     let config: NativeChatConfig
-    var session: URLSession = .shared
+    var session: URLSession = URLSession.shared
     var admission: NativeInferenceAdmission? = nil
     var replyCap: Int? = nil
     var thinkingOff = false

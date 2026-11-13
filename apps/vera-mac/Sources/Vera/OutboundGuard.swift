@@ -4,7 +4,7 @@ import Network
 import WebKit
 
 enum OutboundGuard {
-    enum Policy: Equatable, Sendable {
+    enum Policy: Hashable, Sendable {
         case open
         case loopbackOnly(Set<String>)
     }
@@ -95,8 +95,8 @@ enum OutboundGuard {
 
     static func noteRefusal() { lock.withLock { refusalCount += 1 } }
 
-    static func guarded(_ configuration: URLSessionConfiguration) -> URLSessionConfiguration {
-        guard policy != .open, let copy = configuration.copy() as? URLSessionConfiguration else { return configuration }
+    static func guarded(_ configuration: URLSessionConfiguration, policy chosen: Policy = policy) -> URLSessionConfiguration {
+        guard chosen != .open, let copy = configuration.copy() as? URLSessionConfiguration else { return configuration }
         let standard = URLSessionConfiguration.ephemeral.protocolClasses ?? []
         let standardIDs = Set(standard.map { ObjectIdentifier($0) })
         let current = configuration.protocolClasses ?? standard
@@ -108,8 +108,67 @@ enum OutboundGuard {
     }
 
     static func session(configuration: URLSessionConfiguration = .ephemeral, delegate: (any URLSessionDelegate)? = nil,
-                        delegateQueue: OperationQueue? = nil) -> URLSession {
-        URLSession(configuration: guarded(configuration), delegate: delegate, delegateQueue: delegateQueue)
+                        delegateQueue: OperationQueue? = nil, policy chosen: Policy = policy) -> URLSession {
+        guard chosen != .open else { return URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue) }
+        return URLSession(configuration: guarded(configuration, policy: chosen),
+                          delegate: GuardedRedirects(policy: chosen, inner: delegate), delegateQueue: delegateQueue)
+    }
+
+    nonisolated(unsafe) private static var socketSessions: [Policy: URLSession] = [:]
+
+    static func webSocketTask(with url: URL, policy chosen: Policy = policy) throws -> URLSessionWebSocketTask {
+        guard chosen != .open else { return URLSession.shared.webSocketTask(with: url) }
+        guard permits(url, policy: chosen) else {
+            noteRefusal()
+            throw refusal(for: url)
+        }
+        let socketSession = lock.withLock { () -> URLSession in
+            if let existing = socketSessions[chosen] { return existing }
+            let made = session(configuration: .default, policy: chosen)
+            socketSessions[chosen] = made
+            return made
+        }
+        return socketSession.webSocketTask(with: url)
+    }
+}
+
+final class GuardedRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let policy: OutboundGuard.Policy
+    let inner: (any URLSessionDelegate)?
+    private let lock = NSLock()
+    private var refusedCount = 0
+
+    var refused: Int { lock.withLock { refusedCount } }
+
+    init(policy: OutboundGuard.Policy, inner: (any URLSessionDelegate)?) {
+        self.policy = policy
+        self.inner = inner
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return (inner as? NSObjectProtocol)?.responds(to: aSelector) ?? false
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        guard let inner = inner as? NSObjectProtocol, inner.responds(to: aSelector) else { return nil }
+        return inner
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        guard OutboundGuard.permits(request.url, policy: policy) else {
+            OutboundGuard.noteRefusal()
+            lock.withLock { refusedCount += 1 }
+            completionHandler(nil)
+            return
+        }
+        if let taskDelegate = inner as? URLSessionTaskDelegate,
+           (taskDelegate as NSObjectProtocol).responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:))) {
+            taskDelegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
+            return
+        }
+        completionHandler(request)
     }
 }
 

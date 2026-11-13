@@ -48,7 +48,7 @@ struct NativeInferenceAdmission: Sendable {
     }
 
     let baseURL: URL
-    var session: URLSession = .shared
+    var session: URLSession = URLSession.shared
     var observe: (@Sendable (String, Double) -> Void)? = nil
     var arbiter: NativeInferenceArbiter? = nil
 
