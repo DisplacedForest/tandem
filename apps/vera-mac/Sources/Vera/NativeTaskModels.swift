@@ -11,9 +11,9 @@ enum NativeTaskError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .invalidRequest(let message): return message
-        case .invalidEngine: return "Configure a valid task engine address first."
-        case .engineChanged: return "This research request belongs to a different engine."
-        case .invalidResponse: return "The task engine returned an unreadable response."
+        case .invalidEngine: return "This can't start until Tandem is set up for it."
+        case .engineChanged: return "This research request was started somewhere else and can't continue here."
+        case .invalidResponse: return "The reply couldn't be read."
         case .persistenceUnavailable: return "The research request couldn't be saved locally."
         }
     }
@@ -79,7 +79,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
             throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
         }
         guard Self.workerTypes.contains(workerType) else {
-            throw NativeTaskError.invalidRequest("Background work must be research or a document.")
+            throw NativeTaskError.invalidRequest("This must be research or a document.")
         }
         guard (workerType == "companion") == (dot != nil), dot.map({ $0.assignment == trimmed }) ?? true else {
             throw NativeTaskError.invalidRequest("This needs an assignment.")
@@ -391,7 +391,7 @@ struct NativeTaskGenerationLimits: Codable, Equatable, Hashable, Sendable {
          maximumOutputTokens: Int = 1024) throws {
         guard (1...16).contains(maximumRequests), (1...262144).contains(maximumInputBytes),
               (1...8192).contains(maximumOutputTokens) else {
-            throw NativeTaskError.invalidRequest("Background generation limits must be finite and bounded.")
+            throw NativeTaskError.invalidRequest("Those generation settings are out of range.")
         }
         self.maximumRequests = maximumRequests
         self.maximumInputBytes = maximumInputBytes

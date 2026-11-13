@@ -166,6 +166,7 @@ extension ChatStore {
                 guard let current = live.entry, current.canStop else {
                     return CompanionTalkTools.refusal(CompanionTalkTools.unstoppable(live.entry?.phase))
                 }
+                guard CompanionTalkTools.checkable(said) else { return CompanionTalkTools.refusal(CompanionTalkCopy.tooLong) }
                 let about = CompanionTalkTools.about(stop: entry, among: entries, earlier: earlier)
                 let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
                 try Task.checkCancellation()
@@ -216,6 +217,7 @@ extension ChatStore {
                 guard let current = live.entry, current.decisionID == decisionID, current.spoken[picked.key] == picked.value else {
                     return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion)
                 }
+                guard CompanionTalkTools.checkable(said) else { return CompanionTalkTools.refusal(CompanionTalkCopy.tooLong) }
                 let about = CompanionTalkTools.about(answer: picked.key, for: entry, among: entries, earlier: earlier)
                 let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
                 try Task.checkCancellation()
@@ -251,7 +253,11 @@ extension ChatStore {
         if endedFirst {
             return CompanionTalkTools.refusal(snapshot?.state == .completed ? CompanionTalkCopy.alreadyFinished : CompanionTalkCopy.alreadyEnded)
         }
-        let (doneTitles, unsure) = CompanionTalkTools.effects(CompanionTalkTools.oldestFirst(projected, reference.snapshot))
+        var (doneTitles, unsure) = CompanionTalkTools.effects(CompanionTalkTools.oldestFirst(projected, reference.snapshot))
+        let saved = [projected, reference.snapshot].compactMap { $0?.checkpoint.effects }.max { $0.count < $1.count } ?? []
+        let unsaved = companionTalkUnsaved(reference, notes: saved)
+        for title in unsaved.done where !doneTitles.contains(title) { doneTitles.append(title) }
+        for title in unsaved.unsure where !unsure.contains(title) { unsure.append(title) }
         let done = doneTitles.map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         var sentence = settled ? CompanionTalkCopy.stopped : CompanionTalkCopy.stopping
         var fields: [String: NativeJSONValue] = ["changed": .bool(true)]
@@ -267,6 +273,12 @@ extension ChatStore {
         return .object(fields)
     }
 
+    private func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
+        guard let remote = reference.remoteTaskID, let local = repository as? LocalChatRepository,
+              let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return ([], []) }
+        return CompanionTalkTools.unsaved(records, notes: notes)
+    }
+
     func companionTalkAnswer(_ id: UUID, choice: String, decisionID: String) async -> NativeJSONValue {
         guard let tracker = nativeTaskTracker else { return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotAnswer) }
         let delivery = await tracker.answer(id, choice: choice, expecting: decisionID)
@@ -279,6 +291,7 @@ extension ChatStore {
         if stopped && delivery != .sent { return CompanionTalkTools.refusal(CompanionTalkCopy.stoppedBeforeAnswer) }
         if stopped { return .object(["result": .string(CompanionTalkCopy.stoppedAfterAnswer), "changed": .bool(true)]) }
         if delivery == .dropped { return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion) }
-        return .object(["result": .string(CompanionTalkCopy.answered), "changed": .bool(true)])
+        let ends = choice == CompanionTalkTools.endingChoice
+        return .object(["result": .string(ends ? CompanionTalkCopy.answeredAndEnds : CompanionTalkCopy.answered), "changed": .bool(true)])
     }
 }

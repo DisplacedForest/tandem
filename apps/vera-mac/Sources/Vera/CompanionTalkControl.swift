@@ -156,6 +156,58 @@ enum CompanionTalkTools {
         }
     }
 
+    static let endingChoice = "stop"
+
+    static let subjectMark = ": "
+
+    static func subject(_ record: NativeEffectRecord) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(record.proposal.argumentsJSON.utf8)) as? [String: Any],
+              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return nil }
+        return NativeCompanionWorker.subject(values)
+    }
+
+    static let notDoneOutcome = "not done"
+
+    static func covers(_ note: NativeCompanionEffectNote, _ subject: String?, neverRan: Bool) -> Bool {
+        let saysNotDone = note.outcome == notDoneOutcome
+        guard saysNotDone == neverRan else { return false }
+        guard let subject else { return !note.title.contains(subjectMark) }
+        return note.title.hasSuffix(subjectMark + subject)
+    }
+
+    static func unsaved(_ records: [NativeEffectRecord], notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
+        var done: [String] = []
+        var unsure: [String] = []
+        var open = notes
+        for record in records.sorted(by: { $0.createdAt < $1.createdAt }) {
+            let inFlight = record.state == .admitted
+            let settled = record.state == .completed || record.state == .uncertain
+            guard inFlight || settled else { continue }
+            let ran = NativeCompanionWorker.ran(record)
+            let neverRan = record.state == .uncertain && ran == nil
+            if settled {
+                let subject = subject(record)
+                if let index = open.firstIndex(where: { covers($0, subject, neverRan: neverRan) }) {
+                    open.remove(at: index)
+                    continue
+                }
+            }
+            if neverRan { continue }
+            if ran == true {
+                let title = CompanionTalkCopy.justDone(record.proposal.target)
+                if !done.contains(title) { done.append(title) }
+            } else {
+                let title = CompanionTalkCopy.underWay(record.proposal.target)
+                if !unsure.contains(title) { unsure.append(title) }
+            }
+        }
+        return (done, unsure)
+    }
+
+    static func checkable(_ said: String) -> Bool {
+        said.count <= NativeInstructionCheck.saidLimit
+    }
+
     static func firstInReply() -> Bool {
         let roundOne = NativeToolCallContext.round == 1
         let nothingBefore = NativeToolCallContext.replyCallOrdinal == 0
@@ -225,6 +277,22 @@ enum CompanionTalkCopy {
     static let invalid = "Nothing was changed. Give one item code from the current list, and for an answer, one of its listed answers."
     static let notGoing = "Nothing was changed. That one isn't going right now, so there's nothing to stop. Say so plainly."
     static let alreadyStopping = "Nothing was changed. That one is already stopping. Say so plainly."
+    static let tooLong = "Nothing was changed. The message is too long to be sure what it asks. Ask the person to say it again in a short message."
+    static let answeredAndEnds = "The answer is saved, and it ends there."
+    static let underWayLead = "Something that was under way when it stopped"
+
+    static let justDoneLead = "Something that finished just before it stopped"
+
+    static func justDone(_ target: String?) -> String {
+        let name = (target ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? justDoneLead : justDoneLead + ": " + CompanionTalkTools.clipped(name, CompanionTalkTools.noteLimit)
+    }
+
+    static func underWay(_ target: String?) -> String {
+        let name = (target ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? underWayLead : underWayLead + ": " + CompanionTalkTools.clipped(name, CompanionTalkTools.noteLimit)
+    }
+
     static let unclear = "Nothing was changed. It isn't clear which one the person means. Ask which one, using the list you were given for this reply, and call nothing until they say."
     static let startedAfter = "Nothing was changed. That one started after the person's message, so ask them to say it again if they mean it."
     static let alreadyFinished = "Nothing was changed. That one had already finished before the stop arrived. Say so plainly."
@@ -244,12 +312,12 @@ enum CompanionTalkCopy {
     static let couldNotAnswer = "Nothing was changed. The answer couldn't be saved just now. Tell the person and suggest trying again."
 
     static let couldNotStart = "it couldn't start"
-    static let reasons = ["request_limit": "it used up its limit of model requests", "input_limit": "what it was given was too large",
+    static let reasons = ["input_limit": "what it was given was too large",
                           "request_conflict": "it couldn't be picked up again safely"]
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
                                            notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
-                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
+                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, tooLong, answeredAndEnds, underWayLead, justDoneLead, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
         + CompanionHoldCopy.modelSentences
 

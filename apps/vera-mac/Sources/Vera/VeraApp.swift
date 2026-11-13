@@ -79,7 +79,7 @@ struct VeraApp: App {
             nativeRules: configInstance.nativeSettings.rules,
             nativeMCP: configInstance.nativeMCP,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
-            sweepOrphanedAttachments: fixture == nil,
+            sweepOrphanedAttachments: false,
             nativeTaskConfiguration: NativeMCPUIFixture.current == nil ? NativeTaskConfiguration(
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,

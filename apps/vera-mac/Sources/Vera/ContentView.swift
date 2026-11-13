@@ -780,7 +780,7 @@ struct MessageRow: View {
                         Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
-                        Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
+                        Label(message.failure.map(SavedWording.current) ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))

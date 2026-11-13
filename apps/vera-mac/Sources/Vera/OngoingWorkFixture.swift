@@ -5,6 +5,7 @@ enum OngoingWorkFixture {
     static func reference(conversationID: String, title: String, workerType: String = "research",
                           state: String?, result: [String: Any]? = nil, decision: [String: Any]? = nil,
                           cancelRequested: Bool = false, updatedAt: Double = 1.0,
+                          checkpoint: [String: Any] = [:],
                           request custom: NativeResearchTaskRequest? = nil) throws -> NativeTaskReference {
         let request = try custom ?? NativeResearchTaskRequest(objective: title, deliverables: ["A short summary"],
                                                               workerType: workerType, title: title)
@@ -22,7 +23,7 @@ enum OngoingWorkFixture {
         let envelope = try JSONSerialization.jsonObject(with: body) as? [String: Any] ?? [:]
         var object: [String: Any] = [
             "id": remote, "worker_type": workerType, "payload": envelope["payload"] ?? [:],
-            "state": state, "checkpoint": [:], "cancel_requested": false,
+            "state": state, "checkpoint": checkpoint, "cancel_requested": false,
             "generation": 1, "updated_at": updatedAt,
         ]
         object["result"] = result

@@ -116,7 +116,7 @@ extension SelfTest {
         try require(RuleRows.place(.project("rows-garden"), places: places) == .literal("in the Garden project"), "A project place names the project")
         try require(RuleRows.place(.schedule("rows-frost"), places: places) == .literal("for the schedule Frost check"), "A schedule place names the schedule")
         try require(RuleRows.place(.task("rows-book"), places: places) == .literal("for Book the workshop inspection"), "A task place names the work")
-        try require(RuleRows.place(.task("rows-blank"), places: places) == .literal("for background work"), "A task with no title reads as background work")
+        try require(RuleRows.place(.task("rows-blank"), places: places) == .literal("for untitled work"), "A task with no title reads as background work")
         let braces = row(record(.conversation("rows-braces"), action: .networkSends, tool: "garden-log", statement: "Allow: Post"))
         try require(braces.line == .parts([.text("Always allow: Post, "), .text("in Notes about {name}")])
                     && braces.line.plain(name: "Ada") == "Always allow: Post, in Notes about {name}"
@@ -188,7 +188,7 @@ extension SelfTest {
                     "Everywhere, task, schedule, ask and hand off rules never offer to apply everywhere")
         try require(RuleRows.widenQuestion(chatAllow) == nil && RuleRows.widenQuestion(scheduleNever) == nil && RuleRows.widenQuestion(chatAsk) == nil,
                     "Only a never that widens asks first")
-        try require(RuleRows.widenQuestion(neverRun) == "Never run commands, in every chat and in background work?",
+        try require(RuleRows.widenQuestion(neverRun) == "Never run commands, everywhere?",
                     "The widen question for a chat's never: \(RuleRows.widenQuestion(neverRun) ?? "nil")")
         let offEverywhere = record(action: .networkSends, tool: "mail", target: workshop, status: .disabled)
         try require(row(everywhereAllow).menuTitles == ["Switch off"] && row(offEverywhere).menuTitles == ["Switch on"]
@@ -404,7 +404,7 @@ extension SelfTest {
                                                   from: "lit-chat"), places: places, now: now, calendar: calendar)
                 try require(crowded.line.plain(name: "Ada") == "Never allow file edits in {name} through {name}, in Notes about {name}"
                             && crowded.note?.plain(name: "Ada") == "From a card in Notes about {name}, today"
-                            && crowded.widenQuestion == "Never allow file edits in {name} through {name}, in every chat and in background work?",
+                            && crowded.widenQuestion == "Never allow file edits in {name} through {name}, everywhere?",
                             "A chat title, folder and tool title all holding the token read as written: \(crowded.line.plain(name: "Ada"))")
                 let crowdedText = [crowded.line.plain(name: "Ada"), crowded.note?.plain(name: "Ada") ?? "", crowded.widenQuestion ?? ""]
                     + RuleRows.screenStrings([crowded], name: "Ada")

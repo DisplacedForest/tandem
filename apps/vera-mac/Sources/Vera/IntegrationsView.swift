@@ -18,7 +18,7 @@ enum IntegrationsText {
     static let scopeKeys = ["focused", "assistant", "worker"]
 
     static func scopeOrder(_ companion: CompanionSubject) -> [(key: String, title: String)] {
-        [("focused", "Focused chats"), ("assistant", companion.leading), ("worker", "Background work")]
+        [("focused", "Focused chats"), ("assistant", companion.leading), ("worker", "Research and documents")]
     }
 
     static func scopes(_ scopes: Set<String>) -> CompanionLine {

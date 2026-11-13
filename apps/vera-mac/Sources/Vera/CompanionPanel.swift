@@ -451,7 +451,7 @@ private struct CompanionMessageRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                 if let failure = message.failure, !failure.isEmpty {
-                    Text(failure)
+                    Text(SavedWording.current(failure))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(3)

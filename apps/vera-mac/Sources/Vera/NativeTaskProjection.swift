@@ -17,19 +17,19 @@ enum NativeTaskProjection {
         let work = dot ? "Work" : document ? "Writing" : "Research"
         var card = NativeTaskCardPresentation(
             id: id, title: reference.request.displayTitle, status: .preparing,
-            milestone: "The request is saved here.", connectionNote: connectionNote,
+            milestone: "The request is saved here.", connectionNote: connectionNote.map(SavedWording.current),
             canCancel: true, workerType: reference.createRequest.workerType)
         guard let snapshot else {
             if reference.deliveryState == .rejected {
                 card.status = .failed
-                card.milestone = reference.lastDeliveryError ?? "\(work) couldn't start."
+                card.milestone = reference.lastDeliveryError.map(SavedWording.current) ?? "\(work) couldn't start."
                 card.canCancel = false
             } else if reference.cancelRequested {
                 card.status = .stopping
                 card.milestone = "Waiting to confirm that \(work.lowercased()) has stopped."
                 card.canCancel = false
             } else if let error = reference.lastDeliveryError {
-                card.connectionNote = error
+                card.connectionNote = SavedWording.current(error)
             }
             return (card, nil)
         }
@@ -112,8 +112,8 @@ enum NativeTaskProjection {
             card.status = .failed
             let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
             switch snapshot.checkpoint.failureReason {
-            case "input_limit" where dot: card.milestone = "The assignment and its notes are too large for this task. Start the work again with less."
-            case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large for this task. Start a new document with a shorter brief." : "The research input is too large for this task. Start a smaller research request."
+            case "input_limit" where dot: card.milestone = "The assignment and its notes are too large. Start the work again with less."
+            case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             default:
                 if dot {
