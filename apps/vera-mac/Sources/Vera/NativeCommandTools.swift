@@ -38,11 +38,18 @@ struct NativeCommandRun: Codable, Equatable, Hashable, Identifiable, Sendable {
             if let exitCode { return exitCode == 0 ? "Finished in \(durationText)" : "Exit status \(exitCode) after \(durationText)" }
             if let signal { return "Ended by signal \(signal) after \(durationText)" }
             return "Finished in \(durationText)"
-        case .timedOut: return "Stopped after \(durationText) because the command took too long"
+        case .timedOut: return "Stopped after \(plainDuration) because the command took too long"
         case .canceled: return "Stopped by you after \(durationText)"
         case .declined: return "You declined it, so it was not run"
         case .refused: return note ?? "It was not run"
         }
+    }
+
+    var plainDuration: String {
+        let seconds = Int((Double(durationMilliseconds) / 1000).rounded())
+        if seconds < 60 { return seconds == 1 ? "1 second" : "\(seconds) seconds" }
+        let minutes = Int((Double(seconds) / 60).rounded())
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
     }
 
     var durationText: String {

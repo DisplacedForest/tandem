@@ -464,12 +464,6 @@ extension SelfTest {
             generation: job!.generation, messagesDigest: job!.messagesDigest, response: "{\"subquestions\":[\"Q\"]}", failure: nil))
         let delivered = try await worker.value
         try require(delivered == "{\"subquestions\":[\"Q\"]}", "The worker receives the delivered text")
-        for ordinal in 0...5 {
-            do {
-                _ = try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "step-\(ordinal)", ordinal: ordinal, messages: messages)
-                throw NativeTaskFixture.Failure.assertion("Without presence a model call must not be issued at step \(ordinal)")
-            } catch is NativeTaskExecutorUnavailable {}
-        }
     }
 
     private static func taskRouterContract() async throws {
@@ -1215,12 +1209,33 @@ extension SelfTest {
                 return "other"
             }
         }
-        var requests: [String] = []
-        for ordinal in 0...5 {
-            requests.append(await outcome(dotTask, ordinal: ordinal, base))
-            requests.append(await outcome(researchTask, ordinal: ordinal, base))
+        let stepRepository = try LocalChatRepository(inMemory: true)
+        let stepStore = NativeTaskStore(database: stepRepository.database)
+        let stepExchange = NativeTaskGenerationExchange(store: stepStore, admission: { .local(arbiter) })
+        _ = try stepStore.create(workerType: "companion", payload: try dotPayload(), idempotencyKey: "steps")
+        guard let stepTask = try stepStore.claim(workerTypes: ["companion"]) else {
+            throw NativeTaskFixture.Failure.assertion("The stepping task could not be claimed")
         }
-        try require(requests.allSatisfy { $0 == "accepted" }, "A step may make any number of model requests: \(requests)")
+        _ = try await stepExchange.ready(taskID: stepTask.id, binding: binding)
+        var attempts: [String] = []
+        var answers: [String] = []
+        for ordinal in 0...5 {
+            let turn = Task { try await stepExchange.completeTurn(task: stepTask, binding: binding, phase: "work-1", attempt: "steps",
+                                                              ordinal: ordinal, messages: base) }
+            var pending: NativeTaskGenerationJob?
+            for _ in 0..<200 where pending == nil {
+                try await Task.sleep(for: .milliseconds(10))
+                pending = try await stepExchange.ready(taskID: stepTask.id, binding: binding)
+            }
+            guard let pending else { throw NativeTaskFixture.Failure.assertion("Step \(ordinal) never reached the broker") }
+            attempts.append(pending.attempt)
+            try await stepExchange.result(taskID: stepTask.id, body: NativeTaskGenerationResponse(jobID: pending.id, bindingID: pending.bindingID,
+                generation: pending.generation, messagesDigest: pending.messagesDigest, response: "answer \(ordinal)", failure: nil))
+            answers.append(try await turn.value.content)
+        }
+        try require(answers == (0...5).map { "answer \($0)" } && Set(attempts).count == 6
+                    && attempts == (0...5).map { "steps-\($0)" },
+                    "A step may make any number of model requests, each with its own attempt: \(attempts) \(answers)")
         let filler = (0..<299).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
         let fullTranscript = [NativeTaskGenerationMessage(role: "system", content: "Work")] + filler
         let manyMessages = await outcome(dotTask, fullTranscript)
