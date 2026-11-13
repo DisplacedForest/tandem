@@ -594,7 +594,7 @@ enum CompanionWorkAsideFixture {
     static func reservationRespectsHold() async throws {
         let repository = try LocalChatRepository(inMemory: true)
         let store = NativeTaskStore(database: repository.database)
-        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://local.test/api")!)
         let request = try NativeResearchTaskRequest(objective: "Find the oldest oak in the park", deliverables: ["A cited answer"])
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
@@ -634,7 +634,7 @@ enum CompanionWorkAsideFixture {
         try require(try await rows() == before, "No request is saved for held work")
         let elsewhere = try accepted(UUID().uuidString)
         try require(try repository.reserveTaskGeneration(referenceID: elsewhere.id, job: try job(elsewhere, "first-0")) == .execute,
-                    "Work with no row in this engine still reserves")
+                    "Work with no saved row here still reserves")
     }
 
     static func brokerHoldBetweenFetchAndReserve() async throws {
@@ -662,7 +662,7 @@ enum CompanionWorkAsideFixture {
         let store = engine.store
         let watching = NativeTaskClient { method, url, body, timeout in
             let answer = try await inner.request(method, url, body, timeout)
-            if method == "GET", let remote = armed.value, url.path.hasSuffix("/tasks/" + remote) {
+            if method == "GET", let remote = armed.value, url.lastPathComponent == remote {
                 armed.value = nil
                 _ = try? store.pause(remote)
                 landed.value = true
@@ -733,7 +733,7 @@ enum CompanionWorkAsideFixture {
             try await Talk.eventually("The first request is in flight") { entered.value }
             guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
                 await harness.stop()
-                throw NativeTaskFixture.Failure.assertion("The work reached the engine")
+                throw NativeTaskFixture.Failure.assertion("The work was accepted")
             }
             _ = await harness.tracker.hold(reference.id, resume: false)
             try await poll("The work is put aside", seconds: 15) { try tasks.get(remote).state == .paused }
@@ -790,7 +790,7 @@ enum CompanionWorkAsideFixture {
     }
 
     static func record(_ harness: Talk.Harness, _ reference: NativeTaskReference) throws -> NativeTaskRecord {
-        guard let record = try Talk.engineRecord(harness, reference) else { throw NativeTaskFixture.Failure.assertion("The work reached the engine") }
+        guard let record = try Talk.engineRecord(harness, reference) else { throw NativeTaskFixture.Failure.assertion("The work was accepted") }
         return record
     }
 
@@ -1026,7 +1026,7 @@ enum CompanionWorkAsideFixture {
         try await Talk.eventually("The new work is delivered") { harness.store.deliveredMessageID(for: fresh.id) != nil }
         let after = try harness.repository.messages(conversationID: harness.threadID)
         try require(harness.store.deliveredMessageID(for: old.id) == nil
-                    && !after.contains { message in message.displayBlocks.contains { $0.id == "task:" + old.id.uuidString } },
+                    && !after.contains { message in message.displayBlocks.contains { $0.id.hasSuffix(old.id.uuidString) } },
                     "The old run delivers nothing to the conversation")
     }
 
@@ -1155,7 +1155,7 @@ enum CompanionWorkAsideFixture {
         let released = CompanionTalkBox(false)
         let harness = try await asideHarness(released: released, client: { inner in
             NativeTaskClient { method, url, body, timeout in
-                if method == "POST", url.path.hasSuffix("/tasks"), let body, String(decoding: body, as: UTF8.self).contains(changedWork) {
+                if method == "POST", let body, String(decoding: body, as: UTF8.self).contains(changedWork) {
                     return (try NativeTaskStore.canonical(["detail": "This request can't be accepted"]), 422)
                 }
                 return try await inner.request(method, url, body, timeout)
@@ -1168,7 +1168,7 @@ enum CompanionWorkAsideFixture {
         let reply = try await Talk.send(harness, ask)
         let result = Talk.results(reply).first ?? ""
         try require(result.contains(CompanionHoldCopy.stoppedOnly) && !result.contains(CompanionHoldCopy.changed),
-                    "A replacement the engine refuses is not reported as changed: \(result)")
+                    "A replacement that is refused is not reported as changed: \(result)")
         let fresh = try replacements(harness)
         try require(fresh.count == 1 && fresh[0].deliveryState == .rejected, "The refused replacement is recorded")
         try require(try harness.repository.taskReference(id: old.id)?.replacedBy == fresh[0].id, "The old one is still marked replaced")
@@ -1239,7 +1239,7 @@ enum CompanionWorkAsideFixture {
 
         func wrap(_ inner: NativeTaskClient) -> NativeTaskClient {
             NativeTaskClient { [self] method, url, body, timeout in
-                if method == "POST", url.path.hasSuffix("/tasks"), let body {
+                if method == "POST", let body {
                     let text = String(decoding: body, as: UTF8.self)
                     let hit = lock.withLock { () -> String? in
                         guard blocked == nil, let work = matching.first(where: { text.contains($0) }) else { return nil }
@@ -1301,11 +1301,11 @@ enum CompanionWorkAsideFixture {
         let change = try saveChange(harness, on: old, work: work)
         harness.store.setDotState(.active)
         try await poll("The replacement's creation is held", seconds: 10) { barrier.held != nil }
-        try require(try atOrigin(harness, change).count == 1, "The replacement is saved before it reaches the engine")
+        try require(try atOrigin(harness, change).count == 1, "The replacement is saved before it is accepted")
         let withdrawn = try harness.repository.withdrawTaskChange(id: old.id)
         try require(withdrawn, "The change can still be withdrawn while its replacement is being created")
         barrier.release()
-        try await poll("The replacement reaches the engine", seconds: 10) { try atOrigin(harness, change).first?.remoteTaskID != nil }
+        try await poll("The replacement is accepted", seconds: 10) { try atOrigin(harness, change).first?.remoteTaskID != nil }
         guard let fresh = try atOrigin(harness, change).first, let remote = fresh.remoteTaskID else {
             throw NativeTaskFixture.Failure.assertion("The replacement exists")
         }
@@ -1380,7 +1380,7 @@ enum CompanionWorkAsideFixture {
 
     static func cancelAfterGenerationMoved() async throws {
         let repository = try LocalChatRepository(inMemory: true)
-        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://local.test/api")!)
         let request = try NativeResearchTaskRequest(objective: "Find the oldest oak in the park", deliverables: ["A cited answer"])
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
@@ -1440,7 +1440,7 @@ enum CompanionWorkAsideFixture {
         defer { polling.cancel() }
         let reference = try await harness.submit("How old is the oldest oak in the park?")
         try await Talk.eventually("The plan request is in flight") { entered.value }
-        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work reached the engine") }
+        guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work was accepted") }
         let first = try harness.engine.store.get(remote).generation
         _ = try harness.engine.store.pause(remote)
         try await poll("The work is put aside", seconds: 15) { try harness.engine.store.get(remote).state == .paused }
