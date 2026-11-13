@@ -208,7 +208,7 @@ struct CompanionThreadPanel: View {
                 Button("Appearance") { editingAppearance = true }
                 Button("Settings") { editingProfile = true }
             } label: { moreIcon }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .help(CompanionProfileCopy.moreOptions)
             .accessibilityLabel(CompanionProfileCopy.moreOptions)
         }

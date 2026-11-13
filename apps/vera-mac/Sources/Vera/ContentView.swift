@@ -150,7 +150,7 @@ struct SidebarRow: View {
                     InterfaceIconView(icon: .more, size: InterfaceIconSize.small)
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .help("Chat options").accessibilityLabel(Self.optionsLabel(convo.title))
             } else if convo.pinned {
                 InterfaceIconView(icon: .pin, size: InterfaceIconSize.mark)
@@ -1270,7 +1270,7 @@ struct ComposerField: View {
                     } label: {
                         Label { Text("Files") } icon: { InterfaceIconView(icon: .document, size: InterfaceIconSize.regular) }
                     }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                     .accessibilityLabel("Files for \(project.name)")
                     Button { store.section = .integrations } label: {
                         Label { Text("Plugins") } icon: { InterfaceIconView(icon: .plugins, size: InterfaceIconSize.regular) }
@@ -1345,7 +1345,7 @@ struct ComposerField: View {
                 } label: {
                     ComposerControlGlyph(kind: .plus)
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
                 .frame(width: ComposerControlGlyph.sendSize, height: ComposerControlGlyph.sendSize)
                 .contentShape(Rectangle())
                 .help("Add files, share a folder, or insert a saved prompt")
