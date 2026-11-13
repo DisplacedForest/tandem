@@ -172,7 +172,7 @@ struct NativeChatEffectLedger: Sendable {
     func spend(_ ticket: NativeChatEffectTicket, decision: NativeRuleDecision) -> NativeInstructionSpend? {
         guard decision == .act(.instruction), let signature = ticket.instruction, let userMessageID else { return nil }
         return NativeInstructionSpend(messageID: userMessageID, conversationID: conversationID, signature: signature,
-                                      holder: NativeInstructionSpend.replyHolder(attempt))
+                                      holder: ticket.proposal.idempotencyKey)
     }
 
     func decline(_ ticket: NativeChatEffectTicket, answer: NativeCardAnswer) async {

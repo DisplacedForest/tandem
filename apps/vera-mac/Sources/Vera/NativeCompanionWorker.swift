@@ -214,6 +214,10 @@ enum NativeCompanionWorker {
                                  _ messages: [NativeTaskGenerationMessage], _ tools: [NativeTaskGenerationTool]?, _ toolChoice: String) async throws -> NativeTaskGenerationCompletion
 
     static func step(_ task: NativeTaskRecord, environment: NativeCompanionWorkerEnvironment, model: @escaping Model) async throws -> NativeTaskStepResult {
+        try await NativeToolCallContext.$instructionHolder.withValue(nil) { try await unbound(task, environment: environment, model: model) }
+    }
+
+    private static func unbound(_ task: NativeTaskRecord, environment: NativeCompanionWorkerEnvironment, model: @escaping Model) async throws -> NativeTaskStepResult {
         let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
         guard let dot = payload.dot else { return .failed(checkpoint: NativeTaskStore.emptyObject, reason: "worker_error") }
         var checkpoint = (try? JSONDecoder().decode(NativeCompanionCheckpoint.self, from: task.checkpoint)) ?? NativeCompanionCheckpoint()

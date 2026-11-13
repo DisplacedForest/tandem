@@ -6,10 +6,6 @@ struct NativeInstructionSpend: Equatable, Sendable {
     let conversationID: String
     let signature: String
     let holder: String
-
-    static func replyHolder(_ attempt: String) -> String {
-        "reply:" + attempt
-    }
 }
 
 struct NativeInstructionUseStore: Sendable {

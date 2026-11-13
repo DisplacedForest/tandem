@@ -33,7 +33,7 @@ final class NativeInstructionUses: @unchecked Sendable {
         let inMemory = lock.withLock { spent.contains(signature) }
         if inMemory { return true }
         guard let store, let messageID else { return false }
-        return store.used(messageID, signature: signature, excluding: holder)
+        return store.used(messageID, signature: signature, excluding: NativeToolCallContext.instructionHolder ?? holder)
     }
 
     @discardableResult

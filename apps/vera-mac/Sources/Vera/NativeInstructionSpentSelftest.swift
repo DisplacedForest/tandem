@@ -54,9 +54,10 @@ enum NativeInstructionSpentFixture {
         try await oldWork()
         try await stoppedReply()
         try await concurrentAdmissions()
+        try await failedEditThenCorrected()
         try await unresolvedOrigin()
         try await lapsedDuringCheck()
-        print("  instruction spent once OK (store, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions, unknown origin asks, lapsed during check asks)")
+        print("  instruction spent once OK (store, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions, failed edit then corrected asks, unknown origin asks, lapsed during check asks)")
     }
 
     nonisolated static func device(_ box: NativeInstructionSpentDevice) -> NativeToolDefinition {
@@ -99,15 +100,17 @@ enum NativeInstructionSpentFixture {
         try chat.repository.database.read { db in try String.fetchAll(db, sql: "SELECT holder FROM native_instruction_uses ORDER BY created_at, rowid") }
     }
 
-    static func reply(_ chat: Chat, cards: NativeChatRulesCounter, check: @escaping NativeInstructionAnswerer = { _, _ in true })
+    static func reply(_ chat: Chat, cards: NativeChatRulesCounter, check: @escaping NativeInstructionAnswerer = { _, _ in true },
+                      calls: [[NativeChatToolCall]] = [[NativeChatToolCall(id: "set-1", name: "set_device", arguments: argumentsJSON)]],
+                      tools: ((NativeTypedWords, NativeInstructionUses) -> [NativeToolDefinition])? = nil)
         async throws -> NativeToolTurnSnapshot? {
         let turn = chat.turn
         guard let attempt = turn.attempt else { throw NativeTaskFixture.Failure.assertion("The reply has an attempt") }
         let words = chat.store.typedWords(for: turn)
-        try NativeTaskFixture.require(words.said == typed || words.said == other, "The message counts as typed: \(words.said)")
+        try NativeTaskFixture.require(!words.said.isEmpty, "The message counts as typed")
         let uses = chat.store.turnInstructionUses(for: turn)
-        let tool = ChatStore.ruled(device(chat.device), rules: chat.rules, store: nil, conversationID: turn.conversationID,
-                                   requestText: words.said, typed: words, uses: uses)
+        let definitions = tools?(words, uses) ?? [ChatStore.ruled(device(chat.device), rules: chat.rules, store: nil, conversationID: turn.conversationID,
+                                                                  requestText: words.said, typed: words, uses: uses)]
         let ledger = NativeEffectLedgerStore(database: chat.repository.database)
         let effects = NativeChatEffectLedger(ledger: ledger, rules: chat.rules, grants: chat.grants, records: nil, conversationID: turn.conversationID,
                                              turnID: turn.id.uuidString, attempt: attempt.uuidString, userMessageID: turn.userMessageID)
@@ -119,15 +122,14 @@ enum NativeInstructionSpentFixture {
             confirm: { _, _ in cards.hit(); return NativeCardAnswer(kind: .decline, byPerson: true) },
             answered: { _, _ in },
             settle: { await effects.settle($0, $1) })
-        let rounds = [[NativeChatStreamSnapshot(content: "", toolCalls: [NativeChatToolCall(id: "set-1", name: "set_device", arguments: argumentsJSON)],
-                                                finishReason: "tool_calls")],
-                      [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")]]
-        let loop = NativeToolLoop(transport: ScriptedNativeToolTransport(rounds: rounds), registry: NativeToolRegistry(definitions: [tool]),
+        let rounds = calls.map { [NativeChatStreamSnapshot(content: "", toolCalls: $0, finishReason: "tool_calls")] }
+            + [[NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")]]
+        let loop = NativeToolLoop(transport: ScriptedNativeToolTransport(rounds: rounds), registry: NativeToolRegistry(definitions: definitions),
                                   executionTimeout: .seconds(5), instructionCheck: check, instructionTimeout: .seconds(5),
                                   said: words.said, effects: hook)
         var final: NativeToolTurnSnapshot?
         for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: words.said)], model: "local-model",
-                                              enabledToolIDs: [tool.id]) {
+                                              enabledToolIDs: Set(definitions.map(\.id))) {
             final = snapshot
         }
         return final
@@ -363,11 +365,11 @@ enum NativeInstructionSpentFixture {
         let chat = try chat()
         guard let attempt = chat.turn.attempt?.uuidString else { throw NativeTaskFixture.Failure.assertion("The reply has an attempt") }
         let ledger = NativeEffectLedgerStore(database: chat.repository.database)
-        func proposed(_ key: String) throws -> NativeEffectRecord {
+        func proposed(_ key: String, later: TimeInterval = 0) throws -> NativeEffectRecord {
             try ledger.propose(NativeEffectProposal(id: UUID().uuidString.lowercased(), taskID: NativeEffectProposal.turnTaskID(chat.turn.id.uuidString),
                                                     generation: 0, toolID: "fixture-home", function: "set_device", argumentsJSON: argumentsJSON,
                                                     target: nil, action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
-                                                    conversationID: chat.turn.conversationID, expiresAtMilliseconds: NativeEffectProposal.expiry(from: Date()),
+                                                    conversationID: chat.turn.conversationID, expiresAtMilliseconds: NativeEffectProposal.expiry(from: Date().addingTimeInterval(later)),
                                                     idempotencyKey: key, turnID: chat.turn.id.uuidString, turnAttempt: attempt))
         }
         let message = chat.turn.userMessageID
@@ -392,11 +394,15 @@ enum NativeInstructionSpentFixture {
         let winner = outcomes[0] == .refused(.instructionSpent) ? "two" : "one"
         let loser = winner == "one" ? two : one
         try require(try ledger.record(digest: loser.digest)?.state == .proposed, "The refused action stays waiting to ask")
-        let repeatOne = try proposed("three")
-        guard case .admitted = try ledger.admit(digest: repeatOne.digest, generation: 0, rulesRevision: 0, grantsRevision: 0, decision: .act(.instruction),
+        let resumed = try proposed(winner, later: 1)
+        guard case .admitted = try ledger.admit(digest: resumed.digest, generation: 0, rulesRevision: 0, grantsRevision: 0, decision: .act(.instruction),
                                                 decisionID: nil, reply: nil, instruction: spend(winner)) else {
-            throw NativeTaskFixture.Failure.assertion("The holder that spent it admits again")
+            throw NativeTaskFixture.Failure.assertion("The same action proposed again admits on its own spend")
         }
+        let another = try proposed("three")
+        try require(try ledger.admit(digest: another.digest, generation: 0, rulesRevision: 0, grantsRevision: 0, decision: .act(.instruction),
+                                     decisionID: nil, reply: nil, instruction: spend("three")) == .refused(.instructionSpent),
+                    "A different action from the same message is refused")
     }
 
     static func unresolvedOrigin() async throws {
@@ -459,5 +465,41 @@ enum NativeInstructionSpentFixture {
         let changed = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
         try require(ran.state == .completed && changed == "new" && (try rows(chat)).count == 1,
                     "The unspent instruction still runs once for the next piece of work: \(ran.state)")
+    }
+
+    static func failedEditThenCorrected() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("spent-edit-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let notes = grant.path + "/notes.md"
+        try Data("old line".utf8).write(to: URL(fileURLWithPath: notes))
+        let chat = try chat("Update notes.md", rules: [.fileEdits: .ask])
+        let rules = chat.rules
+        let conversation = chat.turn.conversationID
+        let roots = [grant.path]
+        func edit(_ id: String, _ old: String) -> NativeChatToolCall {
+            NativeChatToolCall(id: id, name: NativeFolderTools.editName,
+                               arguments: "{\"path\":\"\(notes)\",\"old_text\":\"\(old)\",\"new_text\":\"new line\"}")
+        }
+        let cards = NativeChatRulesCounter()
+        let checks = NativeChatRulesCounter()
+        let final = try await reply(chat, cards: cards, check: { _, _ in checks.hit(); return true },
+                                    calls: [[edit("edit-1", "missing line")], [edit("edit-2", "old line")]]) { words, uses in
+            NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask,
+                                          live: { rules.resolver(for: conversation, requestText: words.said, typed: words).decision(for: $0) },
+                                          liveTargets: { ChatStore.folderDecision(rules, conversationID: conversation, requestText: words.said, typed: words,
+                                                                                  uses: uses, action: $0, subjects: $1, roots: roots) },
+                                          instruction: { ChatStore.folderInstruction(rules, conversationID: conversation, requestText: words.said, typed: words,
+                                                                                     uses: uses, action: $0, subjects: $1, about: $2, roots: roots) })
+        }
+        let steps = final?.activities ?? []
+        let content = String(decoding: try Data(contentsOf: URL(fileURLWithPath: notes)), as: UTF8.self)
+        try require(steps.count == 2 && checks.count == 1 && steps[0].state == .failed && !steps[0].confirmationRequired
+                        && (steps[0].result ?? "").contains("old_text was not found") && (try rows(chat)).count == 1,
+                    "The first edit ran on the instruction, failed before changing anything and kept its spend: \(steps.map(\.state))")
+        try require(cards.count == 1 && steps[1].state == .failed && steps[1].confirmationRequired && content == "old line",
+                    "The corrected edit in the same reply asks and changes nothing without approval: \(content)")
     }
 }

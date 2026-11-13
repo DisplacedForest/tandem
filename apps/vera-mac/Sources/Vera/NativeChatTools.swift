@@ -894,6 +894,7 @@ struct NativeToolLoop: Sendable {
                                     defer { gate.close() }
                                     let approved = needsConfirmation
                                     let clearing = cleared
+                                    let holding = cleared == nil ? nil : ticket?.proposal.idempotencyKey
                                     let expectsHandOff = handsOff
                                     let boundary = NativeEffectBoundary()
                                     do {
@@ -905,9 +906,11 @@ struct NativeToolLoop: Sendable {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
                                                                 try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
                                                                     try await NativeToolCallContext.$sameToolOrdinal.withValue(ordinal) {
-                                                                        try await Self.execute(
-                                                                            definition, arguments: arguments, activity: activity,
-                                                                            timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                        try await NativeToolCallContext.$instructionHolder.withValue(holding) {
+                                                                            try await Self.execute(
+                                                                                definition, arguments: arguments, activity: activity,
+                                                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                        }
                                                                     }
                                                                 }
                                                             }
