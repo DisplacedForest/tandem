@@ -153,6 +153,29 @@ enum CompanionTalkTools {
 
     static let endingChoice = "stop"
 
+    static func unsaved(_ records: [NativeEffectRecord], after saved: TimeInterval) -> (done: [String], unsure: [String]) {
+        var done: [String] = []
+        var unsure: [String] = []
+        for record in records {
+            let inFlight = record.state == .admitted
+            let newer = record.updatedAt.timeIntervalSince1970 > saved
+            guard inFlight || newer else { continue }
+            let settled = record.state == .completed || record.state == .uncertain
+            guard inFlight || settled else { continue }
+            let ran = NativeCompanionWorker.ran(record)
+            let neverRan = record.state == .uncertain && ran == nil
+            if neverRan { continue }
+            if ran == true {
+                let title = CompanionTalkCopy.justDone(record.proposal.target)
+                if !done.contains(title) { done.append(title) }
+            } else {
+                let title = CompanionTalkCopy.underWay(record.proposal.target)
+                if !unsure.contains(title) { unsure.append(title) }
+            }
+        }
+        return (done, unsure)
+    }
+
     static func checkable(_ said: String) -> Bool {
         said.count <= NativeInstructionCheck.saidLimit
     }
@@ -230,6 +253,13 @@ enum CompanionTalkCopy {
     static let answeredAndEnds = "The answer is saved, and it ends there."
     static let underWayLead = "Something that was under way when it stopped"
 
+    static let justDoneLead = "Something that finished just before it stopped"
+
+    static func justDone(_ target: String?) -> String {
+        let name = (target ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? justDoneLead : justDoneLead + ": " + CompanionTalkTools.clipped(name, CompanionTalkTools.noteLimit)
+    }
+
     static func underWay(_ target: String?) -> String {
         let name = (target ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? underWayLead : underWayLead + ": " + CompanionTalkTools.clipped(name, CompanionTalkTools.noteLimit)
@@ -259,7 +289,7 @@ enum CompanionTalkCopy {
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
                                            notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
-                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, tooLong, answeredAndEnds, underWayLead, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
+                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, tooLong, answeredAndEnds, underWayLead, justDoneLead, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 
     static func line(_ entry: CompanionTalkEntry) -> String {

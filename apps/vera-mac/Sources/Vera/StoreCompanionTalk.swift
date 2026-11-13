@@ -243,7 +243,9 @@ extension ChatStore {
             return CompanionTalkTools.refusal(snapshot?.state == .completed ? CompanionTalkCopy.alreadyFinished : CompanionTalkCopy.alreadyEnded)
         }
         var (doneTitles, unsure) = CompanionTalkTools.effects(CompanionTalkTools.oldestFirst(projected, reference.snapshot))
-        for title in companionTalkUnderWay(reference, since: began) where !unsure.contains(title) { unsure.append(title) }
+        let unsaved = companionTalkUnsaved(reference, after: snapshot?.updatedAt ?? began.timeIntervalSince1970)
+        for title in unsaved.done where !doneTitles.contains(title) { doneTitles.append(title) }
+        for title in unsaved.unsure where !unsure.contains(title) { unsure.append(title) }
         let done = doneTitles.map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         var sentence = settled ? CompanionTalkCopy.stopped : CompanionTalkCopy.stopping
         var fields: [String: NativeJSONValue] = ["changed": .bool(true)]
@@ -259,18 +261,10 @@ extension ChatStore {
         return .object(fields)
     }
 
-    private func companionTalkUnderWay(_ reference: NativeTaskReference, since began: Date) -> [String] {
+    private func companionTalkUnsaved(_ reference: NativeTaskReference, after saved: TimeInterval) -> (done: [String], unsure: [String]) {
         guard let remote = reference.remoteTaskID, let local = repository as? LocalChatRepository,
-              let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return [] }
-        var titles: [String] = []
-        for record in records {
-            let inFlight = record.state == .admitted
-            let leftUnsure = record.state == .uncertain && record.updatedAt >= began
-            guard inFlight || leftUnsure else { continue }
-            let title = CompanionTalkCopy.underWay(record.proposal.target)
-            if !titles.contains(title) { titles.append(title) }
-        }
-        return titles
+              let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return ([], []) }
+        return CompanionTalkTools.unsaved(records, after: saved)
     }
 
     func companionTalkAnswer(_ id: UUID, choice: String, decisionID: String) async -> NativeJSONValue {

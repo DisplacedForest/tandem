@@ -823,6 +823,26 @@ enum CompanionTalkControlFixture {
         let warns = result.contains("may_have_happened") && result.contains(CompanionTalkCopy.underWayLead) && result.contains("reading-list.txt")
         try require(warns && result.contains("\"changed\":true"), "An action still under way at the stop is reported as possibly done: \(result)")
         try require(CompanionTalkCopy.underWay(nil) == CompanionTalkCopy.underWayLead, "An action with no name still gets a plain line")
+        let stamp = Date(timeIntervalSince1970: 2_000)
+        func record(_ state: NativeEffectState, receipt: NativeJSONValue? = nil, target: String) -> NativeEffectRecord {
+            let made = NativeEffectProposal(id: UUID().uuidString, taskID: remote, generation: 1, toolID: "notes", function: "write_note",
+                                            argumentsJSON: "{}", target: target, action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
+                                            conversationID: harness.threadID, expiresAtMilliseconds: expires, idempotencyKey: UUID().uuidString)
+            return NativeEffectRecord(proposal: made, digest: UUID().uuidString, state: state, decisionID: nil, decisionReply: nil,
+                                      receipt: receipt, modelClaim: nil, createdAt: stamp, updatedAt: stamp)
+        }
+        let absent = NativeJSONValue.object(["observed": .string("absent")])
+        let failed = NativeJSONValue.object(["exit_code": .number(1)])
+        let mixed = [record(.completed, target: "sent.txt"), record(.completed, receipt: failed, target: "broke.txt"),
+                     record(.uncertain, receipt: absent, target: "never.txt"), record(.uncertain, target: "unknown.txt"),
+                     record(.admitted, target: "running.txt"), record(.declined, target: "declined.txt")]
+        let fresh = CompanionTalkTools.unsaved(mixed, after: 1_000)
+        let doneRight = fresh.done == [CompanionTalkCopy.justDone("sent.txt")]
+        let unsureRight = fresh.unsure == [CompanionTalkCopy.underWay("broke.txt"), CompanionTalkCopy.underWay("unknown.txt"), CompanionTalkCopy.underWay("running.txt")]
+        try require(doneRight && unsureRight, "Actions not yet in a saved step are sorted into done and possibly done, and one that never ran is left out: \(fresh)")
+        let saved = CompanionTalkTools.unsaved(mixed, after: 3_000)
+        try require(saved.done.isEmpty && saved.unsure == [CompanionTalkCopy.underWay("running.txt")],
+                    "Actions already in a saved step aren't repeated; one still running always is: \(saved)")
     }
 
     static func tooLongToCheck() async throws {
