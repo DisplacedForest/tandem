@@ -11,7 +11,7 @@ final class NativeTaskConfiguration {
          savedTemplate: @escaping () -> String? = { nil },
          generationOptions: NativeChatRequestOptions? = nil,
          credential: @escaping (String) -> String? = {
-             KeychainNativeCredentialStore(allowsInteraction: false).value(for: $0)
+             AppLocations.credentialStore(allowsInteraction: false).value(for: $0)
          }) {
         self.generationOptions = generationOptions
         self.settings = settings

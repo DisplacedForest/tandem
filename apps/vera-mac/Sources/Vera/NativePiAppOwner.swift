@@ -296,7 +296,7 @@ enum PiOwnedHTTP {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 120
         configuration.timeoutIntervalForResource = 125
-        let session = URLSession(configuration: configuration, delegate: PiOwnedRedirectGuard(), delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: configuration, delegate: PiOwnedRedirectGuard(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(for: request)
         guard let response = response as? HTTPURLResponse else { throw PiBrokerError.unavailable }

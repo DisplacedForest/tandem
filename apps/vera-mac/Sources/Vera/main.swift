@@ -4,9 +4,11 @@ import AppKit
 let arguments = CommandLine.arguments
 let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
 let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()), isolatedModes: piModes)
+LaunchPlan.settle(launchMode)
 if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.environment) {
     AppLocations.isolateForHeadlessRun()
 }
+OutboundGuard.install(OutboundGuard.policy(for: launchMode, environment: ProcessInfo.processInfo.environment))
 AppLocations.settle()
 AppLocations.checkSettingDataRoot()
 switch SelectedCredentialAuthorization.dispatch(Array(arguments.dropFirst())) {

@@ -165,9 +165,7 @@ extension SelfTest {
         follow.scope("b", sends: 1)
         try require(follow.following && follow.atLatest && !follow.holding && !follow.readerScrolling, "Another conversation starts fresh at its latest message")
         try require(!follow.sent(1), "A send in the conversation left behind does not carry over")
-        let suite = "transcript-follow-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else { throw NativeTaskFixture.Failure.assertion("Isolated transcript storage") }
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = AppLocations.scratchPreferences()
         let messages = [UUID(), UUID(), UUID()]
         let saved = CompanionTranscriptContinuity(defaults: defaults)
         _ = saved.begin(conversationID: "c", messages: messages)

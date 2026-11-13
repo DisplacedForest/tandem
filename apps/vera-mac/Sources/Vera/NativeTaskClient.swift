@@ -45,7 +45,7 @@ struct NativeTaskClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
-        let session = URLSession(configuration: configuration, delegate: NativeTaskRedirectGuard(), delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: configuration, delegate: NativeTaskRedirectGuard(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.httpMethod = method

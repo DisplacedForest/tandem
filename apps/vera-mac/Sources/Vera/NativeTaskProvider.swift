@@ -57,7 +57,7 @@ struct NativeTaskProvider {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = request.timeoutInterval
         configuration.timeoutIntervalForResource = remaining
-        let session = URLSession(configuration: configuration, delegate: observer, delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: configuration, delegate: observer, delegateQueue: nil)
         let setupTimer = Task {
             do { try await Task.sleep(for: .seconds(min(limits.connectAndSend, remaining))) } catch { return }
             if observer.finish(.connect_send_timeout, onlyBeforeSetup: true) { session.invalidateAndCancel() }

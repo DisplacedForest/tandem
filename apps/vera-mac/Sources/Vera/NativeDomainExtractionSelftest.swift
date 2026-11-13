@@ -827,7 +827,7 @@ final class DomainExtractionService: NativeMemoryServing, @unchecked Sendable {
         configuration.protocolClasses = [DomainExtractionWire.self]
         inner = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
             baseURL: URL(string: "https://fixture.example/v1")!, apiKey: nil, embeddingsModel: "",
-            extractionModel: "fixture-extraction"), session: URLSession(configuration: configuration))
+            extractionModel: "fixture-extraction"), session: OutboundGuard.session(configuration: configuration))
     }
 
     var calls: Int { lock.withLock { count } }

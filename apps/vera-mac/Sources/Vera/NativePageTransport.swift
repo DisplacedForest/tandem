@@ -28,6 +28,7 @@ enum NativePageTransport {
     }
 
     static func pinnedAddress(_ host: String) async throws -> String {
+        if !NativePageFetch.hostIsPrivate(host) { try OutboundGuard.check(host: host) }
         let address: String? = await Task.detached {
             guard !NativePageFetch.hostIsPrivate(host) else { return nil }
             var bare = host.lowercased()

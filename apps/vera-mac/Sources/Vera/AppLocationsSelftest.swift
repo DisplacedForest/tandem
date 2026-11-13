@@ -221,7 +221,7 @@ enum AppLocationsSelftest {
 
         let run = scratch.appendingPathComponent("run", isDirectory: true)
         let headless = AppLocations.resolve(environment: [:], home: home, applicationSupport: support, headlessRoot: run)
-        try require(headless.dataLocations.allSatisfy { inside($0, run) } && headless.database.path == oldDatabase.path,
+        try require(headless.dataLocations.allSatisfy { inside($0, run) } && inside(headless.database, run),
                     "In a headless run every data location is inside the run's scratch folder")
 
         guard let root = AppLocations.headlessRoot else { throw NativeTaskFixture.Failure.assertion("This check runs inside a headless run") }

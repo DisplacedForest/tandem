@@ -73,7 +73,7 @@ final class ChatStore: ObservableObject {
     var companionArtifactKeeper: ((String) throws -> Void)?
     @Published var companionFocusTick = 0
     static let companionSeenKey = "companion_last_seen_reply"
-    var companionDefaults: UserDefaults = .standard
+    var companionDefaults: UserDefaults = AppLocations.preferences
     private var companionSeenStorage: String??
     @Published var pendingSendDecision: PendingSendDecision?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
@@ -266,6 +266,7 @@ final class ChatStore: ObservableObject {
     var isPulseConfigured: Bool { client != nil }
     var mediaBase: String? { client?.base.absoluteString }
     var currentNativeConfig: NativeChatConfig? { nativeConfig }
+    var hasChatTransport: Bool { nativeTransport != nil }
 
     init(veraAPI: VeraAPIClient? = nil,
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
@@ -429,7 +430,7 @@ final class ChatStore: ObservableObject {
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
         let configStore = ConfigStore()
-        let native = configStore.nativeResolved
+        let native = AppLocations.isHeadless ? nil : configStore.nativeResolved
         self.init(
             veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,

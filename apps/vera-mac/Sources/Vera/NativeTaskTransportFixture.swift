@@ -26,7 +26,7 @@ enum NativeTaskTransportFixture {
                                       "Completion after the cutoff must atomically become timeout")
         let timely = NativeTaskTransportObserver(phase: .plan, expectedBytes: 10, overallSeconds: 5, sink: { _ in })
         try NativeTaskFixture.require(timely.finish(.completed) && timely.outcome == .completed, "Timely completion remains accepted")
-        let session = URLSession(configuration: .ephemeral)
+        let session = OutboundGuard.session(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
         let request = URLRequest(url: URL(string: "https://fixture.test")!)
         let task = session.dataTask(with: request)

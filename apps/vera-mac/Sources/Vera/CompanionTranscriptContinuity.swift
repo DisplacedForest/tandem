@@ -15,7 +15,7 @@ final class CompanionTranscriptContinuity: ObservableObject {
     private var firstVisible: UUID?
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = AppLocations.preferences) { self.defaults = defaults }
 
     func begin(conversationID: String, messages: [UUID]) -> UUID? {
         self.conversationID = conversationID

@@ -35,9 +35,7 @@ extension SelfTest {
         try require(store.companionWantsAttention, "The badge changes when the companion needs an answer")
         store.nativeTaskReferences = []
         try require(!store.companionWantsAttention, "The badge goes quiet again once nothing is waiting")
-        let suite = "tandem-presence-selftest-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else { throw NativeTaskFixture.Failure.assertion("presence defaults suite") }
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = AppLocations.scratchPreferences()
         store.companionDefaults = defaults
         store.conversations[0].messages = [Message(role: .assistant, text: "The seedlings are in.")]
         store.setCompanionSeenReplyForTesting("")

@@ -8,6 +8,7 @@ enum ConfigFile {
     static var defaultURL: URL { AppLocations.current.configFile }
 
     static func read(at url: URL = defaultURL) -> [String: Any] {
+        AppLocations.refuseRealSettings(url)
         guard let data = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         return obj
@@ -15,6 +16,7 @@ enum ConfigFile {
 
     /// Atomic write, creating the parent directory if needed.
     static func write(_ raw: [String: Any], at url: URL = defaultURL) throws {
+        AppLocations.refuseRealSettings(url)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])
@@ -86,9 +88,18 @@ final class ConfigStore: ObservableObject {
         NativeWebSearch.configKey: NativeWebSearch.envName,
     ]
 
-    init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore(),
+    static let retiredKeys = ["base", "api_key", "owui_email", "owui_password"]
+
+    static func cleansRetiredKeys(_ mode: LaunchPlan.Mode, headless: Bool) -> Bool {
+        mode == .app && !headless
+    }
+
+    static var cleansRetiredKeysInThisRun: Bool { cleansRetiredKeys(LaunchPlan.current, headless: AppLocations.isHeadless) }
+
+    init(credentialStore: any NativeCredentialStore = AppLocations.credentialStore(),
          readConfiguration: @escaping () -> [String: Any] = { ConfigFile.read() },
          nativeMCP injectedMCP: NativeMCPManager? = nil,
+         cleansRetiredKeys: Bool = ConfigStore.cleansRetiredKeysInThisRun,
          writeConfiguration: @escaping ([String: Any]) throws -> Void = { try ConfigFile.write($0) }) {
         self.readConfiguration = readConfiguration
         let loaded = readConfiguration()
@@ -103,11 +114,10 @@ final class ConfigStore: ObservableObject {
             do { if let value = try credentialStore.readForStartup(for: id) { keys[id] = value } }
             catch { unavailable.insert(id) }
         }
-        let retiredKeys = ["base", "api_key", "owui_email", "owui_password"]
         var cleaned = loaded
-        for key in retiredKeys { cleaned.removeValue(forKey: key) }
+        for key in Self.retiredKeys { cleaned.removeValue(forKey: key) }
         let migratedMemoryEndpoint = NativeChatSettings.needsMemoryEndpointMigration(loaded) && settings.memoryEndpoint.isConfigured
-        if cleaned.count != loaded.count { try? writeConfiguration(cleaned) }
+        if cleaned.count != loaded.count && cleansRetiredKeys { try? writeConfiguration(cleaned) }
         raw = cleaned
         nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs)
         nativeSettings = settings

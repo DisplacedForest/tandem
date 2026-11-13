@@ -9,6 +9,8 @@ struct AppLocations: Equatable, Sendable {
     }
 
     static let settingName = "VERA_CONFIG_DIR"
+    static let databaseName = "vera.sqlite"
+    static let databaseSiblingSuffixes = ["", "-wal", "-shm", "-journal"]
     static let runPrefix = "tandem-run-"
     static let ownerMarkerName = ".tandem-run-owner"
 
@@ -134,15 +136,20 @@ struct AppLocations: Equatable, Sendable {
         }
         return AppLocations(
             situation: situation,
-            configDirectory: configDirectory,
-            database: configDirectory.appendingPathComponent("vera.sqlite"),
-            configFile: configDirectory.appendingPathComponent("config.json"),
+            configDirectory: settingsFolder(situation, configDirectory: configDirectory),
+            database: settingsFolder(situation, configDirectory: configDirectory).appendingPathComponent(databaseName),
+            configFile: settingsFolder(situation, configDirectory: configDirectory).appendingPathComponent("config.json"),
             dataRoot: dataRoot,
             attachments: dataRoot.appendingPathComponent("attachments", isDirectory: true),
             projects: dataRoot.appendingPathComponent("projects", isDirectory: true),
             artifactsIndex: dataRoot.appendingPathComponent("artifacts.json"),
             assistant: dataRoot.appendingPathComponent("Assistant", isDirectory: true),
             reports: dataRoot.appendingPathComponent("reports", isDirectory: true))
+    }
+
+    static func settingsFolder(_ situation: Situation, configDirectory: URL) -> URL {
+        if case .headless(let root) = situation { return root }
+        return configDirectory
     }
 
     static let accountHome: URL? = {
@@ -185,6 +192,72 @@ struct AppLocations: Equatable, Sendable {
         let message = "This run keeps its data apart from the app's real data folder, but it was given \(url.path), which is inside it. Pass a separate folder instead."
         FileHandle.standardError.write(Data((message + "\n").utf8))
         fatalError(message)
+    }
+
+    static func realSettingsFile(home: URL) -> URL {
+        home.appendingPathComponent(".vera", isDirectory: true).appendingPathComponent("config.json")
+    }
+
+    static var realSettingsFile: URL? { accountHome.map(realSettingsFile(home:)) }
+
+    static func isRealSettingsFile(_ url: URL, realFile: URL? = realSettingsFile, foldCase: Bool? = nil) -> Bool {
+        guard let realFile else { return true }
+        return namesSameFolder(url, realFile, foldCase: foldCase)
+    }
+
+    static func realDatabase(home: URL) -> URL {
+        home.appendingPathComponent(".vera", isDirectory: true).appendingPathComponent(databaseName)
+    }
+
+    static var realDatabase: URL? { accountHome.map(realDatabase(home:)) }
+
+    static func isRealDatabaseFile(_ url: URL, realFile: URL? = realDatabase, foldCase: Bool? = nil) -> Bool {
+        guard let realFile else { return true }
+        if namesSameFolder(url, realFile, foldCase: foldCase) { return true }
+        let folder = realFile.deletingLastPathComponent()
+        guard namesSameFolder(url.deletingLastPathComponent(), folder, foldCase: foldCase) else { return false }
+        let fold = foldCase ?? isCaseInsensitiveVolume(folder)
+        let name = fold ? url.lastPathComponent.lowercased() : url.lastPathComponent
+        let realName = fold ? realFile.lastPathComponent.lowercased() : realFile.lastPathComponent
+        return databaseSiblingSuffixes.contains { name == realName + $0 }
+    }
+
+    static func refuseRealDatabase(_ url: URL) {
+        guard isHeadless, isRealDatabaseFile(url) else { return }
+        stop("This test run keeps its own conversation history, but it was about to open the app's real database at \(url.path).")
+    }
+
+    static func stop(_ message: String) -> Never {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        exit(3)
+    }
+
+    static func refuseRealSettings(_ url: URL) {
+        guard isHeadless, isRealSettingsFile(url) else { return }
+        stop("This test run keeps its own settings, but it was about to open the app's real settings file at \(url.path).")
+    }
+
+    static func refuseRealKeychain() {
+        guard isHeadless else { return }
+        stop("This test run keeps its own saved keys in memory, but it was about to reach the real Keychain.")
+    }
+
+    static var standardPreferences: UserDefaults {
+        if isHeadless { stop("This test run keeps its own preferences in memory, but it was about to use the app's real preferences.") }
+        return .standard
+    }
+
+    static let runPreferences = MemoryPreferences()
+
+    static var preferences: UserDefaults { isHeadless ? runPreferences : standardPreferences }
+
+    static func scratchPreferences() -> UserDefaults { MemoryPreferences() }
+
+    nonisolated(unsafe) static let runCredentials = NativeCredentialFixtureStore()
+
+    static func credentialStore(allowsInteraction: Bool = true) -> any NativeCredentialStore {
+        if isHeadless { return runCredentials }
+        return KeychainNativeCredentialStore(allowsInteraction: allowsInteraction)
     }
 
     static func checkSettingDataRoot() {
