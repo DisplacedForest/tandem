@@ -464,7 +464,7 @@ extension NativeTaskDisplayFixture {
         let listed: Set<String> = ["task", "tasks", "background", "backgrounds", "worker", "workers", "agent", "agents", "engine", "engines"]
         for (old, new) in SavedWording.earlier {
             let words = Set(new.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
-            try require(words.isDisjoint(with: listed) && SavedWording.current(old) == new && SavedWording.current("Failed: " + old) == "Failed: " + new,
+            try require(words.isDisjoint(with: listed) && SavedWording.current(old) == new,
                         "A message saved with earlier words reads with the current ones: \(old)")
             try require(NativeScheduler.shownNote(old) == new, "A saved run note reads with the current words: \(old)")
             var refused = try OngoingWorkFixture.reference(conversationID: "words-saved", title: "Lumber prices this month", state: nil)
@@ -472,7 +472,15 @@ extension NativeTaskDisplayFixture {
             refused.lastDeliveryError = old
             try require(NativeTaskProjection.display(reference: refused, snapshot: nil).card.milestone == new, "A refused card saved earlier reads with the current words: \(old)")
         }
-        try require(SavedWording.current("Tandem wasn't running at the scheduled time.") == "Tandem wasn't running at the scheduled time.", "Other saved text is left as saved")
+        let typed = ["Is the task engine down? The task engine couldn't be reached. is all it says", "The task engine couldn't be reached. Again.",
+                     " The task engine couldn't be reached.", "the task engine couldn't be reached.", "Tandem wasn't running at the scheduled time.",
+                     "{\"error\":\"The task engine couldn't be reached.\"}"]
+        for text in typed {
+            try require(SavedWording.current(text) == text && NativeScheduler.shownNote(text) == text, "Text that isn't exactly a line the app wrote is left as saved: \(text)")
+        }
+        try require(SavedWording.current(SavedWording.argumentsLead + "Provide a worker type, an objective and deliverables.") == SavedWording.argumentsLead + NativeTaskTools.missingArguments
+                        && SavedWording.current(SavedWording.argumentsLead + "use the task engine") == SavedWording.argumentsLead + "use the task engine",
+                    "A saved arguments message is reworded only when the whole detail is the app's own line")
         let unlabelled = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
         try require(hidden.allowMenu.isEmpty && hidden.declineMenu.isEmpty && unlabelled.allowMenu.isEmpty && unlabelled.declineMenu.isEmpty
                     && CardAnswers.shown("Edits in a\nb") == nil && CardAnswers.shown("Edits in Greenhouse") == "Edits in Greenhouse",

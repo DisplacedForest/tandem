@@ -945,7 +945,7 @@ struct NativeToolActivityChip: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 inspected("Request", activity.request)
-                if activity.why == nil, let result = activity.result { inspected("Result", SavedWording.current(result)) }
+                if activity.why == nil, let result = activity.result { inspected("Result", result) }
             }
             .padding(.top, 8)
         } label: {

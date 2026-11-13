@@ -87,7 +87,7 @@
 6 apps/vera-mac/Sources/Vera/NativeTaskDeliverySelftest.swift
 7 apps/vera-mac/Sources/Vera/NativeTaskDispatcher.swift
 2 apps/vera-mac/Sources/Vera/NativeTaskDisplay.swift
-31 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
+39 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskDisplaySelfTest.swift
 79 apps/vera-mac/Sources/Vera/NativeTaskEngineSelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskEvents.swift

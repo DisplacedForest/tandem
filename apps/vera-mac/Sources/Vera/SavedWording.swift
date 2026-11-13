@@ -26,7 +26,13 @@ enum SavedWording {
         ("The research input is too large for this task.", "The research input is too large."),
     ]
 
+    static let argumentsLead = "The tool arguments are invalid: "
+
     static func current(_ saved: String) -> String {
-        earlier.reduce(saved) { text, pair in text.contains(pair.0) ? text.replacingOccurrences(of: pair.0, with: pair.1) : text }
+        if let pair = earlier.first(where: { $0.0 == saved }) { return pair.1 }
+        guard saved.hasPrefix(argumentsLead) else { return saved }
+        let detail = String(saved.dropFirst(argumentsLead.count))
+        guard let pair = earlier.first(where: { $0.0 == detail }) else { return saved }
+        return argumentsLead + pair.1
     }
 }
