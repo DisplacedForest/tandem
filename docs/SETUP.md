@@ -393,7 +393,7 @@ Not included: indexing file contents and App Sandbox entitlements.
 
 The **Library** destination in the rail lists everything the app produces: documents, research reports, generated images, file changes made in shared folders (created, edited, moved and trashed files, but not folder creation) and canvas pieces. Opening one shows it natively, and Revise sends your change request back into the conversation it came from. A reply that produces the same kind of artifact becomes the next version, and every version stays viewable and savable.
 
-All artifacts live in one store in the app's local database next to the conversations. File bytes, such as images and document files, are kept in the app's attachments directory under Application Support, so artifacts survive a relaunch. The cleanup that removes orphaned files from the attachments directory never touches files an artifact refers to.
+All artifacts live in one store in the app's local database next to the conversations. File bytes, such as images and document files, are kept in the app's attachments directory under Application Support, so artifacts survive a relaunch. The app does not remove files from the attachments directory when it starts.
 
 The first launch after the upgrade imports the earlier canvas library, `artifacts.json` in the app's Application Support folder, as canvas artifacts and renames the original to `artifacts-migrated.json`, which stays as a backup. The import runs once. Editing a canvas piece's source in the side panel is no longer saved, so revise it from chat.
 
