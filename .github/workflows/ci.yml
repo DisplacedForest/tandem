@@ -93,5 +93,7 @@ jobs:
         run: |
           python3 scripts/name-ratchet.py
           python3 -m unittest discover -s scripts/tests -p 'test_name_ratchet.py'
+          python3 scripts/words-ratchet.py
+          python3 -m unittest discover -s scripts/tests -p 'test_words_ratchet.py'
       - name: Check the data folder resolver
         run: python3 scripts/data-folder-check.py

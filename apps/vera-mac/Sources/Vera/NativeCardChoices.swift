@@ -21,14 +21,21 @@ enum NativeCardPlace: Equatable, Sendable {
     var hereWords: String {
         switch self {
         case .chat: return "in this chat"
-        case .task: return "in this task"
+        case .task: return "for this"
         }
     }
 
     var neverWords: String {
         switch self {
         case .chat: return "in this chat"
-        case .task: return "in this task"
+        case .task: return "for this"
+        }
+    }
+
+    var neverThing: String {
+        switch self {
+        case .chat: return "this"
+        case .task: return "it"
         }
     }
 }
@@ -99,11 +106,11 @@ enum NativeCardChoices {
     static func wireTitle(_ wire: String) -> String? {
         switch wire {
         case NativeCardChoiceKind.allowOnce.rawValue: return "Allow once"
-        case NativeCardChoiceKind.allowHere.rawValue: return "Always allow in this task"
+        case NativeCardChoiceKind.allowHere.rawValue: return "Always allow for this"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Always allow for this schedule"
         case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow everywhere"
-        case NativeCardChoiceKind.never.rawValue: return "Never allow this in this task"
-        case commandNever: return "Never run commands in this task"
+        case NativeCardChoiceKind.never.rawValue: return "Never allow it for this"
+        case commandNever: return "Never run commands for this"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
         default: return nil
         }
@@ -216,7 +223,7 @@ enum NativeCardChoices {
             let names = list(folders.map { name($0.value) })
             return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
         case .sendTargets(let targets): return "Never send to " + list(targets.map(\.value)) + " " + place.neverWords
-        case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow this \(place.neverWords)"
+        case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow \(place.neverThing) \(place.neverWords)"
         }
     }
 
@@ -261,7 +268,7 @@ enum NativeCardChoices {
         case .allowSchedule: return "For this schedule, allow"
         case .allowHere:
             if case .chat = place { return "In this chat, allow" }
-            return "For this task, allow"
+            return "For this, allow"
         case .never, .allowOnce, .decline: return "Never allow"
         }
     }

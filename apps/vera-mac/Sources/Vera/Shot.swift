@@ -38,6 +38,10 @@ enum Shot {
             RefusalShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view.hasPrefix("words-") {
+            WordsShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("card-") {
             CardShot.render(view: view, to: path, appearance: appearance)
             return

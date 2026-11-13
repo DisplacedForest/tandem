@@ -382,10 +382,10 @@ enum NativeChatToolCatalog {
                 setup: "Share a folder from the message box to turn this on for that chat. Set what asks first in the Rules tab."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
-                name: "Background work",
-                summary: "Hands research and document writing to a background task that reports on a card in the chat, and proposes schedules for recurring work that you confirm before they are saved.",
+                name: "Research and documents",
+                summary: "Does research and document writing on its own while you keep chatting, reports on a card in the chat, and proposes schedules for recurring work that you confirm before they are saved.",
                 available: true,
-                setup: "Enable this tool to allow background research and documents."),
+                setup: "Enable this tool to allow research and documents."),
             NativeImageTools.descriptor(configured: imageConfigured),
         ]
     }
