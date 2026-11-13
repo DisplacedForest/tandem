@@ -169,7 +169,7 @@ private struct ScheduleRow: View {
 
     @ViewBuilder private var kindIcon: some View {
         if schedule.isCompanionWork {
-            Image(systemName: "magnifyingglass")
+            InterfaceIconView(icon: .companion, size: InterfaceIconSize.regular)
         } else {
             Image(systemName: schedule.isDocument ? "doc.text" : "magnifyingglass")
         }
