@@ -12,7 +12,7 @@ struct ComposerMentionItem: Identifiable, Equatable, Sendable {
     let section: ComposerMentionSection
     let name: String
     let detail: String
-    let icon: String
+    let icon: InterfaceIcon
     let available: Bool
     let kind: Kind
     var aliases: [String] = []
@@ -32,34 +32,34 @@ struct ComposerMentionCatalog: Equatable, Sendable {
     }
 
     static let filesItem = ComposerMentionItem(id: "add-files", section: .add, name: "Add photos and files",
-        detail: "", icon: "paperclip", available: true, kind: .files)
+        detail: "", icon: .attach, available: true, kind: .files)
 
     static let folderItem = ComposerMentionItem(id: "grant-folder", section: .add, name: "Work in a folder",
-        detail: "Let this chat read and change files in a folder", icon: "folder", available: true, kind: .folder)
+        detail: "Let this chat read and change files in a folder", icon: .folder, available: true, kind: .folder)
 
     static func builtIns(webAvailable: Bool, imageAvailable: Bool) -> [ComposerMentionItem] {
         [
             ComposerMentionItem(id: NativeWebTools.searchToolID, section: .tools, name: "Search the web",
-                detail: "Answer from live search results", icon: "magnifyingglass", available: webAvailable,
+                detail: "Answer from live search results", icon: .search, available: webAvailable,
                 kind: .tools([NativeWebTools.searchToolID])),
             ComposerMentionItem(id: NativeWebTools.researchToolID, section: .tools, name: "Research",
-                detail: "A cited report, gathered while you keep chatting", icon: "doc.text.magnifyingglass", available: webAvailable,
+                detail: "A cited report, gathered while you keep chatting", icon: .research, available: webAvailable,
                 kind: .tools([NativeWebTools.researchToolID, NativeTaskTools.toolID]), aliases: ["Background research"]),
             ComposerMentionItem(id: NativeTaskTools.toolID, section: .tools, name: "Write a document",
-                detail: "A longer document, written while you keep chatting", icon: "doc.text", available: true,
+                detail: "A longer document, written while you keep chatting", icon: .document, available: true,
                 kind: .tools([NativeWebTools.researchToolID, NativeTaskTools.toolID])),
             ComposerMentionItem(id: NativeImageTools.toolID, section: .tools, name: "Create images",
-                detail: "Generate a picture from a description", icon: "photo", available: imageAvailable,
+                detail: "Generate a picture from a description", icon: .image, available: imageAvailable,
                 kind: .tools([NativeImageTools.toolID])),
             ComposerMentionItem(id: "apple-reminders", section: .tools, name: "Reminders",
-                detail: "List, add and complete Apple Reminders", icon: "checklist", available: true,
+                detail: "List, add and complete Apple Reminders", icon: .reminders, available: true,
                 kind: .tools(["apple-reminders"])),
         ]
     }
 
     static func capability(_ declaration: NativeToolDeclaration, webAvailable: Bool) -> ComposerMentionItem {
         ComposerMentionItem(id: declaration.id, section: .tools, name: declaration.title,
-            detail: "", icon: "wrench.and.screwdriver",
+            detail: "", icon: .tool,
             available: declaration.enabled && (!declaration.needsAPIBase || webAvailable),
             kind: .tools([declaration.id]))
     }
@@ -71,7 +71,7 @@ struct ComposerMentionCatalog: Equatable, Sendable {
         else if allowedIDs.isEmpty { detail = "Turned off in Settings" }
         else { detail = allowedIDs.count == 1 ? "1 tool" : "\(allowedIDs.count) tools" }
         return ComposerMentionItem(id: "plugin-" + serverID, section: .plugins, name: name, detail: detail,
-            icon: "puzzlepiece.extension", available: connected && !allowedIDs.isEmpty, kind: .tools(Set(allowedIDs)))
+            icon: .plugins, available: connected && !allowedIDs.isEmpty, kind: .tools(Set(allowedIDs)))
     }
 
     func matching(_ query: String) -> [ComposerMentionItem] {

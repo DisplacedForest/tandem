@@ -193,8 +193,7 @@ struct CompanionThreadPanel: View {
     }
 
     private var moreIcon: some View {
-        Image(systemName: "ellipsis")
-            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.warmTextSecondary)
+        InterfaceIconView(icon: .more, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextSecondary)
             .frame(width: 28, height: 24).contentShape(Rectangle())
     }
 
@@ -209,7 +208,7 @@ struct CompanionThreadPanel: View {
                 Button("Appearance") { editingAppearance = true }
                 Button("Settings") { editingProfile = true }
             } label: { moreIcon }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .help(CompanionProfileCopy.moreOptions)
             .accessibilityLabel(CompanionProfileCopy.moreOptions)
         }
@@ -223,7 +222,7 @@ struct CompanionThreadPanel: View {
             }
             if CompanionOverviewModel.hasMore(current.activity.count, limit: CompanionOverviewModel.activityPreview) {
                 moreRow(showingAllActivity ? CompanionProfileCopy.showLess : CompanionProfileCopy.showMore,
-                        systemImage: showingAllActivity ? "chevron.up" : "chevron.down") { showingAllActivity.toggle() }
+                        icon: showingAllActivity ? .collapse : .expand) { showingAllActivity.toggle() }
             }
         }
     }
@@ -255,11 +254,11 @@ struct CompanionThreadPanel: View {
         .accessibilityLabel([item.title, line, new ? "New" : ""].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 
-    private func moreRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func moreRow(_ title: String, icon: InterfaceIcon, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Text(title).font(.system(size: 13, weight: .medium))
-                Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                InterfaceIconView(icon: icon, size: InterfaceIconSize.small)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(Theme.sage)
@@ -273,7 +272,7 @@ struct CompanionThreadPanel: View {
         let detail = store.companionActivityDetail(item)
         return VStack(alignment: .leading, spacing: 20) {
             Button { navigationError = nil; selectedID = nil } label: {
-                Label("Back", systemImage: "chevron.left")
+                Label { Text("Back") } icon: { InterfaceIconView(icon: .back, size: InterfaceIconSize.regular) }
             }
             .buttonStyle(.plain).accessibilityLabel("Back to overview")
             Text(item.title).font(.system(size: 18, weight: .semibold))
@@ -315,7 +314,7 @@ struct CompanionThreadPanel: View {
                     if store.openCompanionActivity(item) { onClose?() }
                     else { navigationError = "This chat is no longer available." }
                 } label: {
-                    Label("Go to chat", systemImage: "bubble.left")
+                    Label { Text("Go to chat") } icon: { InterfaceIconView(icon: .chat, size: InterfaceIconSize.regular) }
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(.bordered).controlSize(.large)
             }
@@ -327,9 +326,8 @@ struct CompanionThreadPanel: View {
             ForEach(current.outputs.prefix(CompanionOverviewModel.outputPreview)) { result in
                 Button { store.openCompanionResult(result.id) } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: result.kind == .image ? "photo" : "doc.text")
-                            .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
-                            .frame(width: OngoingWorkMetrics.glyphSize)
+                        InterfaceIconView(icon: result.kind == .image ? .image : .document, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextSecondary)
+                            .frame(width: OngoingWorkMetrics.glyphSize, height: InterfaceIconSize.row - 1)
                         Text(result.title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
                             .lineLimit(2).multilineTextAlignment(.leading)
                         Spacer(minLength: 0)
@@ -341,7 +339,7 @@ struct CompanionThreadPanel: View {
                 .accessibilityLabel("Open \(result.title)")
             }
             if CompanionOverviewModel.hasMore(current.outputs.count, limit: CompanionOverviewModel.outputPreview) {
-                moreRow(CompanionProfileCopy.showMore, systemImage: "chevron.right") { store.openCompanionOutputs() }
+                moreRow(CompanionProfileCopy.showMore, icon: .next) { store.openCompanionOutputs() }
             }
         }
     }
@@ -350,8 +348,7 @@ struct CompanionThreadPanel: View {
         section("Upcoming") {
             ForEach(current.upcoming) { schedule in
                 HStack(spacing: 10) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+                    InterfaceIconView(icon: .scheduled, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextSecondary)
                         .frame(width: OngoingWorkMetrics.glyphSize)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {

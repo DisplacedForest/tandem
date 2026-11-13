@@ -89,8 +89,7 @@ struct JumpToLatestButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 13, weight: .semibold))
+            InterfaceIconView(icon: .latest, size: InterfaceIconSize.regular)
                 .foregroundStyle(Theme.textPrimary.opacity(hovering ? 1 : 0.85))
                 .frame(width: 30, height: 30)
                 .background(.ultraThinMaterial, in: Circle())

@@ -11,9 +11,9 @@ enum TranscriptMarker: Equatable, Sendable {
         }
     }
 
-    var symbol: String {
+    var icon: InterfaceIcon {
         switch self {
-        case .preferenceSaved, .preferenceRemoved: "checkmark.circle"
+        case .preferenceSaved, .preferenceRemoved: .done
         }
     }
 }
@@ -23,7 +23,7 @@ struct TranscriptMarkerRow: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: marker.symbol)
+            InterfaceIconView(icon: marker.icon, size: InterfaceIconSize.small)
             Text(marker.text)
         }
         .font(.system(size: ConversationMetrics.metaSize))

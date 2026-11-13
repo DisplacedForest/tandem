@@ -12,8 +12,11 @@ enum IconShot {
         let content: AnyView
         switch view {
         case "icons-sheet":
-            size = CGSize(width: 900, height: 360)
+            size = CGSize(width: 900, height: CGFloat((InterfaceIcon.allCases.count + 4) / 5) * 66 + 48)
             content = AnyView(sheet())
+        case "icons-conversation-states":
+            size = CGSize(width: 1180, height: 1320)
+            content = AnyView(conversationStates())
         case "icons-sidebar-states":
             size = CGSize(width: 980, height: 760)
             content = AnyView(sidebarStates())
@@ -68,6 +71,117 @@ enum IconShot {
         }
         .foregroundStyle(Theme.textPrimary)
         .padding(24)
+    }
+
+    private static func conversationStates() -> some View {
+        let store = ChatStore()
+        store.activeArtifact = Artifact.mock()
+        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+        let file = Attachment(url: URL(fileURLWithPath: "/tmp/seed-order.pdf"))
+        func tool(_ id: String, _ state: NativeToolActivityState, result: String? = nil) -> NativeToolActivity {
+            NativeToolActivity(id: id, toolID: "apple-reminders", name: "apple_reminders_list", title: "List reminders", round: 1,
+                               request: "{}", result: result, state: state, confirmationRequired: false)
+        }
+        func run(_ outcome: NativeCommandRun.Outcome, exit: Int? = nil) -> NativeCommandRun {
+            NativeCommandRun(id: "icons-\(outcome.rawValue)", command: "make check", directory: "", outcome: outcome, reason: .userApproved,
+                             exitCode: exit, stdout: "", durationMilliseconds: 1200)
+        }
+        func change(_ kind: NativeFileChangeKind, _ path: String) -> NativeFileChange {
+            NativeFileChange(id: "icons-\(path)", path: "/tmp/Greenhouse/" + path, kind: kind, before: nil, after: nil,
+                             movedFrom: kind == .moved ? "/tmp/Greenhouse/old.md" : nil)
+        }
+        let statuses: [NativeTaskCardPresentation.Status] = [.queued, .working, .stopped, .completed, .needsInput, .failed, .setAside, .newer]
+        var ask = Message(role: .assistant, text: "", ask: VeraAsk.mock())
+        ask.answered = true
+        ask.answerText = "Tomatoes"
+        let multi = Message(role: .assistant, text: "", ask: VeraAsk(question: "Which beds?", multiSelect: true, options: [VeraAskOption(label: "North"), VeraAskOption(label: "South")]))
+        return HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 14) {
+                part("Composer buttons") {
+                    HStack(spacing: 10) {
+                        ForEach(Array([ComposerControlKind.plus, .voice, .dictate(active: false), .dictate(active: true),
+                                       .send(active: true, generating: false), .stop(enabled: true)].enumerated()), id: \.offset) { _, kind in
+                            ComposerControlGlyph(kind: kind)
+                        }
+                    }
+                }
+                part("Tool rows") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        NativeToolActivityChip(activity: tool("done", .succeeded, result: "{}"))
+                        NativeToolActivityChip(activity: tool("failed", .failed, result: "{}"))
+                        NativeToolActivityChip(activity: tool("declined", .failed, result: NativeToolActivityChip.declineMarkers[0]))
+                        NativeToolActivityChip(activity: tool("canceled", .canceled))
+                    }
+                }
+                part("Command rows") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        NativeCommandRunCard(run: run(.ran, exit: 0))
+                        NativeCommandRunCard(run: run(.ran, exit: 2))
+                        NativeCommandRunCard(run: run(.timedOut))
+                        NativeCommandRunCard(run: run(.canceled))
+                        NativeCommandRunCard(run: run(.declined))
+                        NativeCommandRunCard(run: run(.refused))
+                    }
+                }
+                part("File changes") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        NativeFileChangeCard(change: change(.created, "log.md"))
+                        NativeFileChangeCard(change: change(.edited, "plan.md"))
+                        NativeFileChangeCard(change: change(.moved, "moved.md"))
+                        NativeFileChangeCard(change: change(.directory, "seeds"))
+                        NativeFileChangeCard(change: change(.trashed, "draft.md"))
+                    }
+                }
+            }
+            .frame(width: 400)
+            VStack(alignment: .leading, spacing: 14) {
+                part("Work status") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(statuses, id: \.self) { status in
+                            NativeTaskCardView(card: NativeTaskCardPresentation(id: "icons-\(status)", title: "Compare insulation", status: status, milestone: ""))
+                        }
+                    }
+                }
+            }
+            .frame(width: 300)
+            VStack(alignment: .leading, spacing: 14) {
+                part("Ongoing work") {
+                    HStack(spacing: 10) {
+                        ForEach([OngoingWorkItem.Glyph.done, .running, .waiting, .held, .problem], id: \.self) { OngoingWorkGlyph(glyph: $0) }
+                    }
+                }
+                part("Attachments") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        AttachmentChipView(att: file, onRemove: {}, revealsRemove: true)
+                        AttachmentRouteBadge(note: MessageRouteNote(route: .bridged))
+                        AttachmentRouteBadge(note: MessageRouteNote(route: .withheld))
+                        AttachmentRouteBadge(note: MessageRouteNote(route: .direct), missingImages: ["photo.png"])
+                    }
+                }
+                part("Questions") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        VeraAskCard(message: ask, canAnswer: false)
+                        VeraAskCard(message: multi, canAnswer: false)
+                    }
+                }
+                part("Canvas and more") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        CanvasPanel().frame(height: 120)
+                        HStack(spacing: 12) {
+                            JumpToLatestButton {}
+                            InfoTip(text: "Shown on hover")
+                            TranscriptMarkerRow(marker: .preferenceSaved)
+                        }
+                        ConversationResultRow(title: "Quiet reading spaces")
+                    }
+                }
+            }
+            .frame(width: 380)
+        }
+        .padding(24)
+        .foregroundStyle(Theme.textPrimary)
+        .environmentObject(store)
+        .environmentObject(config)
     }
 
     private static func sidebarStates() -> some View {

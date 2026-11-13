@@ -35,8 +35,7 @@ struct RuleOfferCard: View {
         let sentence = RuleOfferCopy.question(action)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: .needsYou, size: InterfaceIconSize.row).foregroundStyle(Theme.sage)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                     .accessibilityHidden(true)

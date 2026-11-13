@@ -288,7 +288,7 @@ Issues and PRs are welcome; merged work is credited in the next release's notes.
 
 ## License
 
-[MIT](LICENSE). A few interface icons come from another MIT licensed project, credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). The interface icons come from another MIT licensed project, credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 The optional [household assistant messaging gateway](docs/HOUSEHOLD.md) reuses API modules in a dedicated loopback runtime, with separate inboxes and explicit sharing consent. It defaults to disabled and requires endpoint keys before household use. An optional HTTPS connection lets household members add one MCP address to ChatGPT and connect their own inbox with a one-time code, without a household account signup.
 

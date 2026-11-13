@@ -24,6 +24,61 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     case update
     case clear
     case pin
+    case close
+    case info
+    case warning
+    case connect
+    case attach
+    case folder
+    case research
+    case document
+    case image
+    case reminders
+    case rules
+    case tool
+    case voice
+    case dictate
+    case dictating
+    case send
+    case stop
+    case done
+    case stopped
+    case paused
+    case question
+    case failed
+    case needsYou
+    case declined
+    case refused
+    case timedOut
+    case terminal
+    case edit
+    case fileAdded
+    case moved
+    case folderAdded
+    case trash
+    case link
+    case copy
+    case reply
+    case selectText
+    case addReaction
+    case good
+    case goodChosen
+    case bad
+    case badChosen
+    case expand
+    case collapse
+    case next
+    case back
+    case choose
+    case latest
+    case bridged
+    case withheld
+    case checkboxOn
+    case checkboxOff
+    case radioOn
+    case radioOff
+    case tick
+    case pauseMark
 
     var resource: String {
         switch self {
@@ -49,6 +104,61 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
         case .update: "interface-update"
         case .clear: "interface-clear"
         case .pin: "interface-pin"
+        case .close: "interface-close"
+        case .info: "interface-info"
+        case .warning: "interface-warning"
+        case .connect: "interface-connect"
+        case .attach: "interface-attach"
+        case .folder: "interface-folder"
+        case .research: "interface-research"
+        case .document: "interface-document"
+        case .image: "interface-image"
+        case .reminders: "interface-reminders"
+        case .rules: "interface-rules"
+        case .tool: "interface-tool"
+        case .voice: "interface-voice"
+        case .dictate: "interface-dictate"
+        case .dictating: "interface-dictating"
+        case .send: "interface-send"
+        case .stop: "interface-stop"
+        case .done: "interface-done"
+        case .stopped: "interface-stopped"
+        case .paused: "interface-paused"
+        case .question: "interface-question"
+        case .failed: "interface-failed"
+        case .needsYou: "interface-needs-you"
+        case .declined: "interface-declined"
+        case .refused: "interface-refused"
+        case .timedOut: "interface-timed-out"
+        case .terminal: "interface-terminal"
+        case .edit: "interface-edit"
+        case .fileAdded: "interface-file-added"
+        case .moved: "interface-moved"
+        case .folderAdded: "interface-folder-added"
+        case .trash: "interface-trash"
+        case .link: "interface-link"
+        case .copy: "interface-copy"
+        case .reply: "interface-reply"
+        case .selectText: "interface-select-text"
+        case .addReaction: "interface-add-reaction"
+        case .good: "interface-good"
+        case .goodChosen: "interface-good-chosen"
+        case .bad: "interface-bad"
+        case .badChosen: "interface-bad-chosen"
+        case .expand: "interface-expand"
+        case .collapse: "interface-collapse"
+        case .next: "interface-next"
+        case .back: "interface-back"
+        case .choose: "interface-choose"
+        case .latest: "interface-latest"
+        case .bridged: "interface-bridged"
+        case .withheld: "interface-withheld"
+        case .checkboxOn: "interface-checkbox-on"
+        case .checkboxOff: "interface-checkbox-off"
+        case .radioOn: "interface-radio-on"
+        case .radioOff: "interface-radio-off"
+        case .pauseMark: "interface-pause-mark"
+        case .tick: "interface-tick"
         }
     }
 

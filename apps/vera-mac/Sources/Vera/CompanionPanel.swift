@@ -210,8 +210,7 @@ struct CompanionPanelView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 13, weight: .semibold))
+            InterfaceIconView(icon: .companion, size: InterfaceIconSize.regular)
                 .foregroundStyle(Theme.accent)
             CompanionNamedText(template: CompanionSentence.placeholder)
                 .font(.system(size: 14, weight: .semibold))
@@ -235,8 +234,7 @@ struct CompanionPanelView: View {
                 .accessibilityLabel("Open in Tandem")
             }
             Button { controller.hide() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
+                InterfaceIconView(icon: .close, size: InterfaceIconSize.small)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -294,8 +292,7 @@ struct CompanionPanelView: View {
 
     private var approvalBanner: some View {
         HStack(spacing: 8) {
-            Image(systemName: "hand.raised")
-                .font(.system(size: 12, weight: .semibold))
+            InterfaceIconView(icon: .needsYou, size: InterfaceIconSize.small)
                 .foregroundStyle(.orange)
             Text("Waiting for your approval in Tandem.")
                 .font(.system(size: 12))
@@ -332,7 +329,7 @@ struct CompanionPanelView: View {
             }
             if let error = store.companionErrorLine {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.small)
                     CompanionLineText(line: error).font(.system(size: 11))
                 }
                 .foregroundStyle(Theme.textSecondary)
@@ -340,8 +337,7 @@ struct CompanionPanelView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 editor
                 Button(action: send) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                    InterfaceIconView(icon: .send, size: InterfaceIconSize.row)
                         .foregroundStyle(canSend ? Theme.onAccent : Theme.textSecondary)
                         .frame(width: 30, height: 30)
                         .background(Circle().fill(canSend ? Theme.accent : Theme.surface))
@@ -494,8 +490,7 @@ private struct CompanionAttachmentChip: View {
                     .frame(width: 20, height: 20)
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             } else {
-                Image(systemName: attachment.kind == .image ? "photo" : "doc")
-                    .font(.system(size: 11))
+                InterfaceIconView(icon: attachment.kind == .image ? .image : .document, size: InterfaceIconSize.small)
                     .foregroundStyle(Theme.textSecondary)
             }
             Text(attachment.name)
@@ -505,8 +500,7 @@ private struct CompanionAttachmentChip: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: 140)
             Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                     .foregroundStyle(Theme.textSecondary)
             }
             .buttonStyle(.plain)

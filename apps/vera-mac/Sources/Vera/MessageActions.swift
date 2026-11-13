@@ -13,7 +13,7 @@ enum MessageReaction: String, CaseIterable, Identifiable {
 
     static let offered: [MessageReaction] = [.heart, .thumbsUp, .thumbsDown, .emphasis, .laugh, .check]
     static let addLabel = "Add reaction"
-    static let addSymbol = "face.smiling"
+    static let addIcon: InterfaceIcon = .addReaction
     static let markLimit = 3
 
     var emoji: String {
@@ -81,11 +81,11 @@ enum MessageMenuAction: String, CaseIterable, Identifiable {
         }
     }
 
-    var symbol: String {
+    var icon: InterfaceIcon {
         switch self {
-        case .copy: "doc.on.doc"
-        case .selectText: "text.viewfinder"
-        case .reply: "arrowshape.turn.up.left"
+        case .copy: .copy
+        case .selectText: .selectText
+        case .reply: .reply
         }
     }
 }
@@ -117,7 +117,7 @@ enum MessageActions {
         let each = MessageReaction.offered.map { MessageReaction.onAnnouncement([$0.emoji]) }
         let all = MessageReaction.onAnnouncement(MessageReaction.offered.map(\.emoji))
         let announcements = [MessageReaction.onAnnouncement([])] + each + [all]
-        let fixed = [MessageActionsMetrics.rowLabel, MessageActionsMetrics.menuLabel, MessageReaction.addSymbol]
+        let fixed = [MessageActionsMetrics.rowLabel, MessageActionsMetrics.menuLabel]
         return accessibilityLabels + announcements + fixed + MessageReplyCopy.added
     }
 }

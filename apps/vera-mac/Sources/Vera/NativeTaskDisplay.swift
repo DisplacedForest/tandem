@@ -161,18 +161,18 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
             }
         }
 
-        var symbol: String { symbol(document: false) }
+        var icon: InterfaceIcon { icon(document: false) }
 
-        func symbol(document: Bool) -> String {
+        func icon(document: Bool) -> InterfaceIcon {
             switch self {
-            case .preparing, .queued: return "clock"
-            case .working: return document ? "pencil" : "magnifyingglass"
-            case .stopping, .stopped: return "stop.circle"
-            case .completed: return "checkmark.circle"
-            case .needsInput: return "questionmark.circle"
-            case .failed: return "exclamationmark.circle"
-            case .setAside: return "pause.circle"
-            case .newer: return "arrow.down.circle"
+            case .preparing, .queued: return .scheduled
+            case .working: return document ? .edit : .research
+            case .stopping, .stopped: return .stopped
+            case .completed: return .done
+            case .needsInput: return .question
+            case .failed: return .failed
+            case .setAside: return .paused
+            case .newer: return .update
             }
         }
     }
@@ -236,6 +236,6 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         case .queued, .failed, .setAside, .newer: return status.title(document: false)
         }
     }
-    var statusSymbol: String { needsYou ? "hand.raised" : stoppedHere ? Status.stopped.symbol : status.symbol(document: isDocument) }
+    var statusIcon: InterfaceIcon { needsYou ? .needsYou : stoppedHere ? Status.stopped.icon : status.icon(document: isDocument) }
     var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }
