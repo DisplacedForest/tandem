@@ -268,14 +268,19 @@ enum NativeCompanionWorker {
                                     decision: try NativeTaskStore.canonical(decision))
     }
 
-    static func describe(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) -> String {
+    static func subject(_ arguments: [String: NativeJSONValue]) -> String? {
         for key in ["path", "command", "title", "name", "text", "query", "url"] {
             if case .string(let value)? = arguments[key] {
                 let clean = value.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                if !clean.isEmpty { return "\(definition.title): \(clean.unicodeScalars.count > 120 ? cut(clean, scalars: 117) + "..." : clean)" }
+                if !clean.isEmpty { return clean.unicodeScalars.count > 120 ? cut(clean, scalars: 117) + "..." : clean }
             }
         }
-        return definition.title
+        return nil
+    }
+
+    static func describe(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue]) -> String {
+        guard let subject = subject(arguments) else { return definition.title }
+        return "\(definition.title): \(subject)"
     }
 
     static func details(_ title: String, argumentsJSON: String) -> String {
