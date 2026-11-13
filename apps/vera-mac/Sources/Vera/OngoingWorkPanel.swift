@@ -130,20 +130,20 @@ struct OngoingWorkGlyph: View {
             switch glyph {
             case .done:
                 Circle().fill(Theme.sage.opacity(0.18))
-                Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: .done, size: InterfaceIconSize.regular).foregroundStyle(Theme.sage)
             case .running:
                 Circle().stroke(Theme.cardStroke, lineWidth: 2).padding(4)
                 Circle().trim(from: 0, to: 0.3).stroke(Theme.sage, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90)).padding(4)
             case .waiting:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
-                Image(systemName: "clock").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+                InterfaceIconView(icon: .scheduled, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .held:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
-                Image(systemName: "pause.fill").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+                InterfaceIconView(icon: .paused, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .problem:
                 Circle().fill(Theme.accent.opacity(0.18))
-                Image(systemName: "exclamationmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.accent)
+                InterfaceIconView(icon: .failed, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)
             }
         }
         .frame(width: OngoingWorkMetrics.glyphSize, height: OngoingWorkMetrics.glyphSize)
@@ -171,8 +171,7 @@ struct OngoingWorkCard: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                InterfaceIconView(icon: .next, size: InterfaceIconSize.regular)
                     .foregroundStyle(Theme.warmTextSecondary)
                     .accessibilityHidden(true)
             }

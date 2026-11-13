@@ -40,8 +40,7 @@ struct VoiceView: View {
                         .padding(.bottom, 10)
                 }
                 Button(action: onEnd) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 18, weight: .semibold))
+                    InterfaceIconView(icon: .close, size: InterfaceIconSize.rail)
                         .foregroundStyle(.white)
                         .frame(width: 56, height: 56)
                         .background(Theme.surfaceHover)

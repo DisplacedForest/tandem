@@ -89,6 +89,72 @@ extension SelfTest {
         .update: IconGeometry(bytes: 592, hash: 12592026924203043116),
         .clear: IconGeometry(bytes: 263, hash: 5878221935624466636),
         .pin: IconGeometry(bytes: 1107, hash: 17874464801791710818),
+        .close: IconGeometry(bytes: 196, hash: 8390395120732435969),
+        .info: IconGeometry(bytes: 533, hash: 7047778675819240951),
+        .warning: IconGeometry(bytes: 1021, hash: 6844464036137675511),
+        .connect: IconGeometry(bytes: 449, hash: 905839141765071649),
+        .attach: IconGeometry(bytes: 444, hash: 14785805475343738788),
+        .folder: IconGeometry(bytes: 2454, hash: 10116636564115222591),
+        .research: IconGeometry(bytes: 1670, hash: 10270706448582035180),
+        .document: IconGeometry(bytes: 2657, hash: 1140187331660743019),
+        .image: IconGeometry(bytes: 1233, hash: 15084281777000784573),
+        .reminders: IconGeometry(bytes: 2536, hash: 15234358487964984702),
+        .rules: IconGeometry(bytes: 810, hash: 4931027334619142328),
+        .tool: IconGeometry(bytes: 438, hash: 17366720933809361075),
+        .voice: IconGeometry(bytes: 519, hash: 13330080550912626834),
+        .dictate: IconGeometry(bytes: 850, hash: 11489530479510735273),
+        .dictating: IconGeometry(bytes: 874, hash: 14410899516536224187),
+        .send: IconGeometry(bytes: 129, hash: 11744404674765987333),
+        .stop: IconGeometry(bytes: 119, hash: 12254759145195972880),
+        .done: IconGeometry(bytes: 586, hash: 5194145164676587557),
+        .stopped: IconGeometry(bytes: 180, hash: 12453720026567839284),
+        .paused: IconGeometry(bytes: 259, hash: 10722450644395476547),
+        .question: IconGeometry(bytes: 869, hash: 5192175480380517568),
+        .failed: IconGeometry(bytes: 499, hash: 7718356855032257294),
+        .needsYou: IconGeometry(bytes: 514, hash: 5578166281573923529),
+        .declined: IconGeometry(bytes: 146, hash: 14236215097802300827),
+        .refused: IconGeometry(bytes: 300, hash: 14939144681513251688),
+        .timedOut: IconGeometry(bytes: 1134, hash: 12966522723310919404),
+        .terminal: IconGeometry(bytes: 2266, hash: 14743431999374310603),
+        .edit: IconGeometry(bytes: 706, hash: 3004767787539017732),
+        .fileAdded: IconGeometry(bytes: 1044, hash: 3221957271757878965),
+        .moved: IconGeometry(bytes: 419, hash: 14713047368757306162),
+        .folderAdded: IconGeometry(bytes: 2520, hash: 16392791367150624517, side: 18),
+        .trash: IconGeometry(bytes: 936, hash: 9336008833375516873),
+        .link: IconGeometry(bytes: 1159, hash: 15524316508204179840),
+        .copy: IconGeometry(bytes: 3221, hash: 146665332394702837),
+        .reply: IconGeometry(bytes: 921, hash: 14158836824330727499),
+        .selectText: IconGeometry(bytes: 1525, hash: 9022037510570118882),
+        .addReaction: IconGeometry(bytes: 1328, hash: 11034650447187561382),
+        .good: IconGeometry(bytes: 2455, hash: 12031135414672809284),
+        .goodChosen: IconGeometry(bytes: 464, hash: 6455414001273910115),
+        .bad: IconGeometry(bytes: 2429, hash: 5454773189447699107),
+        .badChosen: IconGeometry(bytes: 559, hash: 5260672730238567873),
+        .expand: IconGeometry(bytes: 121, hash: 1897763155044169926),
+        .collapse: IconGeometry(bytes: 115, hash: 7228592855516792996),
+        .next: IconGeometry(bytes: 120, hash: 12069323854929476458),
+        .back: IconGeometry(bytes: 120, hash: 6253633672018244088),
+        .choose: IconGeometry(bytes: 628, hash: 2182408223912166480),
+        .latest: IconGeometry(bytes: 131, hash: 3304619820672566877),
+        .bridged: IconGeometry(bytes: 1069, hash: 9936219808698129602),
+        .withheld: IconGeometry(bytes: 1603, hash: 3848292242780143714),
+        .checkboxOn: IconGeometry(bytes: 1325, hash: 15286044549133111796),
+        .checkboxOff: IconGeometry(bytes: 1825, hash: 5472626730620543207),
+        .radioOn: IconGeometry(bytes: 226, hash: 17340246410702786588),
+        .radioOff: IconGeometry(bytes: 224, hash: 10803538240702399099),
+    ]
+
+    static let candidateGeometry: [InterfaceIconCandidate: IconGeometry] = [
+        .connectStatus: IconGeometry(bytes: 1370, hash: 16386569431639055677),
+        .researchTelescope: IconGeometry(bytes: 769, hash: 4537033671586817260),
+        .remindersList: IconGeometry(bytes: 914, hash: 13406093435795975882),
+        .rulesShield: IconGeometry(bytes: 343, hash: 6387568544129092439),
+        .declinedHand: IconGeometry(bytes: 1183, hash: 5359133356539751217),
+        .refusedShield: IconGeometry(bytes: 958, hash: 3097556506170922716),
+        .timedOutStopwatch: IconGeometry(bytes: 776, hash: 6580490067836235028),
+        .fileAddedBlank: IconGeometry(bytes: 2496, hash: 869476924721325526),
+        .movedForward: IconGeometry(bytes: 326, hash: 14719823673505904522),
+        .replyLeft: IconGeometry(bytes: 429, hash: 5208448157472655625),
     ]
 
     private static func checkIconFile(_ name: String, url: URL?, image: NSImage?, geometry: IconGeometry?) throws {
@@ -125,8 +191,12 @@ extension SelfTest {
     static func runConversationTopBar() throws {
         let require = NativeTaskFixture.require
 
-        let resources = InterfaceIcon.allCases.map(\.resource)
+        let resources = InterfaceIcon.allCases.map(\.resource) + InterfaceIconCandidate.allCases.map(\.resource)
         try require(Set(resources).count == resources.count, "Each icon meaning has its own file")
+        for candidate in InterfaceIconCandidate.allCases {
+            try checkIconFile(candidate.rawValue, url: candidate.url, image: candidate.image, geometry: candidateGeometry[candidate])
+            try require(candidate.resource.hasPrefix(candidate.role.resource + "-"), "The \(candidate.rawValue) icon sits beside the one it could replace")
+        }
         for icon in InterfaceIcon.allCases {
             try checkIconFile(icon.rawValue, url: icon.url, image: icon.image, geometry: iconGeometry[icon])
             let menu = InterfaceIconCache.shared.menuImage(icon.resource)
@@ -147,6 +217,26 @@ extension SelfTest {
         try require(SidebarDestination.chats.glyph == .home && SidebarDestination.library.glyph == AppSection.artifacts.glyph
                     && SidebarDestination.workflows.glyph == AppSection.agentic.glyph, "The rail and the screens agree on icons")
         try require(SidebarRow.optionsLabel("Compost ratios") == "Options for Compost ratios", "A chat row's options button is named for its chat")
+        try require(MessageMenuAction.copy.icon == .copy && MessageMenuAction.reply.icon == MessageReplyCopy.icon,
+                    "Copy and reply show their own icons in the message menu and the reply bar")
+        try require(MessageReplyCopy.cancelIcon == .close, "Cancelling a reply shows the close icon")
+        try require(ComposerControlGlyph(kind: .send(active: true, generating: false)).icon == .send
+                    && ComposerControlGlyph(kind: .stop(enabled: true)).icon == .stop
+                    && ComposerControlGlyph(kind: .dictate(active: true)).icon == .dictating
+                    && ComposerControlGlyph(kind: .dictate(active: false)).icon == .dictate
+                    && ComposerControlGlyph(kind: .plus).icon == .add, "The composer buttons show send, stop, dictation and add")
+        let failedRun = NativeCommandRun(id: "icons", command: "make check", directory: "", outcome: .ran, reason: .userApproved,
+                                         exitCode: 2, stdout: "", durationMilliseconds: 1)
+        try require(NativeCommandRunCard(run: failedRun).icon == .warning, "A command that failed shows the warning icon")
+        try require(NativeTaskCardPresentation.Status.completed.icon == .done && TranscriptMarker.preferenceSaved.icon == .done
+                    && NativeTaskCardPresentation.Status.failed.icon == .failed
+                    && NativeTaskCardPresentation.Status.working.icon(document: true) == .edit
+                    && NativeTaskCardPresentation.Status.working.icon(document: false) == .research, "Work status icons follow their meaning")
+        try require(ComposerMentionCatalog.filesItem.icon == .attach && ComposerMentionCatalog.folderItem.icon == .folder,
+                    "Adding files and working in a folder keep their own icons")
+        try require(VeraAskCard.optionIcon(on: true, multiSelect: true) == .checkboxOn && VeraAskCard.optionIcon(on: false, multiSelect: false) == .radioOff,
+                    "Question options show a box for several answers and a circle for one")
+        try require(MessageReaction.addIcon == .addReaction, "Adding a reaction shows its own icon")
         try require(VeraResources.url("interface-icons-NOTICE", ext: "txt") != nil, "The icon notice ships inside the app")
 
         for section in AppSection.allCases {
@@ -250,7 +340,7 @@ extension SelfTest {
             + [ConversationTopBarModel.moreTitle]
         try require(!every.contains { $0.localizedCaseInsensitiveContains("vera") || $0.contains("\u{2014}") },
                     "Menu wording stays plain")
-        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, menus, one sidebar control)")
+        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, \(InterfaceIconCandidate.allCases.count) alternates, menus, one sidebar control)")
     }
 }
 

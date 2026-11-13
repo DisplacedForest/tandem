@@ -284,11 +284,11 @@ struct ChatPane: View {
         VStack(spacing: 0) {
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: .info, size: InterfaceIconSize.regular).foregroundStyle(Theme.textSecondary)
                     Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button { store.dismissSourceNotice() } label: { Image(systemName: "xmark") }
+                    Button { store.dismissSourceNotice() } label: { InterfaceIconView(icon: .close, size: InterfaceIconSize.regular) }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
                         .accessibilityLabel("Dismiss")
                 }
@@ -300,7 +300,7 @@ struct ChatPane: View {
             }
             if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.regular).foregroundStyle(Theme.textSecondary)
                     CompanionLineText(line: error.line).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
                     Spacer(minLength: 8)
                 }
@@ -533,7 +533,7 @@ struct EmptyChatView: View {
                 }
                 ComposerField()
                 if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.focusedChatConfigurationError.map(CompanionLine.literal) {
-                    Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
+                    Label { CompanionLineText(line: error) } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive && project == nil {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
@@ -546,7 +546,7 @@ struct EmptyChatView: View {
                                 Text("\(store.conversationAssistantLead) isn't connected. Set up the connection")
                             }
                         } icon: {
-                            Image(systemName: "bolt.horizontal")
+                            InterfaceIconView(icon: .connect, size: InterfaceIconSize.regular)
                         }
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
@@ -626,7 +626,7 @@ struct ComposerMentionList: View {
                     let index = rows.firstIndex(of: item) ?? 0
                     Button { onPick(item) } label: {
                         HStack(spacing: SidebarMetrics.inset) {
-                            Image(systemName: item.icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                            InterfaceIconView(icon: item.icon, size: InterfaceIconSize.row)
                                 .foregroundStyle(Theme.textSecondary)
                                 .frame(width: SidebarMetrics.iconSlot, height: SidebarMetrics.iconSlot)
                             Text(item.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
@@ -691,19 +691,27 @@ struct ComposerControlGlyph: View {
         }
     }
 
-    private var symbol: String {
+    private var iconSize: CGFloat {
         switch kind {
-        case .plus: "plus"
-        case .voice: "waveform"
-        case .dictate(let active): active ? "mic.fill" : "mic"
-        case .send: "arrow.up"
-        case .stop: "stop.fill"
+        case .plus: InterfaceIconSize.regular
+        case .voice, .dictate: InterfaceIconSize.row
+        case .send: InterfaceIconSize.rail
+        case .stop: InterfaceIconSize.small
+        }
+    }
+
+    var icon: InterfaceIcon {
+        switch kind {
+        case .plus: .add
+        case .voice: .voice
+        case .dictate(let active): active ? .dictating : .dictate
+        case .send: .send
+        case .stop: .stop
         }
     }
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: { if case .stop = kind { 12 } else { 15 } }(), weight: { if case .send = kind { .semibold } else { .medium } }()))
+        InterfaceIconView(icon: icon, size: iconSize)
             .foregroundStyle(tint)
             .frame(width: diameter, height: diameter)
             .background(Circle().fill(fill))
@@ -777,7 +785,7 @@ struct MessageRow: View {
                         Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
-                        Label(message.failure.map(SavedWording.current) ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
+                        Label { Text(message.failure.map(SavedWording.current) ?? "The response was interrupted") } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                             .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))
@@ -820,11 +828,11 @@ struct AttachmentRouteBadge: View {
     var missingImages: [String] = []
     @State private var showDisclosure = false
 
-    private var icon: String {
+    private var icon: InterfaceIcon {
         switch note.route {
-        case .direct: return missingImages.isEmpty ? "photo" : "exclamationmark.triangle"
-        case .bridged: return "arrow.triangle.branch"
-        case .withheld: return "eye.slash"
+        case .direct: return missingImages.isEmpty ? .image : .warning
+        case .bridged: return .bridged
+        case .withheld: return .withheld
         }
     }
 
@@ -845,7 +853,7 @@ struct AttachmentRouteBadge: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 10))
+            InterfaceIconView(icon: icon, size: InterfaceIconSize.mark)
             Text(label).font(.system(size: 11))
             if note.route == .bridged, note.disclosure != nil {
                 Button(showDisclosure ? "Hide description" : "Show description") {
@@ -893,14 +901,14 @@ struct NativeToolActivityChip: View {
 
     private var declined: Bool { Self.isDeclined(activity) }
 
-    private var icon: String {
-        if activity.why != nil { return "hand.raised" }
-        if declined { return "hand.raised.slash" }
+    private var icon: InterfaceIcon {
+        if activity.why != nil { return .needsYou }
+        if declined { return .declined }
         switch activity.state {
-        case .pending: return "clock"
-        case .succeeded: return "checkmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
-        case .canceled: return "slash.circle"
+        case .pending: return .scheduled
+        case .succeeded: return .done
+        case .failed: return .failed
+        case .canceled: return .stopped
         }
     }
 
@@ -951,7 +959,7 @@ struct NativeToolActivityChip: View {
                 if activity.state == .pending {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Image(systemName: icon).foregroundStyle(iconColor)
+                    InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(iconColor)
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
@@ -1062,8 +1070,7 @@ struct NativeToolConfirmationBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: .needsYou, size: InterfaceIconSize.row).foregroundStyle(Theme.sage)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
@@ -1173,8 +1180,7 @@ struct ConversationResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+            InterfaceIconView(icon: .document, size: InterfaceIconSize.row).foregroundStyle(Theme.warmTextSecondary)
                 .frame(width: 22)
             Text(title)
                 .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
@@ -1255,19 +1261,19 @@ struct ComposerField: View {
             if let project {
                 HStack(spacing: 18) {
                     Button { editingProject = project } label: {
-                        Label(project.name, systemImage: "folder").lineLimit(1).truncationMode(.middle)
+                        Label { Text(project.name).lineLimit(1).truncationMode(.middle) } icon: { InterfaceIconView(icon: .projects, size: InterfaceIconSize.regular) }
                     }.accessibilityLabel("Edit project \(project.name)").help(project.name)
                     Menu {
                         Button("Add files to this chat", action: pickFiles)
                         Button("Work in a folder…", action: pickFolder)
                         Button("Manage project files") { managingProjectFiles = project }
                     } label: {
-                        Label("Files", systemImage: "doc.on.doc")
+                        Label { Text("Files") } icon: { InterfaceIconView(icon: .document, size: InterfaceIconSize.regular) }
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .accessibilityLabel("Files for \(project.name)")
                     Button { store.section = .integrations } label: {
-                        Label("Plugins", systemImage: "puzzlepiece.extension")
+                        Label { Text("Plugins") } icon: { InterfaceIconView(icon: .plugins, size: InterfaceIconSize.regular) }
                     }
                     Spacer(minLength: 0)
                 }
@@ -1285,26 +1291,27 @@ struct ComposerField: View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = store.attachmentError {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 11))
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.small)
                     Text(error).font(.system(size: 11))
                     Button {
                         store.attachmentError = nil
                     } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
             if let error = store.grantError {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.small)
                     Text(error).font(.system(size: 11))
                     Button { store.grantError = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
                 }
                 .foregroundStyle(Theme.textSecondary)
             }

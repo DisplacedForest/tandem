@@ -44,7 +44,7 @@ extension SelfTest {
         try require(leftShown.card.stop == leftSaved.stop && leftShown.card.why == leftWhy && leftShown.card.milestone.isEmpty
                         && leftShown.card.answer == nil && leftShown.artifact == nil,
                     "The card for a step left to you carries the step and the reason, with no summary, answer or document")
-        try require(leftShown.card.statusTitle == RefusalCopy.needsYou && leftShown.card.needsYou && leftShown.card.statusSymbol == "hand.raised",
+        try require(leftShown.card.statusTitle == RefusalCopy.needsYou && leftShown.card.needsYou && leftShown.card.statusIcon == .needsYou,
                     "A step left to you reads Needs you: \(leftShown.card.statusTitle)")
         let leftPanel = CompanionOverviewModel.taskItem(card: leftShown.card, reference: leftShown.reference, decision: nil, hasArtifact: false, date: Date())
         try require(leftPanel.state == RefusalCopy.needsYou && OngoingWork.item(leftShown.reference).state == RefusalCopy.needsYou
@@ -108,7 +108,7 @@ extension SelfTest {
                         && declined.card.answer == nil && declined.card.milestone.isEmpty,
                     "A declined step shows the step with no document, even when the classifier would keep one")
         try require(declined.card.statusTitle == NativeTaskCardPresentation.workStopped && !declined.card.needsYou
-                        && declined.card.statusSymbol == NativeTaskCardPresentation.Status.stopped.symbol,
+                        && declined.card.statusIcon == NativeTaskCardPresentation.Status.stopped.icon,
                     "A declined step reads Work stopped: \(declined.card.statusTitle)")
         let declinedPanel = CompanionOverviewModel.taskItem(card: declined.card, reference: declined.reference, decision: nil, hasArtifact: false, date: Date())
         try require(declinedPanel.state == NativeTaskCardPresentation.workStopped

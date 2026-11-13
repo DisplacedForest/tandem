@@ -8,7 +8,7 @@ struct NativePiSessionStatus: View {
         VStack(alignment: .leading, spacing: 8) {
             if let session = assistant.session {
                 if let error = session.error {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                    Label { Text(error) } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.regular) }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
                 if let pendingID = session.pendingID, !session.busy {

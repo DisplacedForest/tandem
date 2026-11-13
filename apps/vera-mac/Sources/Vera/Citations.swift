@@ -123,8 +123,7 @@ struct SourcesRow: View {
                     Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
                     Spacer()
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: expanded ? .collapse : .expand, size: InterfaceIconSize.small).foregroundStyle(Theme.textSecondary)
                 }
                 .padding(.vertical, 12)
                 .contentShape(Rectangle())

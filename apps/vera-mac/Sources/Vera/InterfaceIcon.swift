@@ -24,6 +24,59 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     case update
     case clear
     case pin
+    case close
+    case info
+    case warning
+    case connect
+    case attach
+    case folder
+    case research
+    case document
+    case image
+    case reminders
+    case rules
+    case tool
+    case voice
+    case dictate
+    case dictating
+    case send
+    case stop
+    case done
+    case stopped
+    case paused
+    case question
+    case failed
+    case needsYou
+    case declined
+    case refused
+    case timedOut
+    case terminal
+    case edit
+    case fileAdded
+    case moved
+    case folderAdded
+    case trash
+    case link
+    case copy
+    case reply
+    case selectText
+    case addReaction
+    case good
+    case goodChosen
+    case bad
+    case badChosen
+    case expand
+    case collapse
+    case next
+    case back
+    case choose
+    case latest
+    case bridged
+    case withheld
+    case checkboxOn
+    case checkboxOff
+    case radioOn
+    case radioOff
 
     var resource: String {
         switch self {
@@ -49,6 +102,59 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
         case .update: "interface-update"
         case .clear: "interface-clear"
         case .pin: "interface-pin"
+        case .close: "interface-close"
+        case .info: "interface-info"
+        case .warning: "interface-warning"
+        case .connect: "interface-connect"
+        case .attach: "interface-attach"
+        case .folder: "interface-folder"
+        case .research: "interface-research"
+        case .document: "interface-document"
+        case .image: "interface-image"
+        case .reminders: "interface-reminders"
+        case .rules: "interface-rules"
+        case .tool: "interface-tool"
+        case .voice: "interface-voice"
+        case .dictate: "interface-dictate"
+        case .dictating: "interface-dictating"
+        case .send: "interface-send"
+        case .stop: "interface-stop"
+        case .done: "interface-done"
+        case .stopped: "interface-stopped"
+        case .paused: "interface-paused"
+        case .question: "interface-question"
+        case .failed: "interface-failed"
+        case .needsYou: "interface-needs-you"
+        case .declined: "interface-declined"
+        case .refused: "interface-refused"
+        case .timedOut: "interface-timed-out"
+        case .terminal: "interface-terminal"
+        case .edit: "interface-edit"
+        case .fileAdded: "interface-file-added"
+        case .moved: "interface-moved"
+        case .folderAdded: "interface-folder-added"
+        case .trash: "interface-trash"
+        case .link: "interface-link"
+        case .copy: "interface-copy"
+        case .reply: "interface-reply"
+        case .selectText: "interface-select-text"
+        case .addReaction: "interface-add-reaction"
+        case .good: "interface-good"
+        case .goodChosen: "interface-good-chosen"
+        case .bad: "interface-bad"
+        case .badChosen: "interface-bad-chosen"
+        case .expand: "interface-expand"
+        case .collapse: "interface-collapse"
+        case .next: "interface-next"
+        case .back: "interface-back"
+        case .choose: "interface-choose"
+        case .latest: "interface-latest"
+        case .bridged: "interface-bridged"
+        case .withheld: "interface-withheld"
+        case .checkboxOn: "interface-checkbox-on"
+        case .checkboxOff: "interface-checkbox-off"
+        case .radioOn: "interface-radio-on"
+        case .radioOff: "interface-radio-off"
         }
     }
 
@@ -59,6 +165,53 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     @MainActor var menuImage: Image? {
         InterfaceIconCache.shared.menuImage(resource).map { Image(nsImage: $0) }
     }
+}
+
+enum InterfaceIconCandidate: String, CaseIterable, Sendable {
+    case connectStatus
+    case researchTelescope
+    case remindersList
+    case rulesShield
+    case declinedHand
+    case refusedShield
+    case timedOutStopwatch
+    case fileAddedBlank
+    case movedForward
+    case replyLeft
+
+    var role: InterfaceIcon {
+        switch self {
+        case .connectStatus: .connect
+        case .researchTelescope: .research
+        case .remindersList: .reminders
+        case .rulesShield: .rules
+        case .declinedHand: .declined
+        case .refusedShield: .refused
+        case .timedOutStopwatch: .timedOut
+        case .fileAddedBlank: .fileAdded
+        case .movedForward: .moved
+        case .replyLeft: .reply
+        }
+    }
+
+    var resource: String {
+        switch self {
+        case .connectStatus: "interface-connect-status"
+        case .researchTelescope: "interface-research-telescope"
+        case .remindersList: "interface-reminders-list"
+        case .rulesShield: "interface-rules-shield"
+        case .declinedHand: "interface-declined-hand"
+        case .refusedShield: "interface-refused-shield"
+        case .timedOutStopwatch: "interface-timed-out-stopwatch"
+        case .fileAddedBlank: "interface-file-added-blank"
+        case .movedForward: "interface-moved-forward"
+        case .replyLeft: "interface-reply-left"
+        }
+    }
+
+    var url: URL? { VeraResources.url(resource, ext: "svg") }
+
+    @MainActor var image: NSImage? { InterfaceIconCache.shared.image(resource) }
 }
 
 enum InterfaceIconSize {
@@ -107,6 +260,11 @@ struct InterfaceIconView: View {
 
     init(icon: InterfaceIcon, size: CGFloat = InterfaceIconSize.regular) {
         resource = icon.resource
+        self.size = size
+    }
+
+    init(candidate: InterfaceIconCandidate, size: CGFloat = InterfaceIconSize.regular) {
+        resource = candidate.resource
         self.size = size
     }
 

@@ -25,7 +25,7 @@ struct VeraAskCard: View {
 
             if message.answered {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).font(.system(size: 13))
+                    InterfaceIconView(icon: .done, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)
                     Text(message.answerText ?? "").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 }
             } else {
@@ -48,13 +48,16 @@ struct VeraAskCard: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
     }
 
+    static func optionIcon(on: Bool, multiSelect: Bool) -> InterfaceIcon {
+        multiSelect ? (on ? .checkboxOn : .checkboxOff) : (on ? .radioOn : .radioOff)
+    }
+
     private func optionRow(_ opt: VeraAskOption) -> some View {
         let on = selected.contains(opt.label)
         return Button { toggle(opt.label) } label: {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: on ? (ask.multiSelect ? "checkmark.square.fill" : "largecircle.fill.circle")
-                                     : (ask.multiSelect ? "square" : "circle"))
-                    .font(.system(size: 14)).foregroundStyle(on ? Theme.accent : Theme.textSecondary)
+                InterfaceIconView(icon: Self.optionIcon(on: on, multiSelect: ask.multiSelect), size: InterfaceIconSize.regular)
+                    .foregroundStyle(on ? Theme.accent : Theme.textSecondary)
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(opt.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
@@ -78,7 +81,7 @@ struct VeraAskCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Button { otherOpen.toggle() } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: otherOpen ? "chevron.down" : "plus").font(.system(size: 11, weight: .semibold))
+                    InterfaceIconView(icon: otherOpen ? .expand : .add, size: InterfaceIconSize.small)
                     Text("Other").font(.system(size: 12, weight: .medium))
                     Spacer(minLength: 0)
                 }.foregroundStyle(Theme.textSecondary)

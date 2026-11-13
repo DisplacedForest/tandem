@@ -13,7 +13,7 @@ struct NativeTaskCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(statusTitle ?? card.statusTitle, systemImage: card.statusSymbol)
+            Label { Text(statusTitle ?? card.statusTitle) } icon: { InterfaceIconView(icon: card.statusIcon, size: InterfaceIconSize.small) }
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
             Text(card.title)
@@ -151,7 +151,7 @@ struct NativeDisplayBlocksView: View {
                 case .link(let link):
                     if let destination = link.destination {
                         Link(destination: destination) {
-                            Label(link.title, systemImage: "link")
+                            Label { Text(link.title) } icon: { InterfaceIconView(icon: .link, size: InterfaceIconSize.regular) }
                                 .font(.system(size: 13, weight: .medium))
                                 .lineLimit(2)
                         }

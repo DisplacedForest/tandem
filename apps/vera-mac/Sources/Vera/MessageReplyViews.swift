@@ -6,15 +6,14 @@ struct ComposerReplyBar: View {
     var body: some View {
         if let pending = store.shownPendingReply {
             HStack(spacing: 6) {
-                Image(systemName: MessageReplyCopy.symbol)
-                    .font(.system(size: 11))
+                InterfaceIconView(icon: MessageReplyCopy.icon, size: InterfaceIconSize.small)
                 Text(pending.quote)
                     .font(.system(size: 11))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
                 Button { store.cancelReply() } label: {
-                    Image(systemName: MessageReplyCopy.cancelSymbol).font(.system(size: 9, weight: .semibold))
+                    InterfaceIconView(icon: MessageReplyCopy.cancelIcon, size: InterfaceIconSize.mark)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(MessageReplyCopy.cancel)
