@@ -923,6 +923,8 @@ enum NativeMemoryGate {
         guard leaked.isEmpty else { throw NativeMemoryGateError.setup("report", "report contains memory content") }
     }
 
+    static var reportsDirectory: URL { AppLocations.current.reports }
+
     static func live() async -> Int32 {
         let config = ConfigStore(writeConfiguration: { _ in })
         guard let chat = config.nativeResolved else {
@@ -948,9 +950,7 @@ enum NativeMemoryGate {
                                                 memoryEndpointHost: endpoint.baseURL.host ?? "", settings: settings)
         do {
             let report = try await run(driver: driver)
-            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Vera", isDirectory: true).appendingPathComponent("reports", isDirectory: true)
-            let files = try write(report, to: directory)
+            let files = try write(report, to: reportsDirectory)
             print(summary(report))
             print("memory-gate: report written to \(files.json.path) and \(files.markdown.path)")
             return exitStatus(report)

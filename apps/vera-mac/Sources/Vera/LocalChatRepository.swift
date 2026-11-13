@@ -55,16 +55,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     let database: DatabaseQueue
     let artifactDirectory: URL
     let projectsDirectory: URL
+    let createdThisLaunch: Bool
 
-    static var defaultURL: URL {
-        let directory: URL
-        if let override = ProcessInfo.processInfo.environment["VERA_CONFIG_DIR"], !override.isEmpty {
-            directory = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera", isDirectory: true)
-        }
-        return directory.appendingPathComponent("vera.sqlite")
-    }
+    static var defaultURL: URL { AppLocations.current.database }
 
     convenience init() throws {
         try self.init(url: Self.defaultURL)
@@ -72,8 +65,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealDataInHeadlessRun(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
+        createdThisLaunch = !FileManager.default.fileExists(atPath: url.path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var configuration = Configuration()
         configuration.busyMode = .timeout(0.25)
@@ -85,8 +80,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(inMemory: Bool, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        for location in [artifactDirectory, projectsDirectory] { AppLocations.refuseRealDataInHeadlessRun(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
+        createdThisLaunch = true
         database = try DatabaseQueue()
         try migrate()
         try recoverInterruptedMessages()

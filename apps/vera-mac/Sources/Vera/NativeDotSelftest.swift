@@ -3,13 +3,25 @@ import Foundation
 @MainActor
 extension SelfTest {
     static func runNativeDot() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("vera-dot-parent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try await runNativeDot(within: parent)
+        try NativeTaskFixture.require(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty,
+                                      "The dot check leaves nothing behind in its scratch folder")
+    }
+
+    private static func runNativeDot(within parent: URL) async throws {
         let require = NativeTaskFixture.require
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vera-dot-\(UUID().uuidString)")
+        let folder = parent.appendingPathComponent("vera-dot-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("vera.sqlite")
-        let repository = try LocalChatRepository(url: url)
+        let artifacts = folder.appendingPathComponent("artifacts", isDirectory: true)
+        let repository = try LocalChatRepository(url: url, artifactDirectory: artifacts,
+                                                 projectsDirectory: folder.appendingPathComponent("projects", isDirectory: true))
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
-                              nativeAssistantName: "Ada", artifactPersistenceEnabled: false)
+                              nativeAssistantName: "Ada", attachmentStore: NativeAttachmentStore(directory: artifacts),
+                              artifactPersistenceEnabled: false)
         await store.connect()
         store.nativeSchedulerLoop?.cancel()
         await store.nativeSchedulerLoop?.value
@@ -174,6 +186,8 @@ extension SelfTest {
         let threadArtifact = try repository.recordArtifact(ArtifactDraft(
             kind: .document, title: "Greenhouse note", conversationID: veraID, originTitle: "Ada", messageID: nil,
             sourceKey: "dot:note", data: Data("# Note".utf8), mime: "text/markdown", fileExtension: "md"), revising: nil)
+        try require(!(try FileManager.default.contentsOfDirectory(atPath: artifacts.path)).isEmpty,
+                    "The dot check writes its artifact file into its own scratch folder")
 
         let summary = store.dotRemovalSummary()
         try require(summary.messages == 3 && summary.memories == 1 && summary.proposals == 1 && summary.schedules == 1

@@ -515,6 +515,7 @@ enum SelfTest {
         do { try await runTaskEngine() }
         catch { print("SELFTEST ERROR: task engine \(error)"); exit(1) }
         runNativeMedia()
+        do { try AppLocationsSelftest.run() } catch { print("SELFTEST ERROR: data locations \(error)"); exit(1) }
         await runCapabilityRouting()
         await runPulseContinuation()
         runKnowledge()
@@ -2064,7 +2065,14 @@ enum SelfTest {
             }
             let orphanURL = directory.appendingPathComponent("orphan.png")
             try pngData.write(to: orphanURL)
-            store.sweepOrphans(keeping: referenced)
+            let scratchDatabase = directory.appendingPathComponent("media.sqlite")
+            guard let permit = StartupCleanup.decide(StartupCleanup.Inputs(
+                overrideInEffect: false, runsFromAppBundle: true, database: scratchDatabase, databaseCreatedThisLaunch: false,
+                mentionedFileCount: referenced.count, folder: store.directory, folderHasFiles: true,
+                resolvedDatabase: scratchDatabase, resolvedFolder: store.directory)) else {
+                print("SELFTEST ERROR: native media clean-up permit"); exit(1)
+            }
+            store.sweepOrphans(keeping: referenced, permit: permit)
             guard !FileManager.default.fileExists(atPath: orphanURL.path),
                   store.image(for: fileName) != nil else {
                 print("SELFTEST ERROR: native media orphan sweep"); exit(1)

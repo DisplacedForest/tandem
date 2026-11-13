@@ -37,7 +37,7 @@ Remote URL and Off unregister the local engine and remove its login job. They pr
 
 An engine update verifies its download and stages the executable before stopping the current version. It retains the previous executable and launch settings until the new version answers its health check. Failed starts restore that previous version. An interrupted activation leaves a recovery record so reopening Tandem in Local mode restores the previous settings before trying another update. If recovery fails, Tandem keeps the recovery files and reports the failure. Binary rollback does not reverse changes an engine has already made to its data.
 
-An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its job file, using a separate launchd identity. Its job file stays under that root and is started explicitly by the app. This isolates engine storage, not Keychain credentials or every other app service.
+With `VERA_CONFIG_DIR` set, the app keeps what it stores inside that folder: its database and `config.json`, the engine's binaries, data, logs and job file (under a separate launchd identity, started explicitly by the app), and a `data` folder that holds attachments, project files, the assistant's files and memory check reports. Nothing in the default locations, `~/.vera` and the app's Application Support folder, is read, written or removed. The setting doesn't separate Keychain entries or app preferences, so a run with it still uses the same saved credentials and preferences as a normal run.
 
 ### Run the engine without Docker (macOS arm64)
 
@@ -393,7 +393,7 @@ Not included: indexing file contents and App Sandbox entitlements.
 
 The **Library** destination in the rail lists everything the app produces: documents, research reports, generated images, file changes made in shared folders (created, edited, moved and trashed files, but not folder creation) and canvas pieces. Opening one shows it natively, and Revise sends your change request back into the conversation it came from. A reply that produces the same kind of artifact becomes the next version, and every version stays viewable and savable.
 
-All artifacts live in one store in the app's local database next to the conversations. File bytes, such as images and document files, are kept in the app's attachments directory under Application Support, so artifacts survive a relaunch. The app does not remove files from the attachments directory when it starts.
+All artifacts live in one store in the app's local database next to the conversations. File bytes, such as images and document files, are kept in the app's attachments directory under Application Support, so artifacts survive a relaunch. When the app starts, it removes files in that directory that no conversation or artifact mentions. It does this only when running as the packaged app, only for its own default database and attachments directory, only when that database existed before this launch, and never when the database mentions no files at all. A new or empty database, a `VERA_CONFIG_DIR` run and a test run never clean up, and the clean-up removes plain files only, never folders or links.
 
 The first launch after the upgrade imports the earlier canvas library, `artifacts.json` in the app's Application Support folder, as canvas artifacts and renames the original to `artifacts-migrated.json`, which stays as a backup. The import runs once. Editing a canvas piece's source in the side panel is no longer saved, so revise it from chat.
 

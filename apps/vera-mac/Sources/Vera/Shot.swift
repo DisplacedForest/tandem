@@ -658,9 +658,11 @@ enum Shot {
               let tiff = nsImage.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else {
+            CompanionShotFixture.removeLeftovers()
             FileHandle.standardError.write(Data("render failed\n".utf8))
             exit(1)
         }
+        CompanionShotFixture.removeLeftovers()
         do {
             try png.write(to: URL(fileURLWithPath: path))
             print("wrote \(path)")
@@ -1631,9 +1633,23 @@ private struct ShotCompanionStates: View {
 
 @MainActor
 enum CompanionShotFixture {
+    private static var leftovers: (suites: [String], folders: [URL]) = ([], [])
+
+    static func removeLeftovers() {
+        let preferences = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences", isDirectory: true)
+        for suite in leftovers.suites {
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+            CFPreferencesAppSynchronize(suite as CFString)
+            try? FileManager.default.removeItem(at: preferences.appendingPathComponent(suite + ".plist"))
+        }
+        for folder in leftovers.folders { try? FileManager.default.removeItem(at: folder) }
+        leftovers = ([], [])
+    }
+
     static func store() -> ChatStore {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("tandem-companion-shot-\(UUID().uuidString.lowercased())", isDirectory: true)
+        leftovers.folders.append(root)
         let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
         try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         guard let repository = try? LocalChatRepository(inMemory: true, artifactDirectory: artifacts) else { return ChatStore() }
@@ -1641,7 +1657,9 @@ enum CompanionShotFixture {
             nativeConfig: nil, nativeTransport: nil, repository: repository,
             attachmentStore: NativeAttachmentStore(directory: artifacts),
             artifactPersistenceEnabled: false)
-        store.companionDefaults = UserDefaults(suiteName: "tandem-companion-shot-\(UUID().uuidString)") ?? .standard
+        let suite = "tandem-companion-shot-\(UUID().uuidString)"
+        leftovers.suites.append(suite)
+        store.companionDefaults = UserDefaults(suiteName: suite) ?? .standard
         store.ensureVeraThread()
         guard let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) else { return store }
         let now = Date()
