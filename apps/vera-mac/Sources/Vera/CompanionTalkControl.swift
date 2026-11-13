@@ -151,6 +151,12 @@ enum CompanionTalkTools {
         }
     }
 
+    static let endingChoice = "stop"
+
+    static func checkable(_ said: String) -> Bool {
+        said.count <= NativeInstructionCheck.saidLimit
+    }
+
     static func firstInReply() -> Bool {
         let roundOne = NativeToolCallContext.round == 1
         let nothingBefore = NativeToolCallContext.replyCallOrdinal == 0
@@ -220,6 +226,15 @@ enum CompanionTalkCopy {
     static let invalid = "Nothing was changed. Give one item code from the current list, and for an answer, one of its listed answers."
     static let notGoing = "Nothing was changed. That one isn't going right now, so there's nothing to stop. Say so plainly."
     static let alreadyStopping = "Nothing was changed. That one is already stopping. Say so plainly."
+    static let tooLong = "Nothing was changed. The message is too long to be sure what it asks. Ask the person to say it again in a short message."
+    static let answeredAndEnds = "The answer is saved, and it ends there."
+    static let underWayLead = "Something that was under way when it stopped"
+
+    static func underWay(_ target: String?) -> String {
+        let name = (target ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? underWayLead : underWayLead + ": " + CompanionTalkTools.clipped(name, CompanionTalkTools.noteLimit)
+    }
+
     static let unclear = "Nothing was changed. It isn't clear which one the person means. Ask which one, using the list you were given for this reply, and call nothing until they say."
     static let startedAfter = "Nothing was changed. That one started after the person's message, so ask them to say it again if they mean it."
     static let alreadyFinished = "Nothing was changed. That one had already finished before the stop arrived. Say so plainly."
@@ -239,12 +254,12 @@ enum CompanionTalkCopy {
     static let couldNotAnswer = "Nothing was changed. The answer couldn't be saved just now. Tell the person and suggest trying again."
 
     static let couldNotStart = "it couldn't start"
-    static let reasons = ["request_limit": "it used up its limit of model requests", "input_limit": "what it was given was too large",
+    static let reasons = ["input_limit": "what it was given was too large",
                           "request_conflict": "it couldn't be picked up again safely"]
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
                                            notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
-                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
+                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, tooLong, answeredAndEnds, underWayLead, stoppedBeforeAnswer, stoppedAfterAnswer, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 
     static func line(_ entry: CompanionTalkEntry) -> String {

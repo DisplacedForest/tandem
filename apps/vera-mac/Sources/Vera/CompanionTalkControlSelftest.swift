@@ -304,6 +304,8 @@ enum CompanionTalkControlFixture {
         try await startedAfterMessage()
         try await newerStopSnapshot()
         try await sameTitleStaysUnsure()
+        try await underWayAtStop()
+        try await tooLongToCheck()
         try await notFirst()
         try await workCallOrder()
         try await oldHandles()
@@ -792,6 +794,54 @@ enum CompanionTalkControlFixture {
         let listsBoth = result.contains("already_done") && result.contains("may_have_happened")
         try require(listsBoth && result.contains("\"changed\":true"),
                     "A second action with the same title that may have happened is still reported: \(result)")
+    }
+
+    static func underWayAtStop() async throws {
+        let require = NativeTaskFixture.require
+        let ask = "Stop the library comparison right now."
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I've stopped.") }
+            if user == ask { return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries"))]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let work = try await start(harness, libraries)
+        try await settle(harness, work, .going)
+        try await eventually("The work is running") { (try? engineRecord(harness, work))??.state == .running }
+        guard let remote = try harness.repository.taskReference(id: work.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work has a remote") }
+        let ledger = NativeEffectLedgerStore(database: harness.repository.database)
+        let expires = Int64((Date().timeIntervalSince1970 + 600) * 1000)
+        let proposal = NativeEffectProposal(id: UUID().uuidString, taskID: remote, generation: 1, toolID: "notes", function: "write_note",
+                                            argumentsJSON: "{}", target: "reading-list.txt", action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
+                                            conversationID: harness.threadID, expiresAtMilliseconds: expires, idempotencyKey: UUID().uuidString)
+        _ = try ledger.propose(proposal)
+        try await harness.repository.database.write { db in
+            try db.execute(sql: "UPDATE native_effect_ledger SET state = 'admitted' WHERE task_id = ?", arguments: [remote])
+        }
+        let reply = try await send(harness, ask)
+        let result = results(reply).first ?? ""
+        let warns = result.contains("may_have_happened") && result.contains(CompanionTalkCopy.underWayLead) && result.contains("reading-list.txt")
+        try require(warns && result.contains("\"changed\":true"), "An action still under way at the stop is reported as possibly done: \(result)")
+        try require(CompanionTalkCopy.underWay(nil) == CompanionTalkCopy.underWayLead, "An action with no name still gets a plain line")
+    }
+
+    static func tooLongToCheck() async throws {
+        let require = NativeTaskFixture.require
+        let ask = "Stop the library comparison right now. " + String(repeating: "Keep the rest going. ", count: 120)
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I can't be sure.") }
+            if user == ask { return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries"))]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let work = try await start(harness, libraries)
+        try await settle(harness, work, .going)
+        let reply = try await send(harness, ask)
+        let result = results(reply).first ?? ""
+        let longer = ask.count > NativeInstructionCheck.saidLimit
+        let untouched = !(try stopRequested(harness, work)) && harness.veto.calls.isEmpty
+        try require(longer && result.contains(CompanionTalkCopy.tooLong) && untouched,
+                    "A message too long for the check to read whole changes nothing: \(result)")
     }
 
     static func notFirst() async throws {
