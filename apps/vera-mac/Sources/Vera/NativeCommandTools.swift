@@ -38,7 +38,7 @@ struct NativeCommandRun: Codable, Equatable, Hashable, Identifiable, Sendable {
             if let exitCode { return exitCode == 0 ? "Finished in \(durationText)" : "Exit status \(exitCode) after \(durationText)" }
             if let signal { return "Ended by signal \(signal) after \(durationText)" }
             return "Finished in \(durationText)"
-        case .timedOut: return "Stopped after \(durationText) because it reached its time limit"
+        case .timedOut: return "Stopped after \(durationText) because the command took too long"
         case .canceled: return "Stopped by you after \(durationText)"
         case .declined: return "You declined it, so it was not run"
         case .refused: return note ?? "It was not run"
@@ -317,7 +317,7 @@ enum NativeCommandTools {
         ]
         if let exitCode = run.exitCode { object["exit_code"] = .number(Double(exitCode)) }
         if let signal = run.signal { object["signal"] = .number(Double(signal)) }
-        if run.outcome == .timedOut { object["error"] = .string("The command reached its time limit and was stopped") }
+        if run.outcome == .timedOut { object["error"] = .string("The command took too long and was stopped") }
         if run.outcome == .canceled { object["error"] = .string("The command was stopped by the user") }
         return .object(object)
     }

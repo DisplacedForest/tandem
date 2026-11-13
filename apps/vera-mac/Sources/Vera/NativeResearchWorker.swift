@@ -152,7 +152,7 @@ enum NativeResearchWorker {
     static let maximumSources = 14
     static let perSourceCharacters = 1500
     static let stepTimeoutSeconds: Double = 240
-    static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given.\n- At the step limit, give your final answer from what is established, never from guesses."
+    static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given."
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
         "\(identity.opening), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else. " + NativeTaskDelivery.notePrompt
