@@ -56,24 +56,28 @@ enum CompanionHoldTools {
 
     static func carried(reference: NativeTaskReference, firstAsked: String?, snapshots: [NativeTaskSnapshot],
                         done: [String], unsure: [String]) -> NativeCompanionCarried {
+        func bounded(_ text: String, _ limit: Int) -> String {
+            String(String.UnicodeScalarView(text.unicodeScalars.prefix(limit)))
+        }
         let before = reference.request.dot?.carried
         let typed = reference.request.dot?.typedRequest ?? ""
         let asked = before?.request ?? [firstAsked ?? "", typed, reference.request.objective].first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
         let newest = snapshots.last
         var sources: [NativeTaskSource] = []
         for source in (newest?.checkpoint.sources ?? []) + (before?.sources ?? []) where !sources.contains(where: { $0.n == source.n }) {
-            let fits = source.title.unicodeScalars.count <= NativeCompanionCarried.titleLimit && source.url.utf8.count <= 8192
-            if fits, sources.count < NativeCompanionCarried.sourceLimit { sources.append(source) }
+            guard source.url.utf8.count <= 8192, sources.count < NativeCompanionCarried.sourceLimit else { continue }
+            sources.append(NativeTaskSource(n: source.n, title: bounded(source.title, NativeCompanionCarried.titleLimit),
+                                            url: source.url, read: source.read))
         }
-        let note = newest?.checkpoint.note.map { CompanionTalkTools.clipped($0.text, NativeCompanionCarried.noteLimit) }
+        let note = newest?.checkpoint.note.map { bounded(CompanionTalkTools.clipped($0.text, NativeCompanionCarried.noteLimit), NativeCompanionCarried.noteLimit) }
         func kept(_ titles: [String]) -> [String] {
             var seen: [String] = []
-            for title in titles.map({ CompanionTalkTools.clipped($0, NativeCompanionCarried.titleLimit) }) where !seen.contains(title) && !title.isEmpty {
+            for title in titles.map({ bounded(CompanionTalkTools.clipped($0, NativeCompanionCarried.titleLimit), NativeCompanionCarried.titleLimit) }) where !seen.contains(title) && !title.isEmpty {
                 if seen.count < NativeCompanionCarried.effectLimit { seen.append(title) }
             }
             return seen
         }
-        return NativeCompanionCarried(request: String(String.UnicodeScalarView(asked.unicodeScalars.prefix(NativeCompanionCarried.requestLimit))),
+        return NativeCompanionCarried(request: bounded(asked, NativeCompanionCarried.requestLimit),
                                       note: note.flatMap { $0.isEmpty ? nil : $0 }, sources: sources,
                                       done: kept((before?.done ?? []) + done), unsure: kept((before?.unsure ?? []) + unsure))
     }
@@ -105,6 +109,7 @@ enum CompanionHoldCopy {
     static let resting = "Nothing was changed. You are paused, so nothing new can start. Tell the person to resume you and ask again."
     static let changed = "Changed. What you were doing before has stopped, and you are now doing the job as it stands, with what you had already found."
     static let stoppedOnly = "What you were doing before has stopped, but the changed job couldn't be started. Tell the person plainly and suggest asking for it again."
+    static let changedWorkCouldNotStart = "I couldn't start the changed work. Ask me for it again."
     static let changeSaved = "The change is saved. What you were doing before is finishing stopping, and the changed job starts by itself as soon as it has. Tell the person that in one line. They don't need to say it again."
     static let changeWithdrawn = "Stopped. The changed job was waiting to start and now won't. Say so plainly."
     static let changeResting = "The person changed this one. The changed job starts when you are resumed. Stopping this one now also drops the changed job."
@@ -284,7 +289,8 @@ extension ChatStore {
         }
         reloadNativeTaskReferences()
         guard let replacement = ((try? projection.taskReference(id: id)) ?? nil)?.replacedBy else {
-            outcome["result"] = .string(CompanionHoldCopy.changeSaved + tail)
+            let waiting = ((try? projection.taskReference(id: id)) ?? nil)?.pendingChange != nil
+            outcome["result"] = .string((waiting ? CompanionHoldCopy.changeSaved : CompanionHoldCopy.stoppedOnly) + tail)
             return .object(outcome)
         }
         let started = (try? projection.taskReference(id: replacement)) ?? nil
@@ -316,8 +322,14 @@ extension ChatStore {
             for title in unsaved.unsure where !unsure.contains(title) { unsure.append(title) }
             let carried = CompanionHoldTools.carried(reference: old, firstAsked: companionFirstAsked(old), snapshots: snapshots, done: done, unsure: unsure)
             let (profile, usable) = askedWorkProfile()
-            guard usable, !dotProfile.isPaused, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
-                                                                        said: change.said, carried: carried) else { continue }
+            guard usable, !dotProfile.isPaused else { continue }
+            let connected = dotProfile.connectedToolIDs?.sorted()
+            guard let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: connected, said: change.said, carried: carried) else {
+                _ = try? projection.withdrawTaskChange(id: old.id)
+                companionError = CompanionHoldCopy.changedWorkCouldNotStart
+                reloadNativeTaskReferences()
+                continue
+            }
             changesStarting.insert(old.id)
             _ = try? await service.submitChange(id: old.id, change: change, request: request, profile: profile)
             changesStarting.remove(old.id)

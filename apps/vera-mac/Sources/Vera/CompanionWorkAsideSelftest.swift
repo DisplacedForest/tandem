@@ -90,6 +90,7 @@ enum CompanionWorkAsideFixture {
         try await withdrawnBeforeSubmit()
         try await preparedThenRelaunched()
         try await ledgerOnlyActionCarried()
+        try await combiningActionCarried()
         try await changeRestsWhileCompanionPaused()
         try await tooLongForTools()
         try await cancelAfterGenerationMoved()
@@ -103,7 +104,7 @@ enum CompanionWorkAsideFixture {
         try await carriedOver()
         try sweep()
         try await withdrawnDuringOwnStart()
-        print("  companion work aside OK (put aside before it starts, put aside during a model request, put aside during an outside call, a run that ignores the hold, relaunch while put aside, pick back up, put aside while a question is waiting, pick up under a tightened rule, unknown saved state, stopping something put aside, pick up before the step ends, model requests skipped for held work, reservation refused while held, hold between the broker's look and reservation, interrupted request resumes, approval kept across a hold, read retry held, put aside by talking, two possible matches, pick back up by talking, pick up before the hold lands, change, change waits for the stop, change after a relaunch, change waits while the companion is paused, saved change withdrawn by stopping, refused replacement, withdrawn while another starts, replacement already started can only be stopped, starting a change is one step, withdrawn before the start, prepared then relaunched, action known only to the ledger is carried, saved change rests while the companion is paused, too long for the tools, canceled request after the work moved on, quick pick up of research, change to a long request, change that can't be built, change after it finished, changed work starts clean, not typed, not first, replayed turn, started after, injected text, ordinary chat, carried over, copy)")
+        print("  companion work aside OK (put aside before it starts, put aside during a model request, put aside during an outside call, a run that ignores the hold, relaunch while put aside, pick back up, put aside while a question is waiting, pick up under a tightened rule, unknown saved state, stopping something put aside, pick up before the step ends, model requests skipped for held work, reservation refused while held, hold between the broker's look and reservation, interrupted request resumes, approval kept across a hold, read retry held, put aside by talking, two possible matches, pick back up by talking, pick up before the hold lands, change, change waits for the stop, change after a relaunch, change waits while the companion is paused, saved change withdrawn by stopping, refused replacement, withdrawn while another starts, replacement already started can only be stopped, starting a change is one step, withdrawn before the start, prepared then relaunched, action known only to the ledger is carried, combining action is carried, saved change rests while the companion is paused, too long for the tools, canceled request after the work moved on, quick pick up of research, change to a long request, change that can't be built, change after it finished, changed work starts clean, not typed, not first, replayed turn, started after, injected text, ordinary chat, carried over, copy)")
     }
 
     nonisolated static func researchPayload(_ query: String = "Find the oldest oak in the park") throws -> Data {
@@ -1526,6 +1527,63 @@ enum CompanionWorkAsideFixture {
         try require(opening?.contains(expected) == true, "The replacement's first request names the carried action: \(String(describing: opening))")
     }
 
+    static func combiningActionCarried() async throws {
+        let ask = "Actually make it five libraries."
+        let released = CompanionTalkBox(false)
+        let harness = try await asideHarness(released: released, workers: { exchange in
+            ["companion": NativeTaskWorker(timeoutSeconds: 60) { item in
+                while !released.value {
+                    if (try? exchange.store.get(item.id))?.cancelRequested == true { break }
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                return NativeTaskStepResult(state: .queued, checkpoint: item.checkpoint)
+            }]
+        }, reply: changeReply(ask, "libraries"))
+        defer { Task { await finishAside(harness, released) } }
+        let old = try await Talk.start(harness, Talk.libraries)
+        try await Talk.settle(harness, old, .going)
+        try await Talk.eventually("The work is running") { (try? Talk.engineRecord(harness, old))??.state == .running }
+        let running = try record(harness, old)
+        let target = "/bin/echo " + String(repeating: "e\u{301}", count: 180)
+        let ledger = NativeEffectLedgerStore(database: harness.repository.database)
+        let proposal = NativeEffectProposal(id: UUID().uuidString.lowercased(), taskID: running.id, generation: running.generation,
+            toolID: "terminal", function: "run_command", argumentsJSON: "{}", target: target, action: .networkSends,
+            rulesRevision: 0, grantsRevision: 0, conversationID: harness.threadID,
+            expiresAtMilliseconds: NativeEffectProposal.expiry(from: Date()), idempotencyKey: "combining-action")
+        let made = try ledger.propose(proposal)
+        guard case .admitted(let admitted) = try ledger.admit(digest: made.digest, generation: running.generation,
+            rulesRevision: 0, grantsRevision: 0, decision: .act(.rule), decisionID: nil, reply: nil) else {
+            throw NativeTaskFixture.Failure.assertion("The action is admitted before the change")
+        }
+        try ledger.settle(digest: admitted.digest, receipt: .object(["sent": .bool(true)]), modelClaim: nil)
+        let records = try ledger.records(taskID: running.id)
+        try require(records.count == 1 && records[0].state == .completed && records[0].proposal.target == target,
+                    "The combining action is completed in the ledger")
+        let full = CompanionTalkCopy.justDone(target)
+        try require(full.count < NativeCompanionCarried.titleLimit && full.unicodeScalars.count > NativeCompanionCarried.titleLimit,
+                    "The action fits by characters but exceeds the scalar limit")
+        let reply = try await Talk.send(harness, ask)
+        try await poll("The replacement starts with the combining action") { try !replacements(harness).isEmpty }
+        let fresh = try replacements(harness)
+        try require(fresh.count == 1, "Exactly one replacement starts")
+        guard let carried = fresh[0].request.dot?.carried else {
+            throw NativeTaskFixture.Failure.assertion("The replacement carries what was already done")
+        }
+        try require(carried.valid, "The carried context is valid")
+        try require(carried.done.count == 1, "Exactly one completed entry is carried")
+        try require(carried.done[0].unicodeScalars.count <= NativeCompanionCarried.titleLimit,
+                    "The completed entry fits the scalar limit")
+        try require(carried.done[0].hasPrefix(CompanionTalkCopy.justDoneLead),
+                    "The completed entry describes the action from the ledger")
+        let saved = try harness.repository.taskReference(id: old.id)
+        try require(saved?.pendingChange == nil && saved?.replacedBy == fresh[0].id,
+                    "The saved change is consumed")
+        try require(saved?.snapshot?.checkpoint.effects.isEmpty == true,
+                    "The combining action is known only to the ledger")
+        try require(Talk.results(reply).first?.contains(CompanionHoldCopy.changed) == true,
+                    "The reply confirms that the replacement started")
+    }
+
     static func changeRestsWhileCompanionPaused() async throws {
         let ask = "Actually make it five libraries."
         let stop = "Never mind, stop the library research."
@@ -1939,7 +1997,8 @@ enum CompanionWorkAsideFixture {
     static func sweep() throws {
         let sample = NativeCompanionCarried(request: "Compare quiet reading spaces", note: "Two pages read",
                                             sources: [NativeTaskSource(n: 1, title: sourceTitle, url: sourceURL)], done: [doneTitle], unsure: ["Booked a room"])
-        let all = CompanionHoldCopy.modelSentences + [NativeTaskCardPresentation.setAsideLine, NativeTaskCardPresentation.newerLine,
+        let all = CompanionHoldCopy.modelSentences + [NativeTaskCardPresentation.setAsideLine, CompanionHoldCopy.changedWorkCouldNotStart,
+                  NativeTaskCardPresentation.newerLine,
                   NativeTaskCardPresentation.setAsideTitle, NativeTaskCardPresentation.pickUpTitle, CompanionActivityDetail.beforeLabel,
                   CompanionTalkPhase.setAside.words, CompanionTalkPhase.newer.words,
                   NativeTaskCardPresentation.Status.setAside.title, NativeTaskCardPresentation.Status.newer.title,
