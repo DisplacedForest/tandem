@@ -107,11 +107,12 @@ enum CompanionHoldCopy {
     static let stoppedOnly = "What you were doing before has stopped, but the changed job couldn't be started. Tell the person plainly and suggest asking for it again."
     static let changeSaved = "The change is saved. What you were doing before is finishing stopping, and the changed job starts by itself as soon as it has. Tell the person that in one line. They don't need to say it again."
     static let changeWithdrawn = "Stopped. The changed job was waiting to start and now won't. Say so plainly."
+    static let changeResting = "The person changed this one. The changed job starts when you are resumed. Stopping this one now also drops the changed job."
     static let changeWaiting = "The person changed this one. It is finishing stopping, and the changed job starts by itself as soon as it has. Stopping this one now also drops the changed job."
 
     static let modelSentences: [String] = [guide, setAsideDescription, pickUpDescription, changeDescription, setAsideTitle, pickUpTitle, changeTitle,
                                            invalid, invalidChange, notGoing, alreadyAside, newer, setAside, settingAside, couldNotSetAside, notAside,
-                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly, changeSaved, changeWaiting, changeWithdrawn,
+                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly, changeSaved, changeWaiting, changeResting, changeWithdrawn,
                                            NativeCompanionWorker.carriedLead]
 }
 
@@ -312,11 +313,14 @@ extension ChatStore {
             let (profile, usable) = askedWorkProfile()
             guard usable, !dotProfile.isPaused, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
                                                                         said: change.said, carried: carried) else { continue }
+            guard let live = (try? projection.taskReference(id: old.id)) ?? nil, live.pendingChange == change, live.replacedBy == nil else { continue }
             changesStarting.insert(old.id)
             let started = try? await service.submit(origin: change.origin, request: request, profile: profile)
             changesStarting.remove(old.id)
             guard let started else { continue }
-            _ = try? projection.markTaskReplaced(id: old.id, by: started.id)
+            if (try? projection.markTaskReplaced(id: old.id, by: started.id, change: change)) == nil {
+                await nativeTaskTracker?.cancel(started.id)
+            }
             reloadNativeTaskReferences()
         }
     }

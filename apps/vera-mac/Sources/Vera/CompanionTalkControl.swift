@@ -41,6 +41,7 @@ struct CompanionTalkEntry: Sendable, Equatable {
     let date: Double
     var canSetAside = false
     var canPickUp = false
+    var changePending = false
 
     var spokenTitles: [String] { spoken.keys.sorted() }
 

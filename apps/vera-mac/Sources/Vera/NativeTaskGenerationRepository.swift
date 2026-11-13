@@ -49,7 +49,7 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
               failure.map({ allowedFailures.contains($0) }) ?? true else { throw NativeTaskHTTPError.invalidResponse }
         try database.write { db in
             if failure == "canceled", let reference = try Self.readTaskReference(db, id: referenceID), !reference.cancelRequested,
-               try Self.generationHeld(db, reference: reference, running: false) {
+               try Self.generationHeld(db, reference: reference, running: false) || Self.generationMoved(db, reference: reference, job: job) {
                 try db.execute(sql: "DELETE FROM native_task_generations WHERE request_id = ? AND generation_key = ? AND state = 'reserved'",
                                arguments: [referenceID.uuidString, job.key])
                 return
@@ -72,6 +72,13 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
 }
 
 extension LocalChatRepository {
+    static func generationMoved(_ db: Database, reference: NativeTaskReference, job: NativeTaskGenerationJob) throws -> Bool {
+        guard let remote = reference.remoteTaskID, try db.tableExists("native_engine_tasks"),
+              let row = try Row.fetchOne(db, sql: "SELECT state, generation FROM native_engine_tasks WHERE id = ?", arguments: [remote]) else { return false }
+        let ended = [NativeTaskState.completed, .failed, .canceled].map(\.rawValue).contains(row["state"] as String)
+        return !ended && (row["generation"] as Int) != job.generation
+    }
+
     static func generationHeld(_ db: Database, reference: NativeTaskReference, running: Bool) throws -> Bool {
         guard let remote = reference.remoteTaskID, try db.tableExists("native_engine_tasks"),
               let row = try Row.fetchOne(db, sql: "SELECT state, pause_requested, cancel_requested FROM native_engine_tasks WHERE id = ?",

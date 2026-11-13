@@ -127,9 +127,10 @@ extension LocalChatRepository: NativeTaskRepository {
         try mutateTaskReference(id) { $0.cancelRequested = true }
     }
 
-    func markTaskReplaced(id: UUID, by replacement: UUID) throws -> NativeTaskReference {
+    func markTaskReplaced(id: UUID, by replacement: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference {
         try mutateTaskReference(id) { reference in
-            guard reference.cancelRequested, reference.replacedBy == nil || reference.replacedBy == replacement else {
+            if reference.replacedBy == replacement { return }
+            guard reference.cancelRequested, reference.replacedBy == nil, reference.pendingChange == change else {
                 throw NativeTaskError.persistenceUnavailable
             }
             reference.replacedBy = replacement
@@ -138,12 +139,25 @@ extension LocalChatRepository: NativeTaskRepository {
     }
 
     func withdrawTaskChange(id: UUID) throws -> Bool {
-        var withdrawn = false
-        _ = try mutateTaskReference(id) { reference in
-            withdrawn = reference.pendingChange != nil && reference.replacedBy == nil
-            if withdrawn { reference.pendingChange = nil }
+        try database.write { db in
+            guard var reference = try Self.readTaskReference(db, id: id), let change = reference.pendingChange, reference.replacedBy == nil else { return false }
+            reference.pendingChange = nil
+            try db.execute(sql: "UPDATE native_task_outbox SET reference_json = ? WHERE id = ?",
+                           arguments: [try nativeTaskEncoded(reference), id.uuidString])
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, reference_json FROM native_task_outbox WHERE conversation_id = ?
+                AND json_extract(CAST(reference_json AS TEXT), '$.origin.userMessageID') = ?
+                AND COALESCE(json_extract(CAST(reference_json AS TEXT), '$.origin.index'), 0) = ?
+                """, arguments: [change.origin.conversationID, change.origin.userMessageID.uuidString, change.origin.index ?? 0])
+            for row in rows {
+                guard let bytes: Data = row["reference_json"], var prepared = try? JSONDecoder().decode(NativeTaskReference.self, from: bytes),
+                      !prepared.cancelRequested else { continue }
+                prepared.cancelRequested = true
+                try db.execute(sql: "UPDATE native_task_outbox SET reference_json = ? WHERE id = ?",
+                               arguments: [try nativeTaskEncoded(prepared), row["id"] as String])
+            }
+            return true
         }
-        return withdrawn
     }
 
     func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference {

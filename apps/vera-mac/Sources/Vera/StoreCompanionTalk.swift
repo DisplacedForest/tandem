@@ -52,11 +52,11 @@ extension ChatStore {
         for reference in companionTalkReferences() {
             guard let entry = companionTalkEntry(reference) else { continue }
             let recent = entry.date >= since
-            guard entry.phase.ongoing || recent else { continue }
+            guard entry.phase.ongoing || recent || entry.changePending else { continue }
             drafted.append(entry)
         }
-        let ongoing = drafted.filter { $0.phase.ongoing }.sorted { $0.date > $1.date }
-        let ended = drafted.filter { !$0.phase.ongoing }.sorted { $0.date > $1.date }
+        let ongoing = drafted.filter { $0.phase.ongoing || $0.changePending }.sorted { $0.date > $1.date }
+        let ended = drafted.filter { !$0.phase.ongoing && !$0.changePending }.sorted { $0.date > $1.date }
         return Array((ongoing + ended).prefix(CompanionTalkTools.listLimit))
     }
 
@@ -84,7 +84,8 @@ extension ChatStore {
                 if approves || saves { buttonOnly[choiceTitle] = wire } else { spoken[choiceTitle] = wire }
             }
         }
-        let noteText = reference.pendingChange != nil ? CompanionHoldCopy.changeWaiting
+        let waitingNote = phase.ongoing ? CompanionHoldCopy.changeWaiting : CompanionHoldCopy.changeResting
+        let noteText = reference.pendingChange != nil ? waitingNote
             : (snapshot?.checkpoint.note?.text).map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         let date = snapshot?.updatedAt
             ?? conversations.first { $0.id == reference.origin.conversationID }?.messages.first { $0.id == reference.origin.userMessageID }?
@@ -93,8 +94,9 @@ extension ChatStore {
         return CompanionTalkEntry(referenceID: reference.id, what: what, phase: phase,
                                   why: phase == .couldNotFinish ? companionTalkWhy(reference, snapshot: snapshot) : nil,
                                   note: noteText.flatMap { $0.isEmpty ? nil : $0 }, question: question, decisionID: decisionID,
-                                  spoken: spoken, buttonOnly: buttonOnly, canStop: (card.canCancel || reference.pendingChange != nil) && phase.ongoing, date: date,
-                                  canSetAside: card.canSetAside == true && phase.ongoing, canPickUp: card.canPickUp == true)
+                                  spoken: spoken, buttonOnly: buttonOnly, canStop: (card.canCancel && phase.ongoing) || reference.pendingChange != nil, date: date,
+                                  canSetAside: card.canSetAside == true && phase.ongoing, canPickUp: card.canPickUp == true,
+                                  changePending: reference.pendingChange != nil)
     }
 
     private func companionTalkPhase(_ status: NativeTaskCardPresentation.Status, state: NativeTaskState?) -> CompanionTalkPhase {
