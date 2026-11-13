@@ -31,6 +31,12 @@ run = "python3 scripts/name-ratchet.py"
 [tasks.name-ratchet-test]
 run = "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_name_ratchet.py' -v"
 
+[tasks.words-ratchet]
+run = "python3 scripts/words-ratchet.py"
+
+[tasks.words-ratchet-test]
+run = "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_words_ratchet.py' -v"
+
 [tasks.lint]
 depends = ["leak-gate", "copy-check"]
 
@@ -68,7 +74,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "name-ratchet", "name-ratchet-test", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
+depends = ["lint", "name-ratchet", "name-ratchet-test", "words-ratchet", "words-ratchet-test", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
 
 [tasks.native-preferences-test]
 depends = ["mac-build"]

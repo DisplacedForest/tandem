@@ -265,7 +265,7 @@ extension SelfTest {
         try store.saveRun(claimedOnly)
         _ = await scheduler.tick()
         let claimedSaved = try store.run(claimedOnly.id)!
-        try require(claimedSaved.outcome == .couldNotStart && claimedSaved.detail.contains("never reached"), "A claimed occurrence that never fired keeps a truthful record")
+        try require(claimedSaved.outcome == .couldNotStart && claimedSaved.detail.contains("never got started"), "A claimed occurrence that never fired keeps a truthful record")
         try require(try store.heartbeat() == clock.now, "The heartbeat is recorded once the tick has classified its occurrences")
         log.status = .completed
         _ = await scheduler.tick()

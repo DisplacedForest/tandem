@@ -62,7 +62,7 @@ struct NativeTaskCardView: View {
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
                 .accessibilityLabel("Action details: " + details)
             }
-            if let note = card.connectionNote {
+            if let note = card.connectionNote.map(SavedWording.current) {
                 Text(note)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)

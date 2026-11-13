@@ -909,7 +909,7 @@ enum CompanionTalkControlFixture {
             switch user {
             case retry: return CompanionAskedWorkTransport.hand([answer(handle(messages, "vent"), "Retry"), answer(handle(messages, "vent"), "Retry")])
             case approve: return CompanionAskedWorkTransport.hand([answer(handle(messages, "folder"), "Allow once")])
-            case saving: return CompanionAskedWorkTransport.hand([answer(handle(messages, "folder"), "Always allow in this task")])
+            case saving: return CompanionAskedWorkTransport.hand([answer(handle(messages, "folder"), "Always allow for this")])
             default: return CompanionAskedWorkTransport.say("15")
             }
         }

@@ -29,11 +29,14 @@ actor NativeScheduler {
     static let defaultCatchUp: TimeInterval = 86_400
     static let missedHistoryCap = 24
     static let missedNote = "Tandem wasn't running at the scheduled time."
+    static let neverStartedNote = "The run never got started."
+    static let closedBeforeStartNote = "Tandem closed before this run could start."
+    static let refusedNote = "This run couldn't start."
     static let caughtUpNote = "Caught up after Tandem wasn't running at the scheduled time."
     static let retiredMissedNote = missedNote + " It will run next time as planned."
 
     static func shownNote(_ saved: String) -> String {
-        saved == retiredMissedNote ? missedNote : saved
+        saved == retiredMissedNote ? missedNote : SavedWording.current(saved)
     }
     static let waitingNote = "Waiting for your answer."
     static let blockedNote = "Open Tandem with the saved model profile so this run can continue."
@@ -198,8 +201,8 @@ actor NativeScheduler {
             guard let link = lookup(run) else {
                 if run.taskReferenceID == nil {
                     run.outcome = .couldNotStart
-                    run.detail = run.messageID == nil ? "The run never reached the task engine."
-                        : "Tandem closed before this run reached the task engine."
+                    run.detail = run.messageID == nil ? Self.neverStartedNote
+                        : Self.closedBeforeStartNote
                 } else {
                     run.outcome = .stopped
                     run.detail = "The chat that held this run is gone."

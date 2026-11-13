@@ -55,7 +55,7 @@ enum RuleRows {
     static let offMark = "Switched off"
     static let carriedOver = "Carried over from an earlier version"
     static let everywhere = "everywhere"
-    static let unnamedWork = "for background work"
+    static let unnamedWork = "for untitled work"
     static let fallbackTool = "this action"
 
     static func plain(_ text: String) -> String {
@@ -232,7 +232,7 @@ enum RuleRows {
 
     static func widenQuestion(_ record: NativeRuleRecord, tools: [String: String] = [:]) -> String? {
         guard widens(record), record.effect == .forbid else { return nil }
-        return "\(sentence(record, tools: tools)), in every chat and in background work?"
+        return "\(sentence(record, tools: tools)), everywhere?"
     }
 
     static func row(_ record: NativeRuleRecord, places: RulePlaces, now: Date, calendar: Calendar) -> RuleRow {

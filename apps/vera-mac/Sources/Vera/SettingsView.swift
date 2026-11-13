@@ -663,20 +663,27 @@ private struct ImageTab: View {
     }
 }
 
-private struct SearchTab: View {
+struct SearchTab: View {
+    static let savedOn = "Saved. Ask to search the web or start research in any chat."
+    static let pagesNote = "Searches run from this Mac against your own search server. Research also reads the pages it finds."
+
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var status: String?
+
+    init(status: String? = nil) {
+        _status = State(initialValue: status)
+    }
 
     var body: some View {
         Form {
             Section("Web search") {
                 ConfigField(label: "SearXNG URL", key: NativeWebSearch.configKey, placeholder: "http://my-search-host:8088",
-                            tip: "The SearXNG instance that answers web searches. Leave it empty to turn web search and background research off.")
+                            tip: "The SearXNG instance that answers web searches. Leave it empty to turn web search and research off.")
                 InlineTest(title: "Test search") {
                     try await ConnectionTest.search(base: config[NativeWebSearch.configKey])
                 }
-                Text("Searches run from this Mac against your own search server. Background research also reads the pages it finds.")
+                Text(Self.pagesNote)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
             Section {
@@ -705,7 +712,7 @@ private struct SearchTab: View {
             return
         }
         store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
-        status = configured ? "Saved. Ask to search the web or start background research in any chat." : "Saved. Web search is off."
+        status = configured ? Self.savedOn : "Saved. Web search is off."
     }
 }
 
@@ -863,7 +870,7 @@ private struct IdentityTab: View {
         Form {
             Section("Identity") {
                 ConfigField(label: "Assistant's name", key: "assistant_name", placeholder: "Name",
-                            tip: "How your assistant is named across chat and background work. Tandem is the app; this is the assistant.")
+                            tip: "How your assistant is named in chat and in work it does on its own. Tandem is the app; this is the assistant.")
                 ConfigField(label: "Your name", key: "owner_name", placeholder: "how your assistant greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
             }

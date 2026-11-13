@@ -417,32 +417,78 @@ extension NativeTaskDisplayFixture {
         try require(approveSnapshot.decision?.digest == digest, "A snapshot decision keeps its digest")
         let card = try repository.messages(conversationID: approve.origin.conversationID).last?.displayBlocks
             .compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
-        try require(NativeTaskCardPresentation.choiceTitle("approve") == "Allow once" && NativeTaskCardPresentation.choiceTitle("allow_here") == "Always allow in this task"
-                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Always allow everywhere" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow this in this task"
-                    && NativeTaskCardPresentation.choiceTitle("never_commands") == "Never run commands in this task"
+        try require(NativeTaskCardPresentation.choiceTitle("approve") == "Allow once" && NativeTaskCardPresentation.choiceTitle("allow_here") == "Always allow for this"
+                    && NativeTaskCardPresentation.choiceTitle("allow_always") == "Always allow everywhere" && NativeTaskCardPresentation.choiceTitle("never") == "Never allow it for this"
+                    && NativeTaskCardPresentation.choiceTitle("never_commands") == "Never run commands for this"
                     && NativeTaskCardPresentation.choiceTitle("allow_schedule") == "Always allow for this schedule" && NativeTaskCardPresentation.choiceTitle("decline") == "Decline"
                     && NativeTaskCardPresentation.choiceTitle("made_up") == nil, "Every card choice has a plain title and unknown ones have none")
-        let whole = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "This action every time", neverTitle: "Never allow this in this task")
+        let whole = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "This action every time", neverTitle: "Never allow it for this")
         try require(whole.allowTitle == "Allow" && whole.declineTitle == "Decline"
                     && whole.allowMenu.map(\.id) == ["allow_here", "allow_always"]
-                    && whole.allowMenu.map(\.title) == ["Always allow in this task", "Always allow everywhere"]
+                    && whole.allowMenu.map(\.title) == ["Always allow for this", "Always allow everywhere"]
                     && whole.allowMenu.allSatisfy { $0.note == "This action every time" }
-                    && whole.declineMenu.map(\.id) == ["never"] && whole.declineMenu[0].title == "Never allow this in this task" && whole.declineMenu[0].note == nil,
+                    && whole.declineMenu.map(\.id) == ["never"] && whole.declineMenu[0].title == "Never allow it for this" && whole.declineMenu[0].note == nil,
                     "A task card shows two answers, and each caret holds only the standing choices with what they cover")
         try require(!(whole.allowMenu + whole.declineMenu).contains { $0.id == "approve" || $0.id == "decline" },
                     "The one-time answers are the buttons themselves and never appear in a caret menu")
         let commands = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: "Commands that start with make pdf", neverTitle: "ignored")
-        try require(commands.declineMenu.map(\.id) == ["never_commands"] && commands.declineMenu[0].title == "Never run commands in this task"
+        try require(commands.declineMenu.map(\.id) == ["never_commands"] && commands.declineMenu[0].title == "Never run commands for this"
                     && commands.declineMenu[0].note == NativeCardChoices.neverHelp
-                    && commands.allowMenu[0].spoken == "Always allow in this task. Commands that start with make pdf",
+                    && commands.allowMenu[0].spoken == "Always allow for this. Commands that start with make pdf",
                     "A command card's Never names its reach and says allowed commands still run")
         let run = CardAnswers.task(choices: ["decline", "never_commands", "allow_always", "allow_here", "approve"], covers: "Commands that start with make pdf", neverTitle: nil, run: true)
-        try require(run.allowMenu.map(\.title) == ["Always allow for this run", "Always allow everywhere"] && run.declineMenu[0].title == "Never run commands in this run",
+        try require(run.allowMenu.map(\.title) == ["Always allow for this run", "Always allow everywhere"] && run.declineMenu[0].title == "Never run commands for this run",
                     "On the Scheduled screen the standing choices speak of the run")
         let long = String(repeating: "a", count: CardAnswers.displayLimit + 1)
         let hidden = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: "Commands that start with " + long, neverTitle: "Never edit in " + long)
-        let wholeRun = CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never allow this in this task", run: true)
-        try require(wholeRun.declineMenu.map(\.title) == ["Never allow this in this run"], "On a scheduled run a whole-action never says it applies to this run")
+        let wholeRun = CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never allow it for this", run: true)
+        try require(wholeRun.declineMenu.map(\.title) == ["Never allow it for this run"], "On a scheduled run a whole-action never says it applies to this run")
+        let savedRun = CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never allow this in this task", run: true)
+        try require(savedRun.declineMenu.map(\.title) == ["Never allow it for this run"], "A never title saved with the earlier words still speaks of the run")
+        let earlier = ["Never allow this in this task": "Never allow it for this", "Never allow it for this work": "Never allow it for this",
+                       "Never send to ada@example.com in this task": "Never send to ada@example.com for this",
+                       "Never run commands for this work": "Never run commands for this", "Never allow this in this chat": "Never allow this in this chat"]
+        for (saved, shown) in earlier {
+            try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: saved).declineMenu.map(\.title) == [shown],
+                        "A never title saved with earlier words reads with the current ones: \(saved)")
+        }
+        for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task", "Never edit in Plans for this",
+                     "Never move things in Notes for this work to the Trash"] {
+            for run in [false, true] {
+                try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: kept, run: run).declineMenu.map(\.title) == [kept],
+                            "A folder's own name is never reworded: \(kept)")
+            }
+        }
+        try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never send to Plans for this work for this", run: true)
+                        .declineMenu.map(\.title) == ["Never send to Plans for this work for this run"], "A recipient's own name is kept on a scheduled run")
+        let listed: Set<String> = ["task", "tasks", "background", "backgrounds", "worker", "workers", "agent", "agents", "engine", "engines"]
+        for (old, new) in SavedWording.earlier {
+            let words = Set(new.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            try require(words.isDisjoint(with: listed) && SavedWording.current(old) == new,
+                        "A message saved with earlier words reads with the current ones: \(old)")
+            try require(NativeScheduler.shownNote(old) == new, "A saved run note reads with the current words: \(old)")
+            var refused = try OngoingWorkFixture.reference(conversationID: "words-saved", title: "Lumber prices this month", state: nil)
+            refused.deliveryState = .rejected
+            refused.lastDeliveryError = old
+            try require(NativeTaskProjection.display(reference: refused, snapshot: nil).card.milestone == new, "A refused card saved earlier reads with the current words: \(old)")
+            var waiting = try OngoingWorkFixture.reference(conversationID: "words-saved", title: "Lumber prices this month", state: nil)
+            waiting.lastDeliveryError = old
+            try require(waiting.deliveryState != .rejected && !waiting.cancelRequested
+                            && NativeTaskProjection.display(reference: waiting, snapshot: nil).card.connectionNote == new,
+                        "A card still waiting to connect reads with the current words: \(old)")
+            waiting.lastDeliveryError = nil
+            try require(NativeTaskProjection.display(reference: waiting, snapshot: nil, connectionNote: old).card.connectionNote == new,
+                        "A saved connection note reads with the current words: \(old)")
+        }
+        let typed = ["Is the task engine down? The task engine couldn't be reached. is all it says", "The task engine couldn't be reached. Again.",
+                     " The task engine couldn't be reached.", "the task engine couldn't be reached.", "Tandem wasn't running at the scheduled time.",
+                     "{\"error\":\"The task engine couldn't be reached.\"}"]
+        for text in typed {
+            try require(SavedWording.current(text) == text && NativeScheduler.shownNote(text) == text, "Text that isn't exactly a line the app wrote is left as saved: \(text)")
+        }
+        try require(SavedWording.current(SavedWording.argumentsLead + "Provide a worker type, an objective and deliverables.") == SavedWording.argumentsLead + NativeTaskTools.missingArguments
+                        && SavedWording.current(SavedWording.argumentsLead + "use the task engine") == SavedWording.argumentsLead + "use the task engine",
+                    "A saved arguments message is reworded only when the whole detail is the app's own line")
         let unlabelled = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
         try require(hidden.allowMenu.isEmpty && hidden.declineMenu.isEmpty && unlabelled.allowMenu.isEmpty && unlabelled.declineMenu.isEmpty
                     && CardAnswers.shown("Edits in a\nb") == nil && CardAnswers.shown("Edits in Greenhouse") == "Edits in Greenhouse",
