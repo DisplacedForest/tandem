@@ -189,19 +189,20 @@ enum AppLocationsSelftest {
 
     static func checkLaunchPlan() throws {
         let require = NativeTaskFixture.require
-        try require(LaunchPlan.mode([]) == .app, "A plain start opens the app")
-        try require(LaunchPlan.mode(["-NSDocumentRevisionsDebugMode", "YES"]) == .app && LaunchPlan.mode(["-psn_0_12345"]) == .app,
+        let isolated: Set<String> = ["--pi-native-selftest"]
+        try require(LaunchPlan.mode([], isolatedModes: isolated) == .app, "A plain start opens the app")
+        try require(LaunchPlan.mode(["-NSDocumentRevisionsDebugMode", "YES"], isolatedModes: isolated) == .app && LaunchPlan.mode(["-psn_0_12345"], isolatedModes: isolated) == .app,
                     "System arguments with one hyphen still open the app")
-        try require(LaunchPlan.mode(["--selftests"]) == .refused("--selftests"), "A misspelled option is refused")
-        try require(LaunchPlan.mode(["--shot"]) == .refused("--shot"), "A shot without a path is refused")
-        try require(LaunchPlan.mode(["--view", "chat"]) == .refused("--view"), "An option on its own is refused")
-        try require(LaunchPlan.mode(["--shot", "out.png", "--view", "chat"]) == .run("--shot"), "A shot is recognized")
-        try require(LaunchPlan.mode(["--selftest"]) == .run("--selftest"), "The selftest is recognized")
-        try require(LaunchPlan.mode(["--pi-native-selftest", "--task-card-shot"]) == .run("--pi-native-selftest"), "An isolated mode is recognized")
-        try require(LaunchPlan.mode(["--pi-unknown"]) == .refused("--pi-unknown"), "An unknown isolated mode is refused")
-        try require(LaunchPlan.mode(["--selftest", "--dump-context"]) == .run("--selftest"), "Modes keep the order the entry point checks them in")
-        try require(LaunchPlan.mode(["--openrouter-smoke", "--credential-status"]) == .run("--openrouter-smoke"), "The credential status smoke is recognized")
-        try require(LaunchPlan.mode(["--credential-reauthorization"]) == .run(LaunchPlan.credentialMode), "The credential helper is recognized")
+        try require(LaunchPlan.mode(["--selftests"], isolatedModes: isolated) == .refused("--selftests"), "A misspelled option is refused")
+        try require(LaunchPlan.mode(["--shot"], isolatedModes: isolated) == .refused("--shot"), "A shot without a path is refused")
+        try require(LaunchPlan.mode(["--view", "chat"], isolatedModes: isolated) == .refused("--view"), "An option on its own is refused")
+        try require(LaunchPlan.mode(["--shot", "out.png", "--view", "chat"], isolatedModes: isolated) == .run("--shot"), "A shot is recognized")
+        try require(LaunchPlan.mode(["--selftest"], isolatedModes: isolated) == .run("--selftest"), "The selftest is recognized")
+        try require(LaunchPlan.mode(["--pi-native-selftest", "--view"], isolatedModes: isolated) == .run("--pi-native-selftest"), "An isolated mode is recognized")
+        try require(LaunchPlan.mode(["--pi-unknown"], isolatedModes: isolated) == .refused("--pi-unknown"), "An unknown isolated mode is refused")
+        try require(LaunchPlan.mode(["--selftest", "--dump-context"], isolatedModes: isolated) == .run("--selftest"), "Modes keep the order the entry point checks them in")
+        try require(LaunchPlan.mode(["--openrouter-smoke", "--credential-status"], isolatedModes: isolated) == .run("--openrouter-smoke"), "The credential status smoke is recognized")
+        try require(LaunchPlan.mode(["--credential-reauthorization"], isolatedModes: isolated) == .run(LaunchPlan.credentialMode), "The credential helper is recognized")
         let selftest = LaunchPlan.Mode.run("--selftest")
         try require(LaunchPlan.isHeadless(selftest, environment: [:]) && LaunchPlan.isHeadless(selftest, environment: ["VERA_TASK_ENGINE_SELFTEST": "1"]),
                     "Selftests are headless runs")

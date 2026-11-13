@@ -2,7 +2,8 @@ import Foundation
 import AppKit
 
 let arguments = CommandLine.arguments
-let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()))
+let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
+let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()), isolatedModes: piModes)
 if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.environment) {
     AppLocations.isolateForHeadlessRun()
 }
@@ -14,7 +15,7 @@ case .reject:
 case .unrelated:
     break
 }
-if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !LaunchPlan.piModes.contains(arguments.dropFirst().first ?? "") {
+if arguments.dropFirst().contains(where: { $0.hasPrefix("--pi-") }) && !piModes.contains(arguments.dropFirst().first ?? "") {
     FileHandle.standardError.write(Data("Unsupported isolated mode\n".utf8))
     exit(2)
 }

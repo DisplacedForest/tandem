@@ -11,7 +11,6 @@ enum LaunchPlan {
     static let documentArtifactMode = "--document-artifact-selftest"
     static let shotMode = "--shot"
     static let selftestMode = "--selftest"
-    static let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
     static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", selftestMode, "--dump-context"]
 
     static let realDataModes: Set<String> = ["--memory-gate-live", "--companion-live", "--openrouter-smoke", "--dump-context"]
@@ -19,7 +18,7 @@ enum LaunchPlan {
     static let selftestSwitchesBeforeLiveChecks = ["VERA_ATTENTION_SELFTEST", "VERA_ASKED_WORK_SELFTEST", "VERA_TALK_CONTROL_SELFTEST", "VERA_PROJECT_CONTEXT_SELFTEST"]
     static let selftestFixturesBeforeLiveChecks = ["VERA_TASK_TRANSPORT_FIXTURE"]
 
-    static func mode(_ arguments: [String]) -> Mode {
+    static func mode(_ arguments: [String], isolatedModes piModes: Set<String>) -> Mode {
         switch SelectedCredentialAuthorization.dispatch(arguments) {
         case .authorize, .reject:
             return .run(credentialMode)
