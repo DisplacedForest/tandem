@@ -449,10 +449,6 @@ extension SelfTest {
         } catch let status as NativeTaskLocalStatus { try require(status.code == 409, "Binding mismatch is a conflict") }
         let idle = try await exchange.ready(taskID: task.id, binding: binding)
         try require(idle == nil, "Ready without a pending job delivers nothing")
-        do {
-            _ = try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "initial", ordinal: 4, messages: messages)
-            throw NativeTaskFixture.Failure.assertion("The per-step request limit holds")
-        } catch let failure as NativeTaskGenerationFailure { try require(failure.code == "request_limit", "Over the limit is request_limit") }
         let worker = Task { try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "initial", ordinal: 0, messages: messages) }
         var job: NativeTaskGenerationJob?
         for _ in 0..<40 where job == nil {
@@ -468,6 +464,12 @@ extension SelfTest {
             generation: job!.generation, messagesDigest: job!.messagesDigest, response: "{\"subquestions\":[\"Q\"]}", failure: nil))
         let delivered = try await worker.value
         try require(delivered == "{\"subquestions\":[\"Q\"]}", "The worker receives the delivered text")
+        for ordinal in 0...5 {
+            do {
+                _ = try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "step-\(ordinal)", ordinal: ordinal, messages: messages)
+                throw NativeTaskFixture.Failure.assertion("Without presence a model call must not be issued at step \(ordinal)")
+            } catch is NativeTaskExecutorUnavailable {}
+        }
     }
 
     private static func taskRouterContract() async throws {
@@ -932,7 +934,7 @@ extension SelfTest {
         let paused = try await pauseHarness.submit("Quota research twice")
         try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .needsDecision }, "A second provider failure in the same step pauses for a decision")
         let card = try pauseRepository.taskProjection(id: paused.id)!.snapshot!
-        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("usage limit") == true, "The card asks a plain retry question")
+        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("no usage left") == true, "The card asks a plain retry question")
         await pauseHarness.tracker.retry(paused.id)
         try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .completed }, "Retry resumes and completes the task")
         let engineTask = try pauseHarness.engine.store.get(paused.remoteTaskID!)
@@ -1160,7 +1162,7 @@ extension SelfTest {
         let budget = NativeCompanionWorkerBudget.standard
         try require(budget == NativeCompanionWorkerBudget(transcriptBytes: 524288), "The dot budget holds its standard size")
         let enforced = NativeTaskGenerationBudget.forWorker("companion")
-        try require(enforced.maximumOrdinal == 3 && enforced.maximumMessages == nil
+        try require(enforced.maximumMessages == nil
                      && enforced.maximumBytes == budget.transcriptBytes && enforced.allowsTools, "The exchange reads the dot budget")
         try require(NativeTaskGenerationBudget.forWorker("research") == .standard && NativeTaskGenerationBudget.forWorker("document") == .standard,
                     "Research and documents keep their budget")
@@ -1213,11 +1215,12 @@ extension SelfTest {
                 return "other"
             }
         }
-        let accepted3 = await outcome(dotTask, ordinal: 3, base)
-        let rejected4 = await outcome(dotTask, ordinal: 4, base)
-        let research4 = await outcome(researchTask, ordinal: 4, base)
-        try require(accepted3 == "accepted" && rejected4 == "request_limit" && research4 == "request_limit",
-                    "Dot and research share the per-step request ordinal: \(accepted3) \(rejected4) \(research4)")
+        var requests: [String] = []
+        for ordinal in 0...5 {
+            requests.append(await outcome(dotTask, ordinal: ordinal, base))
+            requests.append(await outcome(researchTask, ordinal: ordinal, base))
+        }
+        try require(requests.allSatisfy { $0 == "accepted" }, "A step may make any number of model requests: \(requests)")
         let filler = (0..<299).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
         let fullTranscript = [NativeTaskGenerationMessage(role: "system", content: "Work")] + filler
         let manyMessages = await outcome(dotTask, fullTranscript)
