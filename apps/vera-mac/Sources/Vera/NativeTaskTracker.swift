@@ -6,7 +6,7 @@ actor NativeTaskTracker {
     let service: NativeTaskHandoffService
     let transport: NativeTaskEventTransport
     let configuredBase: @Sendable () -> URL?
-    let onUpdate: @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void
+    let onUpdate: @MainActor @Sendable ([NativeTaskMessageUpdate]) async -> Void
     private let instanceID = UUID()
     private var lease: NativeTaskStreamLease?
     private var progress = NativeTaskStreamProgress()
@@ -17,6 +17,7 @@ actor NativeTaskTracker {
     private var busy = false
     private var actions: Set<UUID> = []
     private var retryActive: Set<UUID> = []
+    private var answerReceipts: [UUID: AnswerReceipt] = [:]
     private var ticks = 0
     private var nextStream: ContinuousClock.Instant?
     private var refreshAfter: [String: ContinuousClock.Instant] = [:]
@@ -25,7 +26,7 @@ actor NativeTaskTracker {
     init(repository: any NativeTaskProjectionRepository, client: NativeTaskClient,
          service: NativeTaskHandoffService, transport: NativeTaskEventTransport = .live,
          configuredBase: @escaping @Sendable () -> URL?,
-         onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in }) {
+         onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) async -> Void = { _ in }) {
         self.repository = repository
         self.client = client
         self.service = service
@@ -248,47 +249,75 @@ actor NativeTaskTracker {
         await decide(id, choice: "retry")
     }
 
+    enum AnswerDelivery: Equatable, Sendable {
+        case sent
+        case waiting
+        case dropped
+    }
+
+    private struct AnswerReceipt {
+        var readers = 0
+        var delivery: AnswerDelivery?
+    }
+
     @discardableResult
-    func decide(_ id: UUID, choice: String) async -> Bool {
+    func decide(_ id: UUID, choice: String, expecting decisionID: String? = nil) async -> Bool {
+        await answer(id, choice: choice, expecting: decisionID) != nil
+    }
+
+    func answer(_ id: UUID, choice: String, expecting decisionID: String? = nil) async -> AnswerDelivery? {
         guard !actions.contains(id), !retryActive.contains(id),
               let reference = try? repository.taskReference(id: id),
               let lease = try? actionSession(for: reference),
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
-              decision.choices.contains(choice), !reference.cancelRequested else { return false }
+              decisionID == nil || decision.id == decisionID,
+              decision.choices.contains(choice), !reference.cancelRequested else { return nil }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
             let intent = try repository.prepareTaskDecision(id: id, decisionID: decision.id, choice: choice)
+            answerReceipts[intent.key, default: AnswerReceipt()].readers += 1
+            defer {
+                answerReceipts[intent.key]?.readers -= 1
+                if answerReceipts[intent.key]?.readers == 0 { answerReceipts[intent.key] = nil }
+            }
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
                 connectionNote: nil, lease: lease, generation: nil) { await onUpdate([update]) }
-            await deliverRetry(intent, lease: lease)
-            return true
-        } catch { return false }
+            if let delivery = answerReceipts[intent.key]?.delivery { return delivery }
+            return await deliverRetry(intent, lease: lease)
+        } catch { return nil }
     }
 
-    private func deliverRetry(_ intent: NativeTaskDecisionIntent, lease: NativeTaskStreamLease) async {
+    @discardableResult
+    private func deliverRetry(_ intent: NativeTaskDecisionIntent, lease: NativeTaskStreamLease) async -> AnswerDelivery {
         let id = intent.referenceID
-        guard !retryActive.contains(id), !actions.contains(id), current(lease),
-              let reference = try? repository.taskReference(id: id), reference.engine == lease.engine else { return }
-        guard !reference.cancelRequested else { try? repository.resolveTaskRetry(intent); return }
-        guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return }
+        guard let reference = try? repository.taskReference(id: id) else { return .waiting }
+        guard !reference.cancelRequested else { try? repository.resolveTaskRetry(intent); return .dropped }
+        if let delivery = answerReceipts[intent.key]?.delivery { return delivery }
+        let idle = !retryActive.contains(id) && !actions.contains(id)
+        guard idle, current(lease), reference.engine == lease.engine else { return .waiting }
+        guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return .waiting }
         guard saved.state == .needsDecision, let decision = saved.decision, decision.id == intent.decisionID,
               decision.choices.contains(intent.choice) else {
             try? repository.resolveTaskRetry(intent)
-            return
+            return .dropped
         }
         retryActive.insert(id)
         defer { retryActive.remove(id) }
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
+        var delivery = AnswerDelivery.waiting
         do {
             let generation = try repository.beginTaskRefresh(id: id, lease: lease)
-            guard current(lease) else { return }
+            guard current(lease) else { return .waiting }
             let snapshot = try await client.decide(reference, intent: intent, digest: decision.digest)
-            guard current(lease) else { return }
+            delivery = .sent
+            answerReceipts[intent.key]?.delivery = delivery
+            guard current(lease) else { return delivery }
             if let update = try repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
                 connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }
             try repository.resolveTaskRetry(intent)
         } catch {}
         if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
+        return delivery
     }
 }

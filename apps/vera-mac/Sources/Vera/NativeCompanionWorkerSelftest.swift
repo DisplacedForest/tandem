@@ -170,7 +170,7 @@ struct NativeCompanionHarness {
             }
             if service.returnTimedOut {
                 service.apply(key, bed: "partial")
-                return .object(["command": .string("water"), "timed_out": .bool(true), "error": .string("The command reached its time limit and was stopped")])
+                return .object(["command": .string("water"), "timed_out": .bool(true), "error": .string("The command took too long and was stopped")])
             }
             let bed: String
             if case .string(let value)? = arguments["bed"] { bed = value } else { bed = "" }
@@ -982,7 +982,7 @@ extension SelfTest {
         let stalledID = try stalled.create()
         let killed = try await stalled.runUntilSettled()
         try require(killed.state == .needsDecision && (try stalled.effects(stalledID)).first?.state == .uncertain,
-                    "A command that was stopped at its time limit is uncertain, not done")
+                    "A command that was stopped for taking too long is uncertain, not done")
 
         let mixed = try NativeCompanionHarness(rules: [.networkSends: .act, .trash: .handOff]) { messages in
             let results = NativeCompanionScriptedModel.toolResults(messages)

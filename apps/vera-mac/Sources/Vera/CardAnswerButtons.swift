@@ -43,6 +43,14 @@ struct CardAnswers: Equatable {
                     declineMenu: [CardMenuItem(id: RuleOfferAnswer.neverOffer.rawValue, title: RuleOfferCopy.neverOffer)])
     }
 
+    static let earlierEndings = [" this in this task", " it for this work", " in this task", " for this work"]
+
+    static func current(_ title: String) -> String {
+        guard let ending = earlierEndings.first(where: title.hasSuffix) else { return title }
+        let whole = ending.hasPrefix(" this ") || ending.hasPrefix(" it ")
+        return String(title.dropLast(ending.count)) + (whole ? " it for this" : " for this")
+    }
+
     static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
         var answers = CardAnswers()
         if let scope = shown(covers) {
@@ -56,7 +64,8 @@ struct CardAnswers: Equatable {
               let wire = choices.first(where: { NativeCardChoices.kind(wire: $0) == .never }) else { return answers }
         let commands = wire == NativeCardChoices.commandNever
         guard commands || shown(neverTitle) != nil, var title = commands ? NativeCardChoices.wireTitle(wire) : neverTitle else { return answers }
-        if run, ["for this work", "in this task"].contains(where: title.hasSuffix) { title = String(title.dropLast(4)) + "run" }
+        title = current(title)
+        if run, title.hasSuffix(" for this") { title += " run" }
         answers.declineMenu = [CardMenuItem(id: wire, title: title, note: commands ? NativeCardChoices.neverHelp : nil)]
         return answers
     }

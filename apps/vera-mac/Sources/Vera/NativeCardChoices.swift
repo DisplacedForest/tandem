@@ -21,14 +21,14 @@ enum NativeCardPlace: Equatable, Sendable {
     var hereWords: String {
         switch self {
         case .chat: return "in this chat"
-        case .task: return "for this work"
+        case .task: return "for this"
         }
     }
 
     var neverWords: String {
         switch self {
         case .chat: return "in this chat"
-        case .task: return "for this work"
+        case .task: return "for this"
         }
     }
 
@@ -106,11 +106,11 @@ enum NativeCardChoices {
     static func wireTitle(_ wire: String) -> String? {
         switch wire {
         case NativeCardChoiceKind.allowOnce.rawValue: return "Allow once"
-        case NativeCardChoiceKind.allowHere.rawValue: return "Always allow for this work"
+        case NativeCardChoiceKind.allowHere.rawValue: return "Always allow for this"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Always allow for this schedule"
         case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow everywhere"
-        case NativeCardChoiceKind.never.rawValue: return "Never allow it for this work"
-        case commandNever: return "Never run commands for this work"
+        case NativeCardChoiceKind.never.rawValue: return "Never allow it for this"
+        case commandNever: return "Never run commands for this"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
         default: return nil
         }
@@ -268,7 +268,7 @@ enum NativeCardChoices {
         case .allowSchedule: return "For this schedule, allow"
         case .allowHere:
             if case .chat = place { return "In this chat, allow" }
-            return "For this work, allow"
+            return "For this, allow"
         case .never, .allowOnce, .decline: return "Never allow"
         }
     }

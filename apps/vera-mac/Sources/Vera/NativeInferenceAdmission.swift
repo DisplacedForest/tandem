@@ -24,7 +24,7 @@ struct NativeInferenceAdmission: Sendable {
             switch self {
             case .unavailable: return "Tandem can't line up the model request right now. Try again in a moment."
             case .expired: return "The model reservation expired. Please try again."
-            case .deadline: return "The model request reached its time limit."
+            case .deadline: return "The request to the model took too long. Try again."
             case .malformed: return "The model reservation came back unreadable. Try again."
             }
         }

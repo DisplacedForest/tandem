@@ -445,6 +445,7 @@ extension ChatStore {
 
     func stopAnswer(_ messageID: UUID, reason: String = "Stopped.", toolCanceled: Bool = false) {
         reloadConversationTurns()
+        dropComposerCapture(messageID)
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               turn.state == .running || turn.state == .pending,
               let location = turnLocation(turn), let turnRepository else { return }
@@ -485,6 +486,7 @@ extension ChatStore {
 
     func retryAnswer(_ messageID: UUID) {
         reloadConversationTurns()
+        dropComposerCapture(messageID)
         if !conversationTurns.contains(where: { $0.assistantMessageID == messageID }) {
             _ = enrollLegacyAnswer(messageID)
             return

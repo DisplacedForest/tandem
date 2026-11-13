@@ -201,6 +201,7 @@ enum NativeToolCallContext {
     @TaskLocal static var round: Int?
     @TaskLocal static var otherToolRan: Bool?
     @TaskLocal static var sameToolOrdinal: Int?
+    @TaskLocal static var replyCallOrdinal: Int?
     @TaskLocal static var instructionHolder: String?
 
     static func effectStarts() {

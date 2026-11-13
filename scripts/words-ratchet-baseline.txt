@@ -1,6 +1,6 @@
 4 apps/vera-mac/Sources/Vera/ArtifactProducerSelftest.swift
 2 apps/vera-mac/Sources/Vera/CanvasPanel.swift
-1 apps/vera-mac/Sources/Vera/CardAnswerButtons.swift
+2 apps/vera-mac/Sources/Vera/CardAnswerButtons.swift
 10 apps/vera-mac/Sources/Vera/CardSentenceLiteralSelftest.swift
 10 apps/vera-mac/Sources/Vera/CardShots.swift
 9 apps/vera-mac/Sources/Vera/CompanionAskedWorkSelftest.swift
@@ -10,6 +10,7 @@
 1 apps/vera-mac/Sources/Vera/CompanionPresenceSelftest.swift
 4 apps/vera-mac/Sources/Vera/CompanionRetiredSettingSelftest.swift
 9 apps/vera-mac/Sources/Vera/CompanionSavedTextSelftest.swift
+10 apps/vera-mac/Sources/Vera/CompanionTalkControlSelftest.swift
 14 apps/vera-mac/Sources/Vera/CompanionWorkWaitingSelftest.swift
 1 apps/vera-mac/Sources/Vera/ComposerMentions.swift
 2 apps/vera-mac/Sources/Vera/ComposerMentionsSelftest.swift
@@ -29,7 +30,6 @@
 1 apps/vera-mac/Sources/Vera/NativeContext.swift
 6 apps/vera-mac/Sources/Vera/NativeDocumentContract.swift
 1 apps/vera-mac/Sources/Vera/NativeDomainRepositorySelftest.swift
-1 apps/vera-mac/Sources/Vera/NativeDotProfile.swift
 16 apps/vera-mac/Sources/Vera/NativeEffectLedgerSelftest.swift
 3 apps/vera-mac/Sources/Vera/NativeInstructionCheckSelftest.swift
 2 apps/vera-mac/Sources/Vera/NativeInstructionSpentSelftest.swift
@@ -87,9 +87,9 @@
 6 apps/vera-mac/Sources/Vera/NativeTaskDeliverySelftest.swift
 7 apps/vera-mac/Sources/Vera/NativeTaskDispatcher.swift
 2 apps/vera-mac/Sources/Vera/NativeTaskDisplay.swift
-18 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
+20 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskDisplaySelfTest.swift
-78 apps/vera-mac/Sources/Vera/NativeTaskEngineSelftest.swift
+79 apps/vera-mac/Sources/Vera/NativeTaskEngineSelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskEvents.swift
 33 apps/vera-mac/Sources/Vera/NativeTaskEventsSelfTest.swift
 7 apps/vera-mac/Sources/Vera/NativeTaskFixture.swift

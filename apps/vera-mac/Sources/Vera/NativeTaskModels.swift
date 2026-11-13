@@ -361,7 +361,7 @@ struct NativeTaskGenerationLimits: Codable, Equatable, Hashable, Sendable {
          maximumOutputTokens: Int = 1024) throws {
         guard (1...16).contains(maximumRequests), (1...262144).contains(maximumInputBytes),
               (1...8192).contains(maximumOutputTokens) else {
-            throw NativeTaskError.invalidRequest("Generation limits must be finite and bounded.")
+            throw NativeTaskError.invalidRequest("Those generation settings are out of range.")
         }
         self.maximumRequests = maximumRequests
         self.maximumInputBytes = maximumInputBytes

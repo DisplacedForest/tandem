@@ -689,6 +689,7 @@ struct NativeToolLoop: Sendable {
                     var content = ""
                     var activities: [NativeToolActivity] = []
                     var callCount = 0
+                    var replyCallCount = 0
                     var otherToolRan = false
                     var toolOrdinals: [String: Int] = [:]
                     var webSearchCount = 0
@@ -769,6 +770,8 @@ struct NativeToolLoop: Sendable {
                         history.append(NativeChatMessage(role: "assistant", content: last.content, toolCalls: last.toolCalls))
                         var stopped = false
                         for call in last.toolCalls {
+                            let replyOrdinal = replyCallCount
+                            replyCallCount += 1
                             let ranOther = otherToolRan
                             if definitions[call.name]?.id != NativeTaskTools.toolID { otherToolRan = true }
                             let toolKey = definitions[call.name]?.id ?? "\u{0}" + call.name
@@ -907,9 +910,11 @@ struct NativeToolLoop: Sendable {
                                                                 try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
                                                                     try await NativeToolCallContext.$sameToolOrdinal.withValue(ordinal) {
                                                                         try await NativeToolCallContext.$instructionHolder.withValue(holding) {
-                                                                            try await Self.execute(
-                                                                                definition, arguments: arguments, activity: activity,
-                                                                                timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                            try await NativeToolCallContext.$replyCallOrdinal.withValue(replyOrdinal) {
+                                                                                try await Self.execute(
+                                                                                    definition, arguments: arguments, activity: activity,
+                                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
