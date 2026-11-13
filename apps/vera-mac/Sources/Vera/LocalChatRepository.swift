@@ -65,6 +65,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        AppLocations.refuseRealFile(url)
         for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory

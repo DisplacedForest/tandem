@@ -69,6 +69,7 @@ struct AuthedAsyncImage: View {
         let cacheKey = u.absoluteString
         if let cached = RemoteImageCache.shared.get(cacheKey) { image = cached; return }
         if u.isFileURL {
+            AppLocations.refuseRealFile(u)
             if let img = NSImage(contentsOf: u) {
                 RemoteImageCache.shared.set(cacheKey, img)
                 image = img
@@ -94,11 +95,35 @@ struct Favicon: View {
     let urlString: String
     private var domain: String { URL(string: urlString)?.host?.replacingOccurrences(of: "www.", with: "") ?? "" }
     var body: some View {
-        AuthedAsyncImage(url: domain.isEmpty ? nil : "https://icons.duckduckgo.com/ip3/\(domain).ico")
+        Group {
+            if LaunchPlan.isShotRun {
+                ShotSiteIcon()
+            } else {
+                AuthedAsyncImage(url: domain.isEmpty ? nil : "https://icons.duckduckgo.com/ip3/\(domain).ico")
+            }
+        }
             .frame(width: 16, height: 16)
             .background(Theme.surface)
             .clipShape(Circle())
             .overlay(Circle().stroke(Theme.bg, lineWidth: 1.5))
+    }
+}
+
+struct ShotSiteIcon: View {
+    var body: some View {
+        Canvas { context, size in
+            let inset = size.width * 0.2
+            let rect = CGRect(x: inset, y: inset, width: size.width - inset * 2, height: size.height - inset * 2)
+            let stroke = StrokeStyle(lineWidth: max(1, size.width / 14))
+            let shading = GraphicsContext.Shading.color(Theme.textSecondary)
+            context.stroke(Path(ellipseIn: rect), with: shading, style: stroke)
+            context.stroke(Path(ellipseIn: rect.insetBy(dx: rect.width * 0.28, dy: 0)), with: shading, style: stroke)
+            var equator = Path()
+            equator.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            equator.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            context.stroke(equator, with: shading, style: stroke)
+        }
+        .accessibilityHidden(true)
     }
 }
 

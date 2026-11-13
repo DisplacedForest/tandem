@@ -87,7 +87,7 @@ enum NativePiTranscriptSelftest {
         try piCheck(presentation.tasks(for: replyID).count == 1)
         let arguments = CommandLine.arguments
         if let flag = arguments.firstIndex(of: "--task-card-shot"), flag + 1 < arguments.count {
-            try render(presentation, to: URL(fileURLWithPath: arguments[flag + 1]))
+            try render(presentation, to: AppLocations.checkedOutput(arguments[flag + 1]))
         }
         await presentation.stop()
         try piCheck(presentation.conversation == nil && !presentation.canSend)

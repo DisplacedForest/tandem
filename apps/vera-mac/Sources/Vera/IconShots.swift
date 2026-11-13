@@ -47,7 +47,7 @@ enum IconShot {
             exit(1)
         }
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("wrote \(path)")
             exit(0)
         } catch {

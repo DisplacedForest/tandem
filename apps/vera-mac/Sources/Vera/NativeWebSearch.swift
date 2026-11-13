@@ -14,7 +14,7 @@ struct NativeWebSearchClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
-        let session = URLSession(configuration: configuration)
+        let session = OutboundGuard.session(configuration: configuration)
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")

@@ -416,10 +416,10 @@ struct NativeKeychainOperations {
         return (SecKeychainGetUserInteractionAllowed(&allowed), allowed.boolValue)
     }
     var setInteraction: (Bool) -> OSStatus = { SecKeychainSetUserInteractionAllowed($0) }
-    var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemCopyMatching($0, $1) }
-    var update: (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) }
-    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemAdd($0, $1) }
-    var delete: (CFDictionary) -> OSStatus = { SecItemDelete($0) }
+    var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemCopyMatching($0, $1) }
+    var update: (CFDictionary, CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemUpdate($0, $1) }
+    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemAdd($0, $1) }
+    var delete: (CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemDelete($0) }
 }
 
 protocol NativeCredentialStore {
@@ -437,8 +437,14 @@ extension NativeCredentialStore {
 
 struct KeychainNativeCredentialStore: NativeCredentialStore {
     var allowsInteraction = true
-    var operations = NativeKeychainOperations()
+    var operations: NativeKeychainOperations
     private let service = "org.displacedforest.vera.native-chat"
+
+    init(allowsInteraction: Bool = true, operations: NativeKeychainOperations? = nil) {
+        if operations == nil { AppLocations.refuseRealKeychain() }
+        self.allowsInteraction = allowsInteraction
+        self.operations = operations ?? NativeKeychainOperations()
+    }
 
     private func query(for profileID: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,

@@ -705,9 +705,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func documentCountsAsNew() async throws {
-        let suiteName = "tandem-delivery-selftest-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else { throw NativeTaskFixture.Failure.assertion("Defaults suite") }
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = AppLocations.scratchPreferences()
         let repository = try memoryRepository()
         let store = await store(repository)
         store.companionDefaults = defaults

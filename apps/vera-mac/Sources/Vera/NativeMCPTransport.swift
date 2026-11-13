@@ -300,7 +300,7 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         outgoing.setValue(nil, forHTTPHeaderField: "Authorization")
         outgoing.setValue(nil, forHTTPHeaderField: "Proxy-Authorization")
         outgoing.setValue(nil, forHTTPHeaderField: "Cookie")
-        let session = URLSession(configuration: NativeMCPNetworkBoundary.configuration(timeout: guardrail.timeout), delegate: self, delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: NativeMCPNetworkBoundary.configuration(timeout: guardrail.timeout), delegate: self, delegateQueue: nil)
         self.session = session
         let start: (URLRequest) -> Void = { request in
             guard guardrail.add(session) else { self.finish(CancellationError()); return }

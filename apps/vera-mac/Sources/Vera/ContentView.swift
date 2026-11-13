@@ -4,7 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
-    @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
+    @AppStorage("sidebarCollapsed", store: AppLocations.preferences) private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
     @State private var windowWidth: CGFloat = 0
     @State private var companionProfile = CompanionProfileState(launchedAt: Date())

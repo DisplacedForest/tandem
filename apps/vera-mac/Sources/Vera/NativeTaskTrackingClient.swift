@@ -69,7 +69,7 @@ struct NativeTaskEventTransport: Sendable {
                 configuration.timeoutIntervalForRequest = 45
                 configuration.timeoutIntervalForResource = 3600
                 configuration.httpMaximumConnectionsPerHost = 1
-                let session = URLSession(configuration: configuration, delegate: NativeTaskRedirectGuard(), delegateQueue: nil)
+                let session = OutboundGuard.session(configuration: configuration, delegate: NativeTaskRedirectGuard(), delegateQueue: nil)
                 defer { session.invalidateAndCancel() }
                 do {
                     var components = URLComponents(url: engine.base.appendingPathComponent("tasks/events"),

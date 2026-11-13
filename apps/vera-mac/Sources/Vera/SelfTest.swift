@@ -307,6 +307,12 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if let probe = ProcessInfo.processInfo.environment[OwnSettingsSelftest.probeSetting] { OwnSettingsSelftest.probe(probe) }
+        if ProcessInfo.processInfo.environment["VERA_OWN_SETTINGS_SELFTEST"] == "1" {
+            do { try AppLocationsSelftest.run(); try await OwnSettingsSelftest.run(); print("OWN SETTINGS SELFTEST OK") }
+            catch { print("OWN SETTINGS SELFTEST FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if ProcessInfo.processInfo.environment["VERA_ATTENTION_SELFTEST"] == "1" {
             do { try runCompanionAttention(); print("COMPANION ATTENTION SELFTEST OK") }
             catch { print("COMPANION ATTENTION SELFTEST FAILED: \(error)"); exit(1) }
@@ -522,6 +528,7 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: task engine \(error)"); exit(1) }
         runNativeMedia()
         do { try AppLocationsSelftest.run() } catch { print("SELFTEST ERROR: data locations \(error)"); exit(1) }
+        do { try await OwnSettingsSelftest.run() } catch { print("SELFTEST ERROR: own settings \(error)"); exit(1) }
         await runCapabilityRouting()
         await runPulseContinuation()
         runKnowledge()
@@ -1836,6 +1843,7 @@ enum SelfTest {
                 ["base": "http://old.example", "api_key": "k", "owui_email": "e",
                  "owui_password": "p", "owner_name": "Test"]
             },
+            cleansRetiredKeys: true,
             writeConfiguration: { written = $0 })
         let retired = ["base", "api_key", "owui_email", "owui_password"]
         guard retired.allSatisfy({ migrated[$0].isEmpty }),
@@ -1850,6 +1858,7 @@ enum SelfTest {
         let clean = ConfigStore(
             credentialStore: NativeCredentialFixtureStore(),
             readConfiguration: { ["owner_name": "Test"] },
+            cleansRetiredKeys: true,
             writeConfiguration: { untouched = $0 })
         guard untouched == nil, clean["owner_name"] == "Test" else {
             print("SELFTEST ERROR: shell config migration rewrote a clean file"); exit(1)

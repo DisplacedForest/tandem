@@ -13,7 +13,15 @@ enum LaunchPlan {
     static let selftestMode = "--selftest"
     static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", selftestMode, "--dump-context"]
 
-    static let realDataModes: Set<String> = ["--memory-gate-live", "--companion-live", "--openrouter-smoke", "--dump-context"]
+    static let realDataModes: Set<String> = ["--memory-gate-live", "--companion-live", "--openrouter-smoke", "--dump-context", "--pi-checkpoint", credentialMode]
+
+    nonisolated(unsafe) private(set) static var current: Mode = .app
+
+    static func settle(_ mode: Mode) { current = mode }
+
+    static func drawsBuiltInSiteIcon(_ mode: Mode) -> Bool { mode == .run(shotMode) }
+
+    static var isShotRun: Bool { drawsBuiltInSiteIcon(current) }
 
     static func mode(_ arguments: [String], isolatedModes piModes: Set<String>) -> Mode {
         switch SelectedCredentialAuthorization.dispatch(arguments) {

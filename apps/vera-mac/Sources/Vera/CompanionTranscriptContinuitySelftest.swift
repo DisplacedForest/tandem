@@ -4,9 +4,7 @@ import SwiftUI
 extension SelfTest {
     @MainActor
     static func runCompanionTranscriptContinuity() throws {
-        let suite = "companion-transcript-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else { throw NativeTaskFixture.Failure.assertion("Isolated transcript storage") }
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = AppLocations.scratchPreferences()
         let require = NativeTaskFixture.require
         let messages = [UUID(), UUID(), UUID()]
         let continuity = CompanionTranscriptContinuity(defaults: defaults)

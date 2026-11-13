@@ -119,7 +119,7 @@ struct ArtifactPreview: View {
 struct ArtifactWebView: NSViewRepresentable {
     let html: String
     func makeNSView(context: Context) -> WKWebView {
-        let v = WKWebView()
+        let v = OutboundGuard.webView()
         v.setValue(false, forKey: "drawsBackground")
         return v
     }

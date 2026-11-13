@@ -267,7 +267,7 @@ enum NativeMemoryEvidenceSelftest {
                 NativeMemoryAdmissionProtocol.state.reset()
                 let config = URLSessionConfiguration.ephemeral
                 config.protocolClasses = [NativeMemoryAdmissionProtocol.self]
-                let session = URLSession(configuration: config)
+                let session = OutboundGuard.session(configuration: config)
                 defer { session.invalidateAndCancel() }
                 let repository = try LocalChatRepository(url: directory.appendingPathComponent("admission-\(streaming)-\(change).sqlite"))
                 let (_, memory) = try fixture(repository, name: "admitted")
@@ -334,7 +334,7 @@ enum NativeMemoryEvidenceSelftest {
             NativeMemoryAdmissionProtocol.state.reset()
             let config = URLSessionConfiguration.ephemeral
             config.protocolClasses = [NativeMemoryAdmissionProtocol.self]
-            let session = URLSession(configuration: config)
+            let session = OutboundGuard.session(configuration: config)
             defer { session.invalidateAndCancel() }
             let repository = try LocalChatRepository(url: directory.appendingPathComponent("extraction-\(queued).sqlite"))
             let (_, revoked) = try fixture(repository, name: "revoked")

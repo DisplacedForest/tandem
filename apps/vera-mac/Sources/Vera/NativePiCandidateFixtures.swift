@@ -118,6 +118,6 @@ final class PiAdmissionFixtureProtocol: URLProtocol, @unchecked Sendable {
     static func admission() -> NativeInferenceAdmission {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [Self.self]
-        return NativeInferenceAdmission(baseURL: URL(string: "https://admission.invalid")!, session: URLSession(configuration: configuration))
+        return NativeInferenceAdmission(baseURL: URL(string: "https://admission.invalid")!, session: OutboundGuard.session(configuration: configuration))
     }
 }
