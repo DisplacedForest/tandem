@@ -229,7 +229,6 @@ extension ChatStore {
             return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotStop)
         }
         if ((try? projection.taskProjection(id: id)) ?? nil) == nil { _ = try? projection.projectTask(id: id, snapshot: nil, cursor: 0, connectionNote: nil, lease: nil, generation: nil) }
-        let began = Date()
         await tracker.cancel(id)
         guard let reference = (try? projection.taskReference(id: id)) ?? nil, reference.cancelRequested else {
             return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotStop)
@@ -243,7 +242,8 @@ extension ChatStore {
             return CompanionTalkTools.refusal(snapshot?.state == .completed ? CompanionTalkCopy.alreadyFinished : CompanionTalkCopy.alreadyEnded)
         }
         var (doneTitles, unsure) = CompanionTalkTools.effects(CompanionTalkTools.oldestFirst(projected, reference.snapshot))
-        let unsaved = companionTalkUnsaved(reference, after: snapshot?.updatedAt ?? began.timeIntervalSince1970)
+        let saved = [projected, reference.snapshot].compactMap { $0?.checkpoint.effects }.max { $0.count < $1.count } ?? []
+        let unsaved = companionTalkUnsaved(reference, notes: saved)
         for title in unsaved.done where !doneTitles.contains(title) { doneTitles.append(title) }
         for title in unsaved.unsure where !unsure.contains(title) { unsure.append(title) }
         let done = doneTitles.map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
@@ -261,10 +261,10 @@ extension ChatStore {
         return .object(fields)
     }
 
-    private func companionTalkUnsaved(_ reference: NativeTaskReference, after saved: TimeInterval) -> (done: [String], unsure: [String]) {
+    private func companionTalkUnsaved(_ reference: NativeTaskReference, notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
         guard let remote = reference.remoteTaskID, let local = repository as? LocalChatRepository,
               let records = try? NativeEffectLedgerStore(database: local.database).records(taskID: remote) else { return ([], []) }
-        return CompanionTalkTools.unsaved(records, after: saved)
+        return CompanionTalkTools.unsaved(records, notes: notes)
     }
 
     func companionTalkAnswer(_ id: UUID, choice: String, decisionID: String) async -> NativeJSONValue {

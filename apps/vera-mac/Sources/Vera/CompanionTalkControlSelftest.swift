@@ -823,26 +823,36 @@ enum CompanionTalkControlFixture {
         let warns = result.contains("may_have_happened") && result.contains(CompanionTalkCopy.underWayLead) && result.contains("reading-list.txt")
         try require(warns && result.contains("\"changed\":true"), "An action still under way at the stop is reported as possibly done: \(result)")
         try require(CompanionTalkCopy.underWay(nil) == CompanionTalkCopy.underWayLead, "An action with no name still gets a plain line")
-        let stamp = Date(timeIntervalSince1970: 2_000)
-        func record(_ state: NativeEffectState, receipt: NativeJSONValue? = nil, target: String) -> NativeEffectRecord {
+        var tick = 2_000.0
+        func record(_ state: NativeEffectState, receipt: NativeJSONValue? = nil, path: String?) -> NativeEffectRecord {
+            tick += 1
+            let stamp = Date(timeIntervalSince1970: tick)
+            let arguments = path.map { "{\"path\":\"" + $0 + "\"}" } ?? "{}"
             let made = NativeEffectProposal(id: UUID().uuidString, taskID: remote, generation: 1, toolID: "notes", function: "write_note",
-                                            argumentsJSON: "{}", target: target, action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
+                                            argumentsJSON: arguments, target: path, action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
                                             conversationID: harness.threadID, expiresAtMilliseconds: expires, idempotencyKey: UUID().uuidString)
             return NativeEffectRecord(proposal: made, digest: UUID().uuidString, state: state, decisionID: nil, decisionReply: nil,
                                       receipt: receipt, modelClaim: nil, createdAt: stamp, updatedAt: stamp)
         }
+        func note(_ title: String) -> NativeCompanionEffectNote { NativeCompanionEffectNote(title: title, outcome: "done", reason: nil) }
         let absent = NativeJSONValue.object(["observed": .string("absent")])
         let failed = NativeJSONValue.object(["exit_code": .number(1)])
-        let mixed = [record(.completed, target: "sent.txt"), record(.completed, receipt: failed, target: "broke.txt"),
-                     record(.uncertain, receipt: absent, target: "never.txt"), record(.uncertain, target: "unknown.txt"),
-                     record(.admitted, target: "running.txt"), record(.declined, target: "declined.txt")]
-        let fresh = CompanionTalkTools.unsaved(mixed, after: 1_000)
+        let mixed = [record(.completed, path: "sent.txt"), record(.completed, receipt: failed, path: "broke.txt"),
+                     record(.uncertain, receipt: absent, path: "never.txt"), record(.uncertain, path: "unknown.txt"),
+                     record(.admitted, path: "running.txt"), record(.declined, path: "declined.txt")]
+        let fresh = CompanionTalkTools.unsaved(mixed, notes: [])
         let doneRight = fresh.done == [CompanionTalkCopy.justDone("sent.txt")]
         let unsureRight = fresh.unsure == [CompanionTalkCopy.underWay("broke.txt"), CompanionTalkCopy.underWay("unknown.txt"), CompanionTalkCopy.underWay("running.txt")]
-        try require(doneRight && unsureRight, "Actions not yet in a saved step are sorted into done and possibly done, and one that never ran is left out: \(fresh)")
-        let saved = CompanionTalkTools.unsaved(mixed, after: 3_000)
+        try require(doneRight && unsureRight, "Actions no saved step holds are sorted into done and possibly done, and one that never ran is left out: \(fresh)")
+        let held = [note("Write a note: sent.txt"), note("Write a note: broke.txt"), note("Write a note: unknown.txt")]
+        let saved = CompanionTalkTools.unsaved(mixed, notes: held)
         try require(saved.done.isEmpty && saved.unsure == [CompanionTalkCopy.underWay("running.txt")],
-                    "Actions already in a saved step aren't repeated; one still running always is: \(saved)")
+                    "Actions a saved step already holds aren't repeated; one still running always is: \(saved)")
+        let twice = [record(.completed, path: "list.txt"), record(.completed, path: "list.txt")]
+        let second = CompanionTalkTools.unsaved(twice, notes: [note("Write a note: list.txt")])
+        try require(second.done == [CompanionTalkCopy.justDone("list.txt")], "A second write to the same file that no saved step holds is still reported: \(second)")
+        let bare = CompanionTalkTools.unsaved([record(.completed, path: nil)], notes: [note("Write a note: other.txt")])
+        try require(bare.done == [CompanionTalkCopy.justDone(nil)], "An action with nothing to name it is reported unless a saved step holds one like it: \(bare)")
     }
 
     static func tooLongToCheck() async throws {

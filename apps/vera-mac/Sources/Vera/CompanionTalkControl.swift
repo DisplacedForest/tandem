@@ -153,18 +153,37 @@ enum CompanionTalkTools {
 
     static let endingChoice = "stop"
 
-    static func unsaved(_ records: [NativeEffectRecord], after saved: TimeInterval) -> (done: [String], unsure: [String]) {
+    static let subjectMark = ": "
+
+    static func subject(_ record: NativeEffectRecord) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(record.proposal.argumentsJSON.utf8)) as? [String: Any],
+              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return nil }
+        return NativeCompanionWorker.subject(values)
+    }
+
+    static func covers(_ note: NativeCompanionEffectNote, _ subject: String?) -> Bool {
+        guard let subject else { return !note.title.contains(subjectMark) }
+        return note.title.hasSuffix(subjectMark + subject)
+    }
+
+    static func unsaved(_ records: [NativeEffectRecord], notes: [NativeCompanionEffectNote]) -> (done: [String], unsure: [String]) {
         var done: [String] = []
         var unsure: [String] = []
-        for record in records {
+        var open = notes
+        for record in records.sorted(by: { $0.createdAt < $1.createdAt }) {
             let inFlight = record.state == .admitted
-            let newer = record.updatedAt.timeIntervalSince1970 > saved
-            guard inFlight || newer else { continue }
             let settled = record.state == .completed || record.state == .uncertain
             guard inFlight || settled else { continue }
             let ran = NativeCompanionWorker.ran(record)
             let neverRan = record.state == .uncertain && ran == nil
             if neverRan { continue }
+            if settled {
+                let subject = subject(record)
+                if let index = open.firstIndex(where: { covers($0, subject) }) {
+                    open.remove(at: index)
+                    continue
+                }
+            }
             if ran == true {
                 let title = CompanionTalkCopy.justDone(record.proposal.target)
                 if !done.contains(title) { done.append(title) }
